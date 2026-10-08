@@ -83,6 +83,10 @@ pub struct Health {
     pub version: Option<String>,
     #[serde(default)]
     pub features: Vec<String>,
+    /// How many addresses the hub holds (with the name and version, tells
+    /// whether two addresses lead to the same hub).
+    #[serde(default)]
+    pub orgs: Option<u64>,
 }
 
 impl Health {

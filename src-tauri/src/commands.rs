@@ -168,6 +168,8 @@ pub enum Probe {
         max_attachment_bytes: u64,
         features: Vec<String>,
         version: Option<String>,
+        /// How many addresses it holds (to tell one hub under two names).
+        orgs: Option<u64>,
     },
     Unreachable {
         url: String,
@@ -259,6 +261,7 @@ async fn probe(input: &str, name: Option<&str>, limit: Duration) -> Probe {
             name: h.name,
             features: h.features,
             version: h.version,
+            orgs: h.orgs,
         },
         Ok(Err(hubchat_core::Error::NotAHub(e))) => Probe::NotAHub { url, error: e },
         Ok(Err(e)) => Probe::Unreachable { url, error: s(e) },

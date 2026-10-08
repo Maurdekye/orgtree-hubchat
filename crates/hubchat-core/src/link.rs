@@ -470,6 +470,57 @@ pub fn review_hubs(bundle_hubs: &[String], via: &str, aliases: &[String]) -> Vec
     rows
 }
 
+/// What a hub's /healthz answers with: name, version, how many addresses it
+/// holds. Two addresses answering alike at the same moment lead to one hub.
+pub type HubKey = (String, Option<String>, Option<u64>);
+
+fn same_hub(a: &HubKey, b: &HubKey) -> bool {
+    a.0 == b.0 && a.1 == b.1 && (a.2.is_none() || b.2.is_none() || a.2 == b.2)
+}
+
+/// One review row per hub (rows from review_hubs, each with the key of the
+/// hub that answered, None when nothing did). A row that answers as a hub an
+/// earlier row already reached is that hub under another name (a PC's
+/// localhost hub as its phone knows it) and merges into the earlier row:
+/// its candidates are added there, and an earlier row made for `via` alone
+/// (the bundle doesn't name it) takes its name for the hub as the other
+/// device knows it. Returns (index of the kept row, theirs, candidates).
+pub fn merge_same_hubs(
+    rows: &[(String, Vec<String>, Option<HubKey>)],
+    bundle_hubs: &[String],
+    via: &str,
+) -> Vec<(usize, String, Vec<String>)> {
+    let norm = |h: &str| {
+        crate::HubAddress::parse(h)
+            .map(|a| a.to_string())
+            .unwrap_or_else(|_| h.to_string())
+    };
+    let via = norm(via);
+    let made_for_via = !bundle_hubs.iter().any(|h| norm(h) == via);
+    let mut out: Vec<(usize, String, Vec<String>)> = Vec::new();
+    for (i, (theirs, candidates, key)) in rows.iter().enumerate() {
+        let earlier = key.as_ref().and_then(|k| {
+            out.iter()
+                .position(|(j, _, _)| rows[*j].2.as_ref().is_some_and(|o| same_hub(o, k)))
+        });
+        match earlier {
+            Some(e) => {
+                let kept = &mut out[e];
+                if made_for_via && kept.1 == via {
+                    kept.1 = theirs.clone();
+                }
+                for c in candidates {
+                    if !kept.2.contains(c) {
+                        kept.2.push(c.clone());
+                    }
+                }
+            }
+            None => out.push((i, theirs.clone(), candidates.clone())),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -677,5 +728,46 @@ mod tests {
         let rows = review_hubs(&["http://elsewhere:7370".into()], "home-pc:7370", &[]);
         assert_eq!(rows[0], ("http://home-pc:7370".to_string(), vec!["http://home-pc:7370".to_string()]));
         assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn one_row_per_hub() {
+        let key = |n: &str, orgs: u64| Some((n.to_string(), Some("2.0.0".to_string()), Some(orgs)));
+        // The PC re-linked from its phone: it joined through localhost, the
+        // phone's bundle names the same hub as home-pc.
+        let bundle = vec!["http://home-pc:7370".to_string()];
+        let rows = review_hubs(&bundle, "localhost:7370", &[]);
+        assert_eq!(rows.len(), 2);
+        let probed: Vec<_> = rows
+            .into_iter()
+            .map(|(t, c)| (t, c, key("maurdekye-net", 16)))
+            .collect();
+        assert_eq!(
+            merge_same_hubs(&probed, &bundle, "localhost:7370"),
+            vec![(
+                0,
+                "http://home-pc:7370".to_string(),
+                vec!["http://localhost:7370".to_string(), "http://home-pc:7370".into()]
+            )]
+        );
+        // Two hubs on one machine with the same name but other address
+        // counts, and one that didn't answer: three rows stay.
+        let probed = vec![
+            ("http://a:7370".to_string(), vec!["http://a:7370".to_string()], key("hub", 3)),
+            ("http://a:7380".to_string(), vec!["http://a:7380".to_string()], key("hub", 9)),
+            ("http://b:7370".to_string(), vec!["http://b:7370".to_string()], None),
+        ];
+        assert_eq!(merge_same_hubs(&probed, &probed.iter().map(|r| r.0.clone()).collect::<Vec<_>>(), "a:7370").len(), 3);
+        // A bundle naming one hub twice: the later row folds into the first,
+        // which keeps its own name (it isn't a row made for via).
+        let probed = vec![
+            ("http://localhost:7370".to_string(), vec!["http://home-pc:7370".to_string()], key("h", 2)),
+            ("http://home-pc:7370".to_string(), vec!["http://home-pc:7370".to_string()], key("h", 2)),
+        ];
+        let bundle: Vec<String> = probed.iter().map(|r| r.0.clone()).collect();
+        assert_eq!(
+            merge_same_hubs(&probed, &bundle, "home-pc:7370"),
+            vec![(0, "http://localhost:7370".to_string(), vec!["http://home-pc:7370".to_string()])]
+        );
     }
 }

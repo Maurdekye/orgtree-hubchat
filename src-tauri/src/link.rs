@@ -122,15 +122,25 @@ async fn arrived(bundle: Bundle, via: &str, aliases: &[String]) -> LinkEvent {
     {
         set.spawn(async move {
             let p = crate::commands::probe_first(candidates.clone(), None, Duration::from_secs(5)).await;
+            let mut key: Option<link::HubKey> = None;
             let row = match p {
-                crate::commands::Probe::Connected { url, name, .. } => HubRow {
-                    theirs,
-                    address: url,
-                    candidates,
-                    name: Some(name),
-                    error: None,
-                    reachable: true,
-                },
+                crate::commands::Probe::Connected {
+                    url,
+                    name,
+                    version,
+                    orgs,
+                    ..
+                } => {
+                    key = Some((name.clone(), version, orgs));
+                    HubRow {
+                        theirs,
+                        address: url,
+                        candidates,
+                        name: Some(name),
+                        error: None,
+                        reachable: true,
+                    }
+                }
                 crate::commands::Probe::Unreachable { error, .. }
                 | crate::commands::Probe::NotAHub { error, .. }
                 | crate::commands::Probe::Invalid { error } => HubRow {
@@ -142,23 +152,36 @@ async fn arrived(bundle: Bundle, via: &str, aliases: &[String]) -> LinkEvent {
                     reachable: false,
                 },
             };
-            (i, row)
+            (i, row, key)
         });
     }
-    let mut rows: Vec<(usize, HubRow)> = Vec::new();
+    let mut probed: Vec<(usize, HubRow, Option<link::HubKey>)> = Vec::new();
     while let Some(r) = set.join_next().await {
         if let Ok(r) = r {
-            rows.push(r);
+            probed.push(r);
         }
     }
-    rows.sort_by_key(|(i, _)| *i);
+    probed.sort_by_key(|(i, _, _)| *i);
+    // one row per hub: the same hub under two names merges
+    let keyed: Vec<(String, Vec<String>, Option<link::HubKey>)> = probed
+        .iter()
+        .map(|(_, r, k)| (r.theirs.clone(), r.candidates.clone(), k.clone()))
+        .collect();
+    let rows: Vec<HubRow> = link::merge_same_hubs(&keyed, &bundle.hubs, via)
+        .into_iter()
+        .map(|(i, theirs, candidates)| HubRow {
+            theirs,
+            candidates,
+            ..probed[i].1.clone()
+        })
+        .collect();
     let name = bundle.name.clone();
     *PENDING.lock().unwrap() = Some(bundle);
     LinkEvent::Review {
         from: current,
         to,
         name,
-        hubs: rows.into_iter().map(|(_, r)| r).collect(),
+        hubs: rows,
     }
 }
 
