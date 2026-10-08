@@ -213,6 +213,26 @@ impl HubClient {
         Ok(check(resp).await?.json::<R>().await?.id)
     }
 
+    /// Take a device off the address's device list (no device keys yet:
+    /// the plain form, which rotates nothing).
+    pub async fn sign_out_device(&self, me: &Identity, device_id: &str) -> Result<()> {
+        let resp = self
+            .http
+            .delete(
+                self.address()
+                    .join(&format!("/api/devices/{}", urlencode(device_id))),
+            )
+            .header("X-Org-Auth", me.auth_header())
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await?;
+        match check(resp).await {
+            Ok(_) => Ok(()),
+            Err(e) if matches!(e.status(), Some(404) | Some(409)) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
     // ---------------------------------------------------- resumable uploads
 
     pub async fn open_upload(&self, me: &Identity, name: &str, bytes: u64) -> Result<UploadState> {

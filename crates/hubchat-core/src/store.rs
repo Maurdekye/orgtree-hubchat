@@ -468,6 +468,17 @@ impl Store {
         })
     }
 
+    /// Forget everything (switching to another identity): messages, files'
+    /// records, hubs, directory, drafts and settings.
+    pub fn wipe(&self) -> Result<()> {
+        self.with(|c| {
+            c.execute_batch(
+                "DELETE FROM attachments; DELETE FROM messages; DELETE FROM roster; DELETE FROM hubs;
+                 DELETE FROM drafts; DELETE FROM meta;",
+            )
+        })
+    }
+
     // ------------------------------------------------------------- sync (v2)
 
     /// Store a message as a v2 hub's sync reports it: ours (sent from any of

@@ -121,6 +121,8 @@ pub struct Engine {
     host: Arc<dyn Host>,
     hubs: Mutex<HashMap<String, HubRuntime>>,
     queue_changed: Notify,
+    /// Set by shutdown(): the sender stops; hub tasks were stopped one by one.
+    stopped: std::sync::atomic::AtomicBool,
     transfers: Mutex<HashMap<String, CancelFlag>>,
     read_receipts: std::sync::atomic::AtomicBool,
     /// This installation's (device_id, device_name) for v2 sync.
@@ -148,6 +150,7 @@ impl Engine {
             host,
             hubs: Mutex::new(HashMap::new()),
             queue_changed: Notify::new(),
+            stopped: std::sync::atomic::AtomicBool::new(false),
             transfers: Mutex::new(HashMap::new()),
             read_receipts: std::sync::atomic::AtomicBool::new(true),
             device: Mutex::new((
@@ -281,6 +284,39 @@ impl Engine {
             })?;
         client.send(&self.me, &Outgoing::new(to, body)).await?;
         Ok(url)
+    }
+
+    /// Stop every hub connection and the sender (switching identity). The
+    /// engine is not usable afterwards.
+    pub fn shutdown(&self) {
+        self.stopped
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        for (_, rt) in self.hubs.lock().unwrap().drain() {
+            rt.stop.cancel();
+            rt.retry_now.notify_one();
+        }
+        for c in self.transfers.lock().unwrap().values() {
+            c.cancel();
+        }
+        self.queue_changed.notify_one();
+    }
+
+    /// Take this device off our device list on every v2 hub (switching to
+    /// another identity). Older hubs have no device list: nothing to do.
+    /// Never unregisters the address: our other devices still use it.
+    pub async fn sign_out_this_device(&self) {
+        let (device_id, _) = self.device();
+        let clients: Vec<HubClient> = self
+            .hubs
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|h| h.status.features.iter().any(|f| f == "devices"))
+            .map(|h| h.client.clone())
+            .collect();
+        for c in clients {
+            let _ = c.sign_out_device(&self.me, &device_id).await;
+        }
     }
 
     pub fn hub_statuses(&self) -> Vec<HubStatus> {
@@ -639,7 +675,7 @@ impl Engine {
     }
 
     async fn sender_loop(self: Arc<Self>) {
-        loop {
+        while !self.stopped.load(std::sync::atomic::Ordering::Relaxed) {
             let mut progressed = false;
             if let Ok(queue) = self.store.queued() {
                 for m in queue {

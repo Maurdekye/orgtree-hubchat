@@ -172,6 +172,26 @@ impl Core {
     }
 
     /// Save a new or restored identity and start talking to the hubs.
+    /// Leave the current identity on this device (switching to another):
+    /// off the device lists of v2 hubs, connections stopped, key and local
+    /// data forgotten. The address itself stays registered for its other
+    /// devices.
+    pub async fn leave_identity(&self) -> Result<(), String> {
+        let Some(e) = self.engine.lock().unwrap().take() else {
+            return Ok(());
+        };
+        let e2 = e.clone();
+        let _ = self
+            .rt
+            .spawn(async move { e2.sign_out_this_device().await })
+            .await;
+        e.shutdown();
+        crate::secrets::forget_identity(&self.dir)?;
+        self.store.wipe().map_err(|e| e.to_string())?;
+        self.host.platform.status("Switching identity");
+        Ok(())
+    }
+
     pub fn adopt_identity(&self, me: Identity) -> Result<(), String> {
         if self.has_identity() {
             return Err("this device already has an identity".into());

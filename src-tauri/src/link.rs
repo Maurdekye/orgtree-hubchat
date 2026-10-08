@@ -29,9 +29,25 @@ static LISTENING: Mutex<Option<CancelFlag>> = Mutex::new(None);
 #[derive(Serialize, Clone)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum LinkEvent {
-    Waiting { expires_in_s: u64 },
-    Done { address: String },
-    Failed { error: String },
+    Waiting {
+        expires_in_s: u64,
+    },
+    Done {
+        address: String,
+    },
+    /// This device already IS that identity (user ruling 19:21Z): nothing to do.
+    Same {
+        address: String,
+    },
+    /// The link carries a different identity: the UI asks before switching
+    /// (hc_link_switch / hc_link_switch_cancel). The bundle waits in memory.
+    Switch {
+        from: String,
+        to: String,
+    },
+    Failed {
+        error: String,
+    },
     Expired,
 }
 
@@ -39,7 +55,7 @@ pub enum LinkEvent {
 pub struct LinkStart {
     /// XXXX-XXXX-XXXX-XXXX, to type on the other device.
     code: String,
-    /// What the QR carries: `hubchat-link:<code>@<hub url>`.
+    /// What the QR carries: `hubchat://link?code=…&hub=…&role=take`.
     qr: String,
     hub: String,
 }
@@ -60,6 +76,55 @@ fn adopt(bundle: Bundle) -> R<String> {
         let _ = e.add_hub(h);
     }
     Ok(address)
+}
+
+/// The identity a link carries just arrived: adopt it on a fresh device;
+/// on a signed-in one, compare and (if different) hold it for the user.
+fn arrived(bundle: Bundle) -> LinkEvent {
+    let current = core::get()
+        .ok()
+        .and_then(|c| c.engine().ok())
+        .map(|e| e.me().address());
+    let to = match bundle.identity() {
+        Ok(me) => me.address(),
+        Err(e) => return LinkEvent::Failed { error: s(e) },
+    };
+    match current {
+        None => match adopt(bundle) {
+            Ok(address) => LinkEvent::Done { address },
+            Err(error) => LinkEvent::Failed { error },
+        },
+        Some(from) if from == to => LinkEvent::Same { address: to },
+        Some(from) => {
+            // Memory only: an unadopted key is never written to disk.
+            *PENDING_SWITCH.lock().unwrap() = Some(bundle);
+            LinkEvent::Switch { from, to }
+        }
+    }
+}
+
+static PENDING_SWITCH: Mutex<Option<Bundle>> = Mutex::new(None);
+
+/// The user confirmed: leave the current identity on this device (off the
+/// device lists of v2 hubs; key and local data forgotten) and adopt the one
+/// the link brought.
+#[tauri::command]
+pub async fn hc_link_switch() -> R<String> {
+    let bundle = PENDING_SWITCH
+        .lock()
+        .unwrap()
+        .take()
+        .ok_or("nothing to switch to: link again")?;
+    let c = core::get()?;
+    c.leave_identity().await?;
+    adopt(bundle)
+}
+
+/// The user kept the current identity: drop what the link brought.
+#[tauri::command]
+pub fn hc_link_switch_cancel() -> R<()> {
+    PENDING_SWITCH.lock().unwrap().take();
+    Ok(())
 }
 
 fn my_bundle() -> R<Bundle> {
@@ -91,9 +156,8 @@ pub async fn hc_link_start<R2: Runtime>(
     code: Option<String>,
 ) -> R<LinkStart> {
     let c = core::get()?;
-    if c.has_identity() {
-        return Err("this device already has an identity".into());
-    }
+    // A signed-in device may join too: what arrives is held for a decision
+    // (same identity: nothing; another one: offer to switch).
     let addr = HubAddress::parse(&hub).map_err(s)?;
     // A code from a scanned/typed QR (the other device made it), or our own.
     let code = match code {
@@ -155,10 +219,7 @@ pub async fn hc_link_start<R2: Runtime>(
                 let _ = client.ack(&temp, &ids).await;
             }
             if let Some(bundle) = found {
-                break Some(match adopt(bundle) {
-                    Ok(address) => LinkEvent::Done { address },
-                    Err(error) => LinkEvent::Failed { error },
-                });
+                break Some(arrived(bundle));
             }
         };
         let _ = client.unregister(&temp).await;
@@ -168,7 +229,7 @@ pub async fn hc_link_start<R2: Runtime>(
     });
     let hub = addr.to_string();
     Ok(LinkStart {
-        qr: format!("hubchat-link:{code}@{hub}"),
+        qr: link_url(&code, &hub, "take"),
         code,
         hub,
     })
@@ -196,10 +257,32 @@ pub struct LinkLookup {
 }
 
 /// The link QR is a URL so a phone camera opens Hubchat with it
-/// (user 19:12Z): `hubchat://link?code=XXXX-XXXX-XXXX-XXXX&hub=<url>`.
-pub fn link_url(code: &str, hub: &str) -> String {
+/// (user 19:12Z): `hubchat://link?code=XXXX-XXXX-XXXX-XXXX&hub=<url>&role=…`.
+/// `role=give`: a signed-in device offers its identity (the scanner joins);
+/// `role=take`: a new device asks for one (the scanner approves).
+pub fn link_url(code: &str, hub: &str, role: &str) -> String {
     let enc = |v: &str| url::form_urlencoded::byte_serialize(v.as_bytes()).collect::<String>();
-    format!("hubchat://link?code={}&hub={}", enc(code), enc(hub))
+    format!(
+        "hubchat://link?code={}&hub={}&role={role}",
+        enc(code),
+        enc(hub)
+    )
+}
+
+/// `give`, `take`, or None when the input doesn't say (a typed code).
+fn link_role(input: &str) -> Option<String> {
+    let t = input.trim();
+    if t.starts_with("hubchat-link:") {
+        return Some("take".into());
+    }
+    let u = url::Url::parse(t)
+        .ok()
+        .filter(|u| u.scheme() == "hubchat")?;
+    let r = u
+        .query_pairs()
+        .find(|(n, _)| n == "role")
+        .map(|(_, v)| v.into_owned())?;
+    matches!(r.as_str(), "give" | "take").then_some(r)
 }
 
 fn format_code(c: &str) -> String {
@@ -233,6 +316,7 @@ pub fn parse_code_or_qr(input: &str) -> R<(String, Option<String>)> {
 pub struct ParsedLink {
     code: String,
     hub: Option<String>,
+    role: Option<String>,
 }
 
 /// For the UI: what a scanned or opened link holds.
@@ -242,6 +326,7 @@ pub fn hc_parse_link(input: String) -> R<ParsedLink> {
     Ok(ParsedLink {
         code: format_code(&code),
         hub,
+        role: link_role(&input),
     })
 }
 
@@ -272,7 +357,7 @@ pub fn hc_link_offer(hub: Option<String>) -> R<LinkOffer> {
     };
     let code = link::new_link_code();
     Ok(LinkOffer {
-        qr: link_url(&code, &hub),
+        qr: link_url(&code, &hub, "give"),
         code,
         hub,
     })
