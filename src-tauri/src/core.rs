@@ -16,7 +16,8 @@ use tauri::{AppHandle, Emitter};
 /// What only the platform can do.
 pub trait Platform: Send + Sync + 'static {
     /// Show a message notification (title = sender, body = preview).
-    fn notify(&self, title: &str, body: &str, peer: &str);
+    /// `sound`: play the notification sound (Settings › Notifications).
+    fn notify(&self, title: &str, body: &str, peer: &str, sound: bool);
     /// Update the ongoing "connected" line (Android) / tray tooltip (desktop).
     fn status(&self, text: &str);
     fn open_source(&self, source: &str) -> std::io::Result<std::fs::File>;
@@ -58,6 +59,21 @@ struct ShellHost {
     foreground: AtomicBool,
     /// The chat the UI shows, if any.
     open_chat: Mutex<Option<String>>,
+    store: Arc<Store>,
+    /// Settings › Notifications (design): notify at all and show the
+    /// message text (on until turned off), play a sound (desktop; off until
+    /// turned on, as the design's prototype has it).
+    notify_on: AtomicBool,
+    notify_text: AtomicBool,
+    notify_sound: AtomicBool,
+}
+
+/// What Settings › Notifications holds.
+#[derive(serde::Serialize, Clone, Copy)]
+pub struct NotifySettings {
+    pub enabled: bool,
+    pub preview: bool,
+    pub sound: bool,
 }
 
 impl Host for ShellHost {
@@ -65,8 +81,20 @@ impl Host for ShellHost {
         if let Event::Incoming { peer, preview, .. } = &ev {
             let showing = self.foreground.load(Ordering::Relaxed)
                 && self.open_chat.lock().unwrap().as_deref() == Some(peer.as_str());
-            if !showing {
-                self.platform.notify(peer, preview, peer);
+            if !showing && self.notify_on.load(Ordering::Relaxed) {
+                let title = self
+                    .store
+                    .display_name(peer)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| peer.clone());
+                let body = if self.notify_text.load(Ordering::Relaxed) {
+                    preview.clone()
+                } else {
+                    "New message".to_string()
+                };
+                self.platform
+                    .notify(&title, &body, peer, self.notify_sound.load(Ordering::Relaxed));
             }
         }
         if let Some(app) = self.app.get() {
@@ -109,11 +137,16 @@ pub fn init(dir: PathBuf, platform: Arc<dyn Platform>) -> Result<&'static Core, 
         })
         .map_err(|e| e.to_string())?;
     let rt = rx.recv().map_err(|e| e.to_string())?;
+    let on = |k: &str| store.meta(k).ok().flatten().as_deref() != Some("off");
     let host = Arc::new(ShellHost {
         app: OnceLock::new(),
         platform,
         foreground: AtomicBool::new(false),
         open_chat: Mutex::new(None),
+        store: store.clone(),
+        notify_on: AtomicBool::new(on("settings.notify")),
+        notify_text: AtomicBool::new(on("settings.notify_preview")),
+        notify_sound: AtomicBool::new(store.meta("settings.notify_sound").ok().flatten().as_deref() == Some("on")),
     });
     let core = Core {
         dir,
@@ -142,6 +175,29 @@ impl Core {
     /// Called by the Tauri setup so events reach the UI.
     pub fn attach_ui(&self, app: AppHandle) {
         let _ = self.host.app.set(app);
+    }
+
+    pub fn notify_settings(&self) -> NotifySettings {
+        NotifySettings {
+            enabled: self.host.notify_on.load(Ordering::Relaxed),
+            preview: self.host.notify_text.load(Ordering::Relaxed),
+            sound: self.host.notify_sound.load(Ordering::Relaxed),
+        }
+    }
+
+    pub fn set_notify_settings(&self, n: NotifySettings) -> Result<(), String> {
+        let v = |on: bool| if on { "on" } else { "off" };
+        for (k, on) in [
+            ("settings.notify", n.enabled),
+            ("settings.notify_preview", n.preview),
+            ("settings.notify_sound", n.sound),
+        ] {
+            self.store.set_meta(k, v(on)).map_err(|e| e.to_string())?;
+        }
+        self.host.notify_on.store(n.enabled, Ordering::Relaxed);
+        self.host.notify_text.store(n.preview, Ordering::Relaxed);
+        self.host.notify_sound.store(n.sound, Ordering::Relaxed);
+        Ok(())
     }
 
     pub fn set_ui_state(&self, foreground: bool, chat: Option<String>) {

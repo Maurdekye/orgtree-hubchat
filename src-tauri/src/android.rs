@@ -84,7 +84,9 @@ struct AndroidPlatform {
 }
 
 impl crate::core::Platform for AndroidPlatform {
-    fn notify(&self, title: &str, body: &str, peer: &str) {
+    /// The sound follows Android's own settings for the Messages channel
+    /// (the design has no sound switch on Android).
+    fn notify(&self, title: &str, body: &str, peer: &str, _sound: bool) {
         if let Some(j) = JNI.get() {
             call(&j.service, "notifyMessage", &[title, body, peer], false);
         }

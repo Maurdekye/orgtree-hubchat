@@ -181,6 +181,18 @@ impl Store {
         })
     }
 
+    /// The name a contact goes by on any of our hubs (None: no name known).
+    pub fn display_name(&self, address: &str) -> Result<Option<String>> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT org_name FROM roster WHERE address=? AND org_name <> '' ORDER BY hub LIMIT 1",
+                [address],
+                |r| r.get(0),
+            )
+            .optional()
+        })
+    }
+
     pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
         self.with(|c| {
             c.execute("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [key, value])

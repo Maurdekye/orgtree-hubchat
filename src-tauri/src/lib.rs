@@ -20,14 +20,13 @@ mod desktop {
     }
 
     impl crate::core::Platform for DesktopPlatform {
-        fn notify(&self, title: &str, body: &str, peer: &str) {
-            let _ = self
-                .app
-                .notification()
-                .builder()
-                .title(title)
-                .body(body)
-                .show();
+        fn notify(&self, title: &str, body: &str, peer: &str, sound: bool) {
+            let mut n = self.app.notification().builder().title(title).body(body);
+            if sound {
+                // Windows: the toast's own "IM" sound; without one it is silent
+                n = n.sound("IM");
+            }
+            let _ = n.show();
             // Remember who notified last so clicking the tray opens that chat.
             let _ = self.app.emit("hc-notified", peer);
         }
@@ -126,6 +125,7 @@ pub fn run() {
             commands::hc_recovery_saved,
             commands::hc_set_profile,
             commands::hc_set_read_receipts,
+            commands::hc_set_notifications,
             commands::hc_probe_hub,
             commands::hc_probe_link_hubs,
             commands::hc_add_hub,

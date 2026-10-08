@@ -46,6 +46,7 @@ pub struct State {
     me: Option<Me>,
     recovery_saved: bool,
     read_receipts: bool,
+    notifications: core::NotifySettings,
     hubs: Vec<HubStatus>,
     platform: &'static str,
 }
@@ -67,6 +68,7 @@ pub fn hc_state() -> R<State> {
         }),
         recovery_saved: meta(c, "recovery.saved") == "yes",
         read_receipts: meta(c, "settings.read_receipts") != "off",
+        notifications: c.notify_settings(),
         hubs: engine.map(|e| e.hub_statuses()).unwrap_or_default(),
         platform: if cfg!(target_os = "android") {
             "android"
@@ -143,6 +145,16 @@ pub async fn hc_set_profile(name: String, about: String) -> R<()> {
     c.store.set_meta("profile.about", about.trim()).map_err(s)?;
     let e = engine()?;
     on_core(async move { e.set_profile(name.trim(), about.trim()).await.map_err(s) }).await
+}
+
+/// Settings › Notifications: notify at all, show the message text, sound.
+#[tauri::command]
+pub fn hc_set_notifications(enabled: bool, preview: bool, sound: bool) -> R<()> {
+    core::get()?.set_notify_settings(core::NotifySettings {
+        enabled,
+        preview,
+        sound,
+    })
 }
 
 #[tauri::command]
