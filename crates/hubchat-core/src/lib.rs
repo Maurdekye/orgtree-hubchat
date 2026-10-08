@@ -6,6 +6,7 @@
 pub mod error;
 pub mod hub;
 pub mod identity;
+pub mod store;
 
 pub use error::{Error, Result};
 pub use hub::{HubAddress, HubClient};

@@ -15,6 +15,8 @@ pub enum Error {
     NotAHub(String),
     #[error("invalid input: {0}")]
     Invalid(String),
+    #[error("local store: {0}")]
+    Store(String),
     #[error("cancelled")]
     Cancelled,
     #[error("i/o: {0}")]
