@@ -109,6 +109,9 @@ export function hubStatusText(h: HubStatus, now: number): string {
   return "Can't reach this hub" + (h.retry_at_ms ? " · retrying in " + s + " s" : "");
 }
 /** CSS class for .hubst (the prototype's names). */
+/** A hub's reported version, or "unknown". */
+export const hubVersion = (h: { version?: string | null }): string => (h.version && h.version.trim() ? h.version.trim() : "unknown");
+
 export const hubCls = (h: HubStatus) => (h.state === "disconnected" ? "unreachable" : h.state);
 
 /** Attachment card state, following the prototype's attState. */

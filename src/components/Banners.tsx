@@ -1,9 +1,13 @@
 // Calm app-level banners: a hub that can't be reached (with its retry
-// countdown and Retry now) and the recovery-words reminder.
+// countdown and Retry now), the recovery-words reminder, and (desktop) an
+// available update.
 import { useState } from "react";
 import { api } from "../api";
 import { Icon } from "../lib/icons";
+import { errText } from "../lib/native";
 import { useSnap } from "../lib/store";
+import { toast } from "../lib/toast";
+import { useUpdate } from "../lib/updates";
 import { useNow, usePlatform } from "./ui";
 
 export function useHubProblem() {
@@ -57,6 +61,26 @@ export function RecoveryBanner({ onShow }: { onShow: () => void }) {
       <span><b>Save your recovery words.</b> If you lose this device, they are the only way to get your address back.</span>
       <button className="btn" onClick={onShow}>Show them</button>
       <button className="icon-btn" style={{ width: 28, height: 28 }} onClick={dismiss} title="Dismiss until next start" aria-label="Dismiss"><Icon name="close" /></button>
+    </div>
+  );
+}
+
+/** Desktop: an update is ready to install. Dismissed until the next check. */
+export function UpdateBanner() {
+  const avail = useUpdate();
+  const [busy, setBusy] = useState(false);
+  const [hidden, setHidden] = useState<string | null>(null);
+  if (!avail || hidden === avail.version) return null;
+  const go = async () => {
+    setBusy(true);
+    try { await avail.install(); } catch (e) { toast("Couldn't update: " + errText(e)); setBusy(false); }
+  };
+  return (
+    <div className="banner upd">
+      <Icon name="restart" />
+      <span><b>Hubchat {avail.version} is available.</b>{busy ? " Downloading…" : " It installs when Hubchat restarts."}</span>
+      <button className="btn primary" onClick={go} disabled={busy}>{busy ? "Updating…" : "Restart to update"}</button>
+      <button className="icon-btn" style={{ width: 28, height: 28 }} onClick={() => setHidden(avail.version)} title="Not now" aria-label="Dismiss"><Icon name="close" /></button>
     </div>
   );
 }

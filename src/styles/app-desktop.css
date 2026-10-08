@@ -4,3 +4,27 @@
 .mi-preview .msg-actions { display: none !important; }
 .settings .set-body .note-card { margin-bottom: 4px; }
 .addhub .field { margin-bottom: 10px; }
+
+/* transfers chip (the prototype's title-bar chip, in the sidebar header) */
+.tb-xfer { position: relative; display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px 0 7px; margin-right: 4px; border-radius: 13px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font: 600 11.5px var(--font); font-variant-numeric: tabular-nums; overflow: hidden; flex: none; }
+.tb-xfer .ic { width: 15px; height: 15px; color: var(--accent-text); }
+.tb-xfer .n { min-width: 16px; height: 16px; border-radius: 8px; background: var(--panel-2); color: var(--dim); font-size: 10.5px; display: inline-flex; align-items: center; justify-content: center; padding: 0 4px; }
+.tb-xfer .tb-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; border-radius: 0; background: transparent; }
+.tb-xfer:hover, .tb-xfer.on { border-color: var(--faint); }
+.pop.xpop { max-width: 420px; }
+.pop .xrow .t span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* link a device, devices, updates */
+.paircode.long { font-size: 21px; letter-spacing: .06em; white-space: nowrap; }
+.pair .help { margin-bottom: 2px; }
+.waiting .cd { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--faint); }
+.modal.link3 .modal-b { min-height: 300px; }
+.modal.link3 .pair { margin-bottom: 4px; }
+.lc-code input { font: 600 19px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.banner.upd { background: var(--accent-soft); }
+.banner.upd > .ic { color: var(--accent-text); }
+.about-upd { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
+.about-upd .help { flex: 1; }
+.ob-card .kfile { margin-top: 2px; }
+.ob .lc-steps { margin-top: -4px; }
+.lc-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }

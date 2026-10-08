@@ -10,3 +10,28 @@
 .set-row, .li .help { overflow-wrap: anywhere; }
 .qrwrap.big .help { max-width: 320px; }
 .keyacts .saved { margin-left: auto; }
+
+/* transfers strip above the chat list */
+.xstrip .strip { position: relative; overflow: hidden; }
+.xstrip .strip .ic { color: var(--accent-text); }
+.xstrip .strip .xchev { margin-left: auto; color: var(--dim); }
+.xstrip .strip .tb-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; border-radius: 0; background: transparent; }
+.xlist { background: var(--panel); border-bottom: 1px solid var(--line-soft); padding: 4px 0; }
+.xrow { display: flex; align-items: center; gap: 12px; padding: 10px 16px; }
+.xrow .xic { width: 36px; height: 36px; border-radius: 10px; background: var(--accent-soft); color: var(--accent-text); display: flex; align-items: center; justify-content: center; flex: none; }
+.xrow .xic .ic { width: 20px; height: 20px; }
+.xrow .t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.xrow .t b { font-size: 14px; color: var(--ink-strong); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xrow .t span { font-size: 12.5px; color: var(--dim); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xrow .link { font-size: 13.5px; }
+
+/* link a device, devices, updates */
+.obpair .paircode.long { font-size: 21px; letter-spacing: .06em; white-space: nowrap; }
+.ob .waiting .cd { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--faint); }
+.lc-code input { font: 600 20px var(--mono); letter-spacing: .08em; text-transform: uppercase; text-align: center; }
+.lc-pane { padding-bottom: 24px; }
+.kfpanel { margin: 0 20px 14px; padding: 14px; border-radius: 16px; background: var(--panel); display: flex; flex-direction: column; gap: 10px; }
+.kfpanel .input { margin: 0; }
+.cam-hint { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; padding: 10px 20px 18px; }
+.cam-hint .vf { width: 200px; height: 200px; position: relative; border-radius: 18px; background: radial-gradient(circle at 40% 35%, #2a2a2a, #121212 70%); overflow: hidden; }
+.cam-hint .vf::before { content: ""; position: absolute; inset: 14px; border: 3px solid transparent; border-radius: 14px; border-top-color: #fff; border-bottom-color: #fff; clip-path: polygon(0 0, 22% 0, 22% 100%, 0 100%, 0 0, 100% 0, 100% 100%, 78% 100%, 78% 0); }

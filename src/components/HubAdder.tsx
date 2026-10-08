@@ -1,17 +1,19 @@
 // Add a hub: type an address, Check it (GET /healthz through the core), then
 // add it. A hub may be added while unreachable; the core keeps retrying.
-// Used by onboarding and by Settings › Hubs.
+// Used by onboarding and by Settings › Hubs. With `onPick` it only checks:
+// linking a new device needs a reachable hub but adds nothing yet.
 import { useState } from "react";
 import { api, type Probe } from "../api";
 import { Icon } from "../lib/icons";
 import { bytes } from "../lib/format";
 import { errText } from "../lib/native";
+import { hubVersion } from "../lib/peers";
 import { refreshState } from "../lib/store";
 import { NoteCard, usePlatform } from "./ui";
 
 type Phase = { k: "idle" } | { k: "checking"; input: string } | { k: "result"; p: Probe } | { k: "adding" } | { k: "error"; msg: string };
 
-export function HubAdder({ onAdded, existing, autoFocus, onCancel }: { onAdded?: (url: string, name: string) => void; existing: string[]; autoFocus?: boolean; onCancel?: () => void }) {
+export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel }: { onAdded?: (url: string, name: string) => void; onPick?: (url: string, name: string) => void; existing: string[]; autoFocus?: boolean; onCancel?: () => void }) {
   const platform = usePlatform();
   const [value, setValue] = useState("");
   const [ph, setPh] = useState<Phase>({ k: "idle" });
@@ -43,16 +45,18 @@ export function HubAdder({ onAdded, existing, autoFocus, onCancel }: { onAdded?:
     else if (p.result === "connected") {
       card = (
         <div className="probe-card ok"><Icon name="check_circle" />
-          <div><b>Connected to {p.name}</b><span className="mono">{p.url}</span> · files up to {bytes(p.max_attachment_bytes)} per message
-            <div className="acts"><button className="btn primary" onClick={() => add(p.name)}><Icon name="add" />Add {p.name}</button></div>
+          <div><b>Connected to {p.name}</b><span className="mono">{p.url}</span> · hub version {hubVersion(p)} · files up to {bytes(p.max_attachment_bytes)} per message
+            <div className="acts">{onPick
+              ? <button className="btn primary" onClick={() => onPick(p.url, p.name)}><Icon name="check" />Use {p.name}</button>
+              : <button className="btn primary" onClick={() => add(p.name)}><Icon name="add" />Add {p.name}</button>}</div>
           </div>
         </div>
       );
     } else if (p.result === "unreachable") {
       card = (
         <div className="probe-card bad"><Icon name="error" />
-          <div><b>Can't reach that hub</b>{p.error}. Check the address, that the hub is running, and that this device is on its network.
-            <div className="acts"><button className="btn" onClick={check}><Icon name="refresh" />Try again</button><button className="btn ghost" onClick={() => add(p.url.replace(/^https?:\/\//, ""))}>Add anyway and keep trying</button></div>
+          <div><b>Can't reach that hub</b>{p.error}.{onPick ? " Linking needs a hub this device can reach." : ""} Check the address, that the hub is running, and that this device is on its network.
+            <div className="acts"><button className="btn" onClick={check}><Icon name="refresh" />Try again</button>{onPick ? null : <button className="btn ghost" onClick={() => add(p.url.replace(/^https?:\/\//, ""))}>Add anyway and keep trying</button>}</div>
           </div>
         </div>
       );

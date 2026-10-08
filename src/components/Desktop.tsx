@@ -7,7 +7,8 @@ import { copyText } from "../lib/native";
 import { hubSummary } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { useForeground, useMessage, useReadTracking } from "../lib/visibility";
-import { HubBanner, RecoveryBanner } from "./Banners";
+import { startUpdateChecks } from "../lib/updates";
+import { HubBanner, RecoveryBanner, UpdateBanner } from "./Banners";
 import { ChatRows, EmptyChats, useFilteredChats, type ChatFilter } from "./ChatList";
 import { Conversation } from "./Conversation";
 import { Directory } from "./Directory";
@@ -15,6 +16,7 @@ import { MessageInfoBody } from "./MessageInfo";
 import { MessageView } from "./MessageView";
 import { NewChatInput, NewChatResults, useResolve } from "./NewChat";
 import { SettingsModal, type SetTab } from "./Settings";
+import { TransfersChip } from "./Transfers";
 import { Addr, Avatar, Modal, ModalHead, Toasts } from "./ui";
 
 type Overlay = null | { k: "newchat"; q: string } | { k: "directory" } | { k: "settings"; tab: SetTab };
@@ -64,6 +66,7 @@ export function Desktop() {
   const [info, setInfo] = useState<{ id: string; peer: string } | null>(null);
   const fg = useForeground("desktop");
   useReadTracking(ov ? null : chat, fg);
+  useEffect(() => { startUpdateChecks(); }, []);
 
   const open = useCallback((peer: string) => { setChat(peer); setOv(null); setInfo((i) => (i && i.peer === peer ? i : null)); }, []);
   const onInfo = useCallback((m: Message) => setInfo({ id: m.id, peer: m.peer }), []);
@@ -75,7 +78,7 @@ export function Desktop() {
       else if (e.ctrlKey && e.key === ",") { e.preventDefault(); setOv({ k: "settings", tab: "profile" }); }
       else if (e.ctrlKey && e.key.toLowerCase() === "k") { e.preventDefault(); document.getElementById("chat-q")?.focus(); }
       else if (e.key === "Escape") {
-        if (document.querySelector(".modal.confirm")) return;
+        if (document.querySelector(".modal.confirm, .modal.link3")) return;
         if (ov) { e.preventDefault(); setOv(null); } else if (info) setInfo(null);
       }
     };
@@ -91,6 +94,7 @@ export function Desktop() {
 
   return (
     <div className="app">
+      <UpdateBanner />
       <HubBanner />
       <RecoveryBanner onShow={() => settings("recovery")} />
       <div className="body">
@@ -98,6 +102,7 @@ export function Desktop() {
           <div className="side-head">
             <span onClick={() => settings("profile")} title="Profile" style={{ cursor: "pointer", marginRight: 8 }}><Avatar kind="me" name={me.name || me.id} size={32} /></span>
             <div className="side-title">Chats</div>
+            <TransfersChip onOpen={open} />
             <button className="icon-btn" onClick={() => setOv({ k: "newchat", q: "" })} title="New chat (Ctrl+N)" aria-label="New chat"><Icon name="new_chat" /></button>
             <button className="icon-btn" onClick={() => setOv({ k: "directory" })} title="Directory: everyone on your hubs" aria-label="Directory"><Icon name="contacts" /></button>
             <button className="icon-btn" onClick={() => settings("profile")} title="Settings (Ctrl+,)" aria-label="Settings"><Icon name="settings" /></button>

@@ -13,12 +13,15 @@ import { Directory } from "./Directory";
 import { MessageInfoBody } from "./MessageInfo";
 import { MessageView } from "./MessageView";
 import { NewChatInput, NewChatResults, useResolve } from "./NewChat";
+import { api } from "../api";
+import { LinkDevice } from "./LinkDevice";
 import { SettingsList, SettingsSection, TABS, type SetTab } from "./Settings";
+import { TransfersStrip } from "./Transfers";
 import { Toasts } from "./ui";
 
 type Scr =
   | { s: "chats" } | { s: "conv"; p: string } | { s: "msginfo"; id: string; p: string }
-  | { s: "newchat" } | { s: "directory" } | { s: "settings" } | { s: "set"; tab: SetTab };
+  | { s: "newchat" } | { s: "directory" } | { s: "settings" } | { s: "set"; tab: SetTab } | { s: "link" };
 
 function Chats({ go }: { go: (s: Scr) => void }) {
   const [filter, setFilter] = useState<ChatFilter>("all");
@@ -41,6 +44,7 @@ function Chats({ go }: { go: (s: Scr) => void }) {
       </div>
       <HubBanner />
       <RecoveryBanner onShow={() => go({ s: "set", tab: "recovery" })} />
+      <TransfersStrip onOpen={(p) => go({ s: "conv", p })} />
       <div className="fchips">{f("all", "All")}{f("agents", "Agents")}{f("people", "People")}</div>
       <div className="scr-body">
         {!total ? <EmptyChats onNew={() => go({ s: "newchat" })} />
@@ -118,6 +122,24 @@ export function Android() {
     return () => { window.removeEventListener("popstate", pop); window.removeEventListener("keydown", key); };
   }, [back]);
 
+  // a tapped message notification names a chat: open it (at start, and
+  // whenever the app comes back to the foreground)
+  useEffect(() => {
+    const take = () => {
+      if (document.visibilityState !== "visible") return;
+      api.takePendingChat().then((p) => {
+        if (!p) return;
+        const t = stackRef.current[stackRef.current.length - 1];
+        if (t.s === "conv" && t.p === p) return;
+        go({ s: "conv", p });
+      }, () => {});
+    };
+    take();
+    window.addEventListener("focus", take);
+    document.addEventListener("visibilitychange", take);
+    return () => { window.removeEventListener("focus", take); document.removeEventListener("visibilitychange", take); };
+  }, [go]);
+
   const onInfo = useCallback((m: Message) => go({ s: "msginfo", id: m.id, p: m.peer }), [go]);
   const openChat = useCallback((a: string) => go({ s: "conv", p: a }), [go]);
 
@@ -132,7 +154,13 @@ export function Android() {
     case "set": screen = (
       <>
         <div className="appbar flat"><button className="icon-btn" onClick={back} aria-label="Back"><Icon name="back" /></button><div className="title">{TABS.find((t) => t[0] === top.tab)![1]}</div></div>
-        <div className="scr-body"><SettingsSection tab={top.tab} /></div>
+        <div className="scr-body"><SettingsSection tab={top.tab} onLink={() => go({ s: "link" })} /></div>
+      </>
+    ); break;
+    case "link": screen = (
+      <>
+        <div className="appbar flat"><button className="icon-btn" onClick={back} aria-label="Back"><Icon name="back" /></button><div className="title">Link a device</div></div>
+        <div className="scr-body"><LinkDevice onClose={back} onRecovery={() => go({ s: "set", tab: "recovery" })} /></div>
       </>
     ); break;
   }

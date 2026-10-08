@@ -1,19 +1,23 @@
-// Settings: Profile, Hubs, Recovery words, Privacy, Appearance, About.
+// Settings: Profile, Hubs, Devices, Recovery words, Privacy, Appearance,
+// General (desktop), About.
 // Desktop: one modal with a nav column. Android: a list and a screen each.
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api, type HubStatus } from "../api";
 import { Icon, Logo, type IconName } from "../lib/icons";
 import { bytes } from "../lib/format";
-import { copyText, errText } from "../lib/native";
-import { hubCls, hubStatusText, hubSummary } from "../lib/peers";
+import { appVersion, autostart, copyText, errText } from "../lib/native";
+import { hubCls, hubStatusText, hubSummary, hubVersion } from "../lib/peers";
 import { refreshDirectory, refreshState, useSnap } from "../lib/store";
 import { setThemePref, useThemePref, type ThemePref } from "../lib/theme";
 import { toast } from "../lib/toast";
+import { checkForUpdate, useUpdate } from "../lib/updates";
+import { LinkDeviceModal } from "./LinkDevice";
 import { HubAdder } from "./HubAdder";
 import { Addr, Avatar, Confirm, NoteCard, QR, Switch, useNow, usePlatform } from "./ui";
 
-export type SetTab = "profile" | "hubs" | "recovery" | "privacy" | "appearance" | "about";
-export const TABS: [SetTab, string, IconName][] = [["profile", "Profile", "person"], ["hubs", "Hubs", "dns"], ["recovery", "Recovery words", "key"], ["privacy", "Privacy", "privacy"], ["appearance", "Appearance", "palette"], ["about", "About", "info"]];
+export type SetTab = "profile" | "hubs" | "devices" | "recovery" | "privacy" | "appearance" | "general" | "about";
+/** Every section (Android titles its screens from this too; General is desktop only). */
+export const TABS: [SetTab, string, IconName][] = [["profile", "Profile", "person"], ["hubs", "Hubs", "dns"], ["devices", "Devices", "computer"], ["recovery", "Recovery words", "key"], ["privacy", "Privacy", "privacy"], ["appearance", "Appearance", "palette"], ["general", "General", "tune"], ["about", "About", "info"]];
 
 // ---------------------------------------------------------------- shapes
 function Row({ icon, t1, t2, right, onClick }: { icon?: IconName; t1: ReactNode; t2?: ReactNode; right?: ReactNode; onClick?: () => void }) {
@@ -100,7 +104,7 @@ function HubRow({ h, now, onRemove }: { h: HubStatus; now: number; onRemove: () 
       t2={<>
         <span className="mono">{h.url}</span><br />
         <span className={"hubst " + hubCls(h)}><span className="dot" />{hubStatusText(h, now)}</span>
-        <span className="dim" style={{ fontSize: 12 }}> · files up to {bytes(h.max_attachment_bytes)} per message</span>
+        <span className="dim" style={{ fontSize: 12 }}> · hub version {hubVersion(h)} · files up to {bytes(h.max_attachment_bytes)} per message</span>
       </>}
       right={<div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
         {bad ? <button className="btn" onClick={() => api.retryNow().catch(() => {})}><Icon name="refresh" />{platform === "android" ? "Retry" : "Retry now"}</button> : null}
@@ -191,6 +195,50 @@ function Recovery() {
   );
 }
 
+function Devices({ onLink, goTab }: { onLink?: () => void; goTab?: (t: SetTab) => void }) {
+  const snap = useSnap();
+  const platform = usePlatform();
+  const me = snap.state!.me!;
+  const [linking, setLinking] = useState(false);
+  const link = onLink || (() => setLinking(true));
+  const self = platform === "android" ? "This phone" : "This PC";
+  const pad = platform === "android" ? " pad" : "";
+  return (
+    <>
+      <Sec title="Your devices" first>
+        <Card>
+          <Row icon={platform === "android" ? "phone" : "computer"} t1={<>{self} <span className="chip">this device</span></>} t2={<>Holds your key · <span className="mono"><Addr a={me.address} net /></span></>} />
+          {platform === "android"
+            ? <div className="pad" style={{ marginTop: 6 }}><button className="btn block" onClick={link}><Icon name="link" />Link a device</button></div>
+            : <div className="set-row"><button className="btn" onClick={link}><Icon name="link" />Link a device</button><span className="help">Bring your identity to a new phone or PC: approve its code, show your key as a QR code, or save a key file.</span></div>}
+        </Card>
+      </Sec>
+      <Sec>
+        <div className={"help" + pad}>All your devices are equal: each holds your one key and is <span className="mono"><Addr a={me.address} net /></span>. Only this one is listed, because hubs can't tell devices with the same key apart.</div>
+        <div className={"help" + pad} style={{ marginTop: 8 }}>Signing out one device comes with mail hub v2.0.</div>
+      </Sec>
+      {linking ? <LinkDeviceModal onClose={() => setLinking(false)} onRecovery={goTab ? () => { setLinking(false); goTab("recovery"); } : undefined} /> : null}
+    </>
+  );
+}
+
+function General() {
+  const [on, setOn] = useState<boolean | null>(null);
+  useEffect(() => { autostart.get().then(setOn, () => setOn(false)); }, []);
+  const set = async (v: boolean) => {
+    setOn(v);
+    try { await autostart.set(v); } catch (e) { toast(errText(e)); setOn(!v); }
+  };
+  return (
+    <Sec first>
+      <Card>
+        <Row icon="play" t1="Start with Windows" t2="Hubchat starts hidden in the tray when you sign in to Windows, so messages arrive before you open it." right={on == null ? null : <Switch on={on} onChange={set} label="Start with Windows" />} />
+        <Row icon="minimize" t1="Closing the window keeps Hubchat running in the tray." t2="To quit, right-click the Hubchat icon in the tray and choose Quit." />
+      </Card>
+    </Sec>
+  );
+}
+
 function Privacy() {
   const snap = useSnap();
   const on = !!snap.state?.read_receipts;
@@ -234,22 +282,57 @@ function Appearance() {
   );
 }
 
+function UpdateCheck() {
+  const avail = useUpdate();
+  const [st, setSt] = useState<{ k: "idle" } | { k: "checking" } | { k: "none" } | { k: "error"; msg: string } | { k: "installing" }>({ k: "idle" });
+  const check = async () => {
+    setSt({ k: "checking" });
+    try { setSt((await checkForUpdate()) ? { k: "idle" } : { k: "none" }); } catch (e) { setSt({ k: "error", msg: errText(e) }); }
+  };
+  const install = async () => {
+    if (!avail) return;
+    setSt({ k: "installing" });
+    try { await avail.install(); } catch (e) { setSt({ k: "error", msg: errText(e) }); }
+  };
+  const text = st.k === "checking" ? "Checking…" : st.k === "installing" ? "Downloading the update…" : avail ? "Hubchat " + avail.version + " is available."
+    : st.k === "none" ? "You have the latest version." : st.k === "error" ? "Couldn't check for updates: " + st.msg : "Hubchat checks for updates when it starts and every 6 hours.";
+  return (
+    <div className="about-upd">
+      <span className={"help" + (st.k === "error" ? " bad" : "")}>{text}</span>
+      {avail
+        ? <button className="btn primary" onClick={install} disabled={st.k === "installing"}><Icon name="restart" />Restart to update</button>
+        : <button className="btn" onClick={check} disabled={st.k === "checking"}><Icon name="refresh" />Check for updates</button>}
+    </div>
+  );
+}
+
+function useVersion(): string {
+  const [v, setV] = useState("");
+  useEffect(() => { appVersion().then(setV, () => setV("")); }, []);
+  return v;
+}
+
 function About() {
   const platform = usePlatform();
+  const version = useVersion();
+  const ver = version ? "Version " + version : "\u00a0";
   const text = "Hubchat is a chat client for the Orgtree mail hub. It talks to Orgtree orgs, Claude Code sessions and people by address. There is no account and no cloud: your identity lives on your devices and your messages travel through hubs you choose.";
-  if (platform === "android") return <><div className="hero"><Logo size={72} /><div className="name">Hubchat</div><div className="dim">Version 0.1</div></div><div className="pad help" style={{ fontSize: 14, lineHeight: 1.55 }}>{text}</div></>;
+  if (platform === "android") return <><div className="hero"><Logo size={72} /><div className="name">Hubchat</div><div className="dim">{ver}</div></div><div className="pad help" style={{ fontSize: 14, lineHeight: 1.55 }}>{text}</div></>;
   return (
     <>
-      <div style={{ display: "flex", gap: 16, alignItems: "center", margin: "10px 0 18px" }}><Logo size={56} /><div><div style={{ font: "600 20px var(--font-display)", color: "var(--ink-strong)" }}>Hubchat</div><div className="dim">Version 0.1</div></div></div>
+      <div style={{ display: "flex", gap: 16, alignItems: "center", margin: "10px 0 18px" }}><Logo size={56} /><div><div style={{ font: "600 20px var(--font-display)", color: "var(--ink-strong)" }}>Hubchat</div><div className="dim">{ver}</div></div></div>
       <div className="help" style={{ fontSize: 13.5, lineHeight: 1.55 }}>{text}</div>
+      <UpdateCheck />
     </>
   );
 }
 
-export function SettingsSection({ tab }: { tab: SetTab }) {
+export function SettingsSection({ tab, onLink, goTab }: { tab: SetTab; onLink?: () => void; goTab?: (t: SetTab) => void }) {
   switch (tab) {
     case "profile": return <Profile />;
     case "hubs": return <Hubs />;
+    case "devices": return <Devices onLink={onLink} goTab={goTab} />;
+    case "general": return <General />;
     case "recovery": return <Recovery />;
     case "privacy": return <Privacy />;
     case "appearance": return <Appearance />;
@@ -276,7 +359,7 @@ export function SettingsModal({ tab, setTab, onClose }: { tab: SetTab; setTab: (
         </nav>
         <div className="set-main">
           <div className="modal-h"><h3>{TABS.find((t) => t[0] === tab)![1]}</h3><button className="icon-btn" onClick={onClose} title="Close (Esc)" aria-label="Close"><Icon name="close" /></button></div>
-          <div className="set-body scroll" key={tab}><SettingsSection tab={tab} /></div>
+          <div className="set-body scroll" key={tab}><SettingsSection tab={tab} goTab={setTab} /></div>
         </div>
       </div>
     </div>
@@ -288,6 +371,7 @@ export function SettingsList({ onOpen, onBack }: { onOpen: (t: SetTab) => void; 
   const snap = useSnap();
   const me = snap.state!.me!;
   const pref = useThemePref();
+  const version = useVersion();
   const hs = hubSummary(snap.state!.hubs);
   const chev = <Icon name="chevron_right" className="chev" />;
   const warn = <span className="warnmark" />;
@@ -301,10 +385,11 @@ export function SettingsList({ onOpen, onBack }: { onOpen: (t: SetTab) => void; 
           <button className="icon-btn" onClick={(e) => { e.stopPropagation(); void copyText("@net:" + me.address, "Address copied"); }} aria-label="Copy address"><Icon name="copy" /></button>
         </div>
         <Row icon="dns" t1="Hubs" t2={hs.text} right={<>{snap.state!.hubs.some((h) => h.state !== "connected") ? warn : null}{chev}</>} onClick={() => onOpen("hubs")} />
+        <Row icon="phone" t1="Devices" t2="Link a device · key file" right={chev} onClick={() => onOpen("devices")} />
         <Row icon="key" t1="Recovery words" t2={snap.state!.recovery_saved ? "Saved" : <span style={{ color: "var(--warn)" }}>Not saved yet</span>} right={<>{snap.state!.recovery_saved ? null : warn}{chev}</>} onClick={() => onOpen("recovery")} />
         <Row icon="privacy" t1="Privacy" t2="Read receipts · who can reach you" right={chev} onClick={() => onOpen("privacy")} />
         <Row icon="palette" t1="Appearance" t2={pref === "system" ? "Follow system" : pref === "light" ? "Light" : "Dark"} right={chev} onClick={() => onOpen("appearance")} />
-        <Row icon="info" t1="About" t2="Version 0.1" right={chev} onClick={() => onOpen("about")} />
+        <Row icon="info" t1="About" t2={version ? "Version " + version : undefined} right={chev} onClick={() => onOpen("about")} />
       </div>
     </div>
   );
