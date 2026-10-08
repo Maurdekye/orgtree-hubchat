@@ -83,3 +83,8 @@
 .info-hero .ptext { display: inline; }
 .info-hero .ptext:not(.p-disconnected)::before { display: inline-block; margin-right: 6px; vertical-align: 1px; }
 .info-hero .ptext .ic { display: inline-block; vertical-align: -3px; margin-right: 6px; }
+/* the hover actions sit beside the bubble, in the empty space (user 23:38Z):
+   right of an incoming bubble, left of an outgoing one, level with its top.
+   Their room is kept, so they never cover text and nothing moves on hover. */
+.msg .row > .msg-actions { position: static; display: flex; visibility: hidden; align-self: flex-start; flex: none; }
+.msg:hover .row > .msg-actions { visibility: visible; }

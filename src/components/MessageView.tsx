@@ -130,15 +130,15 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
           {m.attachments.length ? <div className="atts">{m.attachments.map((a) => <AttCard key={a.local_id} a={a} m={m} />)}</div> : null}
           {body}
         </div>
+        {/* beside the bubble, in the empty space, never over its text (user 23:38Z) */}
+        {hover ? (
+          <div className="msg-actions">
+            <button className="icon-btn" title="Reply" onClick={() => onReply(m)}><Icon name="reply" /></button>
+            <button className="icon-btn" title="Copy text" onClick={() => copyText(m.body, "Copied")}><Icon name="copy" /></button>
+            <button className="icon-btn" title="Message info" onClick={() => onInfo(m)}><Icon name="info" /></button>
+          </div>
+        ) : null}
       </div>
-      {hover ? (
-        <div className="msg-actions">
-          <button className="icon-btn" title="Reply" onClick={() => onReply(m)}><Icon name="reply" /></button>
-          <button className="icon-btn" title="Copy text" onClick={() => copyText(m.body, "Copied")}><Icon name="copy" /></button>
-          <button className="icon-btn" title="Message info" onClick={() => onInfo(m)}><Icon name="info" /></button>
-          <button className="icon-btn" title="Delete for me" onClick={() => onDelete(m)}><Icon name="delete" /></button>
-        </div>
-      ) : null}
       {failed ? (
         <div className="failed-line">
           <Icon name="error" />

@@ -207,7 +207,6 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
             <button className="icon-btn" onClick={() => reply(selMsg)} aria-label="Reply"><Icon name="reply" /></button>
             <button className="icon-btn" onClick={() => { void copyText(selMsg.body, "Copied"); setSel(null); }} aria-label="Copy"><Icon name="copy" /></button>
             <button className="icon-btn" onClick={() => info(selMsg)} aria-label="Message info"><Icon name="info" /></button>
-            <button className="icon-btn" onClick={() => del(selMsg)} aria-label="Delete for me"><Icon name="delete" /></button>
           </div>
         ) : (
           <div className="appbar">
