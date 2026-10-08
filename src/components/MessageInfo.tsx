@@ -24,6 +24,7 @@ export function MessageInfoBody({ m }: { m: Message }) {
         <H t="Received" />
         {kv("Sent", (when(m.sent_at) || "—") + " (their clock)")}
         {kv("Hub has it", when(m.received_at) || "—")}
+        {kv("Read", when(m.read_at) || (m.seen ? "Yes (the time wasn't kept)" : "Not read yet"))}
         {kv("Hub", hub || "—")}
         {kv("Kind", m.kind || "message")}
       </div>
@@ -41,13 +42,15 @@ export function MessageInfoBody({ m }: { m: Message }) {
       <H t="Delivery" />
       {m.state === "failed" ? <div className="failed-line" style={{ margin: platform === "android" ? "0 20px 12px" : "0 0 12px" }}><Icon name="error" /><span>Not sent{m.error ? ": " + m.error : ""}</span></div> : null}
       <ul className="ladder">
-        {steps.map((s) => {
+        {steps.map((s, i) => {
           const w = when(s.at);
+          // the last step, once the hub has it: say it plainly (user 23:51Z)
+          const wait = !w && i === steps.length - 1 && !!steps[1].at ? "Not read yet" : "—";
           return (
             <li key={s.label} className={w ? "done" : ""}>
               <span className="lk">{w ? <Icon name="check" /> : null}</span>
               <div className="ll">{s.label}</div>
-              {w ? <div className="lt">{w}</div> : <div className="lt dim">—</div>}
+              {w ? <div className="lt">{w}</div> : <div className="lt dim">{wait}</div>}
               <div className="ln">{s.note}</div>
             </li>
           );

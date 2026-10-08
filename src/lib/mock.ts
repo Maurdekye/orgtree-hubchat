@@ -77,7 +77,7 @@ function add(peer: string, outgoing: boolean, t: number, body: string, o: Partia
   const m: Message = {
     id: uid(), peer, outgoing, hub: OFFICE, body, kind: null, reply_to: null,
     sent_at: iso(t), received_at: iso(t + 400), created_at: iso(t), state: outgoing ? "read" : "received",
-    fetched_at: outgoing ? iso(t + 2000) : null, delivered_at: outgoing ? iso(t + 2600) : null, read_at: outgoing ? iso(t + 60000) : null,
+    fetched_at: outgoing ? iso(t + 2000) : null, delivered_at: outgoing ? iso(t + 2600) : null, read_at: outgoing ? iso(t + 60000) : o.seen === false ? null : iso(t + 30000),
     error: null, seen: true, attachments: [], ...o,
   };
   msgs.push(m);
@@ -485,7 +485,7 @@ export const mockApi: Api = {
   },
   markRead: async (peer) => {
     let n = 0;
-    for (const m of msgs) if (m.peer === peer && !m.outgoing && !m.seen) { m.seen = true; n++; }
+    for (const m of msgs) if (m.peer === peer && !m.outgoing && !m.seen) { m.seen = true; m.read_at = new Date().toISOString(); n++; }
     if (n) chatEv(peer);
   },
   deleteMessage: async (id) => { const i = msgs.findIndex((m) => m.id === id); if (i >= 0) { const p = msgs[i].peer; msgs.splice(i, 1); chatEv(p); } },
