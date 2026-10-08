@@ -144,7 +144,8 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref }:
             else if (e.key === "Escape" && replyTo) { e.stopPropagation(); e.preventDefault(); onCancelReply(); }
           }} />
       </div>
-      <button className="sendbtn" disabled={!can} onClick={send} title={platform === "desktop" ? "Send (Enter)" : "Send"} aria-label="Send"><Icon name="send" /></button>
+      {/* pressing Send leaves the focus (and Android's keyboard) in the message box */}
+      <button className="sendbtn" disabled={!can} onMouseDown={(e) => e.preventDefault()} onClick={send}title={platform === "desktop" ? "Send (Enter)" : "Send"} aria-label="Send"><Icon name="send" /></button>
     </div>
   );
   if (platform === "android") return <div className="composer">{top}{row}<div className="comp-meta">{meta}</div></div>;
