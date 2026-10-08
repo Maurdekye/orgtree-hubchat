@@ -30,10 +30,23 @@ export interface Me {
   about: string;
 }
 
+/** Settings › Notifications. */
+export interface NotifySettings {
+  /** Notify for chats that aren't on screen. */
+  enabled: boolean;
+  /** Show the message text (off: "New message"). */
+  preview: boolean;
+  /** Play a sound (desktop; Android follows its own channel settings). */
+  sound: boolean;
+}
+
 export interface State {
   me: Me | null;
   recovery_saved: boolean;
   read_receipts: boolean;
+  notifications: NotifySettings;
+  /** Android (design D6): stay connected (true) or check about every 15 minutes; null on desktop. */
+  stay_connected: boolean | null;
   hubs: HubStatus[];
   platform: "desktop" | "android";
 }
@@ -223,6 +236,8 @@ export const tauriApi = {
   recoverySaved: () => invoke<void>("hc_recovery_saved"),
   setProfile: (name: string, about: string) => invoke<void>("hc_set_profile", { name, about }),
   setReadReceipts: (on: boolean) => invoke<void>("hc_set_read_receipts", { on }),
+  setNotifications: (n: NotifySettings) => invoke<void>("hc_set_notifications", { enabled: n.enabled, preview: n.preview, sound: n.sound }),
+  setStayConnected: (on: boolean) => invoke<void>("hc_set_stay_connected", { on }),
 
   probeHub: (input: string) => invoke<Probe>("hc_probe_hub", { input }),
   /** A link's hub under each address it names: the likeliest that answers as `name`. */

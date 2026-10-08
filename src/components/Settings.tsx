@@ -17,9 +17,9 @@ import { copyWords, downloadWords } from "../lib/recovery";
 import { HubAdder } from "./HubAdder";
 import { Addr, Avatar, Confirm, NoteCard, QR, Switch, useNow, usePlatform } from "./ui";
 
-export type SetTab = "profile" | "hubs" | "devices" | "recovery" | "privacy" | "appearance" | "general" | "about";
+export type SetTab = "profile" | "hubs" | "devices" | "notifications" | "recovery" | "privacy" | "appearance" | "general" | "about";
 /** Every section (Android titles its screens from this too; General is desktop only). */
-export const TABS: [SetTab, string, IconName][] = [["profile", "Profile", "person"], ["hubs", "Hubs", "dns"], ["devices", "Devices", "computer"], ["recovery", "Recovery words", "key"], ["privacy", "Privacy", "privacy"], ["appearance", "Appearance", "palette"], ["general", "General", "tune"], ["about", "About", "info"]];
+export const TABS: [SetTab, string, IconName][] = [["profile", "Profile", "person"], ["hubs", "Hubs", "dns"], ["devices", "Devices", "computer"], ["notifications", "Notifications", "bell"], ["recovery", "Recovery words", "key"], ["privacy", "Privacy", "privacy"], ["appearance", "Appearance", "palette"], ["general", "General", "tune"], ["about", "About", "info"]];
 
 // ---------------------------------------------------------------- shapes
 function Row({ icon, t1, t2, right, onClick }: { icon?: IconName; t1: ReactNode; t2?: ReactNode; right?: ReactNode; onClick?: () => void }) {
@@ -319,6 +319,41 @@ function General() {
   );
 }
 
+/** Settings › Notifications (design): notify, show the text, sound on
+ *  desktop; on Android, stay connected or check every 15 minutes (D6). */
+function Notifications() {
+  const snap = useSnap();
+  const platform = usePlatform();
+  const n = snap.state?.notifications ?? { enabled: true, preview: true, sound: false };
+  const stay = snap.state?.stay_connected;
+  const [busy, setBusy] = useState(false);
+  const set = async (p: Partial<typeof n>) => { try { await api.setNotifications({ ...n, ...p }); await refreshState(); } catch (e) { toast(errText(e)); } };
+  const setStay = async (v: boolean) => {
+    setBusy(true);
+    try { await api.setStayConnected(v); await refreshState(); } catch (e) { toast(errText(e)); }
+    setBusy(false);
+  };
+  return (
+    <>
+      <Sec first>
+        <Card>
+          <Row icon="bell" t1={platform === "android" ? "Notifications" : "Show notifications"} t2={platform === "android" ? "For chats that are not on screen." : "When a message arrives in a chat that is not on screen."} right={<Switch on={n.enabled} onChange={(v) => void set({ enabled: v })} label="Show notifications" />} />
+          <Row icon="visibility" t1="Show message text" t2="Off: notifications only say who wrote." right={<Switch on={n.preview} onChange={(v) => void set({ preview: v })} label="Show message text" />} />
+          {platform === "desktop" ? <Row icon="bell" t1="Play a sound" right={<Switch on={n.sound} onChange={(v) => void set({ sound: v })} label="Play a sound" />} /> : null}
+        </Card>
+      </Sec>
+      {platform === "android" && stay != null ? (
+        <Sec title="Background">
+          <Card>
+            <Row icon="sync" t1="Stay connected" t2="Messages arrive instantly. Android requires a quiet ongoing notification (“Hubchat is connected”) while Hubchat waits for mail." right={<Switch on={stay} onChange={(v) => { if (!busy) void setStay(v); }} label="Stay connected" />} />
+          </Card>
+          <div className="pad"><NoteCard icon="info">{stay ? <><b>On:</b> instant messages, a little more battery.</> : <><b>Off:</b> Hubchat checks about every 15 minutes, so messages and receipts can arrive late. Your status shows offline in between.</>} There is no Google push service: the hub is the only server.</NoteCard></div>
+        </Sec>
+      ) : null}
+    </>
+  );
+}
+
 function Privacy() {
   const snap = useSnap();
   const on = !!snap.state?.read_receipts;
@@ -412,6 +447,7 @@ export function SettingsSection({ tab, onLink, goTab }: { tab: SetTab; onLink?: 
     case "profile": return <Profile />;
     case "hubs": return <Hubs />;
     case "devices": return <Devices onLink={onLink} goTab={goTab} />;
+    case "notifications": return <Notifications />;
     case "general": return <General />;
     case "recovery": return <Recovery />;
     case "privacy": return <Privacy />;
@@ -466,6 +502,7 @@ export function SettingsList({ onOpen, onBack }: { onOpen: (t: SetTab) => void; 
         </div>
         <Row icon="dns" t1="Hubs" t2={hs.text} right={<>{snap.state!.hubs.some((h) => h.state !== "connected") ? warn : null}{chev}</>} onClick={() => onOpen("hubs")} />
         <Row icon="phone" t1="Devices" t2="Link a device · key file" right={chev} onClick={() => onOpen("devices")} />
+        <Row icon="bell" t1="Notifications" t2={snap.state!.stay_connected === false ? "Checks every 15 minutes" : "Connected in the background"} right={chev} onClick={() => onOpen("notifications")} />
         <Row icon="key" t1="Recovery words" t2={snap.state!.recovery_saved ? "Saved" : <span style={{ color: "var(--warn)" }}>Not saved yet</span>} right={<>{snap.state!.recovery_saved ? null : warn}{chev}</>} onClick={() => onOpen("recovery")} />
         <Row icon="privacy" t1="Privacy" t2="Read receipts · who can reach you" right={chev} onClick={() => onOpen("privacy")} />
         <Row icon="palette" t1="Appearance" t2={pref === "system" ? "Follow system" : pref === "light" ? "Light" : "Dark"} right={chev} onClick={() => onOpen("appearance")} />

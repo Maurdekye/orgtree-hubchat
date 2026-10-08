@@ -38,6 +38,8 @@ const st: State = {
   me: onboarding ? null : { id: "alex", address: "alex.3be2c9", name: "Alex Rivera", about: "Platform team" },
   recovery_saved: false,
   read_receipts: true,
+  notifications: { enabled: true, preview: true, sound: false },
+  stay_connected: new URLSearchParams(location.search).get("platform") === "android" ? true : null,
   platform: params.get("platform") === "android" ? "android" : "desktop",
   hubs: onboarding ? [] : [
     { url: OFFICE, name: "office", state: "connected", error: null, retry_at_ms: null, max_attachment_bytes: GB, features: ["v2"], version: "1.4.0" },
@@ -367,6 +369,8 @@ export const mockApi: Api = {
   recoverySaved: async () => { st.recovery_saved = true; },
   setProfile: async (name, about) => { await sleep(250); if (st.me) { st.me.name = name.trim(); st.me.about = about.trim(); } },
   setReadReceipts: async (on) => { st.read_receipts = on; },
+  setNotifications: async (n) => { st.notifications = { ...n }; },
+  setStayConnected: async (on) => { await sleep(300); st.stay_connected = on; },
 
   probeHub: async (input): Promise<Probe> => {
     const url = normHub(input);
