@@ -1,14 +1,16 @@
 // A conversation: header, hub banner, timeline (oldest to newest, day
-// dividers, grouped bubbles) and the composer.
+// dividers, grouped bubbles) and the composer. On desktop, files dropped on
+// it are attached.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, type Message } from "../api";
 import { Icon } from "../lib/icons";
-import { dayLabel, dayStart } from "../lib/format";
+import { useFileDrop } from "../lib/drop";
+import { bytes, dayLabel, dayStart, MAX_FILES } from "../lib/format";
 import { copyText, errText } from "../lib/native";
-import { displayName, hubStatusText, kindInfo, kindOf, msgTime, peerHubs, presence, viaHub } from "../lib/peers";
+import { displayName, hubStatusText, kindInfo, kindOf, limitFor, msgTime, peerHubs, presence, viaHub } from "../lib/peers";
 import { refreshChats, useMessages, useSnap } from "../lib/store";
 import { toast } from "../lib/toast";
-import { Composer } from "./Composer";
+import { Composer, type ComposerApi } from "./Composer";
 import { MessageView } from "./MessageView";
 import { Addr, KindChip, KindGlyph, NoteCard, PeerAvatar, PresText, useNow, usePlatform } from "./ui";
 
@@ -187,7 +189,10 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
     gesture.current = null;
   }
 
-  const composer = <Composer peer={peer} c={c} hubs={hubs} replyTo={replyTo} onCancelReply={() => setReplyTo(null)} onSent={() => { pinned.current = true; reload(); }} />;
+  const comp = useRef<ComposerApi>(null);
+  const conv = useRef<HTMLElement>(null);
+  const dragging = useFileDrop(conv, platform === "desktop", (paths) => comp.current?.addFiles(paths));
+  const composer = <Composer ref={comp} peer={peer} c={c} hubs={hubs} replyTo={replyTo} onCancelReply={() => setReplyTo(null)} onSent={() => { pinned.current = true; reload(); }} />;
   const jumpBtn = <button className={"jump" + (far ? "" : " hide")} onClick={toBottom} title="Jump to the newest message" aria-label="Jump to the newest message"><Icon name="arrow_down" /></button>;
   const copyAddr = () => copyText("@net:" + peer, "Address copied");
 
@@ -231,7 +236,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   }
 
   return (
-    <section className="conv">
+    <section className="conv" ref={conv}>
       <div className="conv-head">
         <span className="conv-av" onClick={onContact}><PeerAvatar address={peer} c={c} hubs={hubs} size={40} /></span>
         <div className="who" onClick={onContact} title="Contact info">
@@ -249,8 +254,19 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
       <div className="tl-wrap">
         <div className="timeline scroll" ref={tl} onScroll={onScroll}><div className="tl-inner">{rows}</div></div>
         {jumpBtn}
+        {dragging ? <DropZone lim={limitFor(c, hubs)} /> : null}
       </div>
       {composer}
     </section>
+  );
+}
+
+/** Shown over the timeline while files are dragged over the chat. */
+function DropZone({ lim }: { lim: ReturnType<typeof limitFor> }) {
+  return (
+    <div className="dropzone">
+      <Icon name="upload" />Drop files to attach
+      <span>Up to {MAX_FILES} files{lim ? <> and {bytes(lim.bytes)} per message on hub {lim.hub.name}, text included</> : " per message"}</span>
+    </div>
   );
 }

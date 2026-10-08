@@ -1,6 +1,7 @@
-// The composer: per-chat drafts, reply bar, attachments (up to 10) and a size
-// check against the hub's limit before anything is sent.
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+// The composer: per-chat drafts, reply bar, attachments (up to 10, picked or
+// dropped on the chat) and a size check against the hub's limit before
+// anything is sent.
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { api, newId, type Contact, type HubStatus, type Message, type NewAttachment } from "../api";
 import { Icon } from "../lib/icons";
 import { bytes, isLong, MAX_FILES, num, utf8Len } from "../lib/format";
@@ -16,9 +17,15 @@ interface Props {
   replyTo: Message | null;
   onCancelReply: () => void;
   onSent: () => void;
+  ref?: Ref<ComposerApi>;
 }
 
-export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent }: Props) {
+/** For the conversation: files dropped on the chat join the attachments. */
+export interface ComposerApi {
+  addFiles: (sources: string[]) => void;
+}
+
+export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref }: Props) {
   const platform = usePlatform();
   const [text, setText] = useState("");
   const [atts, setAtts] = useState<NewAttachment[]>([]);
@@ -60,18 +67,25 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent }: Prop
   const overNote = lim ? "This message is " + bytes(total) + ". Hub " + lim.hub.name + " takes up to " + bytes(lim.bytes) + " per message, text and files together." : "";
   const can = (!!text.trim() || atts.length > 0) && !over && !sending;
 
+  const attsRef = useRef(atts);
+  attsRef.current = atts;
+  const addFiles = async (sources: string[]) => {
+    setErr(null);
+    const next = [...attsRef.current];
+    for (const source of sources) {
+      if (next.length >= MAX_FILES) { setErr("Up to " + MAX_FILES + " files per message."); break; }
+      if (next.some((a) => a.source === source)) continue;
+      try { const info = await api.fileInfo(source); next.push({ name: info.name, bytes: info.bytes, source }); }
+      catch (e) { setErr("Can't attach " + ((!source.startsWith("content://") && source.split(/[\\/]/).pop()) || "that file") + ": " + errText(e)); }
+    }
+    setAtts(next);
+  };
+  useImperativeHandle(ref, () => ({ addFiles: (sources) => void addFiles(sources) }));
   const attach = async () => {
     setErr(null);
     let picked: string[];
     try { picked = await pickFiles(); } catch (e) { setErr(errText(e)); return; }
-    const next = [...atts];
-    for (const source of picked) {
-      if (next.length >= MAX_FILES) { setErr("Up to " + MAX_FILES + " files per message."); break; }
-      if (next.some((a) => a.source === source)) continue;
-      try { const info = await api.fileInfo(source); next.push({ name: info.name, bytes: info.bytes, source }); }
-      catch (e) { setErr("Can't read that file: " + errText(e)); }
-    }
-    setAtts(next);
+    await addFiles(picked);
   };
 
   const send = async () => {
