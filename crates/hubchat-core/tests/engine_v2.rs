@@ -347,3 +347,64 @@ async fn a_chat_registration_becomes_a_person_on_connect() {
     e.shutdown();
     let _ = client.unregister(&me).await;
 }
+
+/// Android's periodic mode (design D6): a check starts the sessions over and
+/// returns once every hub has answered or parked its request (no news) and
+/// nothing waits to be sent; what arrived meanwhile is in.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_check_takes_in_what_arrived_and_returns() {
+    let Ok(hub) = std::env::var("HUBCHAT_V2_HUB") else {
+        eprintln!("SKIPPED: set HUBCHAT_V2_HUB to a scratch mail hub v2.0");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let ann = Identity::generate(&uid("chka")).unwrap();
+    let bob = Identity::generate(&uid("chkb")).unwrap();
+    let (a, ha) = device(&ann, "phone", dir.path());
+    let (b, _hb) = device(&bob, "pc", dir.path());
+    for e in [&a, &b] {
+        e.start().unwrap();
+        e.add_hub(&hub).unwrap();
+    }
+    for e in [&a, &b] {
+        until("connected", 20, || {
+            e.hub_statuses()
+                .iter()
+                .any(|s| s.state == HubState::Connected)
+        })
+        .await;
+    }
+    // nothing new: done once the fresh sync is parked
+    let t0 = Instant::now();
+    assert!(a.check_now(Duration::from_secs(30)).await, "a quiet check finishes");
+    let quiet = t0.elapsed();
+    assert!(quiet < Duration::from_secs(15), "a quiet check took {quiet:?}");
+
+    // something to send and something to take in
+    let out = uid("out-");
+    a.send(msg(&out, &bob.address(), "sent by the check")).unwrap();
+    let inc = uid("in-");
+    b.send(msg(&inc, &ann.address(), "arrived while away")).unwrap();
+    until("B sent it", 15, || {
+        b.store()
+            .message(&inc)
+            .unwrap()
+            .is_some_and(|m| m.state != "queued" && m.state != "sending")
+    })
+    .await;
+    assert!(a.check_now(Duration::from_secs(30)).await, "the check finishes");
+    assert!(a.store().message(&inc).unwrap().is_some(), "the message is in");
+    assert!(
+        a.store().queued().unwrap().is_empty(),
+        "nothing waits to be sent"
+    );
+    until("B gets A's", 15, || b.store().message(&out).unwrap().is_some()).await;
+    assert!(ha
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|e| matches!(e, Event::Incoming { id, .. } if *id == inc)));
+    a.shutdown();
+    b.shutdown();
+}

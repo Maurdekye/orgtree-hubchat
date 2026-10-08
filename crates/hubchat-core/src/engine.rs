@@ -105,14 +105,25 @@ pub struct HubStatus {
     pub features: Vec<String>,
     /// The hub's software version as it reports it; None = unknown (v1 hubs).
     pub version: Option<String>,
+    /// Unix ms when the last poll or sync answer was fully taken in.
+    pub answered_ms: Option<u64>,
+    /// Unix ms since which a poll or sync has been waiting for its answer
+    /// (the hub parks one while it has no news).
+    pub waiting_since_ms: Option<u64>,
 }
 
 struct HubRuntime {
     client: HubClient,
     status: HubStatus,
     retry_now: Arc<Notify>,
+    /// Start the session over at once (a check: Android's periodic mode).
+    kick: Arc<Notify>,
     stop: CancelFlag,
 }
+
+/// A request the hub hasn't answered for this long is parked: the hub
+/// answers at once when it has news, so there is none.
+const PARKED_AFTER_MS: u64 = 5000;
 
 pub struct Engine {
     store: Arc<Store>,
@@ -264,6 +275,38 @@ impl Engine {
         Ok(())
     }
 
+    /// One check, for Android's periodic mode (design D6): start every hub's
+    /// session over, then wait (up to `timeout`) until each has taken in an
+    /// answer or has a request parked (no news), and nothing waits to be
+    /// sent. True when everything got through in time.
+    pub async fn check_now(&self, timeout: Duration) -> bool {
+        let start = unix_ms();
+        for rt in self.hubs.lock().unwrap().values() {
+            rt.kick.notify_one();
+        }
+        self.queue_changed.notify_one();
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let now_ms = unix_ms();
+            let hubs_done = self.hubs.lock().unwrap().values().all(|h| {
+                let s = &h.status;
+                s.state == HubState::Refused
+                    || s.answered_ms.is_some_and(|t| t >= start)
+                    || s
+                        .waiting_since_ms
+                        .is_some_and(|t| t >= start && now_ms.saturating_sub(t) >= PARKED_AFTER_MS)
+            });
+            let queue_empty = self.store.queued().map(|q| q.is_empty()).unwrap_or(true);
+            if hubs_done && queue_empty {
+                return true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+
     pub fn retry_now(&self) {
         for rt in self.hubs.lock().unwrap().values() {
             rt.retry_now.notify_one();
@@ -350,14 +393,22 @@ impl Engine {
                 max_attachment_bytes: max.unwrap_or(crate::hub::LEGACY_MAX_ATTACHMENT_BYTES),
                 features: Vec::new(),
                 version: None,
+                answered_ms: None,
+                waiting_since_ms: None,
             },
             retry_now: Arc::new(Notify::new()),
+            kick: Arc::new(Notify::new()),
             stop: CancelFlag::default(),
         };
-        let (client, retry, stop) = (rt.client.clone(), rt.retry_now.clone(), rt.stop.clone());
+        let (client, retry, kick, stop) = (
+            rt.client.clone(),
+            rt.retry_now.clone(),
+            rt.kick.clone(),
+            rt.stop.clone(),
+        );
         self.hubs.lock().unwrap().insert(addr.to_string(), rt);
         let me = self.clone();
-        tokio::spawn(async move { me.hub_loop(client, retry, stop).await });
+        tokio::spawn(async move { me.hub_loop(client, retry, kick, stop).await });
     }
 
     fn set_status(&self, url: &str, f: impl FnOnce(&mut HubStatus)) {
@@ -393,11 +444,28 @@ impl Engine {
             .collect()
     }
 
-    async fn hub_loop(self: Arc<Self>, client: HubClient, retry: Arc<Notify>, stop: CancelFlag) {
+    async fn hub_loop(
+        self: Arc<Self>,
+        client: HubClient,
+        retry: Arc<Notify>,
+        kick: Arc<Notify>,
+        stop: CancelFlag,
+    ) {
         let url = client.address().to_string();
         let mut failures = 0usize;
         while !stop.is_cancelled() {
-            match self.session(&client, &url, &stop).await {
+            let outcome = tokio::select! {
+                r = self.session(&client, &url, &stop) => Some(r),
+                // a check: start over now (after a freeze the parked request
+                // may be on a connection that is long gone)
+                _ = kick.notified() => None,
+            };
+            let Some(outcome) = outcome else {
+                failures = 0;
+                self.mark(&url, |s| s.waiting_since_ms = None);
+                continue;
+            };
+            match outcome {
                 Ok(()) => return, // stopped
                 Err(e) => {
                     if stop.is_cancelled() {
@@ -419,6 +487,7 @@ impl Engine {
                     tokio::select! {
                         _ = tokio::time::sleep(Duration::from_secs(wait)) => {}
                         _ = retry.notified() => { failures = 0; }
+                        _ = kick.notified() => { failures = 0; }
                     }
                     self.set_status(&url, |s| {
                         s.state = HubState::Connecting;
@@ -455,16 +524,20 @@ impl Engine {
         if health.supports("sync") {
             return self.sync_session(client, url, stop, &profile).await;
         }
+        let mut registered_again = false;
         while !stop.is_cancelled() {
+            self.mark(url, |s| s.waiting_since_ms = Some(unix_ms()));
             let p = match client.poll(&self.me, crate::hub::POLL_WAIT_SECS).await {
                 Ok(p) => p,
-                Err(e) if e.status() == Some(401) => {
+                Err(e) if e.status() == Some(401) && !registered_again => {
                     // The hub forgot us (pruned roster): register again.
                     client.register(&self.me, &profile).await?;
+                    registered_again = true;
                     continue;
                 }
                 Err(e) => return Err(e),
             };
+            registered_again = false;
             if stop.is_cancelled() {
                 break;
             }
@@ -481,6 +554,7 @@ impl Engine {
                 }
             }
             if p.messages.is_empty() {
+                self.answered(url);
                 continue;
             }
             let t = now();
@@ -511,8 +585,24 @@ impl Engine {
                 .map(|id| (id.clone(), "delivered", t.clone()))
                 .collect();
             client.receipts(&self.me, &rec).await?;
+            self.answered(url);
         }
         Ok(())
+    }
+
+    /// A poll or sync answer is fully taken in.
+    fn answered(&self, url: &str) {
+        self.mark(url, |s| {
+            s.answered_ms = Some(unix_ms());
+            s.waiting_since_ms = None;
+        });
+    }
+
+    /// Change a hub's progress markers: no event (they move on every poll).
+    fn mark(&self, url: &str, f: impl FnOnce(&mut HubStatus)) {
+        if let Some(h) = self.hubs.lock().unwrap().get_mut(url) {
+            f(&mut h.status);
+        }
     }
 
     /// v2 hubs: every device gets everything through sync (G1), history
@@ -531,8 +621,10 @@ impl Engine {
         // History (from the beginning, until a page without `more`) is not
         // news: it raises no notifications.
         let mut catching_up = cursor.is_none();
+        let mut registered_again = false;
         while !stop.is_cancelled() {
             let first_page = cursor.is_none();
+            self.mark(url, |s| s.waiting_since_ms = Some(unix_ms()));
             let r = match client
                 .sync(
                     &self.me,
@@ -550,8 +642,11 @@ impl Engine {
                 .await
             {
                 Ok(r) => r,
-                Err(e) if e.status() == Some(401) => {
+                // registering again helps only once: a device signed out on
+                // this hub stays refused (no spinning against the hub)
+                Err(e) if e.status() == Some(401) && !registered_again => {
                     client.register(&self.me, profile).await?;
+                    registered_again = true;
                     continue;
                 }
                 Err(e) if e.status() == Some(422) && cursor.is_some() => {
@@ -563,6 +658,7 @@ impl Engine {
                 }
                 Err(e) => return Err(e),
             };
+            registered_again = false;
             if stop.is_cancelled() {
                 break;
             }
@@ -655,6 +751,7 @@ impl Engine {
             cursor = Some(r.cursor);
             if !r.more {
                 catching_up = false;
+                self.answered(url);
             }
         }
         Ok(())
