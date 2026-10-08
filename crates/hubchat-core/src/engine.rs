@@ -282,7 +282,19 @@ impl Engine {
             .ok_or_else(|| {
                 Error::Invalid("none of your connected hubs can reach that device".into())
             })?;
-        client.send(&self.me, &Outgoing::new(to, body)).await?;
+        let sent = client.send(&self.me, &Outgoing::new(to, body)).await?;
+        // Hubs that keep history (v2) would keep our copy and sync it to our
+        // other devices: delete it now (the recipient keeps its own copy
+        // until it takes it).
+        let keeps_history = self
+            .hubs
+            .lock()
+            .unwrap()
+            .get(&url)
+            .is_some_and(|h| h.status.features.iter().any(|f| f == "delete"));
+        if keeps_history {
+            let _ = client.delete_message(&self.me, &sent.id).await;
+        }
         Ok(url)
     }
 
@@ -474,6 +486,11 @@ impl Engine {
             let t = now();
             let mut ids = Vec::new();
             for m in &p.messages {
+                // A sealed identity for a device being linked is no chat.
+                if m.body.starts_with(crate::link::LINK_MESSAGE_PREFIX) {
+                    ids.push(m.id.clone());
+                    continue;
+                }
                 // Persist first, then ack: the hub keeps it until we have it.
                 if self.store.insert_incoming(url, m, &t)? {
                     let preview: String = m.body.chars().take(140).collect();
@@ -581,6 +598,11 @@ impl Engine {
             for ch in &r.changes {
                 match ch {
                     crate::hub_v2::Change::Message(m) => {
+                        // A sealed identity on its way to a device being
+                        // linked (ours, synced back): no chat.
+                        if m.env.body.starts_with(crate::link::LINK_MESSAGE_PREFIX) {
+                            continue;
+                        }
                         let fresh = self.store.upsert_synced(url, &me, m)?;
                         if m.body_bytes.is_some() {
                             if let Ok(body) = client

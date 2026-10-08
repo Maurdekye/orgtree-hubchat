@@ -32,23 +32,42 @@ pub enum LinkEvent {
     Waiting {
         expires_in_s: u64,
     },
-    Done {
-        address: String,
-    },
     /// This device already IS that identity (user ruling 19:21Z): nothing to do.
     Same {
         address: String,
     },
-    /// The link carries a different identity: the UI asks before switching
-    /// (hc_link_switch / hc_link_switch_cancel). The bundle waits in memory.
-    Switch {
-        from: String,
+    /// An identity arrived and waits in memory: the user reviews the hubs
+    /// that come with it (user 20:38Z: prefilled, editable, nothing saved
+    /// silently) and confirms (hc_link_confirm) or drops it
+    /// (hc_link_discard). `from`: this device's identity now, which
+    /// confirming leaves (the switch, user ruling 19:21Z).
+    Review {
+        from: Option<String>,
         to: String,
+        name: String,
+        hubs: Vec<HubRow>,
     },
     Failed {
         error: String,
     },
     Expired,
+}
+
+/// One hub that comes with a linked identity, as the review shows it.
+#[derive(Serialize, Clone)]
+pub struct HubRow {
+    /// The hub as the other device knows it (maybe localhost-style).
+    theirs: String,
+    /// The best address on this device: one that answered, else the first
+    /// candidate.
+    address: String,
+    /// Addresses tried, likeliest first.
+    candidates: Vec<String>,
+    /// The hub that answered at `address`.
+    name: Option<String>,
+    /// Why `address` did not answer.
+    error: Option<String>,
+    reachable: bool,
 }
 
 #[derive(Serialize)]
@@ -60,11 +79,9 @@ pub struct LinkStart {
     hub: String,
 }
 
-/// Put the bundle to use on this device: identity, profile, hubs.
-/// `via`: where this device reached the hub the identity came through;
-/// `aliases`: the other addresses the link named for that hub. Both shape
-/// the hub list (link::hubs_for_device); None and empty for a QR or a file.
-fn adopt(bundle: Bundle, via: Option<&str>, aliases: &[String]) -> R<String> {
+/// Put the bundle to use on this device: identity, profile, and exactly
+/// `hubs` (what the user confirmed; the bundle's own for a QR or a file).
+fn adopt(bundle: Bundle, hubs: Vec<String>) -> R<String> {
     let c = core::get()?;
     let me = bundle.identity().map_err(s)?;
     let address = me.address();
@@ -75,15 +92,18 @@ fn adopt(bundle: Bundle, via: Option<&str>, aliases: &[String]) -> R<String> {
     c.adopt_identity(me)?;
     let e = c.engine()?;
     let _g = c.rt.enter();
-    for h in link::hubs_for_device(&bundle.hubs, via, aliases) {
+    for h in hubs {
         let _ = e.add_hub(&h);
     }
     Ok(address)
 }
 
-/// The identity a link carries just arrived: adopt it on a fresh device;
-/// on a signed-in one, compare and (if different) hold it for the user.
-fn arrived(bundle: Bundle, via: &str, aliases: &[String]) -> LinkEvent {
+/// The identity a link carries just arrived. This device's own: nothing to
+/// do. Otherwise it waits in memory (an unadopted key is never written to
+/// disk) while the user reviews its hubs: each tried here, under the
+/// addresses the link suggests (`via`: where this device reached the link's
+/// hub; `aliases`: what the link called it).
+async fn arrived(bundle: Bundle, via: &str, aliases: &[String]) -> LinkEvent {
     let current = core::get()
         .ok()
         .and_then(|c| c.engine().ok())
@@ -92,52 +112,87 @@ fn arrived(bundle: Bundle, via: &str, aliases: &[String]) -> LinkEvent {
         Ok(me) => me.address(),
         Err(e) => return LinkEvent::Failed { error: s(e) },
     };
-    match current {
-        None => match adopt(bundle, Some(via), aliases) {
-            Ok(address) => LinkEvent::Done { address },
-            Err(error) => LinkEvent::Failed { error },
-        },
-        Some(from) if from == to => LinkEvent::Same { address: to },
-        Some(from) => {
-            // Memory only: an unadopted key is never written to disk.
-            *PENDING_SWITCH.lock().unwrap() = Some(Pending {
-                bundle,
-                via: via.to_string(),
-                aliases: aliases.to_vec(),
-            });
-            LinkEvent::Switch { from, to }
+    if current.as_deref() == Some(to.as_str()) {
+        return LinkEvent::Same { address: to };
+    }
+    let mut set = tokio::task::JoinSet::new();
+    for (i, (theirs, candidates)) in link::review_hubs(&bundle.hubs, via, aliases)
+        .into_iter()
+        .enumerate()
+    {
+        set.spawn(async move {
+            let p = crate::commands::probe_first(candidates.clone(), None, Duration::from_secs(5)).await;
+            let row = match p {
+                crate::commands::Probe::Connected { url, name, .. } => HubRow {
+                    theirs,
+                    address: url,
+                    candidates,
+                    name: Some(name),
+                    error: None,
+                    reachable: true,
+                },
+                crate::commands::Probe::Unreachable { error, .. }
+                | crate::commands::Probe::NotAHub { error, .. }
+                | crate::commands::Probe::Invalid { error } => HubRow {
+                    theirs,
+                    address: candidates.first().cloned().unwrap_or_default(),
+                    candidates,
+                    name: None,
+                    error: Some(error),
+                    reachable: false,
+                },
+            };
+            (i, row)
+        });
+    }
+    let mut rows: Vec<(usize, HubRow)> = Vec::new();
+    while let Some(r) = set.join_next().await {
+        if let Ok(r) = r {
+            rows.push(r);
         }
+    }
+    rows.sort_by_key(|(i, _)| *i);
+    let name = bundle.name.clone();
+    *PENDING.lock().unwrap() = Some(bundle);
+    LinkEvent::Review {
+        from: current,
+        to,
+        name,
+        hubs: rows.into_iter().map(|(_, r)| r).collect(),
     }
 }
 
-/// What a link brought a signed-in device, until the user decides.
-struct Pending {
-    bundle: Bundle,
-    via: String,
-    aliases: Vec<String>,
-}
+/// What a link brought, until the user confirms or drops it. Memory only.
+static PENDING: Mutex<Option<Bundle>> = Mutex::new(None);
 
-static PENDING_SWITCH: Mutex<Option<Pending>> = Mutex::new(None);
-
-/// The user confirmed: leave the current identity on this device (off the
-/// device lists of v2 hubs; key and local data forgotten) and adopt the one
-/// the link brought.
+/// The user confirmed the review: on a signed-in device leave the current
+/// identity first (off the device lists of v2 hubs; key and local data
+/// forgotten), then adopt the one the link brought with exactly `hubs`.
 #[tauri::command]
-pub async fn hc_link_switch() -> R<String> {
-    let p = PENDING_SWITCH
+pub async fn hc_link_confirm(hubs: Vec<String>) -> R<String> {
+    let bundle = PENDING
         .lock()
         .unwrap()
         .take()
-        .ok_or("nothing to switch to: link again")?;
+        .ok_or("nothing to confirm: link again")?;
     let c = core::get()?;
-    c.leave_identity().await?;
-    adopt(p.bundle, Some(&p.via), &p.aliases)
+    if c.engine().is_ok() {
+        c.leave_identity().await?;
+    }
+    let mut keep: Vec<String> = Vec::new();
+    for h in hubs.iter().map(|h| h.trim()).filter(|h| !h.is_empty()) {
+        let a = HubAddress::parse(h).map_err(s)?.to_string();
+        if !keep.contains(&a) {
+            keep.push(a);
+        }
+    }
+    adopt(bundle, keep)
 }
 
-/// The user kept the current identity: drop what the link brought.
+/// The user kept things as they were: drop what the link brought.
 #[tauri::command]
-pub fn hc_link_switch_cancel() -> R<()> {
-    PENDING_SWITCH.lock().unwrap().take();
+pub fn hc_link_discard() -> R<()> {
+    PENDING.lock().unwrap().take();
     Ok(())
 }
 
@@ -228,15 +283,19 @@ pub async fn hc_link_start<R2: Runtime>(
                 }
             };
             let ids: Vec<String> = p.messages.iter().map(|m| m.id.clone()).collect();
-            let found = p
-                .messages
-                .iter()
-                .find_map(|m| link::open_from_link(&code2, &m.body).ok());
+            let found = p.messages.iter().find_map(|m| {
+                link::open_from_link(&code2, &m.body)
+                    .ok()
+                    .map(|b| (m.id.clone(), b))
+            });
             if !ids.is_empty() {
                 let _ = client.ack(&temp, &ids).await;
             }
-            if let Some(bundle) = found {
-                break Some(arrived(bundle, &via, &aliases));
+            if let Some((id, bundle)) = found {
+                // Hubs that keep history (v2) would keep our copy of the
+                // sealed identity: delete it (older hubs answer 404).
+                let _ = client.delete_message(&temp, &id).await;
+                break Some(arrived(bundle, &via, &aliases).await);
             }
         };
         let _ = client.unregister(&temp).await;
@@ -449,7 +508,9 @@ pub fn hc_key_qr() -> R<String> {
 
 #[tauri::command]
 pub fn hc_restore_qr(text: String) -> R<String> {
-    adopt(link::from_qr(&text).map_err(s)?, None, &[])
+    let b = link::from_qr(&text).map_err(s)?;
+    let hubs = link::hubs_for_device(&b.hubs, None, &[]);
+    adopt(b, hubs)
 }
 
 /// Write the passphrase-locked key file to `dest` (a path, or on Android a
@@ -489,5 +550,7 @@ pub fn hc_key_file_import(source: String, passphrase: String) -> R<String> {
         .take(1 << 20)
         .read_to_string(&mut text)
         .map_err(s)?;
-    adopt(link::from_key_file(&text, &passphrase).map_err(s)?, None, &[])
+    let b = link::from_key_file(&text, &passphrase).map_err(s)?;
+    let hubs = link::hubs_for_device(&b.hubs, None, &[]);
+    adopt(b, hubs)
 }

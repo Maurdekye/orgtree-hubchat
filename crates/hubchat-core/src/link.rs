@@ -406,6 +406,70 @@ pub fn hubs_for_device(bundle_hubs: &[String], via: Option<&str>, aliases: &[Str
     out
 }
 
+/// The hubs that come with an identity a link brought, as rows the user
+/// reviews before anything is saved (user 20:38Z): for each hub as the
+/// other device knows it, the addresses to try on this device, likeliest
+/// first. The link's hub (`via`, where this device reached it; `aliases`,
+/// what the link called it) starts with `via`. Another loopback hub of the
+/// other device is tried on the hosts the link named, at its own port. If
+/// no bundle hub is recognisably the link's hub, the first loopback one is
+/// taken to be it; failing that, `via` gets a row of its own, first.
+pub fn review_hubs(bundle_hubs: &[String], via: &str, aliases: &[String]) -> Vec<(String, Vec<String>)> {
+    let norm = |h: &str| {
+        crate::HubAddress::parse(h)
+            .map(|a| a.to_string())
+            .unwrap_or_else(|_| h.to_string())
+    };
+    let via = norm(via);
+    let aliases: Vec<String> = aliases.iter().map(|a| norm(a)).collect();
+    let hubs: Vec<String> = bundle_hubs.iter().map(|h| norm(h)).collect();
+    let link = hubs
+        .iter()
+        .position(|h| *h == via || aliases.contains(h))
+        .or_else(|| hubs.iter().position(|h| is_loopback_hub(h)));
+    // Hosts the link reached the other device by (no loopback ones).
+    let hosts: Vec<(String, String)> = std::iter::once(via.clone())
+        .chain(aliases.iter().cloned())
+        .filter(|a| !is_loopback_hub(a))
+        .filter_map(|a| {
+            let u = url::Url::parse(&a).ok()?;
+            Some((u.scheme().to_string(), u.host_str()?.to_string()))
+        })
+        .collect();
+    let mut rows: Vec<(String, Vec<String>)> = Vec::new();
+    if link.is_none() {
+        rows.push((via.clone(), vec![via.clone()]));
+    }
+    for (i, h) in hubs.iter().enumerate() {
+        if rows.iter().any(|(t, _)| t == h) {
+            continue;
+        }
+        let mut c: Vec<String> = Vec::new();
+        let mut add = |a: String| {
+            if !c.contains(&a) {
+                c.push(a);
+            }
+        };
+        if Some(i) == link {
+            add(via.clone());
+            for a in aliases.iter().filter(|a| !is_loopback_hub(a)) {
+                add(a.clone());
+            }
+        } else if is_loopback_hub(h) {
+            if let Some(port) = url::Url::parse(h).ok().and_then(|u| u.port()) {
+                for (scheme, host) in &hosts {
+                    if let Ok(a) = crate::HubAddress::parse(&format!("{scheme}://{host}:{port}")) {
+                        add(a.to_string());
+                    }
+                }
+            }
+        }
+        add(h.clone());
+        rows.push((h.clone(), c));
+    }
+    rows
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -570,5 +634,48 @@ mod tests {
         );
         // No link (QR, key file): the bundle as it is.
         assert_eq!(hubs_for_device(&bundle, None, &[]), bundle);
+    }
+
+    #[test]
+    fn hub_review_rows() {
+        let aliases: Vec<String> = vec![
+            "http://home-pc:7370".into(),
+            "http://100.101.102.103:7370".into(),
+            "http://localhost:7370".into(),
+        ];
+        // The user's PC: its hub as localhost, a second local hub, a remote one.
+        let rows = review_hubs(
+            &["http://localhost:7370".into(), "localhost:7380".into(), "star-system:7370".into()],
+            "home-pc:7370",
+            &aliases,
+        );
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "http://localhost:7370".to_string(),
+                    vec!["http://home-pc:7370".to_string(), "http://100.101.102.103:7370".into(), "http://localhost:7370".into()]
+                ),
+                (
+                    "http://localhost:7380".to_string(),
+                    vec!["http://home-pc:7380".to_string(), "http://100.101.102.103:7380".into(), "http://localhost:7380".into()]
+                ),
+                ("http://star-system:7370".to_string(), vec!["http://star-system:7370".to_string()]),
+            ]
+        );
+        // A typed address for a hub the bundle names otherwise (no loopback).
+        let rows = review_hubs(&["http://hub.lan:7370".into()], "100.1.2.3:7370", &["http://hub.lan:7370".into()]);
+        assert_eq!(
+            rows,
+            vec![("http://hub.lan:7370".to_string(), vec!["http://100.1.2.3:7370".to_string(), "http://hub.lan:7370".into()])]
+        );
+        // This device made the code (no aliases): its hub is the PC's localhost one.
+        let rows = review_hubs(&["http://localhost:7370".into()], "home-pc:7370", &[]);
+        assert_eq!(rows[0].1[0], "http://home-pc:7370");
+        assert_eq!(rows.len(), 1);
+        // Nothing in the bundle matches: the reached hub gets its own row, first.
+        let rows = review_hubs(&["http://elsewhere:7370".into()], "home-pc:7370", &[]);
+        assert_eq!(rows[0], ("http://home-pc:7370".to_string(), vec!["http://home-pc:7370".to_string()]));
+        assert_eq!(rows.len(), 2);
     }
 }

@@ -199,11 +199,17 @@ pub async fn hc_probe_link_hubs(hubs: Vec<String>, name: Option<String>) -> R<Pr
             error: "the link names no hub".into(),
         });
     }
-    on_core(async move {
+    on_core(async move { Ok(probe_first(hubs, name, Duration::from_secs(5)).await) }).await
+}
+
+/// `hubs` tried at once, `limit` each: the likeliest that answers (as
+/// `name`, when given), else the first's failure.
+pub(crate) async fn probe_first(hubs: Vec<String>, name: Option<String>, limit: Duration) -> Probe {
+    {
         let mut set = tokio::task::JoinSet::new();
         for (i, h) in hubs.iter().cloned().enumerate() {
             let name = name.clone();
-            set.spawn(async move { (i, probe(&h, name.as_deref(), Duration::from_secs(5)).await) });
+            set.spawn(async move { (i, probe(&h, name.as_deref(), limit).await) });
         }
         let mut done: Vec<Option<Probe>> = hubs.iter().map(|_| None).collect();
         let connected = |p: &Option<Probe>| matches!(p, Some(Probe::Connected { .. }));
@@ -214,21 +220,19 @@ pub async fn hc_probe_link_hubs(hubs: Vec<String>, name: Option<String>) -> R<Pr
             let w = done.iter().take_while(|p| p.is_some()).position(connected);
             if let Some(w) = w {
                 set.abort_all();
-                return Ok(done[w].take().expect("answered"));
+                return done[w].take().expect("answered");
             }
         }
         if let Some(w) = done.iter().position(connected) {
-            return Ok(done[w].take().expect("answered"));
+            return done[w].take().expect("answered");
         }
-        Ok(done
-            .into_iter()
+        done.into_iter()
             .next()
             .flatten()
             .unwrap_or(Probe::Invalid {
                 error: "no address answered".into(),
-            }))
-    })
-    .await
+            })
+    }
 }
 
 /// /healthz at `input` within `limit`; `name`: the hub that must answer.
