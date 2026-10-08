@@ -29,6 +29,7 @@ android {
     namespace = "dev.orgtree.hubchat"
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "true" // hubs on a LAN speak plain http (design: trust note)
+        manifestPlaceholders["appLabel"] = "Hubchat"
         applicationId = "dev.orgtree.hubchat"
         minSdk = 24
         targetSdk = 37
@@ -49,6 +50,7 @@ android {
         getByName("debug") {
             // Test builds install beside the user's real Hubchat, never over it.
             manifestPlaceholders["usesCleartextTraffic"] = "true"
+            manifestPlaceholders["appLabel"] = "Hubchat Test"
             isDebuggable = true
             isJniDebuggable = true
             isMinifyEnabled = false
@@ -63,7 +65,10 @@ android {
             signingConfigs.findByName("release")?.let { signingConfig = it }
             // HUBCHAT_TEST_BUILD=1: a release-configured build that installs
             // beside the user's real Hubchat (to prove release-only issues).
-            if (System.getenv("HUBCHAT_TEST_BUILD") != null) applicationIdSuffix = ".test"
+            if (System.getenv("HUBCHAT_TEST_BUILD") != null) {
+                applicationIdSuffix = ".test"
+                manifestPlaceholders["appLabel"] = "Hubchat Test"
+            }
             // No R8 shrinking: it broke the barcode scanner plugin's
             // reflection in release (NPE when a scan returned; user crash
             // 2026-10-08 19:11Z). The code is small; correctness wins.
