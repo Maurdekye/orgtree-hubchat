@@ -89,6 +89,9 @@ fn adopt(bundle: Bundle, hubs: Vec<String>) -> R<String> {
     c.store
         .set_meta("profile.about", &bundle.about)
         .map_err(s)?;
+    if bundle.recovery_saved {
+        c.store.set_meta("recovery.saved", "yes").map_err(s)?;
+    }
     c.adopt_identity(me)?;
     let e = c.engine()?;
     let _g = c.rt.enter();
@@ -235,6 +238,7 @@ fn my_bundle() -> R<Bundle> {
             .into_iter()
             .map(|h| h.url)
             .collect(),
+        recovery_saved: meta("recovery.saved") == "yes",
     })
 }
 

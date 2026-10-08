@@ -35,6 +35,11 @@ pub struct Bundle {
     pub about: String,
     #[serde(default)]
     pub hubs: Vec<String>,
+    /// The sending device has the recovery words saved: they are the same
+    /// words here, so the receiving device doesn't ask again (user 22:14Z).
+    /// Left out when false (older bundles have no such field).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub recovery_saved: bool,
 }
 
 impl std::fmt::Debug for Bundle {
@@ -42,6 +47,7 @@ impl std::fmt::Debug for Bundle {
         f.debug_struct("Bundle")
             .field("id", &self.id)
             .field("hubs", &self.hubs)
+            .field("recovery_saved", &self.recovery_saved)
             .finish_non_exhaustive()
     }
 }
@@ -533,6 +539,7 @@ mod tests {
             name: "Alex".into(),
             about: String::new(),
             hubs: vec!["http://hub:7370".into()],
+            recovery_saved: false,
         }
     }
 
@@ -769,5 +776,19 @@ mod tests {
             merge_same_hubs(&probed, &bundle, "home-pc:7370"),
             vec![(0, "http://localhost:7370".to_string(), vec!["http://home-pc:7370".to_string()])]
         );
+    }
+
+    #[test]
+    fn recovery_saved_travels_with_the_bundle() {
+        let mut b = bundle();
+        // not saved: the field isn't written (older readers see what they knew)
+        assert!(!serde_json::to_string(&b).unwrap().contains("recovery_saved"));
+        b.recovery_saved = true;
+        let code = new_link_code();
+        assert!(open_from_link(&code, &seal_for_link(&code, &b).unwrap()).unwrap().recovery_saved);
+        assert!(from_qr(&to_qr(&b)).unwrap().recovery_saved);
+        // a bundle from before the field: not saved
+        let old = r#"{"id":"alex","secret":"s","name":"Alex","hubs":[]}"#;
+        assert!(!serde_json::from_str::<Bundle>(old).unwrap().recovery_saved);
     }
 }
