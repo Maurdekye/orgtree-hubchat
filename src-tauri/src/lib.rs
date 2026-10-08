@@ -3,6 +3,7 @@ mod android;
 mod commands;
 mod core;
 mod link;
+mod media;
 mod secrets;
 
 #[cfg(desktop)]
@@ -151,6 +152,8 @@ pub fn run() {
             commands::hc_file_info,
             commands::hc_take_pending_chat,
             commands::hc_open_attachment,
+            media::hc_attachment_preview,
+            media::hc_save_pasted,
             link::hc_link_start,
             link::hc_link_cancel,
             link::hc_link_lookup,

@@ -19,7 +19,7 @@ fn s<E: std::fmt::Display>(e: E) -> String {
 }
 
 /// Run a future on the core runtime (where the engine's tasks live).
-async fn on_core<T, F>(f: F) -> R<T>
+pub(crate) async fn on_core<T, F>(f: F) -> R<T>
 where
     T: Send + 'static,
     F: Future<Output = R<T>> + Send + 'static,
@@ -450,13 +450,18 @@ pub async fn hc_mark_read(peer: String) -> R<()> {
 #[tauri::command]
 pub async fn hc_delete_message(id: String) -> R<()> {
     let e = engine()?;
-    on_core(async move { e.delete_message(&id).await.map_err(s) }).await
+    let mid = id.clone();
+    on_core(async move { e.delete_message(&mid).await.map_err(s) }).await?;
+    crate::media::forget(&[id]);
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn hc_delete_chat(peer: String) -> R<()> {
     let e = engine()?;
-    on_core(async move { e.delete_chat(&peer).await.map_err(s) }).await
+    on_core(async move { e.delete_chat(&peer).await.map_err(s) }).await?;
+    crate::media::forget_gone();
+    Ok(())
 }
 
 #[derive(Serialize)]
