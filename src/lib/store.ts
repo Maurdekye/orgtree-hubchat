@@ -96,6 +96,63 @@ export function useTransfer(localId: string): Progress | undefined {
   return useSyncExternalStore((f) => { tsubs.add(f); return () => { tsubs.delete(f); }; }, () => transfers.get(localId));
 }
 
+/** A transfer in progress, for the transfers chip / strip. */
+export interface Active extends Progress {
+  local_id: string;
+  /** Unix ms of its last progress event. */
+  at: number;
+  /** From the message, once read: the file name and the chat. */
+  name: string | null;
+  peer: string | null;
+}
+const active = new Map<string, Active>();
+let activeList: Active[] = [];
+const asubs = new Set<() => void>();
+function activeChanged() { activeList = [...active.values()]; asubs.forEach((f) => f()); }
+/** Every upload and download in progress. */
+export function useActiveTransfers(): Active[] {
+  return useSyncExternalStore((f) => { asubs.add(f); return () => { asubs.delete(f); }; }, () => activeList);
+}
+
+/** Fill in (or, if the attachment is no longer moving, drop) one transfer from its message. */
+async function lookupTransfer(localId: string, messageId: string) {
+  let m: Message | null = null;
+  try { m = await api.message(messageId); } catch { return; }
+  const t = active.get(localId); if (!t) return;
+  const a = m?.attachments.find((x) => x.local_id === localId);
+  if (!m || !a || (a.state !== "uploading" && a.state !== "downloading")) { active.delete(localId); activeChanged(); return; }
+  if (t.name !== a.name || t.peer !== m.peer) { active.set(localId, { ...t, name: a.name, peer: m.peer }); activeChanged(); }
+}
+
+function noteTransfer(e: Extract<HcEvent, { type: "transfer" }>) {
+  const prev = active.get(e.local_id);
+  if (e.total > 0 && e.done >= e.total) {
+    if (prev) { active.delete(e.local_id); activeChanged(); }
+    return;
+  }
+  active.set(e.local_id, { done: e.done, total: e.total, upload: e.upload, message_id: e.message_id, local_id: e.local_id, at: Date.now(), name: prev?.name ?? null, peer: prev?.peer ?? null });
+  activeChanged();
+  if (!prev) void lookupTransfer(e.local_id, e.message_id);
+}
+
+/** Cancel an upload or download (it leaves the list at once). */
+export async function cancelTransfer(localId: string): Promise<void> {
+  if (active.delete(localId)) activeChanged();
+  await api.cancelTransfer(localId);
+}
+
+// a transfer that stopped (failed, cancelled elsewhere) leaves no final
+// progress event: re-check it when its chat changes, and drop silent ones
+function recheckTransfers(peer: string) {
+  for (const t of active.values()) if (t.peer === peer) void lookupTransfer(t.local_id, t.message_id);
+}
+setInterval(() => {
+  const old = Date.now() - 30000;
+  let n = 0;
+  for (const t of active.values()) if (t.at < old) { active.delete(t.local_id); n++; }
+  if (n) activeChanged();
+}, 5000);
+
 // ------------------------------------------------------------------- misc
 export function setOnboarding(on: boolean) { set({ onboarding: on }); }
 export function noteDraft(peer: string, body: string) {
@@ -105,13 +162,14 @@ export function noteDraft(peer: string, body: string) {
 
 function onEvent(e: HcEvent) {
   switch (e.type) {
-    case "chat": schedule("chats"); chatChanged(e.peer); break;
+    case "chat": schedule("chats"); chatChanged(e.peer); recheckTransfers(e.peer); break;
     case "incoming": schedule("chats"); chatChanged(e.peer); break;
     case "hub": schedule("state"); break;
     case "directory": schedule("dir"); break;
     case "transfer":
       transfers.set(e.local_id, { done: e.done, total: e.total, upload: e.upload, message_id: e.message_id });
       tsubs.forEach((f) => f());
+      noteTransfer(e);
       break;
   }
 }
