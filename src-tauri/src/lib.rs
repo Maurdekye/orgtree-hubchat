@@ -1,6 +1,7 @@
 #[cfg(target_os = "android")]
 mod android;
 mod connection;
+mod spike;
 
 #[cfg(desktop)]
 struct DesktopPlatform;
@@ -18,7 +19,14 @@ impl connection::Platform for DesktopPlatform {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .invoke_handler(tauri::generate_handler![
+            spike::spike_info,
+            spike::spike_roundtrip,
+            spike::spike_save
+        ])
         .setup(|_app| {
             // On Android the ConnectionService starts the core (it outlives the
             // activity); on desktop the app process does.

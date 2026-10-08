@@ -24,6 +24,19 @@ pub trait Platform: Send + Sync + 'static {
 
 static STARTED: OnceLock<()> = OnceLock::new();
 
+/// What the spike commands need from the running core.
+pub struct Core {
+    pub client: HubClient,
+    pub me: Identity,
+    pub dir: PathBuf,
+}
+
+static CORE: OnceLock<Core> = OnceLock::new();
+
+pub fn core() -> Option<&'static Core> {
+    CORE.get()
+}
+
 /// Start the connection once per process; later calls do nothing.
 pub fn start(data_dir: PathBuf, platform: Arc<dyn Platform>) {
     if STARTED.set(()).is_err() {
@@ -32,7 +45,11 @@ pub fn start(data_dir: PathBuf, platform: Arc<dyn Platform>) {
     std::thread::Builder::new()
         .name("hubchat-core".into())
         .spawn(move || {
-            let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("runtime");
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("runtime");
             rt.block_on(run(data_dir, platform));
         })
         .expect("core thread");
@@ -42,8 +59,12 @@ fn now() -> String {
     humantime::format_rfc3339_millis(SystemTime::now()).to_string()
 }
 
-fn log(dir: &Path, line: &str) {
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("spike.log")) {
+pub fn log(dir: &Path, line: &str) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("spike.log"))
+    {
         let _ = writeln!(f, "{} {line}", now());
     }
 }
@@ -65,7 +86,8 @@ fn load_identity(dir: &Path) -> Identity {
 async fn run(dir: PathBuf, platform: Arc<dyn Platform>) {
     let _ = std::fs::create_dir_all(&dir);
     let me = load_identity(&dir);
-    let hub = std::fs::read_to_string(dir.join("hub.txt")).unwrap_or_else(|_| "127.0.0.1:7399".into());
+    let hub =
+        std::fs::read_to_string(dir.join("hub.txt")).unwrap_or_else(|_| "127.0.0.1:7399".into());
     let addr = match HubAddress::parse(&hub) {
         Ok(a) => a,
         Err(e) => {
@@ -76,7 +98,17 @@ async fn run(dir: PathBuf, platform: Arc<dyn Platform>) {
     };
     log(&dir, &format!("start address={} hub={addr}", me.address()));
     let client = HubClient::new(addr);
-    let profile = Profile { kind: "chat".into(), org_name: "Hubchat".into(), username: "spike".into(), blurb: String::new() };
+    let _ = CORE.set(Core {
+        client: client.clone(),
+        me: me.clone(),
+        dir: dir.clone(),
+    });
+    let profile = Profile {
+        kind: "chat".into(),
+        org_name: "Hubchat".into(),
+        username: "spike".into(),
+        blurb: String::new(),
+    };
     let mut backoff = 1u64;
     let mut registered = false;
     loop {
@@ -101,26 +133,45 @@ async fn run(dir: PathBuf, platform: Arc<dyn Platform>) {
         match client.poll(&me, 55).await {
             Ok(p) => {
                 backoff = 1;
-                log(&dir, &format!("poll ok after {} ms, {} msgs", t0.elapsed().as_millis(), p.messages.len()));
+                log(
+                    &dir,
+                    &format!(
+                        "poll ok after {} ms, {} msgs",
+                        t0.elapsed().as_millis(),
+                        p.messages.len()
+                    ),
+                );
                 if p.messages.is_empty() {
                     continue;
                 }
                 let ids: Vec<String> = p.messages.iter().map(|m| m.id.clone()).collect();
                 for m in &p.messages {
-                    log(&dir, &format!("msg id={} from={} sent_at={:?} received_at={}", m.id, m.from, m.sent_at, m.received_at));
+                    log(
+                        &dir,
+                        &format!(
+                            "msg id={} from={} sent_at={:?} received_at={}",
+                            m.id, m.from, m.sent_at, m.received_at
+                        ),
+                    );
                     platform.notify(&m.from, &m.body);
                 }
                 if let Err(e) = client.ack(&me, &ids).await {
                     log(&dir, &format!("ack failed: {e}"));
                 }
                 let at = now();
-                let rec: Vec<_> = ids.iter().map(|id| (id.clone(), "delivered", at.clone())).collect();
+                let rec: Vec<_> = ids
+                    .iter()
+                    .map(|id| (id.clone(), "delivered", at.clone()))
+                    .collect();
                 if let Err(e) = client.receipts(&me, &rec).await {
                     log(&dir, &format!("receipts failed: {e}"));
                 }
             }
             Err(e) => {
-                log(&dir, &format!("poll failed after {} ms: {e}", t0.elapsed().as_millis()));
+                log(
+                    &dir,
+                    &format!("poll failed after {} ms: {e}", t0.elapsed().as_millis()),
+                );
                 if e.status() == Some(401) {
                     registered = false; // hub forgot us: re-register
                 }

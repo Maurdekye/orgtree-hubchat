@@ -35,7 +35,8 @@ impl HubAddress {
         if !a.contains("://") {
             a = format!("http://{a}");
         }
-        let mut u = Url::parse(&a).map_err(|e| Error::Invalid(format!("not a hub address: {e}")))?;
+        let mut u =
+            Url::parse(&a).map_err(|e| Error::Invalid(format!("not a hub address: {e}")))?;
         match u.scheme() {
             "http" | "https" => {}
             s => return Err(Error::Invalid(format!("unsupported scheme {s}"))),
@@ -80,7 +81,8 @@ pub struct Health {
 
 impl Health {
     pub fn max_attachment_bytes(&self) -> u64 {
-        self.max_attachment_bytes.unwrap_or(LEGACY_MAX_ATTACHMENT_BYTES)
+        self.max_attachment_bytes
+            .unwrap_or(LEGACY_MAX_ATTACHMENT_BYTES)
     }
 }
 
@@ -185,7 +187,12 @@ pub struct Outgoing {
 
 impl Outgoing {
     pub fn new(to: &str, body: &str) -> Self {
-        Self { id: uuid::Uuid::new_v4().simple().to_string(), to: to.into(), body: body.into(), ..Default::default() }
+        Self {
+            id: uuid::Uuid::new_v4().simple().to_string(),
+            to: to.into(),
+            body: body.into(),
+            ..Default::default()
+        }
     }
 }
 
@@ -237,12 +244,21 @@ impl HubClient {
 
     /// Probe: is something there, and is it a mail hub? Unauthenticated.
     pub async fn healthz(&self) -> Result<Health> {
-        let resp = self.http.get(self.addr.join("/healthz")).timeout(Duration::from_secs(10)).send().await?;
+        let resp = self
+            .http
+            .get(self.addr.join("/healthz"))
+            .timeout(Duration::from_secs(10))
+            .send()
+            .await?;
         if !resp.status().is_success() {
-            return Err(Error::NotAHub(format!("/healthz answered {}", resp.status())));
+            return Err(Error::NotAHub(format!(
+                "/healthz answered {}",
+                resp.status()
+            )));
         }
         let text = resp.text().await?;
-        let h: Health = serde_json::from_str(&text).map_err(|_| Error::NotAHub("unexpected /healthz reply".into()))?;
+        let h: Health = serde_json::from_str(&text)
+            .map_err(|_| Error::NotAHub("unexpected /healthz reply".into()))?;
         if !h.ok {
             return Err(Error::NotAHub("/healthz is not ok".into()));
         }
@@ -268,12 +284,19 @@ impl HubClient {
             username: &profile.username,
             blurb: &profile.blurb,
         };
-        self.post_json(me, "/api/register", &req, Duration::from_secs(20)).await
+        self.post_json(me, "/api/register", &req, Duration::from_secs(20))
+            .await
     }
 
     pub async fn unregister(&self, me: &Identity) -> Result<()> {
-        let _: serde_json::Value =
-            self.post_json(me, "/api/unregister", &serde_json::json!({}), Duration::from_secs(20)).await?;
+        let _: serde_json::Value = self
+            .post_json(
+                me,
+                "/api/unregister",
+                &serde_json::json!({}),
+                Duration::from_secs(20),
+            )
+            .await?;
         Ok(())
     }
 
@@ -282,7 +305,13 @@ impl HubClient {
     pub async fn poll(&self, me: &Identity, wait_secs: u64) -> Result<PollResult> {
         let wait = wait_secs.min(POLL_WAIT_SECS);
         let path = format!("/api/poll?wait={wait}");
-        self.post_json(me, &path, &serde_json::json!({}), Duration::from_secs(wait + 20)).await
+        self.post_json(
+            me,
+            &path,
+            &serde_json::json!({}),
+            Duration::from_secs(wait + 20),
+        )
+        .await
     }
 
     /// Take custody: the hub stops offering these ids (state -> fetched).
@@ -291,7 +320,14 @@ impl HubClient {
         struct R {
             acked: u64,
         }
-        let r: R = self.post_json(me, "/api/ack", &serde_json::json!({ "ids": ids }), Duration::from_secs(20)).await?;
+        let r: R = self
+            .post_json(
+                me,
+                "/api/ack",
+                &serde_json::json!({ "ids": ids }),
+                Duration::from_secs(20),
+            )
+            .await?;
         Ok(r.acked)
     }
 
@@ -302,7 +338,16 @@ impl HubClient {
             #[serde(flatten)]
             msg: &'a Outgoing,
         }
-        self.post_json(me, "/api/send", &Req { from: me.address(), msg }, Duration::from_secs(60)).await
+        self.post_json(
+            me,
+            "/api/send",
+            &Req {
+                from: me.address(),
+                msg,
+            },
+            Duration::from_secs(60),
+        )
+        .await
     }
 
     /// Tell senders we delivered/read their messages. `state` is
@@ -312,10 +357,18 @@ impl HubClient {
         struct R {
             recorded: u64,
         }
-        let list: Vec<_> =
-            items.iter().map(|(id, state, at)| serde_json::json!({"id": id, "state": state, "at": at})).collect();
-        let r: R =
-            self.post_json(me, "/api/receipts", &serde_json::json!({ "receipts": list }), Duration::from_secs(20)).await?;
+        let list: Vec<_> = items
+            .iter()
+            .map(|(id, state, at)| serde_json::json!({"id": id, "state": state, "at": at}))
+            .collect();
+        let r: R = self
+            .post_json(
+                me,
+                "/api/receipts",
+                &serde_json::json!({ "receipts": list }),
+                Duration::from_secs(20),
+            )
+            .await?;
         Ok(r.recorded)
     }
 
@@ -345,26 +398,44 @@ impl HubClient {
         cancel: CancelFlag,
     ) -> Result<AttachmentMeta> {
         let file = tokio::fs::File::open(path).await?;
+        self.upload(me, file, name, progress, cancel).await
+    }
+
+    /// Stream an already-open file (on Android: the descriptor behind a
+    /// content:// URI) to the hub.
+    pub async fn upload(
+        &self,
+        me: &Identity,
+        file: tokio::fs::File,
+        name: &str,
+        progress: Option<Progress>,
+        cancel: CancelFlag,
+    ) -> Result<AttachmentMeta> {
         let total = file.metadata().await?.len();
         let mut done = 0u64;
-        let stream = tokio_util::io::ReaderStream::with_capacity(file, 256 * 1024).map(move |chunk| {
-            if cancel.is_cancelled() {
-                return Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "cancelled"));
-            }
-            if let Ok(c) = &chunk {
-                done += c.len() as u64;
-                if let Some(p) = &progress {
-                    p(done, total);
+        let stream =
+            tokio_util::io::ReaderStream::with_capacity(file, 256 * 1024).map(move |chunk| {
+                if cancel.is_cancelled() {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "cancelled",
+                    ));
                 }
-            }
-            chunk
-        });
+                if let Ok(c) = &chunk {
+                    done += c.len() as u64;
+                    if let Some(p) = &progress {
+                        p(done, total);
+                    }
+                }
+                chunk
+            });
         #[derive(Deserialize)]
         struct R {
             id: String,
             bytes: u64,
         }
-        let mut url = Url::parse(&self.addr.join("/api/attachments")).map_err(|e| Error::Invalid(e.to_string()))?;
+        let mut url = Url::parse(&self.addr.join("/api/attachments"))
+            .map_err(|e| Error::Invalid(e.to_string()))?;
         url.query_pairs_mut().append_pair("name", name);
         let resp = self
             .http
@@ -375,7 +446,11 @@ impl HubClient {
             .send()
             .await?;
         let r: R = check(resp).await?.json().await?;
-        Ok(AttachmentMeta { id: r.id, name: name.to_owned(), bytes: r.bytes })
+        Ok(AttachmentMeta {
+            id: r.id,
+            name: name.to_owned(),
+            bytes: r.bytes,
+        })
     }
 
     /// Download an attachment to `dest` (written to `dest.part`, renamed when
@@ -450,9 +525,18 @@ async fn check(resp: reqwest::Response) -> Result<reqwest::Response> {
     let text = resp.text().await.unwrap_or_default();
     let detail = serde_json::from_str::<serde_json::Value>(&text)
         .ok()
-        .and_then(|v| v.get("detail").map(|d| d.as_str().map(str::to_owned).unwrap_or_else(|| d.to_string())))
+        .and_then(|v| {
+            v.get("detail").map(|d| {
+                d.as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| d.to_string())
+            })
+        })
         .unwrap_or(text);
-    Err(Error::Hub { status: status.as_u16(), detail })
+    Err(Error::Hub {
+        status: status.as_u16(),
+        detail,
+    })
 }
 
 #[cfg(test)]

@@ -28,7 +28,8 @@ impl Drop for Hub {
 
 fn mailhub_dir() -> Option<PathBuf> {
     let d = PathBuf::from(
-        std::env::var("MAILHUB_DIR").unwrap_or_else(|_| r"<orgtree>\engine\mailhub".into()),
+        std::env::var("MAILHUB_DIR")
+            .unwrap_or_else(|_| r"<orgtree>\engine\mailhub".into()),
     );
     d.join("mailhub").join("app.py").is_file().then_some(d)
 }
@@ -52,7 +53,11 @@ async fn start_hub() -> Option<Hub> {
         .stderr(Stdio::null())
         .spawn()
         .ok()?;
-    let hub = Hub { child, port, _data: data };
+    let hub = Hub {
+        child,
+        port,
+        _data: data,
+    };
     let client = HubClient::new(HubAddress::parse(&format!("127.0.0.1:{port}")).unwrap());
     let t0 = std::time::Instant::now();
     while t0.elapsed() < Duration::from_secs(30) {
@@ -65,7 +70,12 @@ async fn start_hub() -> Option<Hub> {
 }
 
 fn profile(name: &str) -> Profile {
-    Profile { kind: "chat".into(), org_name: "Hubchat".into(), username: name.into(), blurb: String::new() }
+    Profile {
+        kind: "chat".into(),
+        org_name: "Hubchat".into(),
+        username: name.into(),
+        blurb: String::new(),
+    }
 }
 
 #[tokio::test]
@@ -78,7 +88,11 @@ async fn register_send_poll_ack_receipts_and_attachments() {
 
     let h = c.healthz().await.unwrap();
     assert_eq!(h.name, "testhub");
-    assert_eq!(h.max_attachment_bytes(), 25 * 1024 * 1024, "today's hub advertises no limit");
+    assert_eq!(
+        h.max_attachment_bytes(),
+        25 * 1024 * 1024,
+        "today's hub advertises no limit"
+    );
 
     let alex = Identity::generate("alex").unwrap();
     let maya = Identity::generate("maya").unwrap();
@@ -92,7 +106,10 @@ async fn register_send_poll_ack_receipts_and_attachments() {
     assert_ne!(thief.address(), alex.address());
 
     // Unknown recipient -> 422 (shown as a failed bubble, never retried forever).
-    let err = c.send(&alex, &Outgoing::new("nobody.000000", "hi")).await.unwrap_err();
+    let err = c
+        .send(&alex, &Outgoing::new("nobody.000000", "hi"))
+        .await
+        .unwrap_err();
     assert_eq!(err.status(), Some(422));
 
     // Attachment: stream 3 MB with progress.
@@ -103,7 +120,13 @@ async fn register_send_poll_ack_receipts_and_attachments() {
     let seen = Arc::new(AtomicU64::new(0));
     let s2 = seen.clone();
     let att = c
-        .upload_file(&alex, &src, "blob.bin", Some(Arc::new(move |d, _t| s2.store(d, Ordering::SeqCst))), CancelFlag::default())
+        .upload_file(
+            &alex,
+            &src,
+            "blob.bin",
+            Some(Arc::new(move |d, _t| s2.store(d, Ordering::SeqCst))),
+            CancelFlag::default(),
+        )
         .await
         .unwrap();
     assert_eq!(att.bytes, payload.len() as u64);
@@ -120,15 +143,37 @@ async fn register_send_poll_ack_receipts_and_attachments() {
     let p = c.poll(&maya, 5).await.unwrap();
     assert_eq!(p.messages.len(), 1);
     let m = &p.messages[0];
-    assert_eq!((m.from.as_str(), m.body.as_str()), (alex.address().as_str(), "hello maya"));
+    assert_eq!(
+        (m.from.as_str(), m.body.as_str()),
+        (alex.address().as_str(), "hello maya")
+    );
     assert_eq!(m.attachments[0].bytes, payload.len() as u64);
     let dest = dir.path().join("got.bin");
-    let n = c.download_file(&maya, &m.attachments[0].id, &dest, None, CancelFlag::default()).await.unwrap();
+    let n = c
+        .download_file(
+            &maya,
+            &m.attachments[0].id,
+            &dest,
+            None,
+            CancelFlag::default(),
+        )
+        .await
+        .unwrap();
     assert_eq!(n, payload.len() as u64);
     assert_eq!(std::fs::read(&dest).unwrap(), payload);
     assert_eq!(c.ack(&maya, &[m.id.clone()]).await.unwrap(), 1);
-    c.receipts(&maya, &[(m.id.clone(), "delivered", "2026-10-08T00:00:00Z".into())]).await.unwrap();
-    c.receipts(&maya, &[(m.id.clone(), "read", "2026-10-08T00:00:01Z".into())]).await.unwrap();
+    c.receipts(
+        &maya,
+        &[(m.id.clone(), "delivered", "2026-10-08T00:00:00Z".into())],
+    )
+    .await
+    .unwrap();
+    c.receipts(
+        &maya,
+        &[(m.id.clone(), "read", "2026-10-08T00:00:01Z".into())],
+    )
+    .await
+    .unwrap();
 
     // Alex's poll carries the receipt ladder (pushed once).
     let p = c.poll(&alex, 5).await.unwrap();
@@ -141,7 +186,16 @@ async fn register_send_poll_ack_receipts_and_attachments() {
     // A third party cannot download it.
     let eve = Identity::generate("eve").unwrap();
     c.register(&eve, &profile("eve")).await.unwrap();
-    let err = c.download_file(&eve, &att.id, &dir.path().join("x"), None, CancelFlag::default()).await.unwrap_err();
+    let err = c
+        .download_file(
+            &eve,
+            &att.id,
+            &dir.path().join("x"),
+            None,
+            CancelFlag::default(),
+        )
+        .await
+        .unwrap_err();
     assert_eq!(err.status(), Some(403));
 
     // Long poll returns early when a message arrives.
@@ -150,10 +204,15 @@ async fn register_send_poll_ack_receipts_and_attachments() {
     let waiter = tokio::spawn(async move { c2.poll(&maya2, 30).await });
     tokio::time::sleep(Duration::from_millis(500)).await;
     let t0 = std::time::Instant::now();
-    c.send(&alex, &Outgoing::new(&maya.address(), "ping")).await.unwrap();
+    c.send(&alex, &Outgoing::new(&maya.address(), "ping"))
+        .await
+        .unwrap();
     let p = waiter.await.unwrap().unwrap();
     assert_eq!(p.messages[0].body, "ping");
-    assert!(t0.elapsed() < Duration::from_secs(5), "long poll woke promptly");
+    assert!(
+        t0.elapsed() < Duration::from_secs(5),
+        "long poll woke promptly"
+    );
 
     c.unregister(&eve).await.unwrap();
 }
@@ -162,5 +221,8 @@ async fn register_send_poll_ack_receipts_and_attachments() {
 async fn unreachable_hub_is_reported_as_such() {
     let c = HubClient::new(HubAddress::parse("127.0.0.1:1").unwrap());
     let err = c.healthz().await.unwrap_err();
-    assert!(matches!(err, hubchat_core::Error::Unreachable(_)), "{err:?}");
+    assert!(
+        matches!(err, hubchat_core::Error::Unreachable(_)),
+        "{err:?}"
+    );
 }

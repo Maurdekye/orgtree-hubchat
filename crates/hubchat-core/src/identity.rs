@@ -16,7 +16,9 @@ pub struct Identity {
 // Never print the secret.
 impl std::fmt::Debug for Identity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Identity").field("address", &self.address()).finish_non_exhaustive()
+        f.debug_struct("Identity")
+            .field("address", &self.address())
+            .finish_non_exhaustive()
     }
 }
 
@@ -34,7 +36,10 @@ impl Identity {
         if secret.len() < 32 || secret.chars().any(char::is_whitespace) {
             return Err(Error::Invalid("secret key is malformed".into()));
         }
-        Ok(Self { id: id.to_owned(), secret: secret.to_owned() })
+        Ok(Self {
+            id: id.to_owned(),
+            secret: secret.to_owned(),
+        })
     }
 
     pub fn id(&self) -> &str {
@@ -65,7 +70,10 @@ impl Identity {
 /// `.`, `_`, `-`; starts with a letter or digit. With the 7-char `.tag` suffix
 /// the whole slug must fit the hub's 128-char limit.
 pub fn validate_id(id: &str) -> Result<()> {
-    let ok_first = id.chars().next().is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
+    let ok_first = id
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit());
     let ok_rest = id
         .chars()
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-'));
