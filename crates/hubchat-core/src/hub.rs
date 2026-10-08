@@ -77,9 +77,19 @@ pub struct Health {
     /// raised-limit hub). Absent means the legacy 25 MiB.
     #[serde(default)]
     pub max_attachment_bytes: Option<u64>,
+    /// Mail hub v2.0: protocol version and the additions it supports
+    /// ("person", "profile", "reply_to", "sync", ...). Absent on older hubs.
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub features: Vec<String>,
 }
 
 impl Health {
+    pub fn supports(&self, feature: &str) -> bool {
+        self.features.iter().any(|f| f == feature)
+    }
+
     pub fn max_attachment_bytes(&self) -> u64 {
         self.max_attachment_bytes
             .unwrap_or(LEGACY_MAX_ATTACHMENT_BYTES)
@@ -141,6 +151,9 @@ pub struct Envelope {
     #[serde(default)]
     pub sent_at: Option<String>,
     pub received_at: String,
+    /// v2 (G3): the id of the message this one answers.
+    #[serde(default)]
+    pub reply_to: Option<String>,
     #[serde(default)]
     pub attachments: Vec<AttachmentMeta>,
 }
@@ -179,6 +192,9 @@ pub struct Outgoing {
     pub kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<String>,
+    /// Only sent to hubs that list "reply_to" in /healthz features.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sent_at: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -286,6 +302,20 @@ impl HubClient {
         };
         self.post_json(me, "/api/register", &req, Duration::from_secs(20))
             .await
+    }
+
+    /// v2 (G2): change our display name / about line. Only on hubs that
+    /// list "profile" in their features.
+    pub async fn set_profile(&self, me: &Identity, name: &str, about: &str) -> Result<()> {
+        let _: serde_json::Value = self
+            .post_json(
+                me,
+                "/api/profile",
+                &serde_json::json!({ "name": name, "about": about }),
+                Duration::from_secs(20),
+            )
+            .await?;
+        Ok(())
     }
 
     pub async fn unregister(&self, me: &Identity) -> Result<()> {

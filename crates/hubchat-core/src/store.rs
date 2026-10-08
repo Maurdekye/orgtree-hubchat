@@ -320,12 +320,16 @@ impl Store {
     /// Store an incoming message. Returns false for a duplicate (the hub is
     /// at-least-once: a lost ack redelivers).
     pub fn insert_incoming(&self, hub: &str, env: &Envelope, now: &str) -> Result<bool> {
+        let body = match env.reply_to {
+            Some(_) => crate::engine::strip_quote(&env.body),
+            None => env.body.as_str(),
+        };
         self.with(|c| {
             let tx = c.transaction()?;
             let n = tx.execute(
                 "INSERT OR IGNORE INTO messages(id, peer, outgoing, hub, body, kind, reply_to, sent_at, received_at, created_at, state)
                  VALUES(?,?,0,?,?,?,?,?,?,?,'received')",
-                params![env.id, env.from, hub, env.body, env.kind, env.thread_id_reply(), env.sent_at, env.received_at, now],
+                params![env.id, env.from, hub, body, env.kind, env.reply_to, env.sent_at, env.received_at, now],
             )?;
             if n > 0 {
                 for (i, a) in env.attachments.iter().enumerate() {
@@ -592,13 +596,6 @@ pub struct NewAttachment {
     pub source: String,
 }
 
-impl Envelope {
-    /// Today's hub has no reply_to (G3); v2.0 adds it. Until then nothing.
-    fn thread_id_reply(&self) -> Option<String> {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -613,6 +610,7 @@ mod tests {
             thread_id: None,
             sent_at: None,
             received_at: "2026-10-08T10:00:00.000Z".into(),
+            reply_to: None,
             attachments: vec![AttachmentMeta {
                 id: "a1".into(),
                 name: "f.txt".into(),

@@ -15,6 +15,21 @@ use crate::hub::{CancelFlag, Outgoing, Profile};
 use crate::store::{NewOutgoing, Store};
 use crate::{Error, HubAddress, HubClient, Identity, Result};
 
+/// First line of a reply's wire body (see `Engine::wire_body`).
+pub const QUOTE_PREFIX: &str = "> ";
+
+/// Remove the one-line quote a Hubchat reply carries, when the message also
+/// names what it answers (so the quote is shown from the referenced message).
+pub fn strip_quote(body: &str) -> &str {
+    match body
+        .strip_prefix(QUOTE_PREFIX)
+        .and_then(|r| r.split_once('\n'))
+    {
+        Some((_, rest)) => rest,
+        None => body,
+    }
+}
+
 /// Back-off between reconnects (design F7: 8, 16, 32 s, then 32 s).
 const BACKOFF: [u64; 3] = [8, 16, 32];
 
@@ -76,6 +91,8 @@ pub struct HubStatus {
     /// Unix ms of the next reconnect attempt while disconnected.
     pub retry_at_ms: Option<u64>,
     pub max_attachment_bytes: u64,
+    /// What the hub advertises in /healthz `features` (empty on older hubs).
+    pub features: Vec<String>,
 }
 
 struct HubRuntime {
@@ -199,6 +216,7 @@ impl Engine {
                 error: None,
                 retry_at_ms: None,
                 max_attachment_bytes: max.unwrap_or(crate::hub::LEGACY_MAX_ATTACHMENT_BYTES),
+                features: Vec::new(),
             },
             retry_now: Arc::new(Notify::new()),
             stop: CancelFlag::default(),
@@ -281,7 +299,12 @@ impl Engine {
     /// One connected session: probe, register, then poll until an error.
     async fn session(&self, client: &HubClient, url: &str, stop: &CancelFlag) -> Result<()> {
         let health = client.healthz().await?;
-        let profile = self.profile.lock().unwrap().clone();
+        let mut profile = self.profile.lock().unwrap().clone();
+        // Older hubs store any kind but org/chat as "org": a person registers
+        // as "chat" there (coordinator ruling 2026-10-08).
+        if profile.kind == "person" && !health.supports("person") {
+            profile.kind = "chat".into();
+        }
         client.register(&self.me, &profile).await?;
         let max = health.max_attachment_bytes();
         self.store
@@ -292,6 +315,7 @@ impl Engine {
             s.error = None;
             s.retry_at_ms = None;
             s.max_attachment_bytes = max;
+            s.features = health.features.clone();
         });
         self.queue_changed.notify_one();
         while !stop.is_cancelled() {
@@ -513,10 +537,21 @@ impl Engine {
                 }
             }
         }
+        let reply_field = self
+            .hubs
+            .lock()
+            .unwrap()
+            .get(&url)
+            .is_some_and(|h| h.status.features.iter().any(|f| f == "reply_to"));
         let out = Outgoing {
             id: m.id.clone(),
             to: m.peer.clone(),
-            body: m.body.clone(),
+            body: self.wire_body(&m)?,
+            reply_to: if reply_field {
+                m.reply_to.clone()
+            } else {
+                None
+            },
             kind: m.kind.clone(),
             thread_id: None,
             sent_at: m.sent_at.clone(),
@@ -538,6 +573,24 @@ impl Engine {
                 Ok(false)
             }
         }
+    }
+
+    /// The body as sent: a reply starts with a one-line quote of what it
+    /// answers, so clients without reply_to (Orgtree, older hubs) still see
+    /// the context. `strip_quote` removes it again on receipt.
+    fn wire_body(&self, m: &crate::store::Message) -> Result<String> {
+        let Some(rid) = &m.reply_to else {
+            return Ok(m.body.clone());
+        };
+        let quoted = self.store.message(rid)?.map(|q| q.body).unwrap_or_default();
+        let line: String = quoted
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(120)
+            .collect();
+        Ok(format!("{QUOTE_PREFIX}{line}\n{}", m.body))
     }
 
     fn fail(&self, peer: &str, id: &str, why: &str) -> Result<()> {
@@ -697,5 +750,17 @@ mod tests {
         std::fs::write(d.path().join("a.txt"), b"x").unwrap();
         assert_eq!(unique_path(d.path(), "a.txt"), d.path().join("a (2).txt"));
         assert_eq!(unique_path(d.path(), ".."), d.path().join("file"));
+    }
+}
+
+#[cfg(test)]
+mod quote_tests {
+    use super::strip_quote;
+
+    #[test]
+    fn strips_only_a_leading_quote_line() {
+        assert_eq!(strip_quote("> earlier question\nmy answer\nmore"), "my answer\nmore");
+        assert_eq!(strip_quote("no quote here"), "no quote here");
+        assert_eq!(strip_quote("> only a quote"), "> only a quote");
     }
 }
