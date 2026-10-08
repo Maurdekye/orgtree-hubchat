@@ -1,5 +1,6 @@
 // Windows layout: sidebar (chats) + conversation, overlays as modals, the
-// message info panel on the right. The window frame is native.
+// info panel on the right (Contact info, or one message's info). The window
+// frame is native.
 import { useCallback, useEffect, useState } from "react";
 import type { Message } from "../api";
 import { Icon, Logo } from "../lib/icons";
@@ -12,6 +13,7 @@ import { useForeground, useMessage, usePendingLink, useReadTracking } from "../l
 import { startUpdateChecks } from "../lib/updates";
 import { HubBanner, RecoveryBanner, UpdateBanner } from "./Banners";
 import { ChatRows, EmptyChats, useFilteredChats, type ChatFilter } from "./ChatList";
+import { ContactInfo } from "./ContactInfo";
 import { Conversation } from "./Conversation";
 import { Directory } from "./Directory";
 import { JoinFlow } from "./JoinLink";
@@ -24,6 +26,8 @@ import { TransfersChip } from "./Transfers";
 import { Addr, Avatar, Modal, ModalHead, Toasts } from "./ui";
 
 type Overlay = null | { k: "newchat"; q: string } | { k: "directory" } | { k: "settings"; tab: SetTab } | { k: "link"; tab: LinkTab; input?: string };
+/** The right-hand panel: the open chat's Contact info, or one message's info. */
+type Info = null | { k: "contact" } | { k: "msg"; id: string; peer: string };
 
 function NewChatModal({ initial, onOpen, onClose, onDirectory }: { initial: string; onOpen: (a: string) => void; onClose: () => void; onDirectory: () => void }) {
   const [q, setQ] = useState(initial);
@@ -67,13 +71,16 @@ export function Desktop() {
   const [filter, setFilter] = useState<ChatFilter>("all");
   const [q, setQ] = useState("");
   const [ov, setOv] = useState<Overlay>(null);
-  const [info, setInfo] = useState<{ id: string; peer: string } | null>(null);
+  const [info, setInfo] = useState<Info>(null);
   const fg = useForeground("desktop");
   useReadTracking(ov ? null : chat, fg);
   useEffect(() => { startUpdateChecks(); }, []);
 
-  const open = useCallback((peer: string) => { setChat(peer); setOv(null); setInfo((i) => (i && i.peer === peer ? i : null)); }, []);
-  const onInfo = useCallback((m: Message) => setInfo({ id: m.id, peer: m.peer }), []);
+  // the panel stays open across chats: Contact info follows the open chat,
+  // another chat's message info gives way to it (the prototype's openChat)
+  const open = useCallback((peer: string) => { setChat(peer); setOv(null); setInfo((i) => (i?.k === "msg" && i.peer !== peer ? { k: "contact" } : i)); }, []);
+  const onInfo = useCallback((m: Message) => setInfo({ k: "msg", id: m.id, peer: m.peer }), []);
+  const toggleContact = useCallback(() => setInfo((i) => (i?.k === "contact" ? null : { k: "contact" })), []);
   const settings = (tab: SetTab) => setOv({ k: "settings", tab });
   // a hubchat:// link the system opened us with: a signed-in device's (role
   // give) is joined; a new device's (role take) is approved here
@@ -89,6 +96,10 @@ export function Desktop() {
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "n") { e.preventDefault(); setOv({ k: "newchat", q: "" }); }
       else if (e.ctrlKey && e.key === ",") { e.preventDefault(); setOv({ k: "settings", tab: "profile" }); }
       else if (e.ctrlKey && e.key.toLowerCase() === "k") { e.preventDefault(); document.getElementById("chat-q")?.focus(); }
+      else if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "i") {
+        // Contact info, while a chat is open and nothing covers it
+        if (chat && !ov && !document.querySelector(".scrim")) { e.preventDefault(); toggleContact(); }
+      }
       else if (e.key === "Escape") {
         if (document.querySelector(".modal.confirm, .modal.link3")) return;
         if (ov) { e.preventDefault(); setOv(null); } else if (info) setInfo(null);
@@ -96,7 +107,7 @@ export function Desktop() {
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [ov, info]);
+  }, [ov, info, chat, toggleContact]);
 
   const { rows, counts, total } = useFilteredChats(filter, q, chat);
   const hs = hubSummary(hubs);
@@ -136,7 +147,7 @@ export function Desktop() {
             <button className="icon-btn side-qr" onClick={() => setOv({ k: "link", tab: "offer" })} title="Link a device: show QR code" aria-label="Link a device"><Icon name="qr" /></button>
           </div>
         </aside>
-        {chat ? <Conversation key={chat} peer={chat} onInfo={onInfo} onOpenAddr={open} /> : (
+        {chat ? <Conversation key={chat} peer={chat} onInfo={onInfo} onOpenAddr={open} onContact={toggleContact} infoOn={!!info && (info.k === "contact" || info.peer === chat)} /> : (
           <section className="conv">
             <div className="conv-empty">
               <Logo size={64} />
@@ -147,7 +158,8 @@ export function Desktop() {
             </div>
           </section>
         )}
-        {info && chat === info.peer ? <InfoPanel id={info.id} peer={info.peer} onClose={() => setInfo(null)} /> : null}
+        {chat && info?.k === "contact" ? <ContactInfo peer={chat} onClose={() => setInfo(null)} /> : null}
+        {chat && info?.k === "msg" && info.peer === chat ? <InfoPanel id={info.id} peer={info.peer} onClose={() => setInfo(null)} /> : null}
       </div>
       {ov?.k === "newchat" ? <NewChatModal initial={ov.q} onOpen={open} onClose={() => setOv(null)} onDirectory={() => setOv({ k: "directory" })} /> : null}
       {ov?.k === "directory" ? <Directory onOpen={open} onClose={() => setOv(null)} /> : null}

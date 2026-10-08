@@ -1,5 +1,6 @@
 // Android layout: a stack of full-screen screens. The system back button and
-// Escape go up one screen (history entries mirror the stack).
+// Escape go up one screen (history entries mirror the stack); with the
+// conversation's menu open they close the menu instead.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message } from "../api";
 import { Icon } from "../lib/icons";
@@ -8,6 +9,7 @@ import { useSnap } from "../lib/store";
 import { useForeground, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { HubBanner, RecoveryBanner } from "./Banners";
 import { ChatRows, EmptyChats, useFilteredChats, type ChatFilter } from "./ChatList";
+import { ContactInfo } from "./ContactInfo";
 import { Conversation } from "./Conversation";
 import { Directory } from "./Directory";
 import { MessageInfoBody } from "./MessageInfo";
@@ -17,14 +19,14 @@ import { api } from "../api";
 import { JoinFlow } from "./JoinLink";
 import { LinkDevice, type LinkTab } from "./LinkDevice";
 import { endJoin, routeLink, startJoin, useJoin, type JoinReq } from "../lib/join";
-import { errText } from "../lib/native";
+import { copyText, errText } from "../lib/native";
 import { toast } from "../lib/toast";
 import { SettingsList, SettingsSection, TABS, type SetTab } from "./Settings";
 import { TransfersStrip } from "./Transfers";
 import { Toasts } from "./ui";
 
 type Scr =
-  | { s: "chats" } | { s: "conv"; p: string } | { s: "msginfo"; id: string; p: string }
+  | { s: "chats" } | { s: "conv"; p: string } | { s: "msginfo"; id: string; p: string } | { s: "info"; p: string }
   | { s: "newchat" } | { s: "directory" } | { s: "settings" } | { s: "set"; tab: SetTab } | { s: "link"; tab?: LinkTab; input?: string };
 
 function Chats({ go }: { go: (s: Scr) => void }) {
@@ -90,6 +92,20 @@ function MsgInfoScreen({ id, peer, back }: { id: string; peer: string; back: () 
   );
 }
 
+/** The conversation's ⋮ menu: a bottom sheet (the prototype's conv-menu). */
+function ConvMenu({ peer, onContact, onClose }: { peer: string; onContact: () => void; onClose: () => void }) {
+  return (
+    <>
+      <div className="sheet-scrim" onClick={onClose} />
+      <div className="sheet" role="menu" aria-label="Chat menu">
+        <div className="grip" />
+        <button className="mi" role="menuitem" onClick={onContact}><Icon name="info" />Contact info</button>
+        <button className="mi" role="menuitem" onClick={() => { onClose(); void copyText("@net:" + peer, "Address copied"); }}><Icon name="copy" />Copy address</button>
+      </div>
+    </>
+  );
+}
+
 export function Android() {
   const [stack, setStack] = useState<Scr[]>([{ s: "chats" }]);
   const [dir, setDir] = useState<"enter" | "back" | "">("");
@@ -100,31 +116,43 @@ export function Android() {
 
   const stackRef = useRef(stack);
   stackRef.current = stack;
+  // the open conversation's menu (its address); a screen change closes it
+  const [menu, setMenu] = useState<string | null>(null);
+  const menuRef = useRef<string | null>(null);
+  const openMenu = useCallback((p: string) => { menuRef.current = p; setMenu(p); }, []);
+  const closeMenu = useCallback(() => { menuRef.current = null; setMenu(null); }, []);
   const go = useCallback((s: Scr) => {
     const st = stackRef.current;
     const t = st[st.length - 1];
+    closeMenu();
     setDir("enter");
     // opening a chat from New chat / Directory replaces those screens
     if (s.s === "conv" && (t.s === "newchat" || t.s === "directory")) { setStack([...st.slice(0, -1), s]); return; }
     history.pushState({ hc: st.length + 1 }, "");
     depth.current = st.length + 1;
     setStack([...st, s]);
-  }, []);
+  }, [closeMenu]);
   const back = useCallback(() => { if (depth.current > 1) history.back(); }, []);
 
   useEffect(() => {
     history.replaceState({ hc: 1 }, "");
     const pop = (e: PopStateEvent) => {
+      // back with the menu open: close it and keep the screen (put back the
+      // history entry the system back button took)
+      if (menuRef.current) { closeMenu(); history.pushState({ hc: depth.current }, ""); return; }
       const d = (e.state && typeof e.state.hc === "number" ? e.state.hc : 1) as number;
       depth.current = d;
       setDir("back");
       setStack((st) => st.slice(0, Math.max(1, d)));
     };
-    const key = (e: KeyboardEvent) => { if (e.key === "Escape" && !document.querySelector(".dialog")) back(); };
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || document.querySelector(".dialog")) return;
+      if (menuRef.current) closeMenu(); else back();
+    };
     window.addEventListener("popstate", pop);
     window.addEventListener("keydown", key);
     return () => { window.removeEventListener("popstate", pop); window.removeEventListener("keydown", key); };
-  }, [back]);
+  }, [back, closeMenu]);
 
   // a tapped message notification names a chat: open it (at start, and
   // whenever the app comes back to the foreground)
@@ -158,8 +186,18 @@ export function Android() {
   let screen;
   switch (top.s) {
     case "chats": screen = <Chats go={go} />; break;
-    case "conv": return <Shell dir={dir} k={"conv:" + top.p}><Conversation key={top.p} peer={top.p} onBack={back} onInfo={onInfo} onOpenAddr={openChat} /></Shell>;
+    case "conv": {
+      const p = top.p;
+      const contact = () => go({ s: "info", p });
+      return (
+        <Shell dir={dir} k={"conv:" + p}>
+          <Conversation key={p} peer={p} onBack={back} onInfo={onInfo} onOpenAddr={openChat} onContact={contact} onMenu={() => openMenu(p)} />
+          {menu === p ? <ConvMenu peer={p} onContact={contact} onClose={closeMenu} /> : null}
+        </Shell>
+      );
+    }
     case "msginfo": screen = <MsgInfoScreen id={top.id} peer={top.p} back={back} />; break;
+    case "info": screen = <ContactInfo peer={top.p} onClose={back} />; break;
     case "newchat": screen = <NewChatScreen back={back} open={openChat} dir={() => go({ s: "directory" })} />; break;
     case "directory": return <Shell dir={dir} k="directory"><Directory onOpen={openChat} onBack={back} /></Shell>;
     case "settings": return <Shell dir={dir} k="settings"><SettingsList onOpen={(tab) => go({ s: "set", tab })} onBack={back} /></Shell>;

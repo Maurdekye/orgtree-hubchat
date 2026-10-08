@@ -20,9 +20,15 @@ interface Props {
   onBack?: () => void;
   onInfo: (m: Message) => void;
   onOpenAddr: (address: string) => void;
+  /** Contact info: desktop toggles the panel, Android opens the screen. */
+  onContact?: () => void;
+  /** Desktop: the info panel is open (its header button shows it). */
+  infoOn?: boolean;
+  /** Android: the app bar's menu (Contact info, Copy address). */
+  onMenu?: () => void;
 }
 
-export function Conversation({ peer, onBack, onInfo, onOpenAddr }: Props) {
+export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, infoOn, onMenu }: Props) {
   const platform = usePlatform();
   const snap = useSnap();
   const hubs = snap.state?.hubs || [];
@@ -201,14 +207,14 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr }: Props) {
         ) : (
           <div className="appbar">
             <button className="icon-btn" onClick={onBack} aria-label="Back"><Icon name="back" /></button>
-            <div className="who">
+            <div className="who" onClick={onContact} role="button" aria-label={"Contact info: " + name}>
               <PeerAvatar address={peer} c={c} hubs={hubs} size={40} />
               <div className="t">
                 <span className="n"><span className="ell">{name}</span> <KindGlyph kind={kind} /></span>
                 <span className="s">{p.state === "disconnected" ? <Icon name="cloud_off" /> : null}{p.state === "online" ? "online" : p.short}{via && hubs.length > 1 ? " · via " + via.name : ""}</span>
               </div>
             </div>
-            <button className="icon-btn" onClick={copyAddr} aria-label="Copy address"><Icon name="copy" /></button>
+            <button className="icon-btn" onClick={onMenu} aria-label="More"><Icon name="more_vert" /></button>
           </div>
         )}
         {down ? (
@@ -227,8 +233,8 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr }: Props) {
   return (
     <section className="conv">
       <div className="conv-head">
-        <PeerAvatar address={peer} c={c} hubs={hubs} size={40} />
-        <div className="who">
+        <span className="conv-av" onClick={onContact}><PeerAvatar address={peer} c={c} hubs={hubs} size={40} /></span>
+        <div className="who" onClick={onContact} title="Contact info">
           <div className="n1"><span className="name">{name}</span>{c ? <KindChip kind={kind} /> : null}</div>
           <div className="n2">
             <PresText c={c} hubs={hubs} />
@@ -238,6 +244,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr }: Props) {
           </div>
         </div>
         <button className="icon-btn" onClick={copyAddr} title="Copy address" aria-label="Copy address"><Icon name="copy" /></button>
+        <button className={"icon-btn" + (infoOn ? " on" : "")} onClick={onContact} title="Contact info (Ctrl+I)" aria-label="Contact info" aria-pressed={!!infoOn}><Icon name="info" /></button>
       </div>
       <div className="tl-wrap">
         <div className="timeline scroll" ref={tl} onScroll={onScroll}><div className="tl-inner">{rows}</div></div>

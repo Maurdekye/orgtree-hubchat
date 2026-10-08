@@ -76,3 +76,8 @@
 .hr-try .chip { height: 32px; padding: 0 12px; border-radius: 16px; font-size: 13px; }
 .hr-x { width: 40px; height: 40px; margin: 2px -6px 0 -2px; border-radius: 20px; }
 .hr-add { height: 40px; padding: 0 14px 0 10px; margin-left: -4px; font-size: 14.5px; }
+/* Contact info (design SCR.info) */
+.hero .name { overflow-wrap: anywhere; }
+.hero .ptext { display: inline; }
+.hero .ptext:not(.p-disconnected)::before { display: inline-block; margin-right: 6px; vertical-align: 1px; }
+.hero .ptext .ic { display: inline-block; vertical-align: -3px; margin-right: 6px; }

@@ -74,3 +74,12 @@
 .hr-x { width: 30px; height: 30px; margin: 3px -4px 0 0; }
 .hr-add { height: 30px; padding: 0 10px 0 8px; margin-left: -2px; }
 .modal.join .hubrev { margin-top: 6px; }
+/* Contact info (design contactHTML): the header's avatar and name open it too */
+.conv-head .conv-av { display: flex; cursor: pointer; }
+.info-hero .name { overflow-wrap: anywhere; }
+.hubline .hl-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hubline .st { flex: none; }
+/* the hero's presence line wraps as text: a long "Status unknown — …" keeps its icon on the first line */
+.info-hero .ptext { display: inline; }
+.info-hero .ptext:not(.p-disconnected)::before { display: inline-block; margin-right: 6px; vertical-align: 1px; }
+.info-hero .ptext .ic { display: inline-block; vertical-align: -3px; margin-right: 6px; }
