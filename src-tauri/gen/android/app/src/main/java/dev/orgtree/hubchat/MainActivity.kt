@@ -12,6 +12,9 @@ import androidx.core.content.ContextCompat
 class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
+    // Test builds (package *.test) can be driven over adb + DevTools, even
+    // when built in the release configuration. The user's real app cannot.
+    if (packageName.endsWith(".test")) android.webkit.WebView.setWebContentsDebuggingEnabled(true)
     super.onCreate(savedInstanceState)
     if (Build.VERSION.SDK_INT >= 33 &&
       ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
