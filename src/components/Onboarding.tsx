@@ -21,7 +21,7 @@ import footerCrop from "../assets/desktop-footer-qr.png";
 import footerQr from "../assets/desktop-footer-qr.json";
 
 type Step = "welcome" | "id" | "addr" | "hub" | "key" | "method" | "restore" | "linkhub" | "linkname" | "linkcode" | "scan" | "keyfile"
-  | "typecode" | "joinname" | "joinhub" | "join";
+  | "typecode" | "joinname" | "joinhub" | "join" | "needgive";
 // join: scan the other device's link QR; type: type its code (and the hub)
 type Flow = "new" | "words" | "link" | "qr" | "file" | "join" | "type";
 const FLOW: Record<Flow, Step[]> = {
@@ -42,7 +42,7 @@ interface Action { label: ReactNode; onClick: () => void; primary?: boolean; dis
 
 function Frame({ step, flow, back, actions, wide, children }: { step: Step; flow: Flow; back?: () => void; actions: Action[]; wide?: boolean; children: ReactNode }) {
   const platform = usePlatform();
-  const cur = step === "joinhub" ? "joinname" : step;
+  const cur = step === "joinhub" ? "joinname" : step === "needgive" ? "scan" : step;
   const dots = step === "welcome" ? null : <div className="dots">{FLOW[flow].map((s) => <i key={s} className={s === cur ? "on" : ""} />)}</div>;
   const btn = (a: Action, i: number, block: boolean) => (
     <button key={i} className={"btn" + (a.primary ? " primary" : " ghost") + (block ? " block" : "")} onClick={a.onClick} disabled={a.disabled}>{a.label}</button>
@@ -90,7 +90,7 @@ const Tag = ({ acc, children }: { acc?: boolean; children: ReactNode }) => <> <s
 const pad = (platform: string) => (platform === "android" ? { padding: "0 20px" } : undefined);
 
 /** What the browser mock's camera reads by default: a PC's link QR. */
-const MOCK_LINK_QR = "hubchat://link?code=M3PX-7QRT-K2ZD-9HAW&hub=" + encodeURIComponent("http://hub.office.lan:7370");
+const MOCK_LINK_QR = "hubchat://link?code=M3PX-7QRT-K2ZD-9HAW&hub=" + encodeURIComponent("http://hub.office.lan:7370") + "&role=give";
 
 /** The device-name field the other device shows when it asks to approve. */
 function DevName({ value, set, onEnter, help }: { value: string; set: (v: string) => void; onEnter: () => void; help?: ReactNode }) {
@@ -283,10 +283,12 @@ export function Onboarding() {
   const joinWith = (c: string, hub: string | null, f: Flow) => {
     setJoin({ code: c, hub }); setJoinProbe(null); setFlow(f); go("joinname");
   };
-  // a phone camera opened a hubchat:// link (the PC's QR): straight to joining it
+  // a phone camera opened a hubchat:// link: a signed-in device's QR (role
+  // give) is joined straight away; a waiting device's (role take) can't be
+  // served from here, this device has no identity to give
   usePendingLink((input) => {
     if (getSnap().state?.me) return;
-    api.parseLink(input).then((p) => joinWith(p.code, p.hub, "join"), (e) => toast(errText(e)));
+    api.parseLink(input).then((p) => { if (p.role === "take") { setFlow("join"); go("needgive"); } else joinWith(p.code, p.hub, "join"); }, (e) => toast(errText(e)));
   });
   // the name step checks that this device reaches the code's hub; if not, ask for an address that works
   useEffect(() => {
@@ -308,15 +310,12 @@ export function Onboarding() {
       const t = (await scanQr(MOCK_LINK_QR))?.trim();
       if (!t) { setBusy(false); return; }
       if (/^hubchat-key/i.test(t)) { setFlow("qr"); const a = await api.restoreQr(t); await arrived(a); return; }
-      if (/^hubchat-link:/i.test(t)) {
-        setErr("That code comes from a device that is waiting to be linked itself. Scan the code your signed-in device shows: on your PC, click the QR button at the bottom of Hubchat's chat list.");
-        setBusy(false); return;
-      }
-      if (!/^hubchat:\/\//i.test(t)) {
+      if (!/^(hubchat:\/\/|hubchat-link:)/i.test(t)) {
         setErr("That QR code isn't from Hubchat. On your PC, click the QR button at the bottom of Hubchat's chat list, then scan the code it shows.");
         setBusy(false); return;
       }
       const p = await api.parseLink(t);
+      if (p.role === "take") { go("needgive"); return; }
       joinWith(p.code, p.hub, "join");
     } catch (e) { setErr(errText(e)); setBusy(false); }
   };
@@ -515,6 +514,7 @@ export function Onboarding() {
       setBusy(true); setErr(null);
       try {
         const p = await api.parseLink(code);
+        if (p.role === "take") { go("needgive"); return; }
         const hub = p.hub ?? linkHub?.url ?? null;
         setJoin({ code: p.code, hub, ok: linkHub && hub === linkHub.url ? linkHub : undefined }); setJoinProbe(null);
         go("joinname");
@@ -601,6 +601,19 @@ export function Onboarding() {
         {err ? <div className="probe-card bad"><Icon name="error" /><div><b>Couldn't use that code</b>{err}</div></div>
           : <div className="help" style={{ marginTop: 12, ...pad(platform) }}>A QR code of your key (<b>Link a device › My key as a QR code</b>) works here too, with no network.</div>}
         <div className="ob-alt"><button className="link" onClick={() => { setCode(""); pick("type", "typecode"); }}>Type the code instead</button></div>
+      </Frame>
+    );
+  }
+
+  if (step === "needgive") {
+    const acts: Action[] = platform === "android"
+      ? [{ label: busy ? "Scanning…" : <><Icon name="camera" />Scan the right QR code</>, primary: true, disabled: busy, onClick: () => { setFlow("join"); go("scan"); void scanLink(); } }]
+      : [{ label: "Type its code instead", primary: true, onClick: () => { setCode(""); pick("type", "typecode"); } }];
+    return (
+      <Frame step={step} flow={flow} back={() => go("method")} wide actions={acts}>
+        <h2>That device is waiting for an identity too</h2>
+        <p className="lead">The code you {platform === "android" ? "scanned" : "entered"} comes from a device that is waiting to be given an identity, and this {device} has none to give yet.</p>
+        <NoteCard icon="qr"><b>Scan the QR your signed-in device shows (Settings › Devices › Link a device).</b> {platform === "android" ? "On a PC, the QR button at the bottom of Hubchat's chat list shows it too." : "This PC can also type the code shown under that QR code."}</NoteCard>
       </Frame>
     );
   }

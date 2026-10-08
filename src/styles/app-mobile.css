@@ -58,3 +58,9 @@
 .ob-alt .link { font-size: 14.5px; padding: 8px 12px; }
 .ob-sub { margin: 18px 24px 10px; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); }
 .ob .hublist-ob .hl .link { flex: none; }
+/* joining another identity's link; the switch screen */
+.switch-warn .keyacts { margin: 10px 0 2px; flex-wrap: wrap; }
+.join .checkrow { margin-top: 4px; }
+.join .join-hubs { flex-wrap: wrap; }
+.join-h { margin: 4px 20px 10px; font: 600 22px/1.3 var(--font-display); color: var(--ink-strong); overflow-wrap: anywhere; }
+.join-stack { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }

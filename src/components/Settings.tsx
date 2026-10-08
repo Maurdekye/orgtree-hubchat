@@ -5,13 +5,14 @@ import { useEffect, useState, type ReactNode } from "react";
 import { api, type Devices, type HubStatus } from "../api";
 import { Icon, Logo, type IconName } from "../lib/icons";
 import { bytes } from "../lib/format";
-import { appVersion, autostart, copyText, errText } from "../lib/native";
+import { appVersion, autostart, copyText, errText, scanQr } from "../lib/native";
+import { routeLink, startJoin } from "../lib/join";
 import { hubCls, hubStatusText, hubSummary, hubVersion } from "../lib/peers";
 import { refreshDirectory, refreshState, useSnap } from "../lib/store";
 import { setThemePref, useThemePref, type ThemePref } from "../lib/theme";
 import { toast } from "../lib/toast";
 import { checkForUpdate, useUpdate } from "../lib/updates";
-import { LinkDeviceModal } from "./LinkDevice";
+import { formatCode, LinkDeviceModal, type LinkTab } from "./LinkDevice";
 import { copyWords, downloadWords } from "../lib/recovery";
 import { HubAdder } from "./HubAdder";
 import { Addr, Avatar, Confirm, NoteCard, QR, Switch, useNow, usePlatform } from "./ui";
@@ -197,12 +198,76 @@ function Recovery() {
   );
 }
 
-function Devices({ onLink, goTab }: { onLink?: () => void; goTab?: (t: SetTab) => void }) {
+/** What the browser mock's camera reads for "Use another identity": a signed-in device's link QR. */
+const MOCK_GIVE_QR = "hubchat://link?code=W2NV-8KQP-4RTX-6MJD&hub=" + encodeURIComponent("http://hub.office.lan:7370") + "&role=give";
+
+/** Use another identity on this device: join the link QR its device shows
+ *  (Android scans it; desktop types or pastes the code or the link). */
+function UseAnother({ onApprove }: { onApprove: (input: string) => void }) {
+  const platform = usePlatform();
+  const [open, setOpen] = useState(false);
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const go = async (input: string) => {
+    setBusy(true); setErr(null);
+    try {
+      const r = await routeLink(input, "join");
+      if (r.k === "join") { startJoin(r.p.code, r.p.hub); setOpen(false); setCode(""); }
+      else onApprove(r.input);
+    } catch (e) { setErr(errText(e)); }
+    finally { setBusy(false); }
+  };
+  const scan = async () => {
+    setErr(null);
+    try {
+      const t = (await scanQr(MOCK_GIVE_QR))?.trim();
+      if (!t) return;
+      if (!/^(hubchat:\/\/|hubchat-link:)/i.test(t)) { setErr("That QR code isn't a Hubchat link. On the device with the other identity: Settings › Devices › Link a device, then scan the QR code it shows."); return; }
+      await go(t);
+    } catch (e) { setErr(errText(e)); }
+  };
+  const label = <><Icon name="sync" />Use another identity on this device</>;
+  const help = platform === "android"
+    ? "Scan its link QR: on the device with that identity, Settings › Devices › Link a device. This phone asks before it switches."
+    : "Type or paste its link code: on the device with that identity, Settings › Devices › Link a device. This PC asks before it switches.";
+  if (platform === "android") {
+    return (
+      <>
+        <div className="pad" style={{ marginTop: 2 }}><button className="btn ghost block" onClick={() => void scan()} disabled={busy}>{label}</button></div>
+        <div className="help pad" style={{ paddingTop: 0 }}>{help}</div>
+        {err ? <div className="probe-card bad"><Icon name="error" /><div><b>Couldn't use that code</b>{err}</div></div> : null}
+      </>
+    );
+  }
+  const ok = /^(hubchat:\/\/|hubchat-link:)/i.test(code.trim()) || code.replace(/[^A-Za-z0-9]/g, "").length === 16;
+  return (
+    <div className="set-row use-another" style={open ? { flexWrap: "wrap" } : undefined}>
+      {!open ? <><button className="btn ghost" onClick={() => setOpen(true)}>{label}</button><span className="help">{help}</span></>
+        : <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="field" style={{ marginBottom: 8 }}>
+              <label htmlFor="ua-code">Code or link from the device with the other identity</label>
+              <label className={"input" + (/^hubchat/i.test(code) ? "" : " lc-code") + (err ? " bad" : "")}>
+                <input id="ua-code" value={code} autoFocus placeholder="XXXX-XXXX-XXXX-XXXX" autoComplete="off" autoCapitalize="characters" spellCheck={false} disabled={busy}
+                  onChange={(e) => { setCode(formatCode(e.target.value)); setErr(null); }} onKeyDown={(e) => { if (e.key === "Enter" && ok && !busy) void go(code); }} />
+              </label>
+              <div className={"help" + (err ? " bad" : "")}>{err || "On that device: Settings › Devices › Link a device › Show a QR code. The code is under the QR code. This PC asks before it switches."}</div>
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button className="btn ghost" onClick={() => { setOpen(false); setCode(""); setErr(null); }} disabled={busy}>Cancel</button>
+              <button className="btn primary" onClick={() => void go(code)} disabled={!ok || busy}>{busy ? "Checking…" : "Continue"}</button>
+            </div>
+          </div>}
+    </div>
+  );
+}
+
+function Devices({ onLink, goTab }: { onLink?: (tab?: LinkTab, input?: string) => void; goTab?: (t: SetTab) => void }) {
   const snap = useSnap();
   const platform = usePlatform();
   const me = snap.state!.me!;
-  const [linking, setLinking] = useState(false);
-  const link = onLink || (() => setLinking(true));
+  const [linking, setLinking] = useState<{ tab?: LinkTab; input?: string } | null>(null);
+  const link = (tab?: LinkTab, input?: string) => (onLink ? onLink(tab, input) : setLinking({ tab, input }));
   const self = platform === "android" ? "This phone" : "This PC";
   const pad = platform === "android" ? " pad" : "";
   // Mail hub v2.0 lists every device that syncs as us; older hubs list none.
@@ -215,8 +280,9 @@ function Devices({ onLink, goTab }: { onLink?: () => void; goTab?: (t: SetTab) =
         <Card>
           <Row icon={platform === "android" ? "phone" : "computer"} t1={<>{self} <span className="chip">this device</span></>} t2={<>Holds your key · <span className="mono"><Addr a={me.address} net /></span></>} />
           {platform === "android"
-            ? <div className="pad" style={{ marginTop: 6 }}><button className="btn block" onClick={link}><Icon name="link" />Link a device</button></div>
-            : <div className="set-row"><button className="btn" onClick={link}><Icon name="link" />Link a device</button><span className="help">Bring your identity to a new phone or PC: show a QR code for it to scan, approve its code, show your key as a QR code, or save a key file.</span></div>}
+            ? <div className="pad" style={{ marginTop: 6 }}><button className="btn block" onClick={() => link()}><Icon name="link" />Link a device</button></div>
+            : <div className="set-row"><button className="btn" onClick={() => link()}><Icon name="link" />Link a device</button><span className="help">Bring your identity to a new phone or PC: show a QR code for it to scan, approve its code, show your key as a QR code, or save a key file.</span></div>}
+          <UseAnother onApprove={(input) => link("approve", input)} />
         </Card>
         {others.length ? (
           <Card>
@@ -231,7 +297,7 @@ function Devices({ onLink, goTab }: { onLink?: () => void; goTab?: (t: SetTab) =
         <div className={"help" + pad}>All your devices are equal: each holds your one key and is <span className="mono"><Addr a={me.address} net /></span>. {list && list.devices.length ? "Your other devices are listed by hubs that run mail hub v2.0." : "Older hubs can't tell devices with the same key apart, so only this one is listed."}</div>
         <div className={"help" + pad} style={{ marginTop: 8 }}>Signing out one device comes with mail hub v2.0.</div>
       </Sec>
-      {linking ? <LinkDeviceModal onClose={() => setLinking(false)} onRecovery={goTab ? () => { setLinking(false); goTab("recovery"); } : undefined} /> : null}
+      {linking ? <LinkDeviceModal initial={linking.tab} input={linking.input} onClose={() => setLinking(null)} onRecovery={goTab ? () => { setLinking(null); goTab("recovery"); } : undefined} /> : null}
     </>
   );
 }
@@ -341,7 +407,7 @@ function About() {
   );
 }
 
-export function SettingsSection({ tab, onLink, goTab }: { tab: SetTab; onLink?: () => void; goTab?: (t: SetTab) => void }) {
+export function SettingsSection({ tab, onLink, goTab }: { tab: SetTab; onLink?: (tab?: LinkTab, input?: string) => void; goTab?: (t: SetTab) => void }) {
   switch (tab) {
     case "profile": return <Profile />;
     case "hubs": return <Hubs />;

@@ -6,9 +6,11 @@
 // out)  ?scan=TEXT (what the fake camera reads)  ?pending=ADDRESS (a tapped
 // notification)  ?link=TEXT (the hubchat:// link Android opened the app with).
 // Linking: a waiting device shows up on the third lookup; a device joining a
-// code is approved after 45 s; a key file opens with any passphrase but
+// code is approved after 45 s (a signed-in device joining one: after 2 s the
+// link turns out to be another identity, maya.e71f2b, or with a code starting
+// "SAME" this device's own); a key file opens with any passphrase but
 // "wrong". Hubs on 127.0.0.1 / localhost can't be reached from the "phone".
-import type { Api, Attachment, ChatSummary, Contact, HcEvent, HubStatus, LinkEvent, LinkLookup, Message, NewOutgoing, Probe, Resolved, State } from "../api";
+import type { Api, Attachment, ChatSummary, Contact, HcEvent, HubStatus, LinkEvent, LinkLookup, LinkRole, Message, NewOutgoing, ParsedLink, Probe, Resolved, State } from "../api";
 import { toast } from "./toast";
 
 const params = new URLSearchParams(location.search);
@@ -186,21 +188,39 @@ function adopt(withHubs: boolean): string {
   }
   return st.me.address;
 }
-function parseLink(input: string): { code: string; hub: string | null } {
-  let t = input.trim(); let hub: string | null = null;
+function parseLink(input: string): ParsedLink {
+  let t = input.trim(); let hub: string | null = null; let role: LinkRole | null = null;
   const m = /^hubchat-link:([^@]+)@(.+)$/i.exec(t);
   if (/^hubchat-link:/i.test(t) && !m) throw "damaged link QR code";
-  if (m) { t = m[1]; hub = m[2]; }
+  if (m) { t = m[1]; hub = m[2]; role = "take"; }
   else if (/^hubchat:\/\//i.test(t)) {
     let u: URL;
     try { u = new URL(t); } catch { throw "damaged link QR code"; }
     const c = u.searchParams.get("code");
     if (!c) throw "the link has no code";
     t = c; hub = u.searchParams.get("hub");
+    const r = u.searchParams.get("role");
+    role = r === "give" || r === "take" ? r : null;
   }
   const raw = t.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (raw.length !== 16) throw "a link code has 16 letters and digits (XXXX-XXXX-XXXX-XXXX); got " + raw.length;
-  return { code: raw.replace(/(.{4})(?=.)/g, "$1-"), hub };
+  return { code: raw.replace(/(.{4})(?=.)/g, "$1-"), hub, role };
+}
+
+/** The identity a link brought on a signed-in device, held until switch or cancel. */
+let pendingSwitch: string | null = null;
+/** Leave this identity, adopt Maya's (her profile and the office hub come with it). */
+function switchTo(address: string): string {
+  st.me = { id: address.split(".")[0], address, name: "Maya Lin", about: "Design · Android" };
+  st.recovery_saved = true;
+  st.hubs = [{ url: OFFICE, name: "office", state: "connecting", error: null, retry_at_ms: null, max_attachment_bytes: GB, features: ["v2"] }];
+  reconnect(st.hubs[0]);
+  msgs.length = 0;
+  for (const k of Object.keys(drafts)) delete drafts[k];
+  dir = clone(SEED_DIR).filter((c) => c.address !== address && c.hubs.includes(OFFICE)).map((c) => ({ ...c, hubs: [OFFICE] }));
+  dir.push(contact("alex.3be2c9", "person", { user: "Alex Rivera" }, "Platform team", true, now(), [OFFICE]));
+  setTimeout(() => emit({ type: "directory" }), 300);
+  return address;
 }
 
 // -------------------------------------------------------------- pipeline
@@ -392,23 +412,39 @@ export const mockApi: Api = {
   fileInfo: async (source) => { const name = source.split(/[\\/]/).pop() || "file"; return { name, bytes: SIZES[name] ?? 12345 }; },
 
   linkStart: async (hub, deviceName, joinCode) => {
-    if (st.me) throw "this device already has an identity";
     await sleep(700);
     const my = ++linkRun;
     const code = joinCode ? parseLink(joinCode).code : "K7QD-4MXP-9TRA-2HZE";
     setTimeout(() => { if (linkRun === my) linkEmit({ state: "waiting", expires_in_s: 600 }); }, 100);
+    if (st.me) {
+      // a signed-in device: the other device approves after 2 s
+      const from = st.me.address;
+      setTimeout(() => {
+        if (linkRun !== my) return;
+        if (code.startsWith("SAME")) linkEmit({ state: "same", address: from });
+        else { pendingSwitch = "maya.e71f2b"; linkEmit({ state: "switch", from, to: pendingSwitch }); }
+      }, 2000);
+      return { code, qr: "hubchat://link?code=" + code + "&hub=" + encodeURIComponent(normHub(hub) || hub) + "&role=take", hub: normHub(hub) || hub };
+    }
     // the other device approves after a while (long enough to look at the code)
     setTimeout(() => { if (linkRun === my) linkEmit({ state: "done", address: adopt(true) }); }, 45000);
     void deviceName;
-    return { code, qr: "hubchat-link:" + code + "@" + (normHub(hub) || hub), hub: normHub(hub) || hub };
+    return { code, qr: "hubchat://link?code=" + code + "&hub=" + encodeURIComponent(normHub(hub) || hub) + "&role=take", hub: normHub(hub) || hub };
   },
   linkCancel: async () => { linkRun++; },
+  linkSwitch: async () => {
+    if (!pendingSwitch) throw "nothing to switch to: link again";
+    await sleep(900);
+    const a = switchTo(pendingSwitch); pendingSwitch = null;
+    return a;
+  },
+  linkSwitchCancel: async () => { pendingSwitch = null; },
   linkOffer: async (hub) => {
     await sleep(300);
     const url = hub ? normHub(hub) : (st.hubs.find((h) => h.state === "connected") || st.hubs[0])?.url;
     if (!url) throw "add a hub first: the new device links through one";
     const code = Array.from({ length: 4 }, () => Array.from({ length: 4 }, () => "ABCDEFGHJKMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 31)]).join("")).join("-");
-    return { code, qr: "hubchat://link?code=" + encodeURIComponent(code) + "&hub=" + encodeURIComponent(url), hub: url };
+    return { code, qr: "hubchat://link?code=" + encodeURIComponent(code) + "&hub=" + encodeURIComponent(url) + "&role=give", hub: url };
   },
   parseLink: async (input) => parseLink(input),
   linkLookup: async (input): Promise<LinkLookup> => {

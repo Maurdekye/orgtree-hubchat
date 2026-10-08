@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Message } from "../api";
 import { Icon, Logo } from "../lib/icons";
-import { copyText } from "../lib/native";
+import { copyText, errText } from "../lib/native";
+import { routeLink, startJoin, useJoin } from "../lib/join";
+import { toast } from "../lib/toast";
 import { hubSummary } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { useForeground, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
@@ -12,6 +14,7 @@ import { HubBanner, RecoveryBanner, UpdateBanner } from "./Banners";
 import { ChatRows, EmptyChats, useFilteredChats, type ChatFilter } from "./ChatList";
 import { Conversation } from "./Conversation";
 import { Directory } from "./Directory";
+import { JoinFlow } from "./JoinLink";
 import { LinkDeviceModal, type LinkTab } from "./LinkDevice";
 import { MessageInfoBody } from "./MessageInfo";
 import { MessageView } from "./MessageView";
@@ -72,8 +75,14 @@ export function Desktop() {
   const open = useCallback((peer: string) => { setChat(peer); setOv(null); setInfo((i) => (i && i.peer === peer ? i : null)); }, []);
   const onInfo = useCallback((m: Message) => setInfo({ id: m.id, peer: m.peer }), []);
   const settings = (tab: SetTab) => setOv({ k: "settings", tab });
-  // a hubchat:// link the system opened us with: a new device showed it, approve it here
-  usePendingLink((input) => setOv({ k: "link", tab: "approve", input }));
+  // a hubchat:// link the system opened us with: a signed-in device's (role
+  // give) is joined; a new device's (role take) is approved here
+  usePendingLink((input) => {
+    routeLink(input, "approve").then((r) => (r.k === "join" ? startJoin(r.p.code, r.p.hub) : setOv({ k: "link", tab: "approve", input: r.input })), (e) => toast(errText(e)));
+  });
+  // joining another identity's link: it replaces whatever overlay started it
+  const join = useJoin();
+  useEffect(() => { if (join) setOv(null); }, [join]);
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -144,6 +153,7 @@ export function Desktop() {
       {ov?.k === "directory" ? <Directory onOpen={open} onClose={() => setOv(null)} /> : null}
       {ov?.k === "link" ? <LinkDeviceModal initial={ov.tab} input={ov.input} onClose={() => setOv(null)} onRecovery={() => settings("recovery")} /> : null}
       {ov?.k === "settings" ? <SettingsModal tab={ov.tab} setTab={(t) => setOv({ k: "settings", tab: t })} onClose={() => setOv(null)} /> : null}
+      {join ? <JoinFlow key={join.n} req={join} /> : null}
       <Toasts />
     </div>
   );

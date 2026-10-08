@@ -149,15 +149,24 @@ export type HcEvent =
  *  return: the one-time code, its QR text and the hub it goes through. */
 export interface LinkStart { code: string; qr: string; hub: string }
 
-/** What a typed code, a hubchat://link URL or an older hubchat-link: text holds. */
-export interface ParsedLink { code: string; hub: string | null }
+/** What a typed code, a hubchat://link URL or an older hubchat-link: text holds.
+ *  `role`: "give" (a signed-in device offers its identity: the scanner joins),
+ *  "take" (a new device asks for one: a signed-in scanner approves), or null
+ *  (a typed code; the older hubchat-link: text counts as "take"). */
+export type LinkRole = "give" | "take";
+export interface ParsedLink { code: string; hub: string | null; role: LinkRole | null }
 
 /** Progress of a link started with hc_link_start (Tauri event "hc-link"). */
 export type LinkEvent =
   | { state: "waiting"; expires_in_s: number }
   | { state: "done"; address: string }
   | { state: "failed"; error: string }
-  | { state: "expired" };
+  | { state: "expired" }
+  /** A signed-in device joined a link for the identity it already has: nothing changes. */
+  | { state: "same"; address: string }
+  /** A signed-in device joined a link for another identity: held in memory
+   *  until hc_link_switch (adopt it) or hc_link_switch_cancel (drop it). */
+  | { state: "switch"; from: string; to: string };
 
 /** Signed-in device: the waiting device a code names. */
 export interface LinkLookup {
@@ -207,13 +216,20 @@ export const tauriApi = {
   saveRecovery: (dest: string | null) => invoke<string>("hc_save_recovery", { dest }),
 
   // linking a device (src-tauri/src/link.rs)
-  /** New device. With `code` it joins the code another device shows (hc_link_offer)
-   *  instead of making its own; either way "hc-link" events follow. */
+  /** Join a link (any device). With `code` it joins the code another device shows
+   *  (hc_link_offer) instead of making its own; either way "hc-link" events follow.
+   *  A signed-in device ends in "same" or "switch" instead of "done". */
   linkStart: (hub: string, deviceName: string, code?: string | null) => invoke<LinkStart>("hc_link_start", { hub, deviceName, code: code ?? null }),
   /** Signed-in device: a one-time code (and QR) for a new device to scan or type. */
   linkOffer: (hub?: string | null) => invoke<LinkStart>("hc_link_offer", { hub: hub ?? null }),
   parseLink: (input: string) => invoke<ParsedLink>("hc_parse_link", { input }),
   linkCancel: () => invoke<void>("hc_link_cancel"),
+  /** After a "switch" event: leave the current identity on this device (signed
+   *  out on v2 hubs; key, chats, hubs and settings forgotten) and adopt the new
+   *  one. Returns the new address. */
+  linkSwitch: () => invoke<string>("hc_link_switch"),
+  /** After a "switch" event: keep the current identity; the new one is dropped. */
+  linkSwitchCancel: () => invoke<void>("hc_link_switch_cancel"),
   linkLookup: (input: string) => invoke<LinkLookup>("hc_link_lookup", { input }),
   linkApprove: (code: string) => invoke<string>("hc_link_approve", { code }),
   keyQr: () => invoke<string>("hc_key_qr"),

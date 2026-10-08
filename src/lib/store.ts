@@ -155,6 +155,15 @@ setInterval(() => {
 
 // ------------------------------------------------------------------- misc
 export function setOnboarding(on: boolean) { set({ onboarding: on }); }
+
+/** This device now holds another identity (a link switched it): drop what
+ *  belonged to the old one and load the new one, like a fresh sign-in. */
+export async function reloadAfterSwitch(): Promise<void> {
+  transfers.clear(); tsubs.forEach((f) => f());
+  active.clear(); activeChanged();
+  set({ chats: [], directory: [], byAddr: new Map(), drafts: {}, onboarding: false });
+  await refreshAll();
+}
 export function noteDraft(peer: string, body: string) {
   if ((snap.drafts[peer] || "") === body) return;
   set({ drafts: { ...snap.drafts, [peer]: body } });

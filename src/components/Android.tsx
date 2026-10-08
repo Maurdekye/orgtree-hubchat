@@ -14,7 +14,11 @@ import { MessageInfoBody } from "./MessageInfo";
 import { MessageView } from "./MessageView";
 import { NewChatInput, NewChatResults, useResolve } from "./NewChat";
 import { api } from "../api";
+import { JoinFlow } from "./JoinLink";
 import { LinkDevice, type LinkTab } from "./LinkDevice";
+import { endJoin, routeLink, startJoin, useJoin, type JoinReq } from "../lib/join";
+import { errText } from "../lib/native";
+import { toast } from "../lib/toast";
 import { SettingsList, SettingsSection, TABS, type SetTab } from "./Settings";
 import { TransfersStrip } from "./Transfers";
 import { Toasts } from "./ui";
@@ -140,9 +144,13 @@ export function Android() {
     return () => { window.removeEventListener("focus", take); document.removeEventListener("visibilitychange", take); };
   }, [go]);
 
-  // a phone camera opened a hubchat:// link: a new device showed that code, so
-  // look it up on Link a device › Approve a code
-  usePendingLink((input) => go({ s: "link", tab: "approve", input }));
+  // a phone camera opened a hubchat:// link: a signed-in device's (role give)
+  // is joined; a new device's (role take) is looked up on Link a device ›
+  // Approve a code
+  usePendingLink((input) => {
+    routeLink(input, "approve").then((r) => (r.k === "join" ? startJoin(r.p.code, r.p.hub) : go({ s: "link", tab: "approve", input: r.input })), (e) => toast(errText(e)));
+  });
+  const join = useJoin();
 
   const onInfo = useCallback((m: Message) => go({ s: "msginfo", id: m.id, p: m.peer }), [go]);
   const openChat = useCallback((a: string) => go({ s: "conv", p: a }), [go]);
@@ -158,7 +166,7 @@ export function Android() {
     case "set": screen = (
       <>
         <div className="appbar flat"><button className="icon-btn" onClick={back} aria-label="Back"><Icon name="back" /></button><div className="title">{TABS.find((t) => t[0] === top.tab)![1]}</div></div>
-        <div className="scr-body"><SettingsSection tab={top.tab} onLink={() => go({ s: "link" })} /></div>
+        <div className="scr-body"><SettingsSection tab={top.tab} onLink={(tab, input) => go({ s: "link", tab, input })} /></div>
       </>
     ); break;
     case "link": screen = (
@@ -168,7 +176,30 @@ export function Android() {
       </>
     ); break;
   }
+  if (join) return <Shell dir="enter" k={"join" + join.n}><JoinScreen req={join} /></Shell>;
   return <Shell dir={dir} k={top.s + stack.length}><div className="scr">{screen}</div></Shell>;
+}
+
+/** Joining another identity's link, over the whole stack. It holds one
+ *  history entry of its own, so the system back button leaves it. */
+function JoinScreen({ req }: { req: JoinReq }) {
+  const alive = useRef(false);
+  useEffect(() => {
+    alive.current = true;
+    if (history.state?.join !== req.n) {
+      const d = (history.state && typeof history.state.hc === "number" ? history.state.hc : 1) as number;
+      history.pushState({ hc: d, join: req.n }, "");
+    }
+    const pop = () => { if (history.state?.join !== req.n) endJoin(); };
+    window.addEventListener("popstate", pop);
+    return () => {
+      alive.current = false;
+      window.removeEventListener("popstate", pop);
+      // closed by a button: drop the entry (not on StrictMode's re-mount)
+      setTimeout(() => { if (!alive.current && history.state?.join === req.n) history.back(); }, 0);
+    };
+  }, [req.n]);
+  return <JoinFlow req={req} />;
 }
 
 /** The screen root; the inner .scr is keyed so a push or pop animates it. */

@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, type LinkLookup, type LinkStart } from "../api";
 import { Icon } from "../lib/icons";
+import { routeLink, startJoin } from "../lib/join";
 import { errText, saveKeyFileTo, scanQr } from "../lib/native";
 import { refreshDirectory, refreshState, useSnap } from "../lib/store";
 import { toast } from "../lib/toast";
@@ -25,10 +26,10 @@ const TAB_LABELS: [LinkTab, string, string][] = [
 ];
 
 /** The row of actions under a tab: right-aligned on desktop, full-width on Android. */
-function Acts({ children }: { children: ReactNode }) {
+export function Acts({ children }: { children: ReactNode }) {
   return usePlatform() === "android" ? <div className="pad" style={{ display: "flex", gap: 8, marginTop: 6 }}>{children}</div> : <div className="lc-acts">{children}</div>;
 }
-function Lead({ children }: { children: ReactNode }) {
+export function Lead({ children }: { children: ReactNode }) {
   return usePlatform() === "android" ? <div className="pad help" style={{ fontSize: 14, marginBottom: 6 }}>{children}</div> : <div className="lc-lead">{children}</div>;
 }
 
@@ -218,7 +219,20 @@ function ApproveTab({ onClose, initialInput }: { onClose: () => void; initialInp
       void refreshDirectory();
     }
   };
-  const cont = () => { const v = qrText || code.trim(); if (v) void lookup(v); };
+  /** A link with role "give" comes from a signed-in device offering its
+   *  identity: this device joins it (and asks before switching). */
+  const route = async (input: string): Promise<boolean> => {
+    const r = await routeLink(input, "approve");
+    if (r.k !== "join") return false;
+    startJoin(r.p.code, r.p.hub);
+    onClose();
+    return true;
+  };
+  const cont = () => {
+    const v = qrText || code.trim(); if (!v) return;
+    if (!/^hubchat:\/\//i.test(v)) { void lookup(v); return; }
+    route(v).then((joined) => { if (!joined) void lookup(v); }, (e) => setSt({ k: "error", msg: errText(e) }));
+  };
   const reset = () => { run.current++; setSt({ k: "idle" }); };
   const scan = async () => {
     setScanning(true);
@@ -226,6 +240,7 @@ function ApproveTab({ onClose, initialInput }: { onClose: () => void; initialInp
       const t = await scanQr("hubchat-link:K7QD-4MXP-9TRA-2HZE@http://hub.office.lan:7370");
       if (!t) return;
       if (!/^(hubchat-link:|hubchat:\/\/)/i.test(t.trim())) { setSt({ k: "error", msg: "That QR code isn't a Hubchat link code. On the new device choose “I already use Hubchat”, then “Show a code on this phone instead” (a PC: “Link through a hub”), and scan the code it shows." }); return; }
+      if (await route(t)) return;
       const p = await api.parseLink(t);
       setCode(p.code); setQrText(t.trim());
       void lookup(t.trim());

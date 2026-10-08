@@ -57,3 +57,9 @@
 .offer-how { margin-top: 14px; font-size: 13.5px; color: var(--ink); text-align: center; line-height: 1.5; }
 .offer + .offer-how + .waiting { margin-top: 14px; }
 .ob .hublist-ob .hl .link { flex: none; }
+/* joining another identity's link; the switch screen */
+.switch-warn .keyacts { margin: 10px 0 2px; }
+.modal.join .checkrow { margin-top: 10px; }
+.modal.join .join-hubs { flex-wrap: wrap; margin-bottom: 12px; }
+.modal.join .modal-h h3 { overflow-wrap: anywhere; }
+.modal.join .modal-b { min-height: 0; }

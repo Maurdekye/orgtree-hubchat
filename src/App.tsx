@@ -27,6 +27,7 @@ export default function App() {
   }
   let body;
   if (snap.onboarding || !snap.state.me) body = <><Onboarding /><Toasts /></>;
-  else body = platform === "android" ? <Android /> : <Desktop />;
+  // keyed by address: after switching identity the layout starts afresh
+  else body = platform === "android" ? <Android key={snap.state.me.address} /> : <Desktop key={snap.state.me.address} />;
   return <PlatformCtx.Provider value={platform}>{framed(body)}</PlatformCtx.Provider>;
 }
