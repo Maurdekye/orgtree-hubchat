@@ -6,6 +6,7 @@ import { api, type Contact, type Resolved } from "../api";
 import { Icon } from "../lib/icons";
 import { displayName, kindInfo, kindOf, presence, viaHub } from "../lib/peers";
 import { useSnap } from "../lib/store";
+import { isLinkWaiting, listed } from "./Directory";
 import { Addr, KindGlyph, PeerAvatar, usePlatform } from "./ui";
 
 export function useResolve(q: string): Resolved | null {
@@ -40,6 +41,9 @@ export function NewChatResults({ q, r, onOpen, onDirectory }: { q: string; r: Re
   const down = hubs.filter((h) => h.state !== "connected");
   const names = (l: typeof hubs) => l.map((h, i) => <span key={h.url}>{i ? " and " : ""}<b style={{ display: "inline" }}>{h.name}</b></span>);
   const started = (a: string) => snap.chats.some((c) => c.peer === a);
+  // the Directory's own list and counts (no waiting link addresses, not you)
+  const everyone = listed(snap.directory, snap.state?.me?.address);
+  const onlineN = everyone.filter((c) => presence(c, hubs).state === "online").length;
 
   const row = (c: Contact) => {
     const p = presence(c, hubs);
@@ -63,8 +67,8 @@ export function NewChatResults({ q, r, onOpen, onDirectory }: { q: string; r: Re
         <div className="nc-sec">Directory</div>
         <div className={platform === "android" ? "" : "dir-chips"}>
           {platform === "android"
-            ? <div className="li" onClick={onDirectory} role="button"><Icon name="contacts" /><div className="t"><div className="t1">Browse the directory</div><div className="t2">{snap.directory.length} on your hubs · {snap.directory.filter((c) => c.online).length} online</div></div><Icon name="chevron_right" className="chev" /></div>
-            : <button className="btn" onClick={onDirectory}><Icon name="contacts" />Browse everyone on your hubs <span className="dim" style={{ fontWeight: 400 }}>{snap.directory.length} people and agents · {snap.directory.filter((c) => c.online).length} online</span></button>}
+            ? <div className="li" onClick={onDirectory} role="button"><Icon name="contacts" /><div className="t"><div className="t1">Browse the directory</div><div className="t2">{everyone.length} on your hubs · {onlineN} online</div></div><Icon name="chevron_right" className="chev" /></div>
+            : <button className="btn" onClick={onDirectory}><Icon name="contacts" />Browse everyone on your hubs <span className="dim" style={{ fontWeight: 400 }}>{everyone.length} people and agents · {onlineN} online</span></button>}
         </div>
         <div className="nc-msg"><Icon name="at" /><div><b>Or type an address</b>Someone may give you theirs, or click an <span className="mono">@net:</span> link in any message.</div></div>
       </>
@@ -90,18 +94,19 @@ export function NewChatResults({ q, r, onOpen, onDirectory }: { q: string; r: Re
       </>
     );
   }
-  if (r.matches.length) {
+  const matches = r.matches.filter((c) => !isLinkWaiting(c));
+  if (matches.length) {
     return (
       <>
         <div className="nc-sec">On your hubs</div>
-        {r.matches.map(row)}
-        {r.matches.length > 1 ? <div className={"help" + (platform === "android" ? " pad" : "")} style={{ margin: platform === "android" ? undefined : "8px 4px" }}>Several share the id <b>{r.address}</b>: the tag after the dot tells them apart.</div> : null}
+        {matches.map(row)}
+        {matches.length > 1 ? <div className={"help" + (platform === "android" ? " pad" : "")} style={{ margin: platform === "android" ? undefined : "8px 4px" }}>Several share the id <b>{r.address}</b>: the tag after the dot tells them apart.</div> : null}
       </>
     );
   }
   // nothing by address: offer directory entries whose name or address starts with it
   const qq = r.address;
-  const near = qq.length >= 2 ? snap.directory.filter((c) => c.address !== snap.state?.me?.address && (c.address.startsWith(qq) || displayName(c, c.address).toLowerCase().split(/\s+/).some((w) => w.startsWith(qq)))).slice(0, 6) : [];
+  const near = qq.length >= 2 ? everyone.filter((c) => c.address.startsWith(qq) || displayName(c, c.address).toLowerCase().split(/\s+/).some((w) => w.startsWith(qq))).slice(0, 6) : [];
   if (near.length) {
     return (
       <>

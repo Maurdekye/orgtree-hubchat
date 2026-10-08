@@ -1,14 +1,23 @@
 // Directory: everyone on all your hubs in one merged list, online first, then
-// seen in the last 7 days, then the rest.
+// seen in the last 7 days, then the rest. Filters: the hub's address kinds
+// (people, orgs, chats) and, with several hubs, the hub.
 import { useState } from "react";
 import type { Contact } from "../api";
 import { Icon } from "../lib/icons";
 import { ms } from "../lib/format";
-import { displayName, isAgent, kindOf, presence } from "../lib/peers";
+import { displayName, kindOf, presence, type Kind } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { Addr, Avatar, KindGlyph, Modal, ModalHead, PeerAvatar, usePlatform } from "./ui";
 
-type KindF = "all" | "agents" | "people";
+type KindF = "all" | Kind;
+
+/** What a device waiting to be linked says about itself (src-tauri/src/link.rs). */
+const LINK_WAITING = "Waiting to be linked to a Hubchat identity";
+/** A throwaway link-a-device address (`link.<tag>` with that about line), never
+ *  a person; a real "link" with any other about line is listed as usual. */
+export const isLinkWaiting = (c: Contact) => /^link\.[^.]+$/.test(c.address) && c.blurb === LINK_WAITING;
+/** The directory as people see it: without you and without waiting link addresses. */
+export const listed = (dir: Contact[], me: string | undefined) => dir.filter((c) => c.address !== me && !isLinkWaiting(c));
 
 export function Directory({ onOpen, onClose, onBack }: { onOpen: (address: string) => void; onClose?: () => void; onBack?: () => void }) {
   const snap = useSnap();
@@ -19,11 +28,10 @@ export function Directory({ onOpen, onClose, onBack }: { onOpen: (address: strin
   const [kf, setKf] = useState<KindF>("all");
   const [hub, setHub] = useState<string>("all");
 
-  const all = snap.directory.filter((c) => c.address !== me?.address);
+  const all = listed(snap.directory, me?.address);
   const qq = q.trim().toLowerCase();
   const shown = all.filter((c) => {
-    if (kf === "agents" && !isAgent(c)) return false;
-    if (kf === "people" && isAgent(c)) return false;
+    if (kf !== "all" && kindOf(c) !== kf) return false;
     if (hub !== "all" && !c.hubs.includes(hub)) return false;
     if (qq && !(displayName(c, c.address).toLowerCase().includes(qq) || c.address.includes(qq) || c.blurb.toLowerCase().includes(qq))) return false;
     return true;
@@ -65,7 +73,7 @@ export function Directory({ onOpen, onClose, onBack }: { onOpen: (address: strin
   const hchip = (u: string, label: string) => <button key={u} className={"fchip hubf" + (hub === u ? " on" : "")} onClick={() => setHub(u)}>{label}</button>;
   const filters = (
     <>
-      {fchip("all", "All")}{fchip("agents", "Agents")}{fchip("people", "People")}
+      {fchip("all", "All")}{fchip("person", "People")}{fchip("org", "Orgs")}{fchip("chat", "Chats")}
       {hubs.length > 1 ? <><span className="fsep" />{platform === "desktop" ? <span className="flabel">Hubs</span> : null}{hchip("all", platform === "android" ? "All hubs" : "All")}{hubs.map((h) => hchip(h.url, h.name))}</> : null}
     </>
   );

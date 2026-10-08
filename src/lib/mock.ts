@@ -58,6 +58,12 @@ const SEED_DIR: Contact[] = [
   contact("research.alex.5b0e9a", "org", { org: "Research" }, "Literature and benchmarks", false, now() - 2 * 864e5, [OFFICE]),
   contact("nightly-ci.alex.8d21e0", "chat", { user: "nightly-ci" }, "Builds every night at 02:00", true, now() - 5000, [OFFICE]),
   contact("kim.19ac02", "person", { user: "Kim Okafor" }, "", false, now() - 12 * 864e5, [OFFICE]),
+  // devices' throwaway link addresses (src-tauri/src/link.rs registers them): a
+  // leftover and one waiting now; the Directory and New chat leave both out
+  contact("link.19356f", "chat", { org: "Pixel 7a", user: "link" }, "Waiting to be linked to a Hubchat identity", false, now() - 5 * 3600e3, [OFFICE]),
+  contact("link.8b02aa", "chat", { org: "New device", user: "link" }, "Waiting to be linked to a Hubchat identity", true, now() - 20000, [OFFICE]),
+  // a real person whose id is "link": listed
+  contact("link.c40e17", "person", { user: "Lincoln Kerr" }, "Goes by Link · hardware lab", false, now() - 4 * 864e5, [LAB]),
 ];
 let dir: Contact[] = onboarding ? [] : clone(SEED_DIR);
 
