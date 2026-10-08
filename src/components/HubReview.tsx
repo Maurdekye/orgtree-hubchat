@@ -26,7 +26,7 @@ interface Row {
   candidates: string[];
   on: boolean;
   /** The user ticked or unticked it (or added it): `on` is theirs. Until
-   *  then it follows the check: ticked when the address answers. */
+   *  then it follows the check (see `wanted`). */
   touched: boolean;
   check: Check;
   added: boolean;
@@ -40,6 +40,18 @@ const DEBOUNCE = 600;
 const short = (a: string) => a.trim().replace(/^http:\/\//i, "").replace(/\/+$/, "");
 const same = (a: string, b: string) => short(a).toLowerCase() === short(b).toLowerCase();
 
+/** An address that names the device it is used on (localhost, 127.x, ::1, 0.0.0.0). */
+function loopback(a: string): boolean {
+  const hostPort = a.trim().toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, "").split("/")[0];
+  const host = hostPort.startsWith("[") ? hostPort.slice(1, hostPort.indexOf("]")) : hostPort.replace(/:\d*$/, "");
+  return host === "localhost" || host.endsWith(".localhost") || /^127\./.test(host) || host === "::1" || host === "0.0.0.0";
+}
+
+/** Ticked until the user says otherwise: a hub that answers, and one that
+ *  doesn't answer now (hubs can be added while unreachable), except a
+ *  loopback address that doesn't answer here: it names the other device. */
+const wanted = (value: string, c: Check) => c.k === "ok" || (c.k === "bad" && !loopback(value));
+
 function fromProbe(p: Probe): Check {
   if (p.result === "connected") return { k: "ok", name: p.name };
   if (p.result === "invalid") return { k: "invalid", error: p.error };
@@ -50,10 +62,10 @@ function fromHub(h: HubRow, key: number): Row {
   const check: Check = !h.address.trim() ? { k: "empty" }
     : h.reachable ? { k: "ok", name: h.name || short(h.address) }
     : { k: "bad", error: h.error || "no answer" };
-  return { key, theirs: h.theirs, value: short(h.address), candidates: h.candidates, on: h.reachable, touched: false, check, added: false };
+  return { key, theirs: h.theirs, value: short(h.address), candidates: h.candidates, on: wanted(h.address, check), touched: false, check, added: false };
 }
 
-/** The review's state: rows as they arrived (ticked when reachable), the
+/** The review's state: rows as they arrived (ticked as `wanted` says), the
  *  edits, and what Confirm would send. */
 export function useHubReview(hubs: HubRow[]) {
   const [rows, setRows] = useState<Row[]>(() => hubs.map(fromHub));
@@ -69,7 +81,7 @@ export function useHubReview(hubs: HubRow[]) {
   const patch = (key: number, p: Partial<Row>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...p } : r)));
   /** A check's outcome; an untouched row's tick follows it (still checking: unchanged). */
   const settle = (key: number, c: Check) => setRows((rs) => rs.map((r) => (r.key !== key ? r
-    : { ...r, check: c, on: r.touched || c.k === "checking" ? r.on : c.k === "ok" })));
+    : { ...r, check: c, on: r.touched || c.k === "checking" ? r.on : wanted(r.value, c) })));
   const stop = (key: number) => {
     const t = timers.current.get(key);
     if (t !== undefined) clearTimeout(t);

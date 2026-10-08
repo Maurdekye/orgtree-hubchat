@@ -213,8 +213,9 @@ impl HubClient {
         Ok(check(resp).await?.json::<R>().await?.id)
     }
 
-    /// Take a device off the address's device list (no device keys yet:
-    /// the plain form, which rotates nothing).
+    /// Take a device off the address's device list: the plain form, no key
+    /// change (user ruling 2026-10-08 22:23Z; Hubchat sets no identity key,
+    /// so the hub asks for no rotation).
     pub async fn sign_out_device(&self, me: &Identity, device_id: &str) -> Result<()> {
         let resp = self
             .http
