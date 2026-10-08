@@ -92,6 +92,11 @@ pub fn run() {
     // Windows updates itself from GitHub Releases (signed); Android does not.
     #[cfg(desktop)]
     let builder = builder
+        // A second launch (Start menu, autostart) shows the running window
+        // instead of starting another Hubchat. Registered first, per the plugin.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            desktop::show(app)
+        }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         // "Start with Windows" (Settings): starts hidden in the tray.
         .plugin(
@@ -137,6 +142,7 @@ pub fn run() {
             commands::hc_mark_read,
             commands::hc_delete_message,
             commands::hc_delete_chat,
+            commands::hc_devices,
             commands::hc_draft,
             commands::hc_set_draft,
             commands::hc_file_info,

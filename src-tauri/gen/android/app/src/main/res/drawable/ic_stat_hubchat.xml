@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Notification small icon: the Hubchat mark as a white silhouette (status
+     bar icons are drawn from alpha only). The iris ring is cut out. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="256" android:viewportHeight="256">
+  <path android:fillColor="#FFFFFFFF" android:fillType="evenOdd"
+      android:pathData="M10,120C39,70 82,40 128,40s89,30 118,80c-29,50 -72,80 -118,80 -17,0 -33,-4 -48,-11L30,222l16,-46C32,160 20,141 10,120Z M128,66a54,54 0,1 0,0.01 0Z"/>
+  <path android:fillColor="#FFFFFFFF"
+      android:pathData="M128,97a23,23 0,1 0,0.01 0Z"/>
+</vector>

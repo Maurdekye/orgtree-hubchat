@@ -1,5 +1,18 @@
 {
   "identifier": "dev.orgtree.hubchat.test",
   "productName": "Hubchat Test",
-  "app": { "windows": [{ "title": "Hubchat (test build)", "width": 1180, "height": 760, "minWidth": 760, "minHeight": 520, "center": true }] }
+  "app": {
+    "windows": [
+      {
+        "title": "Hubchat (test build)",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 760,
+        "minHeight": 520,
+        "center": true,
+        "decorations": false,
+        "shadow": true
+      }
+    ]
+  }
 }

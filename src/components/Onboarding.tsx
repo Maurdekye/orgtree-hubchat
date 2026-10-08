@@ -158,6 +158,8 @@ export function Onboarding() {
   const [flow, setFlow] = useState<Flow>("new");
   const [id, setId] = useState("");
   const [name, setName] = useState("");
+  // The id follows the display name until the user edits it (user 18:24Z).
+  const [idTouched, setIdTouched] = useState(false);
   const [idCheck, setIdCheck] = useState<{ ok: boolean; error: string | null; max_len: number }>({ ok: false, error: null, max_len: 24 });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -221,20 +223,23 @@ export function Onboarding() {
     };
     return (
       <Frame step={step} flow={flow} back={() => go("welcome")} actions={[{ label: busy ? "Creating…" : "Continue", primary: true, disabled: !idCheck.ok || busy, onClick: create }]}>
-        <h2>Choose your id</h2>
-        <p className="lead">People and agents reach you by your address. Pick a short id: it becomes part of your address and can't change later.</p>
+        <h2>Who are you?</h2>
+        <p className="lead">People and agents reach you by your address. Your id becomes part of it and can't change later; your display name can.</p>
+        <div className="field">
+          <label htmlFor="ob-name">Display name</label>
+          <label className="input"><input id="ob-name" value={name} autoFocus placeholder="e.g. Alex Rivera" maxLength={48} autoComplete="off"
+            onChange={(e) => { setName(e.target.value); if (!idTouched) setId(idFromName(e.target.value, idCheck.max_len)); }}
+            onKeyDown={(e) => { if (e.key === "Enter" && idCheck.ok && !busy) void create(); }} /></label>
+          <div className="help">How you appear to others. You can change it later.</div>
+        </div>
         <div className="field">
           <label htmlFor="ob-id">Your id</label>
           <label className={"input" + (showErr ? " bad" : "")}>
-            <input id="ob-id" value={id} autoFocus placeholder="e.g. alex" maxLength={idCheck.max_len} autoComplete="off" autoCapitalize="off" spellCheck={false}
-              onChange={(e) => setId(e.target.value.toLowerCase().replace(/\s+/g, "-"))}
+            <input id="ob-id" value={id} placeholder="e.g. alex-rivera" maxLength={idCheck.max_len} autoComplete="off" autoCapitalize="off" spellCheck={false}
+              onChange={(e) => { setIdTouched(true); setId(e.target.value.toLowerCase().replace(/\s+/g, "-")); }}
               onKeyDown={(e) => { if (e.key === "Enter" && idCheck.ok && !busy) void create(); }} />
           </label>
-          <div className={"help" + (showErr ? " bad" : "")}>{showErr || "Lowercase letters, numbers and “-”, up to " + idCheck.max_len + " characters."}</div>
-        </div>
-        <div className="field">
-          <label htmlFor="ob-name">Display name <span className="dim" style={{ fontWeight: 400 }}>(optional)</span></label>
-          <label className="input"><input id="ob-name" value={name} placeholder="e.g. Alex" maxLength={48} autoComplete="off" onChange={(e) => setName(e.target.value)} /></label>
+          <div className={"help" + (showErr ? " bad" : "")}>{showErr || (idTouched ? "" : "Made from your display name until you edit it. ") + "Lowercase letters, numbers, “.”, “_” and “-”, up to " + idCheck.max_len + " characters."}</div>
         </div>
         <div className="addrprev">
           {platform === "desktop" ? <Icon name="at" /> : null}
@@ -449,4 +454,14 @@ export function Onboarding() {
       </div>
     </Frame>
   );
+}
+
+/** An id made from a display name: lowercase, accents dropped, spaces and
+ *  other separators as "-", only a-z 0-9 . _ -, starting with a letter or
+ *  digit, at most `max` characters. */
+export function idFromName(name: string, max: number): string {
+  let s = name.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  s = s.replace(/[\s/\,;:+&]+/g, "-").replace(/[^a-z0-9._-]/g, "").replace(/[-._]*-[-._]*/g, "-");
+  s = s.replace(/^[^a-z0-9]+/, "").slice(0, max).replace(/[._-]+$/, "");
+  return s;
 }

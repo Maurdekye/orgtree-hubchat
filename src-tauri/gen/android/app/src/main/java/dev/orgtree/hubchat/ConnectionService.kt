@@ -49,7 +49,7 @@ class ConnectionService : Service() {
       val open = PendingIntent.getActivity(
         ctx, peer.hashCode(), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
       val n = NotificationCompat.Builder(ctx, CHANNEL_MESSAGES)
-        .setSmallIcon(R.mipmap.ic_launcher)
+        .setSmallIcon(R.drawable.ic_stat_hubchat)
         .setContentTitle(title)
         .setContentText(body)
         .setStyle(NotificationCompat.BigTextStyle().bigText(body))
@@ -140,7 +140,7 @@ class ConnectionService : Service() {
       val open = PendingIntent.getActivity(
         ctx, 0, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
       return NotificationCompat.Builder(ctx, CHANNEL_CONNECTION)
-        .setSmallIcon(R.mipmap.ic_launcher)
+        .setSmallIcon(R.drawable.ic_stat_hubchat)
         .setContentTitle("Hubchat")
         .setContentText(text)
         .setOngoing(true)

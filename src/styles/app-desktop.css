@@ -28,3 +28,21 @@
 .ob-card .kfile { margin-top: 2px; }
 .ob .lc-steps { margin-top: -4px; }
 .lc-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+
+/* ------------------------------------------------ frameless window (18:23Z)
+   Our own title bar, modelled on Orgtree's: 46 px window buttons, close
+   turns Windows red. The bar is a Tauri drag region (move, snap,
+   double-click maximise). */
+.win { display: flex; flex-direction: column; height: 100vh; }
+.win-body { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
+.win-body > .app { height: 100%; }
+.win-body > .boot { position: absolute; }
+.titlebar { flex: none; height: 32px; display: flex; align-items: stretch; background: var(--side); border-bottom: 1px solid var(--line-soft); user-select: none; position: relative; z-index: 100; }
+.tb-brand { display: flex; align-items: center; gap: 7px; padding: 0 12px; color: var(--dim); font: 600 12px/1 var(--font-ui, inherit); letter-spacing: .02em; }
+.tb-fill { flex: 1; }
+.titlebar .window-controls { display: flex; flex: 0 0 auto; height: 100%; }
+.titlebar .window-control { flex: 0 0 46px; width: 46px; height: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--dim); display: grid; place-items: center; cursor: default; }
+.titlebar .window-control:hover { background: var(--panel-2); color: var(--ink-strong); }
+.titlebar .window-control:active { background: var(--panel); color: var(--ink-strong); }
+.titlebar .window-control.close:hover { background: #c42b1c; color: #fff; }
+.titlebar .window-control.close:active { background: #b02619; color: #fff; }

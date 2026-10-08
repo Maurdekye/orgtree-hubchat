@@ -124,6 +124,20 @@ export interface NewOutgoing {
   attachments?: NewAttachment[];
 }
 
+/** A device using this identity, as a mail hub v2.0 lists it. */
+export interface DeviceEntry {
+  device_id: string;
+  name: string | null;
+  created_at: string | null;
+  last_seen: string | null;
+  online: boolean;
+}
+
+export interface Devices {
+  this_device: string;
+  devices: DeviceEntry[];
+}
+
 export type HcEvent =
   | { type: "chat"; peer: string }
   | { type: "incoming"; peer: string; id: string; preview: string }
@@ -185,6 +199,7 @@ export const tauriApi = {
   draft: (peer: string) => invoke<string | null>("hc_draft", { peer }),
   setDraft: (peer: string, body: string) => invoke<void>("hc_set_draft", { peer, body }),
   fileInfo: (source: string) => invoke<{ name: string; bytes: number }>("hc_file_info", { source }),
+  devices: () => invoke<Devices>("hc_devices"),
 
   // linking a device (src-tauri/src/link.rs)
   linkStart: (hub: string, deviceName: string) => invoke<LinkStart>("hc_link_start", { hub, deviceName }),

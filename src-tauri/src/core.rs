@@ -179,6 +179,22 @@ impl Core {
     fn start_engine(&self, me: Identity) -> Result<(), String> {
         let profile = self.profile_from_store(&me);
         let engine = Engine::new(self.store.clone(), me, profile, self.host.clone());
+        // v2 hubs list each installation as a device: a stable id, a readable name.
+        let device_id = match self.store.meta("device.id").ok().flatten() {
+            Some(id) => id,
+            None => {
+                let id = format!(
+                    "hc-{}",
+                    &hubchat_core::engine::now().replace(|c: char| !c.is_ascii_digit(), "")[..14]
+                );
+                let id = format!("{id}-{:04x}", rand_u16());
+                self.store
+                    .set_meta("device.id", &id)
+                    .map_err(|e| e.to_string())?;
+                id
+            }
+        };
+        engine.set_device(&device_id, &device_name());
         let read = self.store.meta("settings.read_receipts").ok().flatten();
         engine.set_read_receipts(read.as_deref() != Some("off"));
         {
@@ -191,5 +207,28 @@ impl Core {
             .status(&format!("Connected as {}", engine.me().address()));
         *self.engine.lock().unwrap() = Some(engine);
         Ok(())
+    }
+}
+
+fn rand_u16() -> u16 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0),
+    );
+    h.finish() as u16
+}
+
+/// What other devices see this one called (Settings › Devices).
+fn device_name() -> String {
+    if cfg!(target_os = "android") {
+        "Android phone".into()
+    } else {
+        std::env::var("COMPUTERNAME")
+            .map(|n| format!("PC {n}"))
+            .unwrap_or_else(|_| "Windows PC".into())
     }
 }

@@ -1,5 +1,6 @@
 /* Hubchat — Windows desktop layout */
 .app { display: flex; flex-direction: column; height: 100vh; min-width: 960px; }
+.win-body > .app { height: 100%; }
 .body { flex: 1; display: flex; min-height: 0; position: relative; }
 
 /* --------------------------------------------------------------- sidebar */

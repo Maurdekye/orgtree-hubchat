@@ -38,6 +38,7 @@ jni = "0.21"
 tauri-plugin-updater = "2"
 keyring = { version = "3", features = ["windows-native"] }
 tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-barcode-scanner = "2"

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "desktop",
-  "description": "Desktop-only: self-update and relaunch",
+  "description": "Desktop-only: frameless window controls, self-update, relaunch, start with Windows",
   "platforms": [
     "windows",
     "linux",
@@ -13,6 +13,12 @@
   "permissions": [
     "updater:default",
     "process:default",
-    "autostart:default"
+    "autostart:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:window:allow-is-maximized",
+    "core:window:allow-internal-toggle-maximize"
   ]
 }

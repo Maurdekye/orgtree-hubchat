@@ -2,7 +2,7 @@
 // General (desktop), About.
 // Desktop: one modal with a nav column. Android: a list and a screen each.
 import { useEffect, useState, type ReactNode } from "react";
-import { api, type HubStatus } from "../api";
+import { api, type Devices, type HubStatus } from "../api";
 import { Icon, Logo, type IconName } from "../lib/icons";
 import { bytes } from "../lib/format";
 import { appVersion, autostart, copyText, errText } from "../lib/native";
@@ -203,6 +203,10 @@ function Devices({ onLink, goTab }: { onLink?: () => void; goTab?: (t: SetTab) =
   const link = onLink || (() => setLinking(true));
   const self = platform === "android" ? "This phone" : "This PC";
   const pad = platform === "android" ? " pad" : "";
+  // Mail hub v2.0 lists every device that syncs as us; older hubs list none.
+  const [list, setList] = useState<Devices | null>(null);
+  useEffect(() => { api.devices().then(setList, () => setList(null)); }, []);
+  const others = (list?.devices || []).filter((d) => d.device_id !== list?.this_device);
   return (
     <>
       <Sec title="Your devices" first>
@@ -212,9 +216,17 @@ function Devices({ onLink, goTab }: { onLink?: () => void; goTab?: (t: SetTab) =
             ? <div className="pad" style={{ marginTop: 6 }}><button className="btn block" onClick={link}><Icon name="link" />Link a device</button></div>
             : <div className="set-row"><button className="btn" onClick={link}><Icon name="link" />Link a device</button><span className="help">Bring your identity to a new phone or PC: approve its code, show your key as a QR code, or save a key file.</span></div>}
         </Card>
+        {others.length ? (
+          <Card>
+            {others.map((d) => (
+              <Row key={d.device_id} icon={/phone|android/i.test(d.name || "") ? "phone" : "computer"} t1={d.name || d.device_id}
+                t2={d.online ? "Online now" : d.last_seen ? "Last seen " + new Date(d.last_seen).toLocaleString() : "Not seen yet"} />
+            ))}
+          </Card>
+        ) : null}
       </Sec>
       <Sec>
-        <div className={"help" + pad}>All your devices are equal: each holds your one key and is <span className="mono"><Addr a={me.address} net /></span>. Only this one is listed, because hubs can't tell devices with the same key apart.</div>
+        <div className={"help" + pad}>All your devices are equal: each holds your one key and is <span className="mono"><Addr a={me.address} net /></span>. {list && list.devices.length ? "Your other devices are listed by hubs that run mail hub v2.0." : "Older hubs can't tell devices with the same key apart, so only this one is listed."}</div>
         <div className={"help" + pad} style={{ marginTop: 8 }}>Signing out one device comes with mail hub v2.0.</div>
       </Sec>
       {linking ? <LinkDeviceModal onClose={() => setLinking(false)} onRecovery={goTab ? () => { setLinking(false); goTab("recovery"); } : undefined} /> : null}

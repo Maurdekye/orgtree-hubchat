@@ -340,16 +340,36 @@ pub async fn hc_mark_read(peer: String) -> R<()> {
     on_core(async move { e.mark_read(&peer).await.map_err(s) }).await
 }
 
-/// "Delete for me": local only until mail hub v2.0 (G4) can delete the
-/// hub copy too.
+/// "Delete for me": our copy goes from this device and, on a mail hub v2.0,
+/// from the hub and so from all our devices. The other side keeps theirs.
 #[tauri::command]
-pub fn hc_delete_message(id: String) -> R<()> {
-    core::get()?.store.delete_message(&id).map_err(s)
+pub async fn hc_delete_message(id: String) -> R<()> {
+    let e = engine()?;
+    on_core(async move { e.delete_message(&id).await.map_err(s) }).await
 }
 
 #[tauri::command]
-pub fn hc_delete_chat(peer: String) -> R<()> {
-    core::get()?.store.delete_chat(&peer).map_err(s)
+pub async fn hc_delete_chat(peer: String) -> R<()> {
+    let e = engine()?;
+    on_core(async move { e.delete_chat(&peer).await.map_err(s) }).await
+}
+
+#[derive(Serialize)]
+pub struct Devices {
+    this_device: String,
+    devices: Vec<hubchat_core::hub_v2::DeviceEntry>,
+}
+
+/// The devices using this identity (from v2 hubs; empty on older hubs).
+#[tauri::command]
+pub async fn hc_devices() -> R<Devices> {
+    let e = engine()?;
+    let this_device = e.device().0;
+    let devices = on_core(async move { Ok(e.devices().await) }).await?;
+    Ok(Devices {
+        this_device,
+        devices,
+    })
 }
 
 #[tauri::command]

@@ -29,9 +29,17 @@ impl Host for TestHost {
 }
 
 fn device(me: &Identity, device_id: &str, dir: &std::path::Path) -> (Arc<Engine>, Arc<TestHost>) {
-    let host = Arc::new(TestHost { events: Mutex::new(Vec::new()), downloads: dir.join(device_id) });
+    let host = Arc::new(TestHost {
+        events: Mutex::new(Vec::new()),
+        downloads: dir.join(device_id),
+    });
     let store = Arc::new(Store::open_in_memory().unwrap());
-    let profile = Profile { kind: "person".into(), org_name: me.id().into(), username: me.id().into(), blurb: String::new() };
+    let profile = Profile {
+        kind: "person".into(),
+        org_name: me.id().into(),
+        username: me.id().into(),
+        blurb: String::new(),
+    };
     let e = Engine::new(store, me.clone(), profile, host.clone());
     e.set_device(device_id, device_id);
     (e, host)
@@ -40,13 +48,23 @@ fn device(me: &Identity, device_id: &str, dir: &std::path::Path) -> (Arc<Engine>
 async fn until(what: &str, secs: u64, mut f: impl FnMut() -> bool) {
     let t0 = Instant::now();
     while !f() {
-        assert!(t0.elapsed() < Duration::from_secs(secs), "timed out waiting for {what}");
+        assert!(
+            t0.elapsed() < Duration::from_secs(secs),
+            "timed out waiting for {what}"
+        );
         tokio::time::sleep(Duration::from_millis(150)).await;
     }
 }
 
 fn msg(id: &str, to: &str, body: &str) -> NewOutgoing {
-    NewOutgoing { id: id.into(), peer: to.into(), body: body.into(), kind: None, reply_to: None, attachments: vec![] }
+    NewOutgoing {
+        id: id.into(),
+        peer: to.into(),
+        body: body.into(),
+        kind: None,
+        reply_to: None,
+        attachments: vec![],
+    }
 }
 
 fn uid(p: &str) -> String {
@@ -70,7 +88,12 @@ async fn every_device_gets_everything() {
         e.add_hub(&hub).unwrap();
     }
     for e in [&a, &b, &m] {
-        until("connected", 15, || e.hub_statuses().iter().any(|s| s.state == HubState::Connected)).await;
+        until("connected", 15, || {
+            e.hub_statuses()
+                .iter()
+                .any(|s| s.state == HubState::Connected)
+        })
+        .await;
         let s = e.hub_statuses();
         assert!(s[0].features.iter().any(|f| f == "sync"), "hub is v2");
         assert_eq!(s[0].version.as_deref(), Some("2.0.0"));
@@ -79,24 +102,61 @@ async fn every_device_gets_everything() {
     // A message to alex reaches BOTH of alex's devices.
     let m1 = uid("m1-");
     m.send(msg(&m1, &alex.address(), "hello alex")).unwrap();
-    until("A gets m1", 15, || a.store().message(&m1).unwrap().is_some()).await;
-    until("B gets m1", 15, || b.store().message(&m1).unwrap().is_some()).await;
-    assert!(ha.events.lock().unwrap().iter().any(|e| matches!(e, Event::Incoming { id, .. } if *id == m1)));
+    until("A gets m1", 15, || {
+        a.store().message(&m1).unwrap().is_some()
+    })
+    .await;
+    until("B gets m1", 15, || {
+        b.store().message(&m1).unwrap().is_some()
+    })
+    .await;
+    assert!(ha
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|e| matches!(e, Event::Incoming { id, .. } if *id == m1)));
 
     // What A sends shows up on B, as ours; maya's read reaches both.
     let a1 = uid("a1-");
     a.send(msg(&a1, &maya.address(), "from the pc")).unwrap();
-    until("B sees A's message", 15, || b.store().message(&a1).unwrap().is_some_and(|x| x.outgoing)).await;
-    until("maya gets a1", 15, || m.store().message(&a1).unwrap().is_some()).await;
+    until("B sees A's message", 15, || {
+        b.store().message(&a1).unwrap().is_some_and(|x| x.outgoing)
+    })
+    .await;
+    until("maya gets a1", 15, || {
+        m.store().message(&a1).unwrap().is_some()
+    })
+    .await;
     m.mark_read(&alex.address()).await.unwrap();
-    until("A sees read", 20, || a.store().message(&a1).unwrap().unwrap().state == "read").await;
-    until("B sees read", 20, || b.store().message(&a1).unwrap().unwrap().state == "read").await;
+    until("A sees read", 20, || {
+        a.store().message(&a1).unwrap().unwrap().state == "read"
+    })
+    .await;
+    until("B sees read", 20, || {
+        b.store().message(&a1).unwrap().unwrap().state == "read"
+    })
+    .await;
 
     // Reading on A clears unread on B.
-    assert_eq!(b.store().chats().unwrap().iter().find(|c| c.peer == maya.address()).unwrap().unread, 1);
+    assert_eq!(
+        b.store()
+            .chats()
+            .unwrap()
+            .iter()
+            .find(|c| c.peer == maya.address())
+            .unwrap()
+            .unread,
+        1
+    );
     a.mark_read(&maya.address()).await.unwrap();
     until("B unread cleared", 20, || {
-        b.store().chats().unwrap().iter().find(|c| c.peer == maya.address()).is_some_and(|c| c.unread == 0)
+        b.store()
+            .chats()
+            .unwrap()
+            .iter()
+            .find(|c| c.peer == maya.address())
+            .is_some_and(|c| c.unread == 0)
     })
     .await;
 
@@ -104,20 +164,42 @@ async fn every_device_gets_everything() {
     let long: String = "0123456789abcdef\n".repeat(10_000); // 170 KB
     let m2 = uid("m2-");
     m.send(msg(&m2, &alex.address(), &long)).unwrap();
-    until("A gets long m2 whole", 20, || a.store().message(&m2).unwrap().is_some_and(|x| x.body == long)).await;
+    until("A gets long m2 whole", 20, || {
+        a.store()
+            .message(&m2)
+            .unwrap()
+            .is_some_and(|x| x.body == long)
+    })
+    .await;
 
     // Deleting on A removes our copy from B too; maya keeps hers.
     a.delete_message(&m1).await.unwrap();
-    until("B drops m1", 20, || b.store().message(&m1).unwrap().is_none()).await;
+    until("B drops m1", 20, || {
+        b.store().message(&m1).unwrap().is_none()
+    })
+    .await;
     assert!(m.store().message(&m1).unwrap().is_some());
 
     // A third device starting fresh gets the history, without notifications.
     let (c, hc) = device(&alex, "alex-tablet", dir.path());
     c.start().unwrap();
     c.add_hub(&hub).unwrap();
-    until("C gets history", 20, || c.store().message(&a1).unwrap().is_some() && c.store().message(&m2).unwrap().is_some()).await;
-    assert!(c.store().message(&m1).unwrap().is_none(), "deleted stays deleted");
-    assert!(!hc.events.lock().unwrap().iter().any(|e| matches!(e, Event::Incoming { .. })), "history is not news");
+    until("C gets history", 20, || {
+        c.store().message(&a1).unwrap().is_some() && c.store().message(&m2).unwrap().is_some()
+    })
+    .await;
+    assert!(
+        c.store().message(&m1).unwrap().is_none(),
+        "deleted stays deleted"
+    );
+    assert!(
+        !hc.events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, Event::Incoming { .. })),
+        "history is not news"
+    );
     assert_eq!(c.store().message(&a1).unwrap().unwrap().state, "read");
 
     // The device list knows all three.
