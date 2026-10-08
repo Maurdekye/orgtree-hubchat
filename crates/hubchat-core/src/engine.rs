@@ -281,10 +281,7 @@ impl Engine {
     /// sent. True when everything got through in time.
     pub async fn check_now(&self, timeout: Duration) -> bool {
         let start = unix_ms();
-        for rt in self.hubs.lock().unwrap().values() {
-            rt.kick.notify_one();
-        }
-        self.queue_changed.notify_one();
+        self.kick();
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
             let now_ms = unix_ms();
@@ -305,6 +302,15 @@ impl Engine {
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
+    }
+
+    /// Start every hub's session over now (and look at the outgoing queue):
+    /// after a freeze a parked request may sit on a connection long gone.
+    pub fn kick(&self) {
+        for rt in self.hubs.lock().unwrap().values() {
+            rt.kick.notify_one();
+        }
+        self.queue_changed.notify_one();
     }
 
     pub fn retry_now(&self) {

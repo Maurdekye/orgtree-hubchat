@@ -138,6 +138,16 @@ impl crate::core::Platform for AndroidPlatform {
     fn download_dir(&self) -> PathBuf {
         self.dir.join("downloads")
     }
+    fn stay_connected(&self) -> Option<bool> {
+        let j = JNI.get()?;
+        call(&j.service, "isStayConnected", &[], true).map(|v| v != "0")
+    }
+    fn set_stay_connected(&self, on: bool) -> Result<(), String> {
+        let j = JNI.get().ok_or("Hubchat is still starting")?;
+        call(&j.service, "setStayConnected", &[if on { "1" } else { "0" }], false)
+            .map(|_| ())
+            .ok_or_else(|| "Android refused the change".to_string())
+    }
 }
 
 #[no_mangle]
@@ -156,6 +166,38 @@ pub extern "system" fn Java_dev_orgtree_hubchat_ConnectionService_startCore(
     data_dir: JString,
 ) {
     start_core(env, data_dir);
+}
+
+/// The periodic check (design D6), called by CheckWorker on its own thread:
+/// blocks until the check is done or `timeout_secs` pass. True when every
+/// hub answered and nothing waits to be sent.
+fn check_now(timeout_secs: i32) -> bool {
+    let Ok(c) = crate::core::get() else {
+        return false;
+    };
+    let Ok(e) = c.engine() else {
+        return true; // no identity yet: nothing to check
+    };
+    let t = std::time::Duration::from_secs(timeout_secs.clamp(5, 600) as u64);
+    c.rt.block_on(async move { e.check_now(t).await })
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_orgtree_hubchat_ConnectionService_00024Companion_checkNow(
+    _env: JNIEnv,
+    _this: JObject,
+    timeout_secs: jni::sys::jint,
+) -> jni::sys::jboolean {
+    check_now(timeout_secs) as jni::sys::jboolean
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_orgtree_hubchat_ConnectionService_checkNow(
+    _env: JNIEnv,
+    _class: JClass,
+    timeout_secs: jni::sys::jint,
+) -> jni::sys::jboolean {
+    check_now(timeout_secs) as jni::sys::jboolean
 }
 
 fn start_core(mut env: JNIEnv, data_dir: JString) {

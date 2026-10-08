@@ -47,6 +47,9 @@ pub struct State {
     recovery_saved: bool,
     read_receipts: bool,
     notifications: core::NotifySettings,
+    /// Android (design D6): stay connected (true) or check about every 15
+    /// minutes (false); null on desktop.
+    stay_connected: Option<bool>,
     hubs: Vec<HubStatus>,
     platform: &'static str,
 }
@@ -69,6 +72,7 @@ pub fn hc_state() -> R<State> {
         recovery_saved: meta(c, "recovery.saved") == "yes",
         read_receipts: meta(c, "settings.read_receipts") != "off",
         notifications: c.notify_settings(),
+        stay_connected: c.platform().stay_connected(),
         hubs: engine.map(|e| e.hub_statuses()).unwrap_or_default(),
         platform: if cfg!(target_os = "android") {
             "android"
@@ -80,7 +84,15 @@ pub fn hc_state() -> R<State> {
 
 #[tauri::command]
 pub fn hc_ui_state(foreground: bool, chat: Option<String>) -> R<()> {
-    core::get()?.set_ui_state(foreground, chat);
+    let c = core::get()?;
+    // Android checking every 15 minutes: the process may have been frozen
+    // since it was last on screen, so connect afresh now (design D6)
+    if foreground && c.platform().stay_connected() == Some(false) {
+        if let Ok(e) = c.engine() {
+            e.kick();
+        }
+    }
+    c.set_ui_state(foreground, chat);
     Ok(())
 }
 
@@ -155,6 +167,19 @@ pub fn hc_set_notifications(enabled: bool, preview: bool, sound: bool) -> R<()> 
         preview,
         sound,
     })
+}
+
+/// Android (design D6): stay connected, or check about every 15 minutes.
+#[tauri::command]
+pub fn hc_set_stay_connected(on: bool) -> R<()> {
+    let c = core::get()?;
+    c.platform().set_stay_connected(on)?;
+    if let (true, Ok(e)) = (on, c.engine()) {
+        // the new ongoing notification starts at "Connecting…"
+        c.platform()
+            .status(&format!("Connected as {}", e.me().address()));
+    }
+    Ok(())
 }
 
 #[tauri::command]

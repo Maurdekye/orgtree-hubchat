@@ -42,6 +42,15 @@ pub trait Platform: Send + Sync + 'static {
     fn take_pending_chat(&self) -> Option<String> {
         None
     }
+    /// Android (design D6): stay connected with the ongoing notification
+    /// (true, the default) or check about every 15 minutes (false). None
+    /// where there is no such choice.
+    fn stay_connected(&self) -> Option<bool> {
+        None
+    }
+    fn set_stay_connected(&self, _on: bool) -> Result<(), String> {
+        Err("only Android has this setting".into())
+    }
 }
 
 pub struct Core {
