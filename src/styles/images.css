@@ -1,0 +1,27 @@
+/* Image attachments (design att-img) and the full-size viewer */
+.att-img { width: fit-content; max-width: min(360px, 100%); }
+.att-img img { width: auto; max-width: 100%; max-height: 320px; }
+.att-img.wait { width: 220px; max-width: 100%; height: 150px; display: flex; align-items: center; justify-content: center; cursor: default; }
+.att-ph { display: flex; align-items: center; justify-content: center; line-height: 0; }
+.att-ph .ic { width: 36px; height: 36px; color: var(--faint); }
+.att-img .att-x { width: 28px; height: 28px; border-radius: 14px; }
+.att-img .att-x .ic { width: 16px; height: 16px; }
+.att-img .att-bar { margin-top: 6px; }
+[data-platform=android] .att-img { max-width: min(260px, 100%); }
+[data-platform=android] .att-img img { max-height: 300px; }
+
+.imgview { cursor: zoom-out; padding: 20px; }
+.imgview img { cursor: default; max-width: 100%; object-fit: contain; }
+.imgview .iv-close { position: absolute; top: 14px; right: 16px; color: #ddd; }
+.imgview .iv-cap { display: flex; align-items: baseline; gap: 0; max-width: 90%; cursor: default; color: #ddd; }
+.imgview .iv-cap .dim { color: #aaa; white-space: nowrap; }
+.imgview .iv-acts { display: inline-flex; gap: 14px; margin-left: 16px; }
+.imgview .iv-acts .link { color: #9cc7ff; font-size: 13px; }
+.imgview .iv-acts .link:disabled { color: #888; }
+[data-platform=desktop] .imgview { top: 32px; } /* under the title bar */
+[data-platform=desktop] .imgview img { max-width: 86vw; max-height: calc(100vh - 140px); }
+[data-platform=android] .imgview { padding: calc(env(safe-area-inset-top) + 56px) 0 calc(env(safe-area-inset-bottom) + 16px); }
+[data-platform=android] .imgview img { max-height: calc(100% - 40px); }
+[data-platform=android] .imgview .iv-close { top: calc(env(safe-area-inset-top) + 6px); left: 8px; right: auto; width: 44px; height: 44px; color: #eee; }
+[data-platform=android] .imgview .iv-close .ic { width: 24px; height: 24px; }
+[data-platform=android] .imgview .iv-cap { font-size: 13.5px; padding: 0 16px; flex-wrap: wrap; }

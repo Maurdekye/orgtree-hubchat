@@ -261,6 +261,11 @@ export const tauriApi = {
   draft: (peer: string) => invoke<string | null>("hc_draft", { peer }),
   setDraft: (peer: string, body: string) => invoke<void>("hc_set_draft", { peer, body }),
   fileInfo: (source: string) => invoke<{ name: string; bytes: number }>("hc_file_info", { source }),
+  /** An image attachment's bytes for its preview (fetched from the hub once
+   *  if this device hasn't got it; never into Downloads). */
+  attachmentPreview: (messageId: string, localId: string) => invoke<ArrayBuffer>("hc_attachment_preview", { messageId, localId }),
+  /** A pasted image saved as a file the composer can attach; its path. */
+  savePasted: (name: string, data: Uint8Array) => invoke<string>("hc_save_pasted", data, { headers: { "x-name": name } }),
   devices: () => invoke<Devices>("hc_devices"),
   saveRecovery: (dest: string | null) => invoke<string>("hc_save_recovery", { dest }),
 

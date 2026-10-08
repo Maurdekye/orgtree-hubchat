@@ -136,7 +136,39 @@ if (!onboarding) {
   // a download already in progress (the transfers chip / strip)
   const big = add("nightly-ci.alex.8d21e0", false, at(0, "02:16"), "Full logs for #418.", { attachments: [att("nightly-logs-418.zip", 182 * 1048576, "downloading")] });
   setTimeout(() => { void slowDownload(big); }, 1200);
+
+  // images (user 23:29Z): a received screenshot, a sent photo, one too big
+  // for a preview, one the hub no longer has
+  const KIM = "kim.19ac02";
+  add(KIM, false, at(0, "07:40"), "The new onboarding, on my phone:", { attachments: [att("Screenshot_onboarding.png", 412 * 1024, "remote")] });
+  add(KIM, true, at(0, "07:44"), "", { attachments: [att("desk-photo.jpg", 2 * 1048576, "uploaded", { source: "C:\\Users\\alex\\Pictures\\desk-photo.jpg" })] });
+  add(KIM, false, at(0, "07:50"), "And the full-resolution scan, if you need it.", { attachments: [att("poster-scan.png", 46 * 1048576, "remote")] });
+  add(KIM, false, at(2, "18:02"), "Old one", { attachments: [att("whiteboard.jpg", 900 * 1024, "expired")] });
 }
+
+/** A made-up picture for an image attachment (the mock has no files). */
+const pictures = new Map<string, Promise<ArrayBuffer>>();
+function picture(name: string, outgoing: boolean): Promise<ArrayBuffer> {
+  let p = pictures.get(name);
+  if (!p) {
+    p = new Promise<ArrayBuffer>((ok, bad) => {
+      const tall = /screenshot/i.test(name);
+      const c = document.createElement("canvas");
+      c.width = tall ? 540 : 960; c.height = tall ? 1170 : 640;
+      const g = c.getContext("2d")!;
+      const grad = g.createLinearGradient(0, 0, c.width, c.height);
+      grad.addColorStop(0, outgoing ? "#c86b4c" : "#3b6fb5"); grad.addColorStop(1, "#1d2230");
+      g.fillStyle = grad; g.fillRect(0, 0, c.width, c.height);
+      g.fillStyle = "rgba(255,255,255,.85)"; g.font = "bold 44px sans-serif"; g.fillText(name, 32, 80);
+      g.strokeStyle = "rgba(255,255,255,.35)"; g.lineWidth = 6; g.strokeRect(24, 120, c.width - 48, c.height - 150);
+      c.toBlob((b) => (b ? b.arrayBuffer().then(ok, bad) : bad("no picture")), "image/png");
+    });
+    pictures.set(name, p);
+  }
+  return p;
+}
+/** Pasted images by the path savePasted gave them. */
+const pasted = new Map<string, Uint8Array>();
 
 // ------------------------------------------------------------------ events
 const listeners = new Set<(e: HcEvent) => void>();
@@ -459,7 +491,24 @@ export const mockApi: Api = {
     { device_id: "hc-mock-pc", name: "HOME-PC", created_at: null, last_seen: null, online: true },
     { device_id: "hc-mock-phone", name: "Android phone", created_at: null, last_seen: "2026-10-08T17:58:00.000Z", online: false },
   ] }),
-  fileInfo: async (source) => { const name = source.split(/[\\/]/).pop() || "file"; return { name, bytes: SIZES[name] ?? 12345 }; },
+  fileInfo: async (source) => { const name = source.split(/[\\/]/).pop() || "file"; return { name, bytes: pasted.get(source)?.length ?? SIZES[name] ?? 12345 }; },
+  attachmentPreview: async (messageId, localId) => {
+    const m = find(messageId); const a = m?.attachments.find((x) => x.local_id === localId);
+    if (!m || !a) throw "no such attachment";
+    await sleep(m.outgoing ? 60 : 400);
+    if (a.state === "expired" || /broken/i.test(a.name)) throw "gone";
+    const own = a.source ? pasted.get(a.source) : undefined;
+    return own ? (own.slice().buffer as ArrayBuffer) : picture(a.name, m.outgoing);
+  },
+  savePasted: async (name, data) => {
+    // a fresh file each time, as the shell does
+    const dir = "C:\\Users\\alex\\AppData\\Roaming\\Hubchat\\pasted\\";
+    const [stem, ext] = [name.replace(/\.[^.]*$/, ""), name.split(".").pop()];
+    let p = dir + name;
+    for (let i = 2; pasted.has(p); i++) p = dir + stem + "-" + i + "." + ext;
+    pasted.set(p, data);
+    return p;
+  },
 
   linkStart: async (hub, deviceName, joinCode) => {
     await sleep(700);

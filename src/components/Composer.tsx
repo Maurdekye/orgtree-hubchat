@@ -5,6 +5,7 @@ import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type
 import { api, newId, type Contact, type HubStatus, type Message, type NewAttachment } from "../api";
 import { Icon } from "../lib/icons";
 import { bytes, isLong, MAX_FILES, num, utf8Len } from "../lib/format";
+import { isImage, pastedImages, pastedName } from "../lib/images";
 import { errText, pickFiles } from "../lib/native";
 import { displayName, limitFor, preview } from "../lib/peers";
 import { noteDraft, refreshChats } from "../lib/store";
@@ -81,6 +82,17 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref }:
     setAtts(next);
   };
   useImperativeHandle(ref, () => ({ addFiles: (sources) => void addFiles(sources) }));
+  // an image pasted into the box joins the attachments (user 23:40Z); text
+  // still pastes as text
+  const paste = async (files: File[]) => {
+    const when = new Date();
+    const paths: string[] = [];
+    for (const [i, f] of files.entries()) {
+      try { paths.push(await api.savePasted(pastedName(f.type, when, i + 1), new Uint8Array(await f.arrayBuffer()))); }
+      catch (e) { setErr("Can't attach the pasted image: " + errText(e)); }
+    }
+    if (paths.length) await addFiles(paths);
+  };
   const attach = async () => {
     setErr(null);
     let picked: string[];
@@ -118,7 +130,7 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref }:
         <div className="attrow">
           {atts.map((a) => (
             <span className="attchip" key={a.source}>
-              <Icon name="file" /><span className="ell">{a.name}</span> <span className="s">{bytes(a.bytes)}</span>
+              <Icon name={isImage(a.name) ? "image" : "file"} /><span className="ell">{a.name}</span> <span className="s">{bytes(a.bytes)}</span>
               <button className="icon-btn" title="Remove" aria-label={"Remove " + a.name} onClick={() => setAtts(atts.filter((x) => x !== a))}><Icon name="close" /></button>
             </span>
           ))}
@@ -139,6 +151,7 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref }:
         <button className="icon-btn" onClick={attach} title="Attach files" aria-label="Attach files"><Icon name="attach" /></button>
         <textarea ref={ta} rows={1} value={text} spellCheck placeholder={"Message " + displayName(c, peer)}
           onChange={(e) => change(e.target.value)}
+          onPaste={(e) => { const imgs = pastedImages(e.clipboardData); if (imgs.length) { e.preventDefault(); void paste(imgs); } }}
           onKeyDown={(e) => {
             if (platform === "desktop" && e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); }
             else if (e.key === "Escape" && replyTo) { e.stopPropagation(); e.preventDefault(); onCancelReply(); }

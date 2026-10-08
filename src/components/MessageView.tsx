@@ -7,8 +7,10 @@ import { isLong, num, time } from "../lib/format";
 import { esc, md } from "../lib/md";
 import { copyText, errText, openAttachment, openFile, openLink } from "../lib/native";
 import { attView, msgTime, preview, tickInfo, type Kind } from "../lib/peers";
+import { previewable } from "../lib/images";
 import { useTransfer } from "../lib/store";
 import { toast } from "../lib/toast";
+import { AttImage } from "./AttImage";
 import { usePlatform } from "./ui";
 
 const KCHIP: Record<string, [string, string]> = { question: ["Question", "kc-q"], request: ["Request", "kc-q"], decision: ["Decision", "kc-d"], status: ["Status", "kc-s"] };
@@ -19,7 +21,14 @@ function metaHTML(m: Message): string {
   return h + "</span>";
 }
 
+/** An attachment: an image shows as itself (falling back to its card),
+ *  anything else as a file card. */
 export function AttCard({ a, m }: { a: Attachment; m: Message }) {
+  const card = <FileCard a={a} m={m} />;
+  return previewable(a) ? <AttImage a={a} m={m} fallback={card} /> : card;
+}
+
+function FileCard({ a, m }: { a: Attachment; m: Message }) {
   const platform = usePlatform();
   const prog = useTransfer(a.local_id);
   const v = attView(a, m, prog && (a.state === "uploading" || a.state === "downloading") ? prog : undefined);

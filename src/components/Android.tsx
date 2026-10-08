@@ -23,6 +23,7 @@ import { copyText, errText } from "../lib/native";
 import { toast } from "../lib/toast";
 import { SettingsList, SettingsSection, TABS, type SetTab } from "./Settings";
 import { TransfersStrip } from "./Transfers";
+import { ImageViewer } from "./AttImage";
 import { Toasts } from "./ui";
 
 type Scr =
@@ -245,6 +246,7 @@ function Shell({ dir, k, children }: { dir: string; k: string; children: React.R
   return (
     <div className="screen">
       <div className="viewport"><div key={k} className={"scr-anim " + dir} style={{ position: "absolute", inset: 0 }}>{children}</div></div>
+      <ImageViewer />
       <Toasts />
     </div>
   );

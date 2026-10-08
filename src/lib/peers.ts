@@ -2,6 +2,7 @@
 // the directory and the hub statuses the core reports.
 import type { Attachment, Contact, HubStatus, Message } from "../api";
 import { ago, bytes, ms } from "./format";
+import { isImage } from "./images";
 import { plain } from "./md";
 import type { IconName } from "./icons";
 
@@ -71,7 +72,8 @@ export const msgTime = (m: Message) => (m.outgoing ? ms(m.created_at) : ms(m.rec
 export function preview(m: Message | undefined | null): string {
   if (!m) return "";
   const t = plain(m.body);
-  const names = m.attachments.map((a) => a.name).join(", ");
+  // an image goes by "Photo" (design)
+  const names = m.attachments.map((a) => (isImage(a.name) ? "Photo" : a.name)).join(", ");
   if (!t) return names;
   return names ? names + " · " + t : t;
 }

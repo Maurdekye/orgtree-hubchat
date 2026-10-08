@@ -23,6 +23,7 @@ import { MessageView } from "./MessageView";
 import { NewChatInput, NewChatResults, useResolve } from "./NewChat";
 import { SettingsModal, type SetTab } from "./Settings";
 import { TransfersChip } from "./Transfers";
+import { ImageViewer } from "./AttImage";
 import { Addr, Avatar, Modal, ModalHead, Toasts } from "./ui";
 
 type Overlay = null | { k: "newchat"; q: string } | { k: "directory" } | { k: "settings"; tab: SetTab } | { k: "link"; tab: LinkTab; input?: string };
@@ -166,6 +167,7 @@ export function Desktop() {
       {ov?.k === "link" ? <LinkDeviceModal initial={ov.tab} input={ov.input} onClose={() => setOv(null)} onRecovery={() => settings("recovery")} /> : null}
       {ov?.k === "settings" ? <SettingsModal tab={ov.tab} setTab={(t) => setOv({ k: "settings", tab: t })} onClose={() => setOv(null)} /> : null}
       {join ? <JoinFlow key={join.n} req={join} /> : null}
+      <ImageViewer />
       <Toasts />
     </div>
   );
