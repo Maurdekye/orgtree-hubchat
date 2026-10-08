@@ -171,17 +171,34 @@ export interface ParsedLink {
   role: LinkRole | null;
 }
 
+/** One hub an arriving identity brings, as this device reaches it (user 20:38Z). */
+export interface HubRow {
+  /** The hub as the other device knows it (may be localhost-style). */
+  theirs: string;
+  /** Best address found on this device: one that answered, else the first candidate. */
+  address: string;
+  /** Addresses tried, likeliest first. */
+  candidates: string[];
+  /** The hub name that answered at `address` (null: nothing answered). */
+  name: string | null;
+  /** Why `address` didn't answer (null when reachable). */
+  error: string | null;
+  reachable: boolean;
+}
+
 /** Progress of a link started with hc_link_start (Tauri event "hc-link"). */
 export type LinkEvent =
   | { state: "waiting"; expires_in_s: number }
-  | { state: "done"; address: string }
   | { state: "failed"; error: string }
   | { state: "expired" }
   /** A signed-in device joined a link for the identity it already has: nothing changes. */
   | { state: "same"; address: string }
-  /** A signed-in device joined a link for another identity: held in memory
-   *  until hc_link_switch (adopt it) or hc_link_switch_cancel (drop it). */
-  | { state: "switch"; from: string; to: string };
+  /** An identity arrived: held in memory, nothing saved, until hc_link_confirm
+   *  (adopt it with the hubs the user kept) or hc_link_discard (drop it).
+   *  `from`: this device's identity now (confirming switches from it), or
+   *  null on a fresh device; `to`, `name`: what arrived; `hubs`: the hubs
+   *  that come with it, one row each. */
+  | { state: "review"; from: string | null; to: string; name: string; hubs: HubRow[] };
 
 /** Signed-in device: the waiting device a code names. */
 export interface LinkLookup {
@@ -234,20 +251,21 @@ export const tauriApi = {
 
   // linking a device (src-tauri/src/link.rs)
   /** Join a link (any device). With `code` it joins the code another device shows
-   *  (hc_link_offer) instead of making its own; either way "hc-link" events follow.
-   *  A signed-in device ends in "same" or "switch" instead of "done". */
-  /** `aliases`: the other addresses the link named for `hub` (not kept as extra hubs). */
+   *  (hc_link_offer) instead of making its own; either way "hc-link" events follow,
+   *  ending in "review" (or "same": a signed-in device that already is that identity).
+   *  `aliases`: the other addresses the link named for `hub` (not kept as extra hubs). */
   linkStart: (hub: string, deviceName: string, code?: string | null, aliases?: string[] | null) => invoke<LinkStart>("hc_link_start", { hub, deviceName, code: code ?? null, aliases: aliases ?? null }),
   /** Signed-in device: a one-time code (and QR) for a new device to scan or type. */
   linkOffer: (hub?: string | null) => invoke<LinkStart>("hc_link_offer", { hub: hub ?? null }),
   parseLink: (input: string) => invoke<ParsedLink>("hc_parse_link", { input }),
   linkCancel: () => invoke<void>("hc_link_cancel"),
-  /** After a "switch" event: leave the current identity on this device (signed
-   *  out on v2 hubs; key, chats, hubs and settings forgotten) and adopt the new
-   *  one. Returns the new address. */
-  linkSwitch: () => invoke<string>("hc_link_switch"),
-  /** After a "switch" event: keep the current identity; the new one is dropped. */
-  linkSwitchCancel: () => invoke<void>("hc_link_switch_cancel"),
+  /** After a "review" event: adopt the identity that arrived with exactly these
+   *  hub addresses, in this order. On a signed-in device it first leaves `from`
+   *  (signed out on v2 hubs; key, chats, hubs and settings forgotten): that is
+   *  the switch. Returns the new address. */
+  linkConfirm: (hubs: string[]) => invoke<string>("hc_link_confirm", { hubs }),
+  /** After a "review" event: drop what arrived; nothing changes. */
+  linkDiscard: () => invoke<void>("hc_link_discard"),
   linkLookup: (input: string) => invoke<LinkLookup>("hc_link_lookup", { input }),
   linkApprove: (code: string) => invoke<string>("hc_link_approve", { code }),
   keyQr: () => invoke<string>("hc_key_qr"),

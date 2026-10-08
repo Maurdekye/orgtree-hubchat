@@ -63,3 +63,14 @@
 .modal.join .join-hubs { flex-wrap: wrap; margin-bottom: 12px; }
 .modal.join .modal-h h3 { overflow-wrap: anywhere; }
 .modal.join .modal-b { min-height: 0; }
+/* the hub review (link arrivals) */
+.hubrev { margin-bottom: 12px; }
+.hr-h b { font-size: 13.5px; }
+.hr-h > span { font-size: 12.5px; }
+.hr-tick { width: 16px; height: 16px; margin-top: 10px; }
+.hr-main .input { height: 36px; }
+.hr-main .input input { font-size: 13px; }
+.hr-st, .hr-try { font-size: 12.5px; }
+.hr-x { width: 30px; height: 30px; margin: 3px -4px 0 0; }
+.hr-add { height: 30px; padding: 0 10px 0 8px; margin-left: -2px; }
+.modal.join .hubrev { margin-top: 6px; }

@@ -1,10 +1,12 @@
 // A signed-in device joins another device's link (user 19:21-19:22Z): reach
 // the link's hub (or ask for an address that works), join, wait for the other
 // device to approve. What arrives is either this device's own identity
-// ("same": nothing changes) or another one ("switch": leave this identity and
-// adopt that one, or keep it). Desktop: a modal; Android: a full screen.
+// ("same": nothing changes) or another one ("review": the switch screen with
+// the hubs that come with it, user 20:38Z; switch to it with the hubs kept,
+// or keep this identity). Nothing is saved before Switch. Desktop: a modal;
+// Android: a full screen.
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { api, type LinkStart } from "../api";
+import { api, type LinkEvent, type LinkStart } from "../api";
 import { Icon } from "../lib/icons";
 import { endJoin, type JoinReq } from "../lib/join";
 import { errText } from "../lib/native";
@@ -12,10 +14,12 @@ import { copyWords, downloadWords } from "../lib/recovery";
 import { reloadAfterSwitch, useSnap } from "../lib/store";
 import { toast } from "../lib/toast";
 import { HubAdder } from "./HubAdder";
+import { HubReview, useHubReview } from "./HubReview";
 import { Acts, Lead } from "./LinkDevice";
 import { Addr, Modal, ModalHead, NoteCard, useNow, usePlatform } from "./ui";
 
 type Hub = { url: string; name: string };
+type Arrived = Extract<LinkEvent, { state: "review" }>;
 type St =
   | { k: "probe"; hub: string; all?: string[] }
   | { k: "hub"; hub: string | null; why: string | null }
@@ -24,7 +28,7 @@ type St =
   | { k: "failed"; hub: Hub | null; msg: string }
   | { k: "expired"; hub: Hub }
   | { k: "same"; address: string }
-  | { k: "switch"; from: string; to: string; busy?: boolean };
+  | { k: "review"; ev: Arrived; busy?: boolean };
 
 /** Desktop: a modal titled `heading` (else `title`); Android: a screen with
  *  `title` in its app bar and `heading` on top of the body. */
@@ -46,13 +50,68 @@ function Shell({ title, heading, onClose, children }: { title: ReactNode; headin
   );
 }
 
+/** What arrived, to check before anything is saved: the hubs it brings (one
+ *  row each) and, on a device that has an identity, the switch away from it.
+ *  With no identity here (`from` null) it is a plain Confirm, as onboarding. */
+function ReviewScreen({ ev, busy, onKeep, onConfirm }: { ev: Arrived; busy?: boolean; onKeep: () => void; onConfirm: (urls: string[]) => void }) {
+  const platform = usePlatform();
+  const snap = useSnap();
+  const self = platform === "android" ? "phone" : "PC";
+  const blk = platform === "android" ? " block" : "";
+  const rev = useHubReview(ev.hubs);
+  const [ack, setAck] = useState(false);
+  const close = () => { if (!busy) onKeep(); };
+  const to = <span className="mono"><Addr a={ev.to} net /></span>;
+  const check = <>Check the address this {self} should use for each; untick any you don't want.</>;
+
+  if (!ev.from) {
+    const cancelBtn = <button className={"btn ghost" + blk} onClick={close} disabled={busy}>Cancel</button>;
+    const okBtn = <button className={"btn primary" + blk} onClick={() => onConfirm(rev.urls)} disabled={busy || rev.blocked}>Confirm</button>;
+    return (
+      <Shell title="Use another identity" heading={<>Bring these hubs to this {self}?</>} onClose={close}>
+        <Lead>{to}{ev.name ? <> ({ev.name})</> : null} arrived. {ev.hubs.length ? <>These hubs come with it. {check}</> : <>No hubs came with it. Add the one this {self} should use.</>}</Lead>
+        <HubReview rev={rev} disabled={busy} />
+        {busy ? <div className="probe-card busy"><span className="spin" /><div>Bringing {to} to this {self}…</div></div> : null}
+        {platform === "android" ? <div className="pad join-stack">{okBtn}{cancelBtn}</div> : <Acts>{cancelBtn}{okBtn}</Acts>}
+      </Shell>
+    );
+  }
+
+  const from = <span className="mono"><Addr a={ev.from} net /></span>;
+  const id = ev.from.split(".")[0];
+  const keepBtn = <button className={"btn ghost" + blk} onClick={close} disabled={busy}><span>Keep <Addr a={ev.from} net /></span></button>;
+  const switchBtn = <button className={"btn primary" + blk} onClick={() => onConfirm(rev.urls)} disabled={!ack || busy || rev.blocked}><Icon name="sync" /><span>Switch to <Addr a={ev.to} net /></span></button>;
+  return (
+    <Shell title="Switch identity" heading={<>Switch this {self} to <Addr a={ev.to} net />?</>} onClose={close}>
+      <Lead>This device is {from} now. Switching signs it out of {from} and removes {from}'s chats and settings from this device; {from} keeps working on your other devices.</Lead>
+      <div className="switch-warn">
+        <NoteCard icon="warning" warn>
+          <b>If this is the last device with {from}, you can only get it back with its recovery words.</b>
+          <div className="keyacts">
+            <button className="btn" onClick={() => { api.recoveryWords().then((w) => copyWords(w), (e) => toast(errText(e))); }}><Icon name="copy" />Copy words</button>
+            <button className="btn" onClick={() => void downloadWords(platform, snap.state?.me?.id || id)}><Icon name="download" />Download</button>
+          </div>
+        </NoteCard>
+      </div>
+      <label className="checkrow" style={platform === "android" ? { padding: "6px 20px" } : undefined}>
+        <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} disabled={busy} />
+        <span>I have {from}'s recovery words, or I don't need {from} on this device any more</span>
+      </label>
+      <HubReview rev={rev} disabled={busy} head={<><b>Hubs that come with {to}</b><span>{check}</span></>} />
+      {busy ? <div className="probe-card busy"><span className="spin" /><div>Signing this {self} out of {from} and switching to {to}…</div></div> : null}
+      {platform === "android"
+        ? <div className="pad join-stack">{switchBtn}{keepBtn}</div>
+        : <Acts>{keepBtn}{switchBtn}</Acts>}
+    </Shell>
+  );
+}
+
 export function JoinFlow({ req }: { req: JoinReq }) {
   const platform = usePlatform();
   const snap = useSnap();
   const self = platform === "android" ? "phone" : "PC";
   const [st, setSt] = useState<St>(() => (req.hub ? { k: "probe", hub: req.hub, all: req.hubs } : { k: "hub", hub: null, why: null }));
   const [attempt, setAttempt] = useState(0);
-  const [ack, setAck] = useState(false);
   const now = useNow(st.k === "waiting");
   const stRef = useRef(st);
   stRef.current = st;
@@ -70,7 +129,7 @@ export function JoinFlow({ req }: { req: JoinReq }) {
       setTimeout(() => {
         if (alive.current || done.current) return;
         const k = stRef.current.k;
-        if (k === "switch") void api.linkSwitchCancel().catch(() => {});
+        if (k === "review") void api.linkDiscard().catch(() => {});
         else if (k === "starting" || k === "waiting") void api.linkCancel().catch(() => {});
       }, 0);
     };
@@ -81,10 +140,9 @@ export function JoinFlow({ req }: { req: JoinReq }) {
     void api.onLink((e) => {
       if (e.state === "waiting") setSt((s) => (s.k === "waiting" ? { ...s, until: Date.now() + e.expires_in_s * 1000 } : s));
       else if (e.state === "same") setSt({ k: "same", address: e.address });
-      else if (e.state === "switch") { setAck(false); setSt({ k: "switch", from: e.from, to: e.to }); }
-      else if (e.state === "done") { done.current = true; toast("This device is now @net:" + e.address); endJoin(); void reloadAfterSwitch(); }
+      else if (e.state === "review") setSt({ k: "review", ev: e });
       else if (e.state === "failed") setSt({ k: "failed", hub: hubRef.current, msg: e.error });
-      else setSt((s) => (s.k === "waiting" ? { k: "expired", hub: s.hub } : s));
+      else if (e.state === "expired") setSt((s) => (s.k === "waiting" ? { k: "expired", hub: s.hub } : s));
     }).then((u) => { if (gone) u(); else un = u; });
     return () => { gone = true; un?.(); };
   }, []);
@@ -122,21 +180,24 @@ export function JoinFlow({ req }: { req: JoinReq }) {
 
   const close = () => endJoin();
   const again = (hub: Hub) => { setAttempt((a) => a + 1); setSt({ k: "starting", hub }); };
-  const keep = async () => { done.current = true; try { await api.linkSwitchCancel(); } catch { /* nothing was adopted */ } endJoin(); };
-  const doSwitch = async (to: string) => {
-    if (st.k !== "switch") return;
+  const keep = async () => { done.current = true; try { await api.linkDiscard(); } catch { /* nothing was adopted */ } endJoin(); };
+  /** Adopt what arrived with exactly these hubs (signing out of this identity first, if any). */
+  const confirm = async (urls: string[]) => {
+    if (st.k !== "review") return;
+    const ev = st.ev;
     setSt({ ...st, busy: true });
-    try { await api.linkSwitch(); }
-    catch (e) { toast("Couldn't switch: " + errText(e)); setSt({ ...st, busy: false }); return; }
+    let address: string;
+    try { address = await api.linkConfirm(urls); }
+    catch (e) { toast((ev.from ? "Couldn't switch: " : "Couldn't save it: ") + errText(e)); setSt((s) => (s.k === "review" ? { ...s, busy: false } : s)); return; }
     done.current = true;
     endJoin();
     await reloadAfterSwitch();
-    toast("This device is now @net:" + to);
+    toast("This device is now @net:" + (address || ev.to));
   };
 
-  // Escape: Keep (switch), Cancel (otherwise); Android's back does the same
+  // Escape: Keep (review), Cancel (otherwise); Android's back does the same
   const escRef = useRef<() => void>(close);
-  escRef.current = st.k === "switch" ? () => { if (!st.busy) void keep(); } : close;
+  escRef.current = st.k === "review" ? () => { if (!st.busy) void keep(); } : close;
   useEffect(() => {
     if (platform === "android") return;
     const k = (e: KeyboardEvent) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); escRef.current(); } };
@@ -153,35 +214,7 @@ export function JoinFlow({ req }: { req: JoinReq }) {
     );
   }
 
-  if (st.k === "switch") {
-    const from = <span className="mono"><Addr a={st.from} net /></span>;
-    const to = <span className="mono"><Addr a={st.to} net /></span>;
-    const id = st.from.split(".")[0];
-    const keepBtn = <button className={"btn ghost" + blk} onClick={() => void keep()} disabled={st.busy}><span>Keep <Addr a={st.from} net /></span></button>;
-    const switchBtn = <button className={"btn primary" + blk} onClick={() => void doSwitch(st.to)} disabled={!ack || st.busy}><Icon name="sync" /><span>Switch to <Addr a={st.to} net /></span></button>;
-    return (
-      <Shell title="Switch identity" heading={<>Switch this {self} to <Addr a={st.to} net />?</>} onClose={() => { if (!st.busy) void keep(); }}>
-        <Lead>This device is {from} now. Switching signs it out of {from} and removes {from}'s chats and settings from this device; {from} keeps working on your other devices.</Lead>
-        <div className="switch-warn">
-          <NoteCard icon="warning" warn>
-            <b>If this is the last device with {from}, you can only get it back with its recovery words.</b>
-            <div className="keyacts">
-              <button className="btn" onClick={() => { api.recoveryWords().then((w) => copyWords(w), (e) => toast(errText(e))); }}><Icon name="copy" />Copy words</button>
-              <button className="btn" onClick={() => void downloadWords(platform, snap.state?.me?.id || id)}><Icon name="download" />Download</button>
-            </div>
-          </NoteCard>
-        </div>
-        <label className="checkrow" style={platform === "android" ? { padding: "6px 20px" } : undefined}>
-          <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} disabled={st.busy} />
-          <span>I have {from}'s recovery words, or I don't need {from} on this device any more</span>
-        </label>
-        {st.busy ? <div className="probe-card busy"><span className="spin" /><div>Signing this {self} out of {from} and switching to {to}…</div></div> : null}
-        {platform === "android"
-          ? <div className="pad join-stack">{switchBtn}{keepBtn}</div>
-          : <Acts>{keepBtn}{switchBtn}</Acts>}
-      </Shell>
-    );
-  }
+  if (st.k === "review") return <ReviewScreen ev={st.ev} busy={st.busy} onKeep={() => void keep()} onConfirm={(urls) => void confirm(urls)} />;
 
   const title = "Use another identity";
   if (st.k === "hub") {

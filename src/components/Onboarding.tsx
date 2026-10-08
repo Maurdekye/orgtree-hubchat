@@ -1,37 +1,41 @@
 // First run. The fork: create a new identity (id → address → hubs → recovery
 // words) or bring an existing one. Main path (user 19:12-19:13Z): the other
 // device shows a link QR, this phone scans it (or types its code), joins
-// through the hub and waits for the other device to approve. Also: this device
-// shows a code for the other one to approve, a key QR, a key file, or the
-// recovery words. A bundle that brings hubs goes straight to the app; the
-// words (or a bundle without hubs) go on to the add-hubs step.
+// through the hub and waits for the other device to approve; what arrives is
+// reviewed (its hubs, as this device reaches them: user 20:38Z) and saved
+// only on Confirm. Also: this device shows a code for the other one to
+// approve, a key QR, a key file, or the recovery words. A bundle that brings
+// hubs goes straight to the app; the words (or a bundle without hubs) go on
+// to the add-hubs step.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { copyWords, downloadWords } from "../lib/recovery";
-import { api, type LinkStart, type Probe } from "../api";
+import { api, type LinkEvent, type LinkStart, type Probe } from "../api";
 import { Icon, Logo, type IconName } from "../lib/icons";
 import { baseName, errText, pickKeyFile, scanQr } from "../lib/native";
 import { getSnap, refreshAll, refreshState, setOnboarding, useSnap } from "../lib/store";
 import { splitAddr } from "../lib/peers";
 import { toast } from "../lib/toast";
 import { HubAdder } from "./HubAdder";
+import { HubReview, useHubReview } from "./HubReview";
 import { usePendingLink } from "../lib/visibility";
 import { formatCode } from "./LinkDevice";
 import { NoteCard, QR, useNow, usePlatform } from "./ui";
 import footerCrop from "../assets/desktop-footer-qr.png";
 import footerQr from "../assets/desktop-footer-qr.json";
 
+// review: the hubs a linked identity brings (shown by LinkWait once it arrives)
 type Step = "welcome" | "id" | "addr" | "hub" | "key" | "method" | "restore" | "linkhub" | "linkname" | "linkcode" | "scan" | "keyfile"
-  | "typecode" | "joinname" | "joinhub" | "join" | "needgive";
+  | "typecode" | "joinname" | "joinhub" | "join" | "needgive" | "review";
 // join: scan the other device's link QR; type: type its code (and the hub)
 type Flow = "new" | "words" | "link" | "qr" | "file" | "join" | "type";
 const FLOW: Record<Flow, Step[]> = {
   new: ["welcome", "id", "addr", "hub", "key"],
   words: ["welcome", "method", "restore", "hub"],
-  link: ["welcome", "method", "linkhub", "linkname", "linkcode"],
+  link: ["welcome", "method", "linkhub", "linkname", "linkcode", "review"],
   qr: ["welcome", "method", "scan", "hub"],
   file: ["welcome", "method", "keyfile", "hub"],
-  join: ["welcome", "method", "scan", "joinname", "join"],
-  type: ["welcome", "method", "typecode", "joinname", "join"],
+  join: ["welcome", "method", "scan", "joinname", "join", "review"],
+  type: ["welcome", "method", "typecode", "joinname", "join", "review"],
 };
 const VIA: Record<Flow, string> = { new: "", words: "Your words", link: "Linking", qr: "The QR code", file: "Your key file", join: "Linking", type: "Linking" };
 
@@ -122,12 +126,35 @@ function FooterHint() {
 }
 
 // ------------------------------------------------- link: this device waits
-type Wait = { k: "starting" } | { k: "waiting"; s: LinkStart; until: number } | { k: "failed"; msg: string } | { k: "expired" };
+type Arrived = Extract<LinkEvent, { state: "review" }>;
+type Wait = { k: "starting" } | { k: "waiting"; s: LinkStart; until: number } | { k: "failed"; msg: string } | { k: "expired" }
+  | { k: "review"; ev: Arrived; busy?: boolean; err?: string | null };
 
-/** Show the code and its QR, listen for approval, count down 10 minutes.
- *  With `code` (the other device's code, scanned or typed) this device joins
- *  that code instead and shows no code of its own; `other` then offers a new
- *  scan (or a new typed code) when it fails or runs out. */
+/** An identity arrived: its hubs, as this device reaches them, to check
+ *  before anything is saved. Confirm adopts it with the ticked hubs. */
+function ReviewStep({ ev, flow, busy, err, onConfirm, onCancel }: { ev: Arrived; flow: Flow; busy?: boolean; err?: string | null; onConfirm: (urls: string[]) => void; onCancel: () => void }) {
+  const platform = usePlatform();
+  const device = platform === "android" ? "phone" : "PC";
+  const rev = useHubReview(ev.hubs);
+  const back = () => { if (!busy) onCancel(); };
+  return (
+    <Frame step="review" flow={flow} back={back} wide
+      actions={[{ label: busy ? "Saving…" : "Confirm", primary: true, disabled: busy || rev.blocked, onClick: () => onConfirm(rev.urls) }, { label: "Cancel", disabled: busy, onClick: back }]}>
+      <h2>Bring these hubs to this {device}?</h2>
+      <p className="lead"><ObAddr a={ev.to} />{ev.name ? <> ({ev.name})</> : null} arrived. {ev.hubs.length
+        ? <>These hubs come with it. Check the address this {device} should use for each; untick any you don't want.</>
+        : <>No hubs came with it. Add the one this {device} should use.</>}</p>
+      <HubReview rev={rev} disabled={busy} />
+      {err ? <div className="probe-card bad"><Icon name="error" /><div><b>Couldn't save it</b>{err}</div></div> : null}
+    </Frame>
+  );
+}
+
+/** Show the code and its QR, listen for approval, count down 10 minutes,
+ *  then review what arrived. With `code` (the other device's code, scanned
+ *  or typed) this device joins that code instead and shows no code of its
+ *  own; `other` then offers a new scan (or a new typed code) when it fails
+ *  or runs out. */
 function LinkWait({ hub, hubName, name, code, aliases, other, onDone, onCancel, step, flow }: { hub: string; hubName: string; name: string; code?: string; aliases?: string[]; other?: Action; onDone: (address: string) => void; onCancel: () => void; step: Step; flow: Flow }) {
   const platform = usePlatform();
   const [st, setSt] = useState<Wait>({ k: "starting" });
@@ -135,22 +162,31 @@ function LinkWait({ hub, hubName, name, code, aliases, other, onDone, onCancel, 
   const now = useNow(st.k === "waiting");
   const startedFor = useRef(-1);
   const alive = useRef(false);
-  const finished = useRef(false);
+  /** live: listening; review: an identity waits for Confirm; over: confirmed or cancelled. */
+  const phase = useRef<"live" | "review" | "over">("live");
   const onDoneRef = useRef(onDone);
   onDoneRef.current = onDone;
 
-  // stop listening when this screen goes away (not on StrictMode's re-mount)
+  // leaving this screen stops listening, or drops what arrived unconfirmed
+  // (not on StrictMode's re-mount)
   useEffect(() => {
     alive.current = true;
-    return () => { alive.current = false; setTimeout(() => { if (!alive.current && !finished.current) void api.linkCancel().catch(() => {}); }, 0); };
+    return () => {
+      alive.current = false;
+      setTimeout(() => {
+        if (alive.current) return;
+        if (phase.current === "live") void api.linkCancel().catch(() => {});
+        else if (phase.current === "review") void api.linkDiscard().catch(() => {});
+      }, 0);
+    };
   }, []);
   useEffect(() => {
     let un: (() => void) | null = null; let gone = false;
     void api.onLink((e) => {
       if (e.state === "waiting") setSt((s) => (s.k === "waiting" ? { ...s, until: Date.now() + e.expires_in_s * 1000 } : s));
-      else if (e.state === "done") { finished.current = true; onDoneRef.current(e.address); }
+      else if (e.state === "review") { phase.current = "review"; setSt({ k: "review", ev: e }); }
       else if (e.state === "failed") setSt({ k: "failed", msg: e.error });
-      else setSt({ k: "expired" });
+      else if (e.state === "expired") setSt({ k: "expired" });
     }).then((u) => { if (gone) u(); else un = u; });
     return () => { gone = true; un?.(); };
   }, []);
@@ -164,10 +200,25 @@ function LinkWait({ hub, hubName, name, code, aliases, other, onDone, onCancel, 
     );
   }, [attempt, hub, name, code]);
 
-  const cancel = () => { finished.current = true; void api.linkCancel().catch(() => {}); onCancel(); };
+  const cancel = () => {
+    const was = phase.current;
+    phase.current = "over";
+    if (was === "review") void api.linkDiscard().catch(() => {});
+    else void api.linkCancel().catch(() => {});
+    onCancel();
+  };
   const again = () => setAttempt((a) => a + 1);
+  const confirm = async (urls: string[]) => {
+    setSt((s) => (s.k === "review" ? { ...s, busy: true, err: null } : s));
+    let address: string;
+    try { address = await api.linkConfirm(urls); }
+    catch (e) { setSt((s) => (s.k === "review" ? { ...s, busy: false, err: errText(e) } : s)); return; }
+    phase.current = "over";
+    onDoneRef.current(address);
+  };
   const device = platform === "android" ? "phone" : "PC";
   const otherDev = platform === "android" ? "your PC" : "your other device";
+  if (st.k === "review") return <ReviewStep ev={st.ev} flow={flow} busy={st.busy} err={st.err} onConfirm={(urls) => void confirm(urls)} onCancel={cancel} />;
   if (code) {
     let jb: ReactNode;
     if (st.k === "waiting") {
@@ -405,9 +456,12 @@ export function Onboarding() {
         <p className="lead">
           {flow === "words"
             ? <>Your words brought back <ObAddr a={address || snap.state?.me?.address || ""} />. Hubs don't travel in the words: add the ones you use, and Hubchat signs in to each with your key.</>
-            : flow !== "new"
-              ? <>{VIA[flow]} brought back <ObAddr a={address || snap.state?.me?.address || ""} />, but no hubs came with it. Add the ones you use, and Hubchat signs in to each with your key.</>
-              : "Hubchat talks through an Orgtree mail hub on your network. Ask whoever runs it for the address."}
+            : flow === "link" || flow === "join" || flow === "type"
+              // the review may have left every hub out
+              ? <>{VIA[flow]} brought back <ObAddr a={address || snap.state?.me?.address || ""} /> without a hub. Add the ones you use, and Hubchat signs in to each with your key.</>
+              : flow !== "new"
+                ? <>{VIA[flow]} brought back <ObAddr a={address || snap.state?.me?.address || ""} />, but no hubs came with it. Add the ones you use, and Hubchat signs in to each with your key.</>
+                : "Hubchat talks through an Orgtree mail hub on your network. Ask whoever runs it for the address."}
         </p>
         {added.length ? (
           <div className="hublist-ob">

@@ -24,3 +24,32 @@
 .att-file .link { font-weight: 600; }
 .keyacts .saved { white-space: nowrap; }
 .set-row .help { flex: 1; }
+
+/* the hubs a linked identity brings, reviewed before anything is saved (user 20:38Z) */
+.hubrev { display: flex; flex-direction: column; gap: 8px; }
+.hr-h { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.hr-h b { color: var(--ink-strong); font-weight: 600; overflow-wrap: anywhere; }
+.hr-h > span { color: var(--dim); }
+.hr-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--bg); border: 1px solid var(--line-soft); }
+.hr-row.off { background: transparent; border-style: dashed; border-color: var(--line); }
+.hr-row.off .input input { color: var(--dim); }
+.hr-tick { flex: none; accent-color: var(--accent); cursor: pointer; margin: 0; }
+.hr-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.hr-main .input input { font-family: var(--mono); }
+.hr-st { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 14px; min-width: 0; }
+.hr-s { display: inline-flex; align-items: flex-start; gap: 6px; min-width: 0; color: var(--dim); overflow-wrap: anywhere; }
+.hr-s .ic { width: 16px; height: 16px; margin-top: 1px; }
+.hr-s .spin { width: 14px; height: 14px; border-width: 2px; margin-top: 2px; }
+.hr-s.ok .ic { color: var(--ok); }
+.hr-s.ok b { color: var(--ink-strong); font-weight: 600; }
+.hr-s.bad { color: var(--bad); }
+.hr-s .link { font-size: inherit; }
+.hr-theirs { color: var(--dim); overflow-wrap: anywhere; }
+.hr-theirs .mono { color: var(--ink); }
+.hr-try { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--dim); }
+.hr-try .chip { background: transparent; color: var(--accent-text); font-family: var(--mono); cursor: pointer; }
+.hr-try .chip:hover { border-color: var(--accent); background: var(--accent-soft); }
+.hr-try .chip[disabled] { opacity: .45; cursor: default; }
+.hr-x { flex: none; }
+.hr-add { align-self: flex-start; }
+.hubrev .note-card { margin: 0; }

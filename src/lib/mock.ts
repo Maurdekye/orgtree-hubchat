@@ -4,13 +4,15 @@
 // people, markdown, a file, a failed message and climbing receipts.
 // URL parameters: ?platform=android  ?onboarding=1  ?update=1 (an update is
 // out)  ?scan=TEXT (what the fake camera reads)  ?pending=ADDRESS (a tapped
-// notification)  ?link=TEXT (the hubchat:// link Android opened the app with).
+// notification)  ?link=TEXT (the hubchat:// link Android opened the app with)
+// ?approve=S (the other device approves a link after S seconds).
 // Linking: a waiting device shows up on the third lookup; a device joining a
-// code is approved after 45 s (a signed-in device joining one: after 2 s the
-// link turns out to be another identity, maya.e71f2b, or with a code starting
-// "SAME" this device's own); a key file opens with any passphrase but
+// code is approved after 45 s and reviews LINK_HUBS (a signed-in device
+// joining one: after 2 s the link turns out to be another identity,
+// maya.e71f2b, or with a code starting "SAME" this device's own); nothing is
+// adopted before linkConfirm. A key file opens with any passphrase but
 // "wrong". Hubs on 127.0.0.1 / localhost can't be reached from the "phone".
-import type { Api, Attachment, ChatSummary, Contact, HcEvent, HubStatus, LinkEvent, LinkLookup, LinkRole, Message, NewOutgoing, ParsedLink, Probe, Resolved, State } from "../api";
+import type { Api, Attachment, ChatSummary, Contact, HcEvent, HubRow, HubStatus, LinkEvent, LinkLookup, LinkRole, Message, NewOutgoing, ParsedLink, Probe, Resolved, State } from "../api";
 import { toast } from "./toast";
 
 const params = new URLSearchParams(location.search);
@@ -207,18 +209,48 @@ function parseLink(input: string): ParsedLink {
   return { code: raw.replace(/(.{4})(?=.)/g, "$1-"), hub, hubs, hub_name: hubName, role };
 }
 
-/** The identity a link brought on a signed-in device, held until switch or cancel. */
-let pendingSwitch: string | null = null;
-/** Leave this identity, adopt Maya's (her profile and the office hub come with it). */
-function switchTo(address: string): string {
+/** The hubs a link brings, as this device reaches them (user 20:38Z): the
+ *  other device's localhost hub, answering here by its Tailscale name, and
+ *  the lab hub, which doesn't answer from here (its Tailscale name does). */
+const LINK_HUBS: HubRow[] = [
+  { theirs: "http://localhost:7370", address: "http://home-pc:7370", candidates: ["http://home-pc:7370", "http://100.101.102.103:7370", "http://192.168.1.20:7370"], name: "office", error: null, reachable: true },
+  { theirs: "http://10.0.0.7:7370", address: "http://10.0.0.7:7370", candidates: ["http://10.0.0.7:7370", "http://lab.tail5c2e.ts.net:7370"], name: null, error: "connection refused (os error 10061)", reachable: false },
+];
+/** What a link brought, held (nothing saved) until linkConfirm or linkDiscard. */
+let pendingLink: { to: string } | null = null;
+/** The other device approves a link after this long. */
+const approveAfter = (ms: number) => (params.get("approve") ? Number(params.get("approve")) * 1000 : ms);
+
+/** This device's hubs become exactly `hubs` (as typed: normalized, repeats dropped). */
+function setHubs(hubs: string[]) {
+  st.hubs = [];
+  for (const raw of hubs) {
+    const url = normHub(raw);
+    if (!url || st.hubs.some((h) => h.url === url)) continue;
+    const h: HubStatus = { url, name: hubLabel(url), state: "connecting", error: null, retry_at_ms: null, max_attachment_bytes: GB, features: ["v2"] };
+    st.hubs.push(h); reconnect(h);
+  }
+}
+/** A fresh device adopts the identity a link brought, with the hubs the user kept. */
+function adoptLinked(hubs: string[]): string {
+  st.me = { id: "alex", address: "alex.3be2c9", name: "Alex Rivera", about: "Platform team" };
+  st.recovery_saved = true;
+  setHubs(hubs);
+  const first = st.hubs[0]?.url;
+  dir = first ? clone(SEED_DIR).map((c) => ({ ...c, hubs: [first] })) : [];
+  setTimeout(() => emit({ type: "directory" }), 300);
+  return st.me.address;
+}
+/** Leave this identity, adopt Maya's (her profile comes with it) with the hubs the user kept. */
+function switchTo(address: string, hubs: string[]): string {
   st.me = { id: address.split(".")[0], address, name: "Maya Lin", about: "Design · Android" };
   st.recovery_saved = true;
-  st.hubs = [{ url: OFFICE, name: "office", state: "connecting", error: null, retry_at_ms: null, max_attachment_bytes: GB, features: ["v2"] }];
-  reconnect(st.hubs[0]);
+  setHubs(hubs);
   msgs.length = 0;
   for (const k of Object.keys(drafts)) delete drafts[k];
-  dir = clone(SEED_DIR).filter((c) => c.address !== address && c.hubs.includes(OFFICE)).map((c) => ({ ...c, hubs: [OFFICE] }));
-  dir.push(contact("alex.3be2c9", "person", { user: "Alex Rivera" }, "Platform team", true, now(), [OFFICE]));
+  const first = st.hubs[0]?.url;
+  dir = first ? clone(SEED_DIR).filter((c) => c.address !== address).map((c) => ({ ...c, hubs: [first] })) : [];
+  if (first) dir.push(contact("alex.3be2c9", "person", { user: "Alex Rivera" }, "Platform team", true, now(), [first]));
   setTimeout(() => emit({ type: "directory" }), 300);
   return address;
 }
@@ -295,7 +327,12 @@ function normHub(raw: string): string | null {
     return u.protocol + "//" + u.host;
   } catch { return null; }
 }
-const hubLabel = (url: string) => { const h = new URL(url).hostname.split("."); return h[0] === "hub" && h[1] ? h[1] : /^\d+$/.test(h[0]) ? "hub-" + h[h.length - 1] : h[0]; };
+/** The office hub (the PC's localhost hub in LINK_HUBS) under its other names. */
+const ALIASES: Record<string, string> = { "home-pc": "office", "100.101.102.103": "office", "192.168.1.20": "office" };
+const hubLabel = (url: string) => {
+  const host = new URL(url).hostname, h = host.split(".");
+  return ALIASES[host] ?? (h[0] === "hub" && h[1] ? h[1] : /^\d+$/.test(h[0]) ? "hub-" + h[h.length - 1] : h[0]);
+};
 
 export const mockApi: Api = {
   state: async () => clone(st),
@@ -431,23 +468,28 @@ export const mockApi: Api = {
       setTimeout(() => {
         if (linkRun !== my) return;
         if (code.startsWith("SAME")) linkEmit({ state: "same", address: from });
-        else { pendingSwitch = "maya.e71f2b"; linkEmit({ state: "switch", from, to: pendingSwitch }); }
-      }, 2000);
+        else { pendingLink = { to: "maya.e71f2b" }; linkEmit({ state: "review", from, to: pendingLink.to, name: "Maya Lin", hubs: clone(LINK_HUBS) }); }
+      }, approveAfter(2000));
       return { code, qr: "hubchat://link?code=" + code + "&hub=" + encodeURIComponent(normHub(hub) || hub) + "&role=take", hub: normHub(hub) || hub };
     }
     // the other device approves after a while (long enough to look at the code)
-    setTimeout(() => { if (linkRun === my) linkEmit({ state: "done", address: adopt(true) }); }, 45000);
+    setTimeout(() => {
+      if (linkRun !== my) return;
+      pendingLink = { to: "alex.3be2c9" };
+      linkEmit({ state: "review", from: null, to: pendingLink.to, name: "Alex Rivera", hubs: clone(LINK_HUBS) });
+    }, approveAfter(45000));
     void deviceName;
     return { code, qr: "hubchat://link?code=" + code + "&hub=" + encodeURIComponent(normHub(hub) || hub) + "&role=take", hub: normHub(hub) || hub };
   },
   linkCancel: async () => { linkRun++; },
-  linkSwitch: async () => {
-    if (!pendingSwitch) throw "nothing to switch to: link again";
+  linkConfirm: async (hubs) => {
+    const p = pendingLink;
+    if (!p) throw "nothing to confirm: link again";
     await sleep(900);
-    const a = switchTo(pendingSwitch); pendingSwitch = null;
-    return a;
+    pendingLink = null;
+    return st.me ? switchTo(p.to, hubs) : adoptLinked(hubs);
   },
-  linkSwitchCancel: async () => { pendingSwitch = null; },
+  linkDiscard: async () => { pendingLink = null; },
   linkOffer: async (hub) => {
     await sleep(300);
     const url = hub ? normHub(hub) : (st.hubs.find((h) => h.state === "connected") || st.hubs[0])?.url;
