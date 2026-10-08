@@ -19,6 +19,9 @@ impl connection::Platform for DesktopPlatform {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
+    // QR codes: the "offline QR" identity link and scanning someone's address.
+    #[cfg(mobile)]
+    let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
     // Windows updates itself from GitHub Releases (signed); Android does not.
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());

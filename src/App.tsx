@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { scan, Format, checkPermissions, requestPermissions } from "@tauri-apps/plugin-barcode-scanner";
 import "./App.css";
 
 type Info = { address: string; hub: string; max_attachment_bytes: number | null; error: string | null };
@@ -46,6 +47,20 @@ export default function App() {
     }
   }
 
+  async function scanQr() {
+    try {
+      let p = await checkPermissions();
+      if (p !== "granted") p = await requestPermissions();
+      say("camera permission: " + p);
+      if (p !== "granted") return;
+      const t0 = performance.now();
+      const r = await scan({ windowed: false, formats: [Format.QRCode] });
+      say(`scanned in ${((performance.now() - t0) / 1000).toFixed(1)} s: ${r.content}`);
+    } catch (e) {
+      say("scan failed: " + e);
+    }
+  }
+
   async function saveCopy() {
     if (!result) return;
     const dest = await save({ defaultPath: result.name });
@@ -59,7 +74,7 @@ export default function App() {
   }
 
   return (
-    <main className="container" style={{ textAlign: "left", padding: 16 }}>
+    <main className="container" style={{ textAlign: "left", padding: 16, paddingTop: "max(16px, env(safe-area-inset-top))" }}>
       <h2>Hubchat spike</h2>
       <p id="addr">Address: <b>{info?.address || "…"}</b></p>
       <p id="hub">Hub: {info?.hub} {info?.error ? "— " + info.error : "— reachable"}</p>
@@ -68,6 +83,7 @@ export default function App() {
         <button id="refresh" onClick={refresh}>Refresh</button>
         <button id="pick" onClick={pickAndSend}>Pick file and round-trip</button>
         <button id="save" onClick={saveCopy} disabled={!result}>Save copy…</button>
+        <button id="scan" onClick={scanQr}>Scan QR</button>
       </div>
       {xfer && (
         <p id="progress">
