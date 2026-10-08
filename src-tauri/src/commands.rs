@@ -85,14 +85,14 @@ pub fn hc_state() -> R<State> {
 #[tauri::command]
 pub fn hc_ui_state(foreground: bool, chat: Option<String>) -> R<()> {
     let c = core::get()?;
+    let came_forward = c.set_ui_state(foreground, chat);
     // Android checking every 15 minutes: the process may have been frozen
-    // since it was last on screen, so connect afresh now (design D6)
-    if foreground && c.platform().stay_connected() == Some(false) {
+    // since it was last on screen, so connect afresh once it is back (D6)
+    if came_forward && c.platform().stay_connected() == Some(false) {
         if let Ok(e) = c.engine() {
             e.kick();
         }
     }
-    c.set_ui_state(foreground, chat);
     Ok(())
 }
 

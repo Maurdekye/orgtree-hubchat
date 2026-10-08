@@ -209,9 +209,11 @@ impl Core {
         Ok(())
     }
 
-    pub fn set_ui_state(&self, foreground: bool, chat: Option<String>) {
-        self.host.foreground.store(foreground, Ordering::Relaxed);
+    /// What the UI shows. True when it just came to the foreground.
+    pub fn set_ui_state(&self, foreground: bool, chat: Option<String>) -> bool {
+        let was = self.host.foreground.swap(foreground, Ordering::Relaxed);
         *self.host.open_chat.lock().unwrap() = chat;
+        foreground && !was
     }
 
     pub fn engine(&self) -> Result<Arc<Engine>, String> {
