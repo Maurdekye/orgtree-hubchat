@@ -519,10 +519,48 @@ pub async fn hc_link_approve(code: String) -> R<String> {
     let code = link::normalize_code(&code).map_err(s)?;
     let to = link::link_identity(&code).map_err(s)?.address();
     let body = link::seal_for_link(&code, &my_bundle()?).map_err(s)?;
-    c.rt.spawn(async move { e.send_unlisted(&to, &body).await })
+    let hub = c
+        .rt
+        .spawn(async move { e.send_unlisted(&to, &body).await })
         .await
         .map_err(s)?
-        .map_err(s)
+        .map_err(s)?;
+    // The new device takes its message and leaves the hub within seconds;
+    // if it crashed first, its waiting address would stay on the hub's
+    // list for good (seen on the user's hub, 2026-10-08): take it off.
+    forget_link_address(&code, Duration::from_secs(180));
+    Ok(hub)
+}
+
+/// A link code this device offered or approved is done with: after
+/// `delay`, take the waiting address it names off every hub we use (the
+/// code makes its key, so we can). Quietly does nothing where it is gone.
+fn forget_link_address(code: &str, delay: Duration) {
+    let (Ok(c), Ok(temp)) = (core::get(), link::link_identity(code)) else {
+        return;
+    };
+    let hubs: Vec<String> = c
+        .store
+        .hubs()
+        .map(|v| v.into_iter().map(|h| h.url).collect())
+        .unwrap_or_default();
+    c.rt.spawn(async move {
+        tokio::time::sleep(delay).await;
+        for h in hubs {
+            if let Ok(addr) = HubAddress::parse(&h) {
+                let _ = HubClient::new(addr).unregister(&temp).await;
+            }
+        }
+    });
+}
+
+/// The signed-in device's link offer ended without an approval (closed,
+/// denied or expired): no device should stay waiting under its code.
+#[tauri::command]
+pub fn hc_link_forget(code: String) -> R<()> {
+    let code = link::normalize_code(&code).map_err(s)?;
+    forget_link_address(&code, Duration::ZERO);
+    Ok(())
 }
 
 // --------------------------------------------------------- QR and file

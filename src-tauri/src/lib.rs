@@ -157,6 +157,7 @@ pub fn run() {
             link::hc_link_offer,
             link::hc_link_confirm,
             link::hc_link_discard,
+            link::hc_link_forget,
             link::hc_parse_link,
             commands::hc_take_pending_link,
             link::hc_link_approve,
