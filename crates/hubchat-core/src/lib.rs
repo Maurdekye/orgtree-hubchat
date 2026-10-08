@@ -6,6 +6,7 @@
 pub mod engine;
 pub mod error;
 pub mod hub;
+pub mod hub_v2;
 pub mod identity;
 pub mod link;
 pub mod recovery;

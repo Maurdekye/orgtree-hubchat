@@ -30,6 +30,9 @@ pub fn strip_quote(body: &str) -> &str {
     }
 }
 
+/// Long bodies (v2, G6) are fetched whole up to this size.
+pub const LONG_BODY_FETCH_MAX: u64 = 64 * 1024 * 1024;
+
 /// Back-off between reconnects (design F7: 8, 16, 32 s, then 32 s).
 const BACKOFF: [u64; 3] = [8, 16, 32];
 
@@ -113,6 +116,8 @@ pub struct Engine {
     queue_changed: Notify,
     transfers: Mutex<HashMap<String, CancelFlag>>,
     read_receipts: std::sync::atomic::AtomicBool,
+    /// This installation's (device_id, device_name) for v2 sync.
+    device: Mutex<(String, String)>,
 }
 
 fn unix_ms() -> u64 {
@@ -138,6 +143,10 @@ impl Engine {
             queue_changed: Notify::new(),
             transfers: Mutex::new(HashMap::new()),
             read_receipts: std::sync::atomic::AtomicBool::new(true),
+            device: Mutex::new((
+                format!("hc-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]),
+                "Hubchat".into(),
+            )),
         })
     }
 
@@ -159,6 +168,16 @@ impl Engine {
         let me = self.clone();
         tokio::spawn(async move { me.sender_loop().await });
         Ok(())
+    }
+
+    /// Name this installation for v2 hubs (stable id, shown name). Call
+    /// before start().
+    pub fn set_device(&self, id: &str, name: &str) {
+        *self.device.lock().unwrap() = (id.to_owned(), name.to_owned());
+    }
+
+    pub fn device(&self) -> (String, String) {
+        self.device.lock().unwrap().clone()
     }
 
     pub fn set_read_receipts(&self, on: bool) {
@@ -378,6 +397,9 @@ impl Engine {
             s.version = health.version.clone();
         });
         self.queue_changed.notify_one();
+        if health.supports("sync") {
+            return self.sync_session(client, url, stop, &profile).await;
+        }
         while !stop.is_cancelled() {
             let p = match client.poll(&self.me, crate::hub::POLL_WAIT_SECS).await {
                 Ok(p) => p,
@@ -429,6 +451,140 @@ impl Engine {
                 .map(|id| (id.clone(), "delivered", t.clone()))
                 .collect();
             client.receipts(&self.me, &rec).await?;
+        }
+        Ok(())
+    }
+
+    /// v2 hubs: every device gets everything through sync (G1), history
+    /// included (a first sync starts from the beginning).
+    async fn sync_session(
+        &self,
+        client: &HubClient,
+        url: &str,
+        stop: &CancelFlag,
+        profile: &Profile,
+    ) -> Result<()> {
+        let key = format!("sync.cursor.{url}");
+        let me = self.me.address();
+        let (device_id, device_name) = self.device();
+        let mut cursor = self.store.meta(&key)?;
+        // History (from the beginning, until a page without `more`) is not
+        // news: it raises no notifications.
+        let mut catching_up = cursor.is_none();
+        while !stop.is_cancelled() {
+            let first_page = cursor.is_none();
+            let r = match client
+                .sync(
+                    &self.me,
+                    &device_id,
+                    &device_name,
+                    cursor.as_deref(),
+                    crate::hub::POLL_WAIT_SECS,
+                )
+                .await
+            {
+                Ok(r) => r,
+                Err(e) if e.status() == Some(401) => {
+                    client.register(&self.me, profile).await?;
+                    continue;
+                }
+                Err(e) if e.status() == Some(422) && cursor.is_some() => {
+                    // "cursor is not a sync cursor from this hub": start over.
+                    self.store.forget_hub_messages(url)?;
+                    cursor = None;
+                    catching_up = true;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
+            if stop.is_cancelled() {
+                break;
+            }
+            if r.version.is_some() {
+                let v = r.version.clone();
+                self.set_status(url, |s| s.version = v);
+            }
+            if r.reset {
+                self.store.forget_hub_messages(url)?;
+            }
+            let mut dir_changed = false;
+            if first_page && !r.roster.is_empty() {
+                self.store.set_roster(url, &r.roster)?;
+                dir_changed = true;
+            } else if !r.roster.is_empty() {
+                self.store.upsert_roster(url, &r.roster)?;
+                dir_changed = true;
+            }
+            if !r.roster_removed.is_empty() {
+                self.store.remove_roster(url, &r.roster_removed)?;
+                dir_changed = true;
+            }
+            if let Some(online) = &r.online {
+                self.store.set_online(url, online)?;
+                dir_changed = true;
+            }
+            if dir_changed {
+                self.host.event(Event::Directory);
+            }
+            let t = now();
+            let mut to_deliver = Vec::new();
+            let mut peers = std::collections::BTreeSet::new();
+            for ch in &r.changes {
+                match ch {
+                    crate::hub_v2::Change::Message(m) => {
+                        let fresh = self.store.upsert_synced(url, &me, m)?;
+                        if m.body_bytes.is_some() {
+                            if let Ok(body) = client
+                                .message_body(&self.me, &m.env.id, LONG_BODY_FETCH_MAX)
+                                .await
+                            {
+                                let body = if m.env.reply_to.is_some() {
+                                    strip_quote(&body).to_owned()
+                                } else {
+                                    body
+                                };
+                                self.store.set_body(&m.env.id, &body)?;
+                            }
+                        }
+                        let incoming = m.env.from != me;
+                        if incoming && m.delivered_at.is_none() {
+                            to_deliver.push((m.env.id.clone(), "delivered", t.clone()));
+                        }
+                        if fresh && !catching_up {
+                            let preview: String = m.env.body.chars().take(140).collect();
+                            self.host.event(Event::Incoming {
+                                peer: m.env.from.clone(),
+                                id: m.env.id.clone(),
+                                preview,
+                            });
+                        }
+                        peers.insert(if incoming {
+                            m.env.from.clone()
+                        } else {
+                            m.env.to.clone()
+                        });
+                    }
+                    crate::hub_v2::Change::Deleted(id) => {
+                        if let Some(m) = self.store.message(id)? {
+                            self.store.delete_message(id)?;
+                            peers.insert(m.peer);
+                        }
+                    }
+                    crate::hub_v2::Change::Other => {}
+                }
+            }
+            for p in peers {
+                self.host.event(Event::Chat { peer: p });
+            }
+            if !to_deliver.is_empty() {
+                client.receipts(&self.me, &to_deliver).await?;
+            }
+            // Persist the cursor only after everything before it is stored.
+            self.store.set_meta(&key, &r.cursor)?;
+            cursor = Some(r.cursor);
+            if !r.more {
+                catching_up = false;
+            }
         }
         Ok(())
     }
@@ -661,6 +817,73 @@ impl Engine {
         self.store.set_state(id, "failed", Some(why))?;
         self.host.event(Event::Chat { peer: peer.into() });
         Ok(())
+    }
+
+    // --------------------------------------------------------- deleting
+
+    /// Connected hubs that can delete our copy on the hub (v2 "delete").
+    fn delete_capable(&self) -> Vec<(String, HubClient)> {
+        self.hubs
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|h| {
+                h.status.state == HubState::Connected
+                    && h.status.features.iter().any(|f| f == "delete")
+            })
+            .map(|h| (h.status.url.clone(), h.client.clone()))
+            .collect()
+    }
+
+    /// "Delete for me": our copy goes from this device and, on a v2 hub,
+    /// from the hub (so from all our devices); the other side keeps theirs.
+    pub async fn delete_message(&self, id: &str) -> Result<()> {
+        let m = self.store.message(id)?;
+        if let Some(m) = &m {
+            if let Some(hub) = &m.hub {
+                if let Some((_, c)) = self.delete_capable().into_iter().find(|(u, _)| u == hub) {
+                    c.delete_message(&self.me, id).await?;
+                }
+            }
+        }
+        self.store.delete_message(id)?;
+        if let Some(m) = m {
+            self.host.event(Event::Chat { peer: m.peer });
+        }
+        Ok(())
+    }
+
+    pub async fn delete_chat(&self, peer: &str) -> Result<()> {
+        for (_, c) in self.delete_capable() {
+            c.delete_conversation(&self.me, peer).await?;
+        }
+        self.store.delete_chat(peer)?;
+        self.host.event(Event::Chat { peer: peer.into() });
+        Ok(())
+    }
+
+    /// The devices that sync as us, per v2 hub (deduplicated by device id).
+    pub async fn devices(&self) -> Vec<crate::hub_v2::DeviceEntry> {
+        let clients: Vec<HubClient> = self
+            .hubs
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|h| h.status.features.iter().any(|f| f == "devices"))
+            .map(|h| h.client.clone())
+            .collect();
+        let mut out: Vec<crate::hub_v2::DeviceEntry> = Vec::new();
+        for c in clients {
+            if let Ok(list) = c.devices(&self.me).await {
+                for d in list {
+                    match out.iter_mut().find(|x| x.device_id == d.device_id) {
+                        Some(x) => x.online |= d.online,
+                        None => out.push(d),
+                    }
+                }
+            }
+        }
+        out
     }
 
     // ---------------------------------------------------------- reading

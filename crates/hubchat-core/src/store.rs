@@ -9,6 +9,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::hub::{AttachmentMeta, Envelope, Receipt, RosterEntry};
+use crate::hub_v2::SyncedMessage;
 use crate::{Error, Result};
 
 const SCHEMA: &str = r#"
@@ -467,6 +468,161 @@ impl Store {
         })
     }
 
+    // ------------------------------------------------------------- sync (v2)
+
+    /// Store a message as a v2 hub's sync reports it: ours (sent from any of
+    /// our devices) or theirs, with its receipts as they stand now. Returns
+    /// whether this is a new incoming message nobody has read yet.
+    pub fn upsert_synced(&self, hub: &str, me: &str, m: &SyncedMessage) -> Result<bool> {
+        let env = &m.env;
+        let outgoing = env.from == me;
+        let peer = if outgoing {
+            env.to.as_str()
+        } else {
+            env.from.as_str()
+        };
+        let body = match env.reply_to {
+            Some(_) => crate::engine::strip_quote(&env.body),
+            None => env.body.as_str(),
+        };
+        let hub_state = if !outgoing {
+            "received"
+        } else if m.read_at.is_some() {
+            "read"
+        } else if m.delivered_at.is_some() {
+            "delivered"
+        } else if m.fetched_at.is_some() {
+            "fetched"
+        } else {
+            "sent"
+        };
+        self.with(|c| {
+            let tx = c.transaction()?;
+            let existing: Option<String> =
+                tx.query_row("SELECT state FROM messages WHERE id=?", [&env.id], |r| r.get(0)).optional()?;
+            let fresh = existing.is_none();
+            match existing {
+                None => {
+                    tx.execute(
+                        "INSERT INTO messages(id, peer, outgoing, hub, body, kind, reply_to, sent_at, received_at,
+                           created_at, state, fetched_at, delivered_at, read_at, seen)
+                         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        params![
+                            env.id,
+                            peer,
+                            outgoing,
+                            hub,
+                            body,
+                            env.kind,
+                            env.reply_to,
+                            env.sent_at,
+                            env.received_at,
+                            // history sorts by the hub's clock
+                            env.received_at,
+                            hub_state,
+                            m.fetched_at,
+                            m.delivered_at,
+                            m.read_at,
+                            !outgoing && m.read_at.is_some(),
+                        ],
+                    )?;
+                    for (i, a) in env.attachments.iter().enumerate() {
+                        insert_remote_attachment(&tx, &env.id, i, a)?;
+                    }
+                }
+                Some(state) => {
+                    let state = if rank(hub_state) > rank(&state) { hub_state.to_owned() } else { state };
+                    tx.execute(
+                        "UPDATE messages SET hub=?, received_at=COALESCE(received_at, ?),
+                           fetched_at=COALESCE(?, fetched_at), delivered_at=COALESCE(?, delivered_at),
+                           read_at=COALESCE(?, read_at), state=?, error=CASE WHEN ?='failed' THEN error ELSE NULL END,
+                           seen = seen OR ?
+                         WHERE id=?",
+                        params![
+                            hub,
+                            env.received_at,
+                            m.fetched_at,
+                            m.delivered_at,
+                            m.read_at,
+                            state,
+                            state,
+                            !outgoing && m.read_at.is_some(),
+                            env.id
+                        ],
+                    )?;
+                }
+            }
+            tx.commit()?;
+            Ok(fresh && !outgoing && m.read_at.is_none())
+        })
+    }
+
+    /// Replace a message's body (a long one fetched whole).
+    pub fn set_body(&self, id: &str, body: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute("UPDATE messages SET body=? WHERE id=?", params![body, id])
+                .map(|_| ())
+        })
+    }
+
+    /// A v2 hub says its sync cursor is not ours any more: forget what came
+    /// from it so the device rebuilds its copy.
+    pub fn forget_hub_messages(&self, hub: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "DELETE FROM messages WHERE hub=? AND state<>'queued'",
+                [hub],
+            )
+            .map(|_| ())
+        })
+    }
+
+    /// Roster entries that joined or changed (sync), merged into this hub's list.
+    pub fn upsert_roster(&self, hub: &str, entries: &[RosterEntry]) -> Result<()> {
+        self.with(|c| {
+            let tx = c.transaction()?;
+            {
+                let mut st = tx.prepare(
+                    "INSERT INTO roster(address, hub, kind, org_name, username, blurb, online, last_seen) VALUES(?,?,?,?,?,?,?,?)
+                     ON CONFLICT(address, hub) DO UPDATE SET kind=excluded.kind, org_name=excluded.org_name,
+                       username=excluded.username, blurb=excluded.blurb, online=excluded.online, last_seen=excluded.last_seen",
+                )?;
+                for e in entries {
+                    st.execute(params![e.slug, hub, e.kind, e.org_name, e.username, e.blurb, e.online, e.last_seen])?;
+                }
+            }
+            tx.commit()
+        })
+    }
+
+    pub fn remove_roster(&self, hub: &str, addresses: &[String]) -> Result<()> {
+        self.with(|c| {
+            let tx = c.transaction()?;
+            for a in addresses {
+                tx.execute(
+                    "DELETE FROM roster WHERE hub=? AND address=?",
+                    params![hub, a],
+                )?;
+            }
+            tx.commit()
+        })
+    }
+
+    /// Exactly these addresses are online on this hub now.
+    pub fn set_online(&self, hub: &str, online: &[String]) -> Result<()> {
+        self.with(|c| {
+            let tx = c.transaction()?;
+            tx.execute("UPDATE roster SET online=0 WHERE hub=?", [hub])?;
+            for a in online {
+                tx.execute(
+                    "UPDATE roster SET online=1 WHERE hub=? AND address=?",
+                    params![hub, a],
+                )?;
+            }
+            tx.commit()
+        })
+    }
+
     // ------------------------------------------------------ attachments
 
     pub fn set_attachment(
@@ -561,6 +717,18 @@ impl Store {
             }
             Ok(msgs)
         })
+    }
+}
+
+/// How far along the receipt ladder a state is; states only move forward.
+fn rank(state: &str) -> u8 {
+    match state {
+        "sending" | "failed" => 1,
+        "sent" => 2,
+        "fetched" => 3,
+        "delivered" => 4,
+        "read" => 5,
+        _ => 0, // queued, received
     }
 }
 

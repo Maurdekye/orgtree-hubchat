@@ -54,7 +54,7 @@ impl HubAddress {
         &self.0
     }
 
-    fn join(&self, path: &str) -> String {
+    pub(crate) fn join(&self, path: &str) -> String {
         format!("{}{}", self.0, path)
     }
 }
@@ -244,7 +244,7 @@ impl CancelFlag {
 #[derive(Clone)]
 pub struct HubClient {
     addr: HubAddress,
-    http: reqwest::Client,
+    pub(crate) http: reqwest::Client,
 }
 
 impl HubClient {
@@ -530,7 +530,7 @@ impl HubClient {
         Ok(done)
     }
 
-    async fn post_json<B: Serialize + ?Sized, R: serde::de::DeserializeOwned>(
+    pub(crate) async fn post_json<B: Serialize + ?Sized, R: serde::de::DeserializeOwned>(
         &self,
         me: &Identity,
         path: &str,
@@ -550,7 +550,7 @@ impl HubClient {
 }
 
 /// Turn an HTTP error status into `Error::Hub` with the hub's `detail`.
-async fn check(resp: reqwest::Response) -> Result<reqwest::Response> {
+pub(crate) async fn check(resp: reqwest::Response) -> Result<reqwest::Response> {
     let status = resp.status();
     if status.is_success() {
         return Ok(resp);
