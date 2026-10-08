@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Remove the dev Hubchat identity and data of THIS Windows user so the e2e
-# smoke starts at onboarding. Never run this on a machine where Hubchat is
-# used for real.
-powershell -c "Get-Process hubchat -ErrorAction SilentlyContinue | Stop-Process -Force" >/dev/null 2>&1
-powershell -c "cmdkey /delete:'identity:$APPDATA\dev.orgtree.hubchat.dev.orgtree.hubchat'" >/dev/null 2>&1
+# Remove the TEST build's identity and data (identifier dev.orgtree.hubchat.test,
+# built with --config src-tauri/tauri.test.conf.json) so an e2e run starts at
+# onboarding. The real Hubchat (dev.orgtree.hubchat) is never touched.
+powershell -NoProfile -Command 'Get-Process hubchat -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*cargo-target*" } | Stop-Process -Force' >/dev/null 2>&1
+powershell -NoProfile -Command "cmdkey /delete:'identity:$APPDATA\\dev.orgtree.hubchat.test.dev.orgtree.hubchat'" >/dev/null 2>&1
 sleep 1
-rm -rf "$APPDATA/dev.orgtree.hubchat"
+rm -rf "$APPDATA/dev.orgtree.hubchat.test"
