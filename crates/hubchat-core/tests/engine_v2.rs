@@ -307,3 +307,43 @@ async fn resumable_upload_continues_after_a_break_and_big_files_go_through_the_e
     let path = m.download(&id, &got.attachments[0].local_id).await.unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), payload);
 }
+
+/// A person registered as "chat" (on a v1 hub, imported into v2 as it was)
+/// becomes "person" on its next connect: the engine registers with the kind
+/// it wants every time (user 19:57Z; needs a hub with mailhub fd0409d).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_chat_registration_becomes_a_person_on_connect() {
+    let Ok(hub) = std::env::var("HUBCHAT_V2_HUB") else {
+        eprintln!("SKIPPED: set HUBCHAT_V2_HUB to a scratch mail hub v2.0");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let me = Identity::generate(&uid("kind")).unwrap();
+    let client = hubchat_core::HubClient::new(hubchat_core::HubAddress::parse(&hub).unwrap());
+    let old = Profile {
+        kind: "chat".into(),
+        org_name: me.id().into(),
+        username: me.id().into(),
+        blurb: String::new(),
+    };
+    client.register(&me, &old).await.unwrap();
+    let kind = |r: Vec<hubchat_core::hub::RosterEntry>| {
+        r.into_iter()
+            .find(|e| e.slug == me.address())
+            .map(|e| e.kind)
+    };
+    assert_eq!(kind(client.roster(&me).await.unwrap()).as_deref(), Some("chat"));
+
+    let (e, _h) = device(&me, "pc", dir.path());
+    e.start().unwrap();
+    e.add_hub(&hub).unwrap();
+    until("connected", 20, || {
+        e.hub_statuses()
+            .iter()
+            .any(|s| s.state == HubState::Connected)
+    })
+    .await;
+    assert_eq!(kind(client.roster(&me).await.unwrap()).as_deref(), Some("person"));
+    e.shutdown();
+    let _ = client.unregister(&me).await;
+}
