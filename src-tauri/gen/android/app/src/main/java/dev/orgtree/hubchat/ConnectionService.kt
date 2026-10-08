@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -25,7 +26,6 @@ class ConnectionService : Service() {
     const val CHANNEL_CONNECTION = "connection"
     const val CHANNEL_MESSAGES = "messages"
     private const val ONGOING_ID = 1
-    private var nextId = 100
 
     @Volatile private var appContext: Context? = null
 
@@ -38,11 +38,15 @@ class ConnectionService : Service() {
 
     /** Called from Rust (any thread) when a message arrives. */
     @JvmStatic
-    fun notifyMessage(title: String, body: String) {
+    fun notifyMessage(title: String, body: String, peer: String) {
       val ctx = appContext ?: return
+      // One notification per chat (replaced as new messages arrive); tapping
+      // it opens that chat.
+      val intent = Intent(ctx, MainActivity::class.java)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        .putExtra("peer", peer)
       val open = PendingIntent.getActivity(
-        ctx, 0, Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-        PendingIntent.FLAG_IMMUTABLE)
+        ctx, peer.hashCode(), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
       val n = NotificationCompat.Builder(ctx, CHANNEL_MESSAGES)
         .setSmallIcon(R.mipmap.ic_launcher)
         .setContentTitle(title)
@@ -53,7 +57,18 @@ class ConnectionService : Service() {
         .setAutoCancel(true)
         .setContentIntent(open)
         .build()
-      ctx.getSystemService(NotificationManager::class.java).notify(nextId++, n)
+      ctx.getSystemService(NotificationManager::class.java).notify(peer, 2, n)
+    }
+
+    /** Called from Rust: open a content:// URI read-only; returns a detached fd or -1. */
+    @JvmStatic
+    fun openFd(uri: String): Int {
+      val ctx = appContext ?: return -1
+      return try {
+        ctx.contentResolver.openFileDescriptor(Uri.parse(uri), "r")?.detachFd() ?: -1
+      } catch (e: Exception) {
+        -1
+      }
     }
 
     /** Called from Rust to update the ongoing notification's text. */

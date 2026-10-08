@@ -38,6 +38,7 @@ pub fn load_identity(dir: &Path) -> Option<Identity> {
 }
 
 #[cfg(desktop)]
+#[allow(dead_code)] // used by "Remove this identity" (Settings), not wired yet
 pub fn forget_identity(dir: &Path) -> Result<(), String> {
     match entry(dir)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
@@ -61,6 +62,7 @@ pub fn load_identity(dir: &Path) -> Option<Identity> {
 }
 
 #[cfg(target_os = "android")]
+#[allow(dead_code)] // used by "Remove this identity" (Settings), not wired yet
 pub fn forget_identity(dir: &Path) -> Result<(), String> {
     match std::fs::remove_file(dir.join("identity.sealed")) {
         Ok(()) => Ok(()),

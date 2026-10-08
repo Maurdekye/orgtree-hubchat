@@ -9,8 +9,6 @@ use std::sync::{Arc, OnceLock};
 use jni::objects::{GlobalRef, JClass, JObject, JString, JValue};
 use jni::{JNIEnv, JavaVM};
 
-use crate::connection::{self, Platform};
-
 struct Jni {
     vm: JavaVM,
     // Classes must be resolved on a Java thread: FindClass from the core's
@@ -60,18 +58,56 @@ pub fn open(sealed: &str) -> Option<String> {
     call(&JNI.get()?.secret_box, "open", &[sealed], true).filter(|s| !s.is_empty())
 }
 
-struct AndroidPlatform;
+/// `static int openFd(String uri)` on ConnectionService: a content:// URI
+/// (or path) opened read-only through the ContentResolver; -1 on failure.
+fn open_fd(source: &str) -> Option<i32> {
+    let jni = JNI.get()?;
+    let mut env = jni.vm.attach_current_thread_as_daemon().ok()?;
+    let arg = env.new_string(source).ok()?;
+    let class: &JClass = jni.service.as_obj().into();
+    match env.call_static_method(
+        class,
+        "openFd",
+        "(Ljava/lang/String;)I",
+        &[JValue::Object(arg.as_ref())],
+    ) {
+        Ok(v) => v.i().ok().filter(|fd| *fd >= 0),
+        Err(_) => {
+            let _ = env.exception_clear();
+            None
+        }
+    }
+}
 
-impl Platform for AndroidPlatform {
-    fn notify(&self, title: &str, body: &str) {
+struct AndroidPlatform {
+    dir: PathBuf,
+}
+
+impl crate::core::Platform for AndroidPlatform {
+    fn notify(&self, title: &str, body: &str, peer: &str) {
         if let Some(j) = JNI.get() {
-            call(&j.service, "notifyMessage", &[title, body], false);
+            call(&j.service, "notifyMessage", &[title, body, peer], false);
         }
     }
     fn status(&self, text: &str) {
         if let Some(j) = JNI.get() {
             call(&j.service, "setStatus", &[text], false);
         }
+    }
+    fn open_source(&self, source: &str) -> std::io::Result<std::fs::File> {
+        if !source.starts_with("content://") {
+            return std::fs::File::open(source);
+        }
+        let fd =
+            open_fd(source).ok_or_else(|| std::io::Error::other("can't open the picked file"))?;
+        // SAFETY: openFd hands us a detached descriptor we now own.
+        Ok(unsafe {
+            use std::os::fd::FromRawFd;
+            std::fs::File::from_raw_fd(fd)
+        })
+    }
+    fn download_dir(&self) -> PathBuf {
+        self.dir.join("downloads")
     }
 }
 
@@ -116,5 +152,6 @@ fn start_core(mut env: JNIEnv, data_dir: JString) {
             secret_box,
         });
     }
-    connection::start(PathBuf::from(dir), Arc::new(AndroidPlatform));
+    let dir = PathBuf::from(dir);
+    let _ = crate::core::init(dir.clone(), Arc::new(AndroidPlatform { dir }));
 }

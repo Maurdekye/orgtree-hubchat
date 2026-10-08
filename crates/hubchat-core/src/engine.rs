@@ -164,6 +164,47 @@ impl Engine {
             .store(on, std::sync::atomic::Ordering::Relaxed);
     }
 
+    pub fn profile(&self) -> Profile {
+        self.profile.lock().unwrap().clone()
+    }
+
+    /// Change the display name and about line everywhere: through
+    /// POST /api/profile on hubs that support it, by registering again on
+    /// older hubs (which refresh the fields on re-registration).
+    pub async fn set_profile(&self, name: &str, about: &str) -> Result<()> {
+        let profile = {
+            let mut p = self.profile.lock().unwrap();
+            p.org_name = name.to_owned();
+            p.blurb = about.to_owned();
+            p.clone()
+        };
+        let hubs: Vec<(HubClient, Vec<String>)> = self
+            .hubs
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|h| h.status.state == HubState::Connected)
+            .map(|h| (h.client.clone(), h.status.features.clone()))
+            .collect();
+        for (client, features) in hubs {
+            let has = |f: &str| features.iter().any(|x| x == f);
+            let r = if has("profile") {
+                client.set_profile(&self.me, name, about).await
+            } else {
+                let mut p = profile.clone();
+                if p.kind == "person" && !has("person") {
+                    p.kind = "chat".into();
+                }
+                client.register(&self.me, &p).await.map(|_| ())
+            };
+            if let Err(e) = r {
+                // Not fatal: the next (re)registration carries the new values.
+                let _ = e;
+            }
+        }
+        Ok(())
+    }
+
     // ------------------------------------------------------------ hubs
 
     /// Add a hub (it is kept even while unreachable) and connect to it.
@@ -759,7 +800,10 @@ mod quote_tests {
 
     #[test]
     fn strips_only_a_leading_quote_line() {
-        assert_eq!(strip_quote("> earlier question\nmy answer\nmore"), "my answer\nmore");
+        assert_eq!(
+            strip_quote("> earlier question\nmy answer\nmore"),
+            "my answer\nmore"
+        );
         assert_eq!(strip_quote("no quote here"), "no quote here");
         assert_eq!(strip_quote("> only a quote"), "> only a quote");
     }
