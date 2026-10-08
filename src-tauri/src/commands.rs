@@ -379,3 +379,34 @@ pub fn hc_file_info(source: String) -> R<FileInfo> {
         .unwrap_or_else(|| "file".into());
     Ok(FileInfo { name, bytes })
 }
+
+/// Open a downloaded attachment with the system's default app (or, with
+/// `reveal`, show it in its folder on desktop).
+#[tauri::command]
+pub fn hc_open_attachment<RT: tauri::Runtime>(
+    app: tauri::AppHandle<RT>,
+    message_id: String,
+    local_id: String,
+    reveal: bool,
+) -> R<()> {
+    use tauri_plugin_opener::OpenerExt;
+    let m = core::get()?
+        .store
+        .message(&message_id)
+        .map_err(s)?
+        .ok_or("no such message")?;
+    let a = m
+        .attachments
+        .into_iter()
+        .find(|a| a.local_id == local_id)
+        .ok_or("no such attachment")?;
+    let path = a.local_path.ok_or("not downloaded yet")?;
+    if path.starts_with("content://") {
+        return app.opener().open_url(path, None::<&str>).map_err(s);
+    }
+    if reveal {
+        app.opener().reveal_item_in_dir(&path).map_err(s)
+    } else {
+        app.opener().open_path(path, None::<&str>).map_err(s)
+    }
+}

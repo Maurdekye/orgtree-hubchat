@@ -93,6 +93,12 @@ pub fn run() {
     #[cfg(desktop)]
     let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // "Start with Windows" (Settings): starts hidden in the tray.
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .args(["--hidden"])
+                .build(),
+        )
         .plugin(tauri_plugin_notification::init())
         .on_window_event(|w, ev| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = ev {
@@ -135,6 +141,7 @@ pub fn run() {
             commands::hc_set_draft,
             commands::hc_file_info,
             commands::hc_take_pending_chat,
+            commands::hc_open_attachment,
             link::hc_link_start,
             link::hc_link_cancel,
             link::hc_link_lookup,
@@ -161,6 +168,11 @@ pub fn run() {
                 };
                 core::init(dir, std::sync::Arc::new(platform))?;
                 desktop::tray(app.handle())?;
+                if std::env::args().any(|a| a == "--hidden") {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.hide();
+                    }
+                }
             }
             let handle = app.handle().clone();
             std::thread::spawn(move || {
