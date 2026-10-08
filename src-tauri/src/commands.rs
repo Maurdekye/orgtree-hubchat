@@ -493,10 +493,15 @@ pub struct FileInfo {
     bytes: u64,
 }
 
-/// Name and size of a picked file (a path, or on Android a content:// URI),
-/// so the composer can check the hub's limit before anything uploads.
+/// Name and size of a picked or dropped file (a path, or on Android a
+/// content:// URI), so the composer can check the hub's limit before anything
+/// uploads.
 #[tauri::command]
 pub fn hc_file_info(source: String) -> R<FileInfo> {
+    // a folder dropped on the chat (Windows can't open one as a file anyway)
+    if !source.starts_with("content://") && std::path::Path::new(&source).is_dir() {
+        return Err("it's a folder. Hubchat sends files, not folders.".into());
+    }
     let c = core::get()?;
     let f = c.platform().open_source(&source).map_err(s)?;
     let bytes = f.metadata().map_err(s)?.len();
