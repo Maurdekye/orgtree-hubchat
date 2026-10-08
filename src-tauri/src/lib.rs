@@ -2,6 +2,7 @@
 mod android;
 mod commands;
 mod core;
+mod link;
 mod secrets;
 
 #[cfg(desktop)]
@@ -133,6 +134,14 @@ pub fn run() {
             commands::hc_draft,
             commands::hc_set_draft,
             commands::hc_file_info,
+            link::hc_link_start,
+            link::hc_link_cancel,
+            link::hc_link_lookup,
+            link::hc_link_approve,
+            link::hc_key_qr,
+            link::hc_restore_qr,
+            link::hc_key_file_export,
+            link::hc_key_file_import,
         ])
         .setup(|app| {
             // On Android the ConnectionService creates the core (it outlives

@@ -240,6 +240,21 @@ impl Engine {
         self.queue_changed.notify_one();
     }
 
+    /// Send a message that is not part of any chat (device linking): through
+    /// a connected hub whose roster lists `to`, without storing it.
+    pub async fn send_unlisted(&self, to: &str, body: &str) -> Result<String> {
+        let reaching = self.store.hubs_reaching(to)?;
+        let (url, client, _) = self
+            .connected_hubs()
+            .into_iter()
+            .find(|(u, _, _)| reaching.contains(u))
+            .ok_or_else(|| {
+                Error::Invalid("none of your connected hubs can reach that device".into())
+            })?;
+        client.send(&self.me, &Outgoing::new(to, body)).await?;
+        Ok(url)
+    }
+
     pub fn hub_statuses(&self) -> Vec<HubStatus> {
         let hubs = self.hubs.lock().unwrap();
         let mut v: Vec<_> = hubs.values().map(|h| h.status.clone()).collect();

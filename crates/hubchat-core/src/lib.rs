@@ -7,6 +7,7 @@ pub mod engine;
 pub mod error;
 pub mod hub;
 pub mod identity;
+pub mod link;
 pub mod recovery;
 pub mod store;
 
