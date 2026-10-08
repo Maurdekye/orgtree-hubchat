@@ -1,0 +1,109 @@
+package dev.orgtree.hubchat
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.os.Build
+import android.os.IBinder
+import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
+
+/**
+ * Keeps Hubchat's hub connection alive in the background (design D6: a
+ * persistent "connection" notification). The hub connection itself runs in
+ * Rust (hubchat_lib); this service only owns the process lifetime and posts
+ * notifications on the core's behalf. It starts the core itself, so a
+ * START_STICKY restart without any activity still reconnects.
+ */
+class ConnectionService : Service() {
+  companion object {
+    const val CHANNEL_CONNECTION = "connection"
+    const val CHANNEL_MESSAGES = "messages"
+    private const val ONGOING_ID = 1
+    private var nextId = 100
+
+    @Volatile private var appContext: Context? = null
+
+    init {
+      System.loadLibrary("hubchat_lib")
+    }
+
+    /** Rust entry: start the hub core once per process (idempotent). */
+    @JvmStatic external fun startCore(dataDir: String)
+
+    /** Called from Rust (any thread) when a message arrives. */
+    @JvmStatic
+    fun notifyMessage(title: String, body: String) {
+      val ctx = appContext ?: return
+      val open = PendingIntent.getActivity(
+        ctx, 0, Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        PendingIntent.FLAG_IMMUTABLE)
+      val n = NotificationCompat.Builder(ctx, CHANNEL_MESSAGES)
+        .setSmallIcon(R.mipmap.ic_launcher)
+        .setContentTitle(title)
+        .setContentText(body)
+        .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+        .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+        .setPriority(NotificationCompat.PRIORITY_HIGH)
+        .setAutoCancel(true)
+        .setContentIntent(open)
+        .build()
+      ctx.getSystemService(NotificationManager::class.java).notify(nextId++, n)
+    }
+
+    /** Called from Rust to update the ongoing notification's text. */
+    @JvmStatic
+    fun setStatus(text: String) {
+      val ctx = appContext ?: return
+      ctx.getSystemService(NotificationManager::class.java).notify(ONGOING_ID, ongoing(ctx, text))
+    }
+
+    fun start(ctx: Context) {
+      val i = Intent(ctx, ConnectionService::class.java)
+      if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
+    }
+
+    private fun ongoing(ctx: Context, text: String): Notification {
+      val open = PendingIntent.getActivity(
+        ctx, 0, Intent(ctx, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+      return NotificationCompat.Builder(ctx, CHANNEL_CONNECTION)
+        .setSmallIcon(R.mipmap.ic_launcher)
+        .setContentTitle("Hubchat")
+        .setContentText(text)
+        .setOngoing(true)
+        .setSilent(true)
+        .setPriority(NotificationCompat.PRIORITY_MIN)
+        .setContentIntent(open)
+        .build()
+    }
+
+    private fun channels(ctx: Context) {
+      if (Build.VERSION.SDK_INT < 26) return
+      val nm = ctx.getSystemService(NotificationManager::class.java)
+      nm.createNotificationChannel(NotificationChannel(
+        CHANNEL_CONNECTION, "Background connection", NotificationManager.IMPORTANCE_MIN).apply {
+        description = "Keeps Hubchat connected to your hubs so messages arrive right away"
+      })
+      nm.createNotificationChannel(NotificationChannel(
+        CHANNEL_MESSAGES, "Messages", NotificationManager.IMPORTANCE_HIGH))
+    }
+  }
+
+  override fun onCreate() {
+    super.onCreate()
+    appContext = applicationContext
+    channels(this)
+    val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING else 0
+    ServiceCompat.startForeground(this, ONGOING_ID, ongoing(this, "Connecting…"), type)
+    startCore(filesDir.absolutePath)
+  }
+
+  override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+
+  override fun onBind(intent: Intent?): IBinder? = null
+}

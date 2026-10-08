@@ -18,7 +18,7 @@ android {
     compileSdk = 37
     namespace = "dev.orgtree.hubchat"
     defaultConfig {
-        manifestPlaceholders["usesCleartextTraffic"] = "false"
+        manifestPlaceholders["usesCleartextTraffic"] = "true" // hubs on a LAN speak plain http (design: trust note)
         applicationId = "dev.orgtree.hubchat"
         minSdk = 24
         targetSdk = 37
