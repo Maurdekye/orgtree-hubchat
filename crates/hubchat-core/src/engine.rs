@@ -1259,6 +1259,62 @@ impl Engine {
         self.host.event(Event::Chat { peer: m.peer });
         out
     }
+
+    /// Fetch an incoming attachment to `dest` for showing it in the chat (an
+    /// image preview), leaving its download state alone: Download still saves
+    /// it where downloads go. A hub that no longer has it marks it expired.
+    pub async fn fetch_preview(
+        &self,
+        message_id: &str,
+        local_id: &str,
+        dest: &std::path::Path,
+    ) -> Result<()> {
+        let m = self
+            .store
+            .message(message_id)?
+            .ok_or_else(|| Error::Invalid("no such message".into()))?;
+        let a = m
+            .attachments
+            .iter()
+            .find(|a| a.local_id == local_id)
+            .ok_or_else(|| Error::Invalid("no such attachment".into()))?;
+        let (Some(hub_id), Some(hub)) = (a.hub_id.clone(), m.hub.clone()) else {
+            return Err(Error::Invalid("not on a hub".into()));
+        };
+        let client = self
+            .hubs
+            .lock()
+            .unwrap()
+            .get(&hub)
+            .map(|h| h.client.clone())
+            .ok_or_else(|| Error::Invalid(format!("hub {hub} was removed")))?;
+        if let Some(dir) = dest.parent() {
+            tokio::fs::create_dir_all(dir).await?;
+        }
+        // a partial file never passes for a whole one (and two fetches of
+        // the same file don't share one)
+        static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let part = dest.with_extension(format!("part{n}"));
+        match client
+            .download_file(&self.me, &hub_id, &part, None, CancelFlag::default())
+            .await
+        {
+            Ok(_) => {
+                tokio::fs::rename(&part, dest).await?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&part).await;
+                if let Error::Hub { status: 410, .. } = &e {
+                    self.store
+                        .set_attachment(local_id, "expired", None, None, Some(&e.to_string()))?;
+                    self.host.event(Event::Chat { peer: m.peer });
+                }
+                Err(e)
+            }
+        }
+    }
 }
 
 /// `name`, or `name (2)`, `name (3)`... so a download never overwrites.
