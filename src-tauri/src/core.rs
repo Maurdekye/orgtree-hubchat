@@ -33,6 +33,10 @@ pub trait Platform: Send + Sync + 'static {
     fn publish_download(&self, _path: &std::path::Path, _name: &str) -> Option<String> {
         None
     }
+    /// A hubchat:// link the system opened the app with (taken once).
+    fn take_pending_link(&self) -> Option<String> {
+        None
+    }
     /// A chat a tapped notification asked to open (taken once).
     fn take_pending_chat(&self) -> Option<String> {
         None

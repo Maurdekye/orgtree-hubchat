@@ -75,6 +75,16 @@ class ConnectionService : Service() {
     /** The chat a tapped notification asked for; the UI takes it once. */
     @Volatile var pendingPeer: String = ""
 
+    /** A hubchat:// link the system opened us with; the UI takes it once. */
+    @Volatile var pendingLink: String = ""
+
+    @JvmStatic
+    fun takePendingLink(): String {
+      val l = pendingLink
+      pendingLink = ""
+      return l
+    }
+
     @JvmStatic
     fun takePendingPeer(): String {
       val p = pendingPeer

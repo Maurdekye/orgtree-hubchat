@@ -88,13 +88,18 @@ pub async fn hc_link_start<R2: Runtime>(
     app: AppHandle<R2>,
     hub: String,
     device_name: String,
+    code: Option<String>,
 ) -> R<LinkStart> {
     let c = core::get()?;
     if c.has_identity() {
         return Err("this device already has an identity".into());
     }
     let addr = HubAddress::parse(&hub).map_err(s)?;
-    let code = link::new_link_code();
+    // A code from a scanned/typed QR (the other device made it), or our own.
+    let code = match code {
+        Some(c) => format_code(&link::normalize_code(&c).map_err(s)?),
+        None => link::new_link_code(),
+    };
     let temp = link::link_identity(&code).map_err(s)?;
     let client = HubClient::new(addr.clone());
     let profile = Profile {
@@ -190,7 +195,19 @@ pub struct LinkLookup {
     unknown_hub: Option<String>,
 }
 
-fn parse_code_or_qr(input: &str) -> R<(String, Option<String>)> {
+/// The link QR is a URL so a phone camera opens Hubchat with it
+/// (user 19:12Z): `hubchat://link?code=XXXX-XXXX-XXXX-XXXX&hub=<url>`.
+pub fn link_url(code: &str, hub: &str) -> String {
+    let enc = |v: &str| url::form_urlencoded::byte_serialize(v.as_bytes()).collect::<String>();
+    format!("hubchat://link?code={}&hub={}", enc(code), enc(hub))
+}
+
+fn format_code(c: &str) -> String {
+    format!("{}-{}-{}-{}", &c[..4], &c[4..8], &c[8..12], &c[12..])
+}
+
+/// A typed code, the link URL, or the older `hubchat-link:CODE@HUB` text.
+pub fn parse_code_or_qr(input: &str) -> R<(String, Option<String>)> {
     let t = input.trim();
     if let Some(rest) = t.strip_prefix("hubchat-link:") {
         let (code, hub) = rest.split_once('@').ok_or("damaged link QR code")?;
@@ -199,7 +216,66 @@ fn parse_code_or_qr(input: &str) -> R<(String, Option<String>)> {
             Some(hub.to_string()),
         ));
     }
+    if t.starts_with("hubchat://") {
+        let u = url::Url::parse(t).map_err(|_| "damaged link QR code")?;
+        let get = |k: &str| {
+            u.query_pairs()
+                .find(|(n, _)| n == k)
+                .map(|(_, v)| v.into_owned())
+        };
+        let code = get("code").ok_or("the link has no code")?;
+        return Ok((link::normalize_code(&code).map_err(s)?, get("hub")));
+    }
     Ok((link::normalize_code(t).map_err(s)?, None))
+}
+
+#[derive(Serialize)]
+pub struct ParsedLink {
+    code: String,
+    hub: Option<String>,
+}
+
+/// For the UI: what a scanned or opened link holds.
+#[tauri::command]
+pub fn hc_parse_link(input: String) -> R<ParsedLink> {
+    let (code, hub) = parse_code_or_qr(&input)?;
+    Ok(ParsedLink {
+        code: format_code(&code),
+        hub,
+    })
+}
+
+#[derive(Serialize)]
+pub struct LinkOffer {
+    code: String,
+    qr: String,
+    hub: String,
+}
+
+/// Signed-in device: make a one-time code for a NEW device to scan
+/// (user 19:12-19:13Z: the PC shows the QR, the phone scans it). The new
+/// device then appears under the code's address; hc_link_lookup sees its
+/// name and hc_link_approve sends it the identity, as in the other direction.
+#[tauri::command]
+pub fn hc_link_offer(hub: Option<String>) -> R<LinkOffer> {
+    let c = core::get()?;
+    let e = c.engine()?;
+    let statuses = e.hub_statuses();
+    let hub = match hub {
+        Some(h) => HubAddress::parse(&h).map_err(s)?.to_string(),
+        None => statuses
+            .iter()
+            .find(|h| matches!(h.state, hubchat_core::engine::HubState::Connected))
+            .or_else(|| statuses.first())
+            .map(|h| h.url.clone())
+            .ok_or("add a hub first: the new device links through one")?,
+    };
+    let code = link::new_link_code();
+    Ok(LinkOffer {
+        qr: link_url(&code, &hub),
+        code,
+        hub,
+    })
 }
 
 #[tauri::command]

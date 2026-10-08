@@ -200,6 +200,7 @@ export const tauriApi = {
   setDraft: (peer: string, body: string) => invoke<void>("hc_set_draft", { peer, body }),
   fileInfo: (source: string) => invoke<{ name: string; bytes: number }>("hc_file_info", { source }),
   devices: () => invoke<Devices>("hc_devices"),
+  saveRecovery: (dest: string | null) => invoke<string>("hc_save_recovery", { dest }),
 
   // linking a device (src-tauri/src/link.rs)
   linkStart: (hub: string, deviceName: string) => invoke<LinkStart>("hc_link_start", { hub, deviceName }),

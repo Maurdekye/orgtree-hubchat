@@ -29,5 +29,7 @@ class MainActivity : TauriActivity() {
 
   private fun takePeer(intent: Intent?) {
     intent?.getStringExtra("peer")?.let { ConnectionService.pendingPeer = it }
+    // hubchat://link?... from a camera or QR app (user 19:12Z)
+    intent?.data?.takeIf { it.scheme == "hubchat" }?.let { ConnectionService.pendingLink = it.toString() }
   }
 }

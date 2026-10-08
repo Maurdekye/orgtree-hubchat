@@ -375,6 +375,7 @@ export const mockApi: Api = {
   deleteChat: async (peer) => { for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].peer === peer) msgs.splice(i, 1); chatEv(peer); },
   draft: async (peer) => drafts[peer] ?? null,
   setDraft: async (peer, body) => { drafts[peer] = body; },
+  saveRecovery: async (dest) => dest || "Downloads/hubchat-recovery-alex.txt",
   devices: async () => ({ this_device: "hc-mock-pc", devices: [
     { device_id: "hc-mock-pc", name: "HOME-PC", created_at: null, last_seen: null, online: true },
     { device_id: "hc-mock-phone", name: "Android phone", created_at: null, last_seen: "2026-10-08T17:58:00.000Z", online: false },

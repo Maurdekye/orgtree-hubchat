@@ -125,6 +125,10 @@ impl crate::core::Platform for AndroidPlatform {
         )
         .filter(|u| !u.is_empty())
     }
+    fn take_pending_link(&self) -> Option<String> {
+        let j = JNI.get()?;
+        call(&j.service, "takePendingLink", &[], true).filter(|p| !p.is_empty())
+    }
     fn take_pending_chat(&self) -> Option<String> {
         let j = JNI.get()?;
         call(&j.service, "takePendingPeer", &[], true).filter(|p| !p.is_empty())

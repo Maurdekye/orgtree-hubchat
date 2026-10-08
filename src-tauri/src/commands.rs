@@ -328,6 +328,12 @@ pub async fn hc_download(message_id: String, local_id: String) -> R<String> {
     }
 }
 
+/// A hubchat:// link the system opened us with (Android), taken once.
+#[tauri::command]
+pub fn hc_take_pending_link() -> R<Option<String>> {
+    Ok(core::get()?.platform().take_pending_link())
+}
+
 /// The chat a tapped notification asked for (Android), taken once.
 #[tauri::command]
 pub fn hc_take_pending_chat() -> R<Option<String>> {
@@ -431,4 +437,66 @@ pub fn hc_open_attachment<RT: tauri::Runtime>(
     } else {
         app.opener().open_path(path, None::<&str>).map_err(s)
     }
+}
+
+/// The recovery words as a text file (user 19:08Z). `dest` is the save
+/// dialog's choice on desktop; without it (Android) the file goes to the
+/// shared Downloads. Saving counts as "saved". Returns where it went.
+#[tauri::command]
+pub fn hc_save_recovery<RT: tauri::Runtime>(
+    app: tauri::AppHandle<RT>,
+    dest: Option<String>,
+) -> R<String> {
+    use std::io::Write;
+    let c = core::get()?;
+    let e = c.engine()?;
+    let words = recovery::to_words(e.me()).map_err(s)?;
+    let mut text = String::new();
+    text.push_str("Hubchat recovery words\r\n\r\n");
+    text.push_str(&format!("Address: @net:{}\r\n", e.me().address()));
+    text.push_str(&format!("Saved:   {}\r\n\r\n", hubchat_core::engine::now()));
+    for (i, w) in words.iter().enumerate() {
+        text.push_str(&format!("{:>2}. {w}\r\n", i + 1));
+    }
+    text.push_str(
+        "\r\nThese 24 words ARE your Hubchat identity: they bring back your address on a new\r\n",
+    );
+    text.push_str(
+        "device (Hubchat > I already use Hubchat > Recovery words). Anyone who has them can\r\n",
+    );
+    text.push_str(
+        "be you. Keep this file somewhere safe and private, or print it and delete it.\r\n",
+    );
+    let file_name = format!("hubchat-recovery-{}.txt", e.me().id());
+    let place = match dest {
+        Some(dest) => {
+            use std::str::FromStr;
+            use tauri_plugin_fs::{FilePath, FsExt, OpenOptions};
+            let fp = FilePath::from_str(&dest).map_err(s)?;
+            let mut f = app
+                .fs()
+                .open(
+                    fp,
+                    OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .truncate(true)
+                        .clone(),
+                )
+                .map_err(s)?;
+            f.write_all(text.as_bytes()).map_err(s)?;
+            dest
+        }
+        None => {
+            let tmp = c.platform().download_dir().join(&file_name);
+            std::fs::create_dir_all(tmp.parent().unwrap()).map_err(s)?;
+            std::fs::write(&tmp, text.as_bytes()).map_err(s)?;
+            match c.platform().publish_download(&tmp, &file_name) {
+                Some(_) => format!("Downloads/{file_name}"),
+                None => tmp.to_string_lossy().into_owned(),
+            }
+        }
+    };
+    c.store.set_meta("recovery.saved", "yes").map_err(s)?;
+    Ok(place)
 }

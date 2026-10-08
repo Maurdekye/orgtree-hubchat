@@ -4,9 +4,10 @@
 // recovery words. A bundle that brings hubs goes straight to the app; the
 // words (or a bundle without hubs) go on to the add-hubs step.
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { copyWords, downloadWords } from "../lib/recovery";
 import { api, type LinkStart } from "../api";
 import { Icon, Logo, type IconName } from "../lib/icons";
-import { baseName, errText, copyText, pickKeyFile, scanQr } from "../lib/native";
+import { baseName, errText, pickKeyFile, scanQr } from "../lib/native";
 import { getSnap, refreshAll, refreshState, setOnboarding, useSnap } from "../lib/store";
 import { splitAddr } from "../lib/peers";
 import { toast } from "../lib/toast";
@@ -308,7 +309,8 @@ export function Onboarding() {
         <p className="lead">These 24 words hold your key and your id. If you lose every device, they bring back {address ? <ObAddr a={address} /> : "your address"} on a new one.</p>
         {words.length ? <ol className="words">{words.map((w, i) => <li key={i}>{w}</li>)}</ol> : <div className="probe-card busy"><span className="spin" /><div>Reading your words…</div></div>}
         <div className={"keyacts" + (platform === "android" ? " pad" : "")} style={{ marginTop: 10 }}>
-          <button className="btn" disabled={!words.length} onClick={() => copyText(words.join(" "), "Recovery words copied")}><Icon name="copy" />Copy words</button>
+          <button className="btn" disabled={!words.length} onClick={() => void copyWords(words)}><Icon name="copy" />Copy words</button>
+          <button className="btn" disabled={!words.length} onClick={() => void downloadWords(platform, snap.state?.me?.id || "words")}><Icon name="download" />Download</button>
         </div>
         <NoteCard icon="warning" warn><b>Keep them private.</b> Anyone with these words can read your messages and send as you. Write them down, or keep them in a password manager.</NoteCard>
         {err ? <div className="help bad">{err}</div> : null}

@@ -27,6 +27,13 @@
                 <!-- AndroidTV support -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+            <!-- The link-a-device QR: hubchat://link?code=...&hub=... (no key inside) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="hubchat" android:host="link" />
+            </intent-filter>
         </activity>
 
         <service

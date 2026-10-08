@@ -12,6 +12,7 @@ import { setThemePref, useThemePref, type ThemePref } from "../lib/theme";
 import { toast } from "../lib/toast";
 import { checkForUpdate, useUpdate } from "../lib/updates";
 import { LinkDeviceModal } from "./LinkDevice";
+import { copyWords, downloadWords } from "../lib/recovery";
 import { HubAdder } from "./HubAdder";
 import { Addr, Avatar, Confirm, NoteCard, QR, Switch, useNow, usePlatform } from "./ui";
 
@@ -179,7 +180,8 @@ function Recovery() {
         <ol className={"words" + (words ? "" : " blur")}>{(words || placeholder).map((w, i) => <li key={i}>{w}</li>)}</ol>
         <div className={"keyacts" + (platform === "android" ? " pad" : "")} style={{ marginTop: 12 }}>
           {words
-            ? <button className="btn" onClick={() => copyText(words.join(" "), "Recovery words copied")}><Icon name="copy" />Copy words</button>
+            ? <><button className="btn" onClick={() => void copyWords(words)}><Icon name="copy" />Copy words</button>
+                <button className="btn" onClick={() => void downloadWords(platform, snap.state?.me?.id || "words")}><Icon name="download" />Download</button></>
             : <button className="btn" onClick={() => setAsk(true)}><Icon name="visibility" />Show words</button>}
           {words ? <button className="btn ghost" onClick={() => setWords(null)}>Hide</button> : null}
           {!saved && words ? <button className="btn primary" onClick={markSaved}>I've saved them</button> : null}

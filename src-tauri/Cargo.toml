@@ -26,6 +26,7 @@ serde_json = "1"
 hubchat-core = { path = "../crates/hubchat-core" }
 tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros"] }
 humantime = "2"
+url = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-process = "2"

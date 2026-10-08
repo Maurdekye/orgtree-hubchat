@@ -48,6 +48,7 @@ android {
     buildTypes {
         getByName("debug") {
             // Test builds install beside the user's real Hubchat, never over it.
+            applicationIdSuffix = ".test"
             manifestPlaceholders["usesCleartextTraffic"] = "true"
             isDebuggable = true
             isJniDebuggable = true
@@ -61,8 +62,14 @@ android {
         }
         getByName("release") {
             signingConfigs.findByName("release")?.let { signingConfig = it }
+            // HUBCHAT_TEST_BUILD=1: a release-configured build that installs
+            // beside the user's real Hubchat (to prove release-only issues).
+            if (System.getenv("HUBCHAT_TEST_BUILD") != null) applicationIdSuffix = ".test"
+            // No R8 shrinking: it broke the barcode scanner plugin's
+            // reflection in release (NPE when a scan returned; user crash
+            // 2026-10-08 19:11Z). The code is small; correctness wins.
             optimization {
-               enable = true
+               enable = false
             }
             proguardFiles(
                 *fileTree(".") {
