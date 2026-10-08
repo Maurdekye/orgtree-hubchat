@@ -148,7 +148,7 @@ export function Android() {
   // is joined; a new device's (role take) is looked up on Link a device ›
   // Approve a code
   usePendingLink((input) => {
-    routeLink(input, "approve").then((r) => (r.k === "join" ? startJoin(r.p.code, r.p.hub) : go({ s: "link", tab: "approve", input: r.input })), (e) => toast(errText(e)));
+    routeLink(input, "approve").then((r) => (r.k === "join" ? startJoin(r.p.code, r.p.hub, r.p.hubs, r.p.hub_name) : go({ s: "link", tab: "approve", input: r.input })), (e) => toast(errText(e)));
   });
   const join = useJoin();
 

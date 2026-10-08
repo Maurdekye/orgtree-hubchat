@@ -213,7 +213,7 @@ function UseAnother({ onApprove }: { onApprove: (input: string) => void }) {
     setBusy(true); setErr(null);
     try {
       const r = await routeLink(input, "join");
-      if (r.k === "join") { startJoin(r.p.code, r.p.hub); setOpen(false); setCode(""); }
+      if (r.k === "join") { startJoin(r.p.code, r.p.hub, r.p.hubs, r.p.hub_name); setOpen(false); setCode(""); }
       else onApprove(r.input);
     } catch (e) { setErr(errText(e)); }
     finally { setBusy(false); }

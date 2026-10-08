@@ -36,7 +36,7 @@ const FLOW: Record<Flow, Step[]> = {
 const VIA: Record<Flow, string> = { new: "", words: "Your words", link: "Linking", qr: "The QR code", file: "Your key file", join: "Linking", type: "Linking" };
 
 /** The other device's code, and the hub to join it through (verified: this device reached it). */
-interface Join { code: string; hub: string | null; ok?: { url: string; name: string } }
+interface Join { code: string; hub: string | null; hubs?: string[]; hubName?: string | null; ok?: { url: string; name: string } }
 
 interface Action { label: ReactNode; onClick: () => void; primary?: boolean; disabled?: boolean }
 
@@ -128,7 +128,7 @@ type Wait = { k: "starting" } | { k: "waiting"; s: LinkStart; until: number } | 
  *  With `code` (the other device's code, scanned or typed) this device joins
  *  that code instead and shows no code of its own; `other` then offers a new
  *  scan (or a new typed code) when it fails or runs out. */
-function LinkWait({ hub, hubName, name, code, other, onDone, onCancel, step, flow }: { hub: string; hubName: string; name: string; code?: string; other?: Action; onDone: (address: string) => void; onCancel: () => void; step: Step; flow: Flow }) {
+function LinkWait({ hub, hubName, name, code, aliases, other, onDone, onCancel, step, flow }: { hub: string; hubName: string; name: string; code?: string; aliases?: string[]; other?: Action; onDone: (address: string) => void; onCancel: () => void; step: Step; flow: Flow }) {
   const platform = usePlatform();
   const [st, setSt] = useState<Wait>({ k: "starting" });
   const [attempt, setAttempt] = useState(0);
@@ -158,7 +158,7 @@ function LinkWait({ hub, hubName, name, code, other, onDone, onCancel, step, flo
     if (startedFor.current === attempt) return;
     startedFor.current = attempt;
     setSt({ k: "starting" });
-    api.linkStart(hub, name, code ?? null).then(
+    api.linkStart(hub, name, code ?? null, aliases ?? null).then(
       (s) => setSt({ k: "waiting", s, until: Date.now() + 600e3 }),
       (e) => setSt({ k: "failed", msg: errText(e) }),
     );
@@ -280,22 +280,23 @@ export function Onboarding() {
   };
 
   /** Join the other device's code through `hub` (checked next, on the name step). */
-  const joinWith = (c: string, hub: string | null, f: Flow) => {
-    setJoin({ code: c, hub }); setJoinProbe(null); setFlow(f); go("joinname");
+  const joinWith = (c: string, hub: string | null, f: Flow, hubs: string[] = [], hubName: string | null = null) => {
+    setJoin({ code: c, hub, hubs, hubName }); setJoinProbe(null); setFlow(f); go("joinname");
   };
   // a phone camera opened a hubchat:// link: a signed-in device's QR (role
   // give) is joined straight away; a waiting device's (role take) can't be
   // served from here, this device has no identity to give
   usePendingLink((input) => {
     if (getSnap().state?.me) return;
-    api.parseLink(input).then((p) => { if (p.role === "take") { setFlow("join"); go("needgive"); } else joinWith(p.code, p.hub, "join"); }, (e) => toast(errText(e)));
+    api.parseLink(input).then((p) => { if (p.role === "take") { setFlow("join"); go("needgive"); } else joinWith(p.code, p.hub, "join", p.hubs, p.hub_name); }, (e) => toast(errText(e)));
   });
   // the name step checks that this device reaches the code's hub; if not, ask for an address that works
   useEffect(() => {
     if (step !== "joinname" || !join || join.ok) return;
     if (!join.hub) { go("joinhub"); return; }
     let live = true;
-    api.probeHub(join.hub).then((p) => {
+    // the link may name its hub several ways (a PC's localhost hub: its Tailscale name and addresses)
+    (join.hubs && join.hubs.length > 0 ? api.probeLinkHubs(join.hubs, join.hubName ?? null) : api.probeHub(join.hub)).then((p) => {
       if (!live) return;
       if (p.result === "connected") setJoin((j) => (j ? { ...j, ok: { url: p.url, name: p.name } } : j));
       else { setJoinProbe(p); go("joinhub"); }
@@ -316,7 +317,7 @@ export function Onboarding() {
       }
       const p = await api.parseLink(t);
       if (p.role === "take") { go("needgive"); return; }
-      joinWith(p.code, p.hub, "join");
+      joinWith(p.code, p.hub, "join", p.hubs, p.hub_name);
     } catch (e) { setErr(errText(e)); setBusy(false); }
   };
   const startScan = () => { pick("join", "scan"); void scanLink(); };
@@ -516,7 +517,7 @@ export function Onboarding() {
         const p = await api.parseLink(code);
         if (p.role === "take") { go("needgive"); return; }
         const hub = p.hub ?? linkHub?.url ?? null;
-        setJoin({ code: p.code, hub, ok: linkHub && hub === linkHub.url ? linkHub : undefined }); setJoinProbe(null);
+        setJoin({ code: p.code, hub, hubs: p.hubs, hubName: p.hub_name, ok: linkHub && hub === linkHub.url ? linkHub : undefined }); setJoinProbe(null);
         go("joinname");
       } catch (e) { setErr(errText(e)); setBusy(false); }
     };
@@ -575,7 +576,7 @@ export function Onboarding() {
     const other: Action | undefined = flow === "type"
       ? { label: "Type a new code", onClick: () => { setCode(""); go("typecode"); } }
       : platform === "android" ? { label: <><Icon name="camera" />Scan again</>, onClick: () => { go("scan"); void scanLink(); } } : undefined;
-    return <LinkWait step={step} flow={flow} hub={join.ok.url} hubName={join.ok.name} name={devName.trim()} code={join.code} other={other} onDone={(a) => void arrived(a)} onCancel={() => go("method")} />;
+    return <LinkWait step={step} flow={flow} hub={join.ok.url} hubName={join.ok.name} name={devName.trim()} code={join.code} aliases={join.hubs} other={other} onDone={(a) => void arrived(a)} onCancel={() => go("method")} />;
   }
 
   if (step === "scan") {

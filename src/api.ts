@@ -147,14 +147,29 @@ export type HcEvent =
 
 /** What hc_link_start (new device) and hc_link_offer (signed-in device)
  *  return: the one-time code, its QR text and the hub it goes through. */
-export interface LinkStart { code: string; qr: string; hub: string }
+export interface LinkStart {
+  code: string; qr: string;
+  /** The hub as this device knows it. */
+  hub: string;
+  /** What a link offer's QR names it: as other devices may reach it (localhost is no address for a phone). */
+  hubs?: string[];
+}
 
 /** What a typed code, a hubchat://link URL or an older hubchat-link: text holds.
  *  `role`: "give" (a signed-in device offers its identity: the scanner joins),
  *  "take" (a new device asks for one: a signed-in scanner approves), or null
  *  (a typed code; the older hubchat-link: text counts as "take"). */
 export type LinkRole = "give" | "take";
-export interface ParsedLink { code: string; hub: string | null; role: LinkRole | null }
+export interface ParsedLink {
+  code: string;
+  /** The likeliest address of the link's hub. */
+  hub: string | null;
+  /** Every address the link names for its hub, the likeliest first. */
+  hubs: string[];
+  /** The hub's name, to check the right hub answered. */
+  hub_name: string | null;
+  role: LinkRole | null;
+}
 
 /** Progress of a link started with hc_link_start (Tauri event "hc-link"). */
 export type LinkEvent =
@@ -193,6 +208,8 @@ export const tauriApi = {
   setReadReceipts: (on: boolean) => invoke<void>("hc_set_read_receipts", { on }),
 
   probeHub: (input: string) => invoke<Probe>("hc_probe_hub", { input }),
+  /** A link's hub under each address it names: the likeliest that answers as `name`. */
+  probeLinkHubs: (hubs: string[], name: string | null) => invoke<Probe>("hc_probe_link_hubs", { hubs, name }),
   addHub: (input: string) => invoke<string>("hc_add_hub", { input }),
   removeHub: (url: string, unregister: boolean) => invoke<void>("hc_remove_hub", { url, unregister }),
   retryNow: () => invoke<void>("hc_retry_now"),
@@ -219,7 +236,8 @@ export const tauriApi = {
   /** Join a link (any device). With `code` it joins the code another device shows
    *  (hc_link_offer) instead of making its own; either way "hc-link" events follow.
    *  A signed-in device ends in "same" or "switch" instead of "done". */
-  linkStart: (hub: string, deviceName: string, code?: string | null) => invoke<LinkStart>("hc_link_start", { hub, deviceName, code: code ?? null }),
+  /** `aliases`: the other addresses the link named for `hub` (not kept as extra hubs). */
+  linkStart: (hub: string, deviceName: string, code?: string | null, aliases?: string[] | null) => invoke<LinkStart>("hc_link_start", { hub, deviceName, code: code ?? null, aliases: aliases ?? null }),
   /** Signed-in device: a one-time code (and QR) for a new device to scan or type. */
   linkOffer: (hub?: string | null) => invoke<LinkStart>("hc_link_offer", { hub: hub ?? null }),
   parseLink: (input: string) => invoke<ParsedLink>("hc_parse_link", { input }),

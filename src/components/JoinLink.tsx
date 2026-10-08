@@ -17,7 +17,7 @@ import { Addr, Modal, ModalHead, NoteCard, useNow, usePlatform } from "./ui";
 
 type Hub = { url: string; name: string };
 type St =
-  | { k: "probe"; hub: string }
+  | { k: "probe"; hub: string; all?: string[] }
   | { k: "hub"; hub: string | null; why: string | null }
   | { k: "starting"; hub: Hub }
   | { k: "waiting"; hub: Hub; s: LinkStart; until: number }
@@ -50,7 +50,7 @@ export function JoinFlow({ req }: { req: JoinReq }) {
   const platform = usePlatform();
   const snap = useSnap();
   const self = platform === "android" ? "phone" : "PC";
-  const [st, setSt] = useState<St>(() => (req.hub ? { k: "probe", hub: req.hub } : { k: "hub", hub: null, why: null }));
+  const [st, setSt] = useState<St>(() => (req.hub ? { k: "probe", hub: req.hub, all: req.hubs } : { k: "hub", hub: null, why: null }));
   const [attempt, setAttempt] = useState(0);
   const [ack, setAck] = useState(false);
   const now = useNow(st.k === "waiting");
@@ -93,7 +93,8 @@ export function JoinFlow({ req }: { req: JoinReq }) {
   useEffect(() => {
     if (st.k !== "probe") return;
     let live = true;
-    api.probeHub(st.hub).then(
+    // the link may name its hub several ways (a PC's localhost hub: its Tailscale name and addresses)
+    (st.all && st.all.length > 0 ? api.probeLinkHubs(st.all, req.hubName) : api.probeHub(st.hub)).then(
       (p) => { if (!live) return; if (p.result === "connected") setSt({ k: "starting", hub: { url: p.url, name: p.name } }); else setSt({ k: "hub", hub: st.hub, why: p.error }); },
       (e) => { if (live) setSt({ k: "hub", hub: st.hub, why: errText(e) }); },
     );
@@ -113,7 +114,7 @@ export function JoinFlow({ req }: { req: JoinReq }) {
       let name = platform === "android" ? "Android phone" : "Windows PC";
       try { const d = await api.devices(); name = d.devices.find((x) => x.device_id === d.this_device)?.name || name; } catch { /* the default name */ }
       try {
-        const s = await api.linkStart(hub.url, name, req.code);
+        const s = await api.linkStart(hub.url, name, req.code, req.hubs);
         setSt((c) => (c.k === "starting" ? { k: "waiting", hub, s, until: Date.now() + 600e3 } : c));
       } catch (e) { setSt({ k: "failed", hub, msg: errText(e) }); }
     })();

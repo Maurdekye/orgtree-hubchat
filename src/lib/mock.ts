@@ -189,22 +189,22 @@ function adopt(withHubs: boolean): string {
   return st.me.address;
 }
 function parseLink(input: string): ParsedLink {
-  let t = input.trim(); let hub: string | null = null; let role: LinkRole | null = null;
+  let t = input.trim(); let hub: string | null = null; let role: LinkRole | null = null; let hubs: string[] = []; let hubName: string | null = null;
   const m = /^hubchat-link:([^@]+)@(.+)$/i.exec(t);
   if (/^hubchat-link:/i.test(t) && !m) throw "damaged link QR code";
-  if (m) { t = m[1]; hub = m[2]; role = "take"; }
+  if (m) { t = m[1]; hub = m[2]; hubs = [m[2]]; role = "take"; }
   else if (/^hubchat:\/\//i.test(t)) {
     let u: URL;
     try { u = new URL(t); } catch { throw "damaged link QR code"; }
     const c = u.searchParams.get("code");
     if (!c) throw "the link has no code";
-    t = c; hub = u.searchParams.get("hub");
+    t = c; hubs = u.searchParams.getAll("hub").filter((h) => h.trim()); hub = hubs[0] ?? null; hubName = u.searchParams.get("name");
     const r = u.searchParams.get("role");
     role = r === "give" || r === "take" ? r : null;
   }
   const raw = t.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (raw.length !== 16) throw "a link code has 16 letters and digits (XXXX-XXXX-XXXX-XXXX); got " + raw.length;
-  return { code: raw.replace(/(.{4})(?=.)/g, "$1-"), hub, role };
+  return { code: raw.replace(/(.{4})(?=.)/g, "$1-"), hub, hubs, hub_name: hubName, role };
 }
 
 /** The identity a link brought on a signed-in device, held until switch or cancel. */
@@ -338,6 +338,15 @@ export const mockApi: Api = {
     if (/unreach|10\.0\.9\.|10\.0\.0\.7|127\.0\.0\.1|localhost/.test(url)) return { result: "unreachable", url, error: "connection refused (os error 10061)" };
     if (/example|google|github/.test(url)) return { result: "not_a_hub", url, error: "GET /healthz answered 404 Not Found" };
     return { result: "connected", url, name: hubLabel(url), max_attachment_bytes: GB, features: ["v2"], version: "1.4.0" };
+  },
+  probeLinkHubs: async (hubs, name): Promise<Probe> => {
+    let first: Probe | null = null;
+    for (const h of hubs) {
+      const p = await mockApi.probeHub(h);
+      if (p.result === "connected" && (!name || p.name === name)) return p;
+      first ??= p;
+    }
+    return first ?? { result: "invalid", error: "the link names no hub" };
   },
   addHub: async (input) => {
     const url = normHub(input);

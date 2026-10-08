@@ -7,15 +7,16 @@
 import { useSyncExternalStore } from "react";
 import { api, type ParsedLink } from "../api";
 
-export interface JoinReq { code: string; hub: string | null; n: number }
+export interface JoinReq { code: string; hub: string | null; hubs: string[]; hubName: string | null; n: number }
 
 let cur: JoinReq | null = null;
 let n = 0;
 const subs = new Set<() => void>();
 const changed = () => subs.forEach((f) => f());
 
-/** Join `code` through `hub` (null: ask which hub). */
-export function startJoin(code: string, hub: string | null): void { cur = { code, hub, n: ++n }; changed(); }
+/** Join `code` through `hub` (null: ask which hub); `hubs`: every address the
+ *  link names for it, `hubName`: the name it must answer with. */
+export function startJoin(code: string, hub: string | null, hubs: string[] = [], hubName: string | null = null): void { cur = { code, hub, hubs, hubName, n: ++n }; changed(); }
 export function endJoin(): void { cur = null; changed(); }
 export function useJoin(): JoinReq | null {
   return useSyncExternalStore((f) => { subs.add(f); return () => { subs.delete(f); }; }, () => cur);

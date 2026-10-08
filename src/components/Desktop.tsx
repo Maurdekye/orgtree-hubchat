@@ -78,7 +78,7 @@ export function Desktop() {
   // a hubchat:// link the system opened us with: a signed-in device's (role
   // give) is joined; a new device's (role take) is approved here
   usePendingLink((input) => {
-    routeLink(input, "approve").then((r) => (r.k === "join" ? startJoin(r.p.code, r.p.hub) : setOv({ k: "link", tab: "approve", input: r.input })), (e) => toast(errText(e)));
+    routeLink(input, "approve").then((r) => (r.k === "join" ? startJoin(r.p.code, r.p.hub, r.p.hubs, r.p.hub_name) : setOv({ k: "link", tab: "approve", input: r.input })), (e) => toast(errText(e)));
   });
   // joining another identity's link: it replaces whatever overlay started it
   const join = useJoin();

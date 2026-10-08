@@ -224,7 +224,7 @@ function ApproveTab({ onClose, initialInput }: { onClose: () => void; initialInp
   const route = async (input: string): Promise<boolean> => {
     const r = await routeLink(input, "approve");
     if (r.k !== "join") return false;
-    startJoin(r.p.code, r.p.hub);
+    startJoin(r.p.code, r.p.hub, r.p.hubs, r.p.hub_name);
     onClose();
     return true;
   };
