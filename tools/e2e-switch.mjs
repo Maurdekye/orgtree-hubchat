@@ -59,7 +59,8 @@ try {
   await shot(phone, 'switch-phone-ask.png');
   const blocked = await phone.eval(`(() => { const b = [...document.querySelectorAll('button')].find((x) => /^Switch to/.test(x.innerText.trim())); return b ? b.disabled : null; })()`);
   check('Switch is disabled until the box is ticked', blocked === true, String(blocked));
-  await phone.eval(`(() => { const c = document.querySelector('input[type=checkbox]'); c.click(); })()`); await sleep(400);
+  // the "I have the recovery words" box (the hub review has boxes of its own)
+  await phone.eval(`(() => { const l = [...document.querySelectorAll('label')].find((x) => /recovery words/.test(x.innerText)); l.querySelector('input[type=checkbox]').click(); })()`); await sleep(400);
   await phone.eval(`[...document.querySelectorAll('button')].find((x) => /^Switch to/.test(x.innerText.trim())).click()`);
   const switched = await waitFor(phone, `window.__TAURI_INTERNALS__.invoke('hc_state').then((s) => s.me && s.me.address === ${JSON.stringify(A)})`, 20000);
   check('phone is now A', switched);
