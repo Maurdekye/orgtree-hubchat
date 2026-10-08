@@ -30,6 +30,13 @@ pub fn strip_quote(body: &str) -> &str {
     }
 }
 
+/// Bodies longer than this go to v2 hubs as an uploaded part (the hub takes
+/// up to 32 MiB of JSON per send).
+pub const BODY_INLINE_MAX: u64 = 16 * 1024 * 1024;
+
+/// Files at least this big go through v2's resumable uploads.
+pub const RESUMABLE_MIN: u64 = 8 * 1024 * 1024;
+
 /// Long bodies (v2, G6) are fetched whole up to this size.
 pub const LONG_BODY_FETCH_MAX: u64 = 64 * 1024 * 1024;
 
@@ -479,7 +486,13 @@ impl Engine {
                     &device_id,
                     &device_name,
                     cursor.as_deref(),
-                    crate::hub::POLL_WAIT_SECS,
+                    // While catching up, don't park: a live message arriving
+                    // during the history fetch must still count as news.
+                    if catching_up {
+                        0
+                    } else {
+                        crate::hub::POLL_WAIT_SECS
+                    },
                 )
                 .await
             {
@@ -724,9 +737,21 @@ impl Engine {
                     total,
                 })
             });
-            let r = client
-                .upload(&self.me, file, &a.name, Some(progress), cancel.clone())
-                .await;
+            let resumable = a.bytes >= RESUMABLE_MIN
+                && self
+                    .hubs
+                    .lock()
+                    .unwrap()
+                    .get(&url)
+                    .is_some_and(|h| h.status.features.iter().any(|f| f == "uploads"));
+            let r = if resumable {
+                self.upload_resumable(&client, a, file, progress, cancel.clone())
+                    .await
+            } else {
+                client
+                    .upload(&self.me, file, &a.name, Some(progress), cancel.clone())
+                    .await
+            };
             self.transfers.lock().unwrap().remove(&a.local_id);
             match r {
                 Ok(meta) => {
@@ -738,6 +763,26 @@ impl Engine {
                         None,
                     )?;
                     hub_ids.push(meta.id);
+                }
+                Err(e)
+                    if resumable
+                        && !cancel.is_cancelled()
+                        && matches!(e, Error::Unreachable(_)) =>
+                {
+                    // The connection dropped mid-file: the hub keeps what it
+                    // got. Wait for the network and continue from there.
+                    self.store.set_attachment(
+                        &a.local_id,
+                        "pending",
+                        None,
+                        None,
+                        Some(&e.to_string()),
+                    )?;
+                    self.store.set_state(id, "queued", None)?;
+                    self.host.event(Event::Chat {
+                        peer: m.peer.clone(),
+                    });
+                    return Ok(false);
                 }
                 Err(e) => {
                     let what = if cancel.is_cancelled() {
@@ -763,10 +808,35 @@ impl Engine {
             .unwrap()
             .get(&url)
             .is_some_and(|h| h.status.features.iter().any(|f| f == "reply_to"));
+        let mut body = self.wire_body(&m)?;
+        let mut body_part = None;
+        let long_ok = self
+            .hubs
+            .lock()
+            .unwrap()
+            .get(&url)
+            .is_some_and(|h| h.status.features.iter().any(|f| f == "long_messages"));
+        if long_ok && body.len() as u64 > BODY_INLINE_MAX {
+            match client
+                .upload_body(&self.me, std::mem::take(&mut body))
+                .await
+            {
+                Ok(part) => body_part = Some(part),
+                Err(e) if matches!(e.status(), Some(413) | Some(422)) => {
+                    self.fail(&m.peer, id, &e.to_string())?;
+                    return Ok(true);
+                }
+                Err(_) => {
+                    self.store.set_state(id, "queued", None)?;
+                    return Ok(false);
+                }
+            }
+        }
         let out = Outgoing {
             id: m.id.clone(),
             to: m.peer.clone(),
-            body: self.wire_body(&m)?,
+            body,
+            body_part,
             reply_to: if reply_field {
                 m.reply_to.clone()
             } else {
@@ -811,6 +881,35 @@ impl Engine {
             .take(120)
             .collect();
         Ok(format!("{QUOTE_PREFIX}{line}\n{}", m.body))
+    }
+
+    /// v2 hubs: upload in a resumable session; a retry continues where the
+    /// hub's copy ends (the session id lives in the attachment's hub_id).
+    async fn upload_resumable(
+        &self,
+        client: &HubClient,
+        a: &crate::store::Attachment,
+        file: tokio::fs::File,
+        progress: crate::hub::Progress,
+        cancel: CancelFlag,
+    ) -> Result<crate::hub::AttachmentMeta> {
+        let existing = a.hub_id.clone().filter(|_| a.state != "uploaded");
+        let upload_id = match existing {
+            Some(id) if client.upload_state(&self.me, &id).await.is_ok() => id,
+            _ => {
+                let st = client.open_upload(&self.me, &a.name, a.bytes).await?;
+                self.store
+                    .set_attachment(&a.local_id, "uploading", Some(&st.id), None, None)?;
+                st.id
+            }
+        };
+        let st = client
+            .resume_upload(&self.me, &upload_id, file, Some(progress), cancel)
+            .await?;
+        if !st.complete {
+            return Err(Error::Unreachable("upload stopped before the end".into()));
+        }
+        Ok(crate::hub_v2::upload_meta(&st, &a.name))
     }
 
     fn fail(&self, peer: &str, id: &str, why: &str) -> Result<()> {

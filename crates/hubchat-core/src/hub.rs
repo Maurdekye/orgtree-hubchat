@@ -202,6 +202,9 @@ pub struct Outgoing {
     pub sent_at: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<String>,
+    /// v2 (G6): the body was uploaded like a file; `body` is then empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_part: Option<String>,
 }
 
 impl Outgoing {

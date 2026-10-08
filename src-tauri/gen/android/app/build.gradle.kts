@@ -48,7 +48,6 @@ android {
     buildTypes {
         getByName("debug") {
             // Test builds install beside the user's real Hubchat, never over it.
-            applicationIdSuffix = ".test"
             manifestPlaceholders["usesCleartextTraffic"] = "true"
             isDebuggable = true
             isJniDebuggable = true

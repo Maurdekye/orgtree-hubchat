@@ -194,6 +194,25 @@ impl HubClient {
         Ok(check(resp).await?.json::<R>().await?.devices)
     }
 
+    /// Upload a long body as a text part (v2, G6); returns its id for
+    /// `Outgoing::body_part`.
+    pub async fn upload_body(&self, me: &Identity, body: String) -> Result<String> {
+        #[derive(Deserialize)]
+        struct R {
+            id: String,
+        }
+        let len = body.len();
+        let resp = self
+            .http
+            .post(self.address().join("/api/attachments?name=body.txt"))
+            .header("X-Org-Auth", me.auth_header())
+            .header(reqwest::header::CONTENT_LENGTH, len)
+            .body(body)
+            .send()
+            .await?;
+        Ok(check(resp).await?.json::<R>().await?.id)
+    }
+
     // ---------------------------------------------------- resumable uploads
 
     pub async fn open_upload(&self, me: &Identity, name: &str, bytes: u64) -> Result<UploadState> {
@@ -222,7 +241,34 @@ impl HubClient {
 
     /// Send the file from where the upload stands. On a dropped connection
     /// call again: it asks the hub for the offset and continues from there.
+    /// A hub still finishing a broken earlier attempt answers 409; that is
+    /// waited out (briefly) rather than reported.
     pub async fn resume_upload(
+        &self,
+        me: &Identity,
+        upload_id: &str,
+        file: tokio::fs::File,
+        progress: Option<Progress>,
+        cancel: CancelFlag,
+    ) -> Result<UploadState> {
+        let std_file = file.into_std().await;
+        let mut tries = 0;
+        loop {
+            let f = tokio::fs::File::from_std(std_file.try_clone()?);
+            match self
+                .resume_once(me, upload_id, f, progress.clone(), cancel.clone())
+                .await
+            {
+                Err(e) if e.status() == Some(409) && tries < 20 && !cancel.is_cancelled() => {
+                    tries += 1;
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+                r => return r,
+            }
+        }
+    }
+
+    async fn resume_once(
         &self,
         me: &Identity,
         upload_id: &str,

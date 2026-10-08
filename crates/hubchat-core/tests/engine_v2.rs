@@ -208,3 +208,102 @@ async fn every_device_gets_everything() {
         assert!(devs.iter().any(|x| x.device_id == d), "{d} in {devs:?}");
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn resumable_upload_continues_after_a_break_and_big_files_go_through_the_engine() {
+    use hubchat_core::hub::CancelFlag;
+    use hubchat_core::store::NewAttachment;
+    use hubchat_core::{HubAddress, HubClient};
+    let Ok(hub) = std::env::var("HUBCHAT_V2_HUB") else {
+        eprintln!("SKIPPED: set HUBCHAT_V2_HUB to a scratch mail hub v2.0");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let alex = Identity::generate("alex").unwrap();
+    let c = HubClient::new(HubAddress::parse(&hub).unwrap());
+    c.register(
+        &alex,
+        &Profile {
+            kind: "person".into(),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+
+    // 24 MB file; the first attempt is cut off part-way.
+    let src = dir.path().join("big.bin");
+    let payload: Vec<u8> = (0..24_000_000u32)
+        .map(|i| (i.wrapping_mul(2654435761) >> 13) as u8)
+        .collect();
+    std::fs::write(&src, &payload).unwrap();
+    let st = c
+        .open_upload(&alex, "big.bin", payload.len() as u64)
+        .await
+        .unwrap();
+    let cancel = CancelFlag::default();
+    let c2 = cancel.clone();
+    let progress: hubchat_core::hub::Progress = Arc::new(move |done, _| {
+        if done > 10_000_000 {
+            c2.cancel();
+        }
+    });
+    let f = tokio::fs::File::open(&src).await.unwrap();
+    assert!(
+        c.resume_upload(&alex, &st.id, f, Some(progress), cancel)
+            .await
+            .is_err(),
+        "first attempt breaks"
+    );
+    let mid = c.upload_state(&alex, &st.id).await.unwrap();
+    assert!(
+        mid.offset > 0 && mid.offset < payload.len() as u64,
+        "hub kept part: {}",
+        mid.offset
+    );
+    let f = tokio::fs::File::open(&src).await.unwrap();
+    let done = c
+        .resume_upload(&alex, &st.id, f, None, CancelFlag::default())
+        .await
+        .unwrap();
+    assert!(done.complete && done.offset == payload.len() as u64);
+    let got = dir.path().join("got.bin");
+    c.download_file(&alex, &st.id, &got, None, CancelFlag::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read(&got).unwrap(),
+        payload,
+        "resumed file is byte-identical"
+    );
+
+    // Through the engine: a 24 MB attachment uses the resumable path.
+    let maya = Identity::generate("maya").unwrap();
+    let (a, _) = device(&alex, "alex-pc", dir.path());
+    let (m, _) = device(&maya, "maya-pc", dir.path());
+    for e in [&a, &m] {
+        e.start().unwrap();
+        e.add_hub(&hub).unwrap();
+        until("connected", 15, || {
+            e.hub_statuses()
+                .iter()
+                .any(|s| s.state == HubState::Connected)
+        })
+        .await;
+    }
+    let id = uid("big-");
+    let mut out = msg(&id, &maya.address(), "the big file");
+    out.attachments.push(NewAttachment {
+        name: "big.bin".into(),
+        bytes: payload.len() as u64,
+        source: src.to_string_lossy().into(),
+    });
+    a.send(out).unwrap();
+    until("maya gets the big file", 60, || {
+        m.store().message(&id).unwrap().is_some()
+    })
+    .await;
+    let got = m.store().message(&id).unwrap().unwrap();
+    let path = m.download(&id, &got.attachments[0].local_id).await.unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), payload);
+}
