@@ -166,6 +166,7 @@ pub enum Probe {
         name: String,
         max_attachment_bytes: u64,
         features: Vec<String>,
+        version: Option<String>,
     },
     Unreachable {
         url: String,
@@ -196,6 +197,7 @@ pub async fn hc_probe_hub(input: String) -> R<Probe> {
                 max_attachment_bytes: h.max_attachment_bytes(),
                 name: h.name,
                 features: h.features,
+                version: h.version,
             },
             Err(hubchat_core::Error::NotAHub(e)) => Probe::NotAHub { url, error: e },
             Err(e) => Probe::Unreachable { url, error: s(e) },

@@ -174,6 +174,9 @@ pub struct Receipt {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct PollResult {
     pub name: String,
+    /// v2: the hub's version (absent on v1 hubs).
+    #[serde(default)]
+    pub version: Option<String>,
     #[serde(default)]
     pub messages: Vec<Envelope>,
     #[serde(default)]

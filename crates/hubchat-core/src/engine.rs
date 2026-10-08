@@ -93,6 +93,8 @@ pub struct HubStatus {
     pub max_attachment_bytes: u64,
     /// What the hub advertises in /healthz `features` (empty on older hubs).
     pub features: Vec<String>,
+    /// The hub's software version as it reports it; None = unknown (v1 hubs).
+    pub version: Option<String>,
 }
 
 struct HubRuntime {
@@ -273,6 +275,7 @@ impl Engine {
                 retry_at_ms: None,
                 max_attachment_bytes: max.unwrap_or(crate::hub::LEGACY_MAX_ATTACHMENT_BYTES),
                 features: Vec::new(),
+                version: None,
             },
             retry_now: Arc::new(Notify::new()),
             stop: CancelFlag::default(),
@@ -372,6 +375,7 @@ impl Engine {
             s.retry_at_ms = None;
             s.max_attachment_bytes = max;
             s.features = health.features.clone();
+            s.version = health.version.clone();
         });
         self.queue_changed.notify_one();
         while !stop.is_cancelled() {
@@ -386,6 +390,10 @@ impl Engine {
             };
             if stop.is_cancelled() {
                 break;
+            }
+            if p.version.is_some() {
+                let v = p.version.clone();
+                self.set_status(url, |s| s.version = v);
             }
             self.store.set_roster(url, &p.roster)?;
             self.host.event(Event::Directory);
