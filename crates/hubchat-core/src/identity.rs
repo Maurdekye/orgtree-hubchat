@@ -23,9 +23,9 @@ impl std::fmt::Debug for Identity {
 }
 
 impl Identity {
-    /// A brand-new identity with a fresh 256-bit secret.
+    /// A brand-new identity with a fresh 128-bit secret (what the recovery words carry).
     pub fn generate(id: &str) -> Result<Self> {
-        let mut key = [0u8; 32];
+        let mut key = [0u8; 16];
         rand::thread_rng().fill_bytes(&mut key);
         Self::from_parts(id, &hex::encode(key))
     }
@@ -67,8 +67,8 @@ impl Identity {
 }
 
 /// An id is the part of a hub slug before the tag: lower-case letters, digits,
-/// `.`, `_`, `-`; starts with a letter or digit. With the 7-char `.tag` suffix
-/// the whole slug must fit the hub's 128-char limit.
+/// `.`, `_`, `-`; starts with a letter or digit; at most 24 characters so the
+/// recovery words can carry it (user ruling 2026-10-08).
 pub fn validate_id(id: &str) -> Result<()> {
     let ok_first = id
         .chars()
@@ -77,9 +77,9 @@ pub fn validate_id(id: &str) -> Result<()> {
     let ok_rest = id
         .chars()
         .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-'));
-    if id.is_empty() || !ok_first || !ok_rest || id.len() > 121 {
+    if id.is_empty() || !ok_first || !ok_rest || id.len() > crate::recovery::MAX_ID_LEN {
         return Err(Error::Invalid(
-            "an id uses a-z, 0-9, '.', '_' or '-', starts with a letter or digit, max 121 characters".into(),
+            "an id uses a-z, 0-9, '.', '_' or '-', starts with a letter or digit, and has at most 24 characters".into(),
         ));
     }
     Ok(())

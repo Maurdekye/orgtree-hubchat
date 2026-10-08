@@ -7,6 +7,7 @@ pub mod engine;
 pub mod error;
 pub mod hub;
 pub mod identity;
+pub mod recovery;
 pub mod store;
 
 pub use error::{Error, Result};
