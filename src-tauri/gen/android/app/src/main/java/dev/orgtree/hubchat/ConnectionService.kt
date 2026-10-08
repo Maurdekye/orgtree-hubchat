@@ -41,6 +41,8 @@ class ConnectionService : Service() {
 
     /** The service runs (the ongoing notification belongs to it). */
     @Volatile private var running = false
+    /** The core's latest status line, for an ongoing notification posted later. */
+    @Volatile private var lastStatus: String? = null
 
     @Volatile private var appContext: Context? = null
 
@@ -186,6 +188,7 @@ class ConnectionService : Service() {
     /** Called from Rust to update the ongoing notification's text. */
     @JvmStatic
     fun setStatus(text: String) {
+      lastStatus = text
       if (!running) return // no service, no ongoing notification
       val ctx = appContext ?: return
       ctx.getSystemService(NotificationManager::class.java).notify(ONGOING_ID, ongoing(ctx, text))
@@ -236,7 +239,7 @@ class ConnectionService : Service() {
     appContext = applicationContext
     channels(this)
     val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING else 0
-    ServiceCompat.startForeground(this, ONGOING_ID, ongoing(this, "Connecting…"), type)
+    ServiceCompat.startForeground(this, ONGOING_ID, ongoing(this, lastStatus ?: "Connecting…"), type)
     running = true
     startCore(filesDir.absolutePath)
   }
