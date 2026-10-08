@@ -1,6 +1,7 @@
 #[cfg(target_os = "android")]
 mod android;
 mod connection;
+mod secrets;
 mod spike;
 
 #[cfg(desktop)]

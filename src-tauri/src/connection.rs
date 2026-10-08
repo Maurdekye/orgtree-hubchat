@@ -70,16 +70,27 @@ pub fn log(dir: &Path, line: &str) {
 }
 
 fn load_identity(dir: &Path) -> Identity {
-    let p = dir.join("spike-identity.txt");
-    if let Ok(s) = std::fs::read_to_string(&p) {
-        if let Some((id, secret)) = s.trim().split_once(' ') {
-            if let Ok(me) = Identity::from_parts(id, secret) {
-                return me;
-            }
-        }
+    // Secure store first; migrate the spike's earlier plain-text file into it.
+    if let Some(me) = crate::secrets::load_identity(dir) {
+        log(dir, "identity loaded from secure store");
+        return me;
     }
-    let me = Identity::generate("spike").expect("identity");
-    let _ = std::fs::write(&p, format!("{} {}", me.id(), me.secret()));
+    let plain = dir.join("spike-identity.txt");
+    let me = std::fs::read_to_string(&plain)
+        .ok()
+        .and_then(|s| {
+            s.trim()
+                .split_once(' ')
+                .and_then(|(i, k)| Identity::from_parts(i, k).ok())
+        })
+        .unwrap_or_else(|| Identity::generate("spike").expect("identity"));
+    match crate::secrets::save_identity(dir, &me) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&plain);
+            log(dir, "identity saved to secure store");
+        }
+        Err(e) => log(dir, &format!("secure store failed: {e}")),
+    }
     me
 }
 
