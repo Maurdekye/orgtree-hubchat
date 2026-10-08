@@ -19,3 +19,7 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+# Called from Rust over JNI by name: keep every member as written.
+-keep class dev.orgtree.hubchat.ConnectionService { *; }
+-keep class dev.orgtree.hubchat.ConnectionService$Companion { *; }
+-keep class dev.orgtree.hubchat.SecretBox { *; }
