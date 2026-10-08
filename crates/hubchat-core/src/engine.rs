@@ -1,0 +1,701 @@
+//! The sync engine: one connection task per hub (register, long poll, ack,
+//! receipts, roster) and one sender task that drains the outgoing queue.
+//! Everything lands in the `Store`; the shell is told what changed through
+//! `Host::event` and re-reads what it shows.
+
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
+
+use serde::Serialize;
+use tokio::sync::Notify;
+
+use crate::hub::{CancelFlag, Outgoing, Profile};
+use crate::store::{NewOutgoing, Store};
+use crate::{Error, HubAddress, HubClient, Identity, Result};
+
+/// Back-off between reconnects (design F7: 8, 16, 32 s, then 32 s).
+const BACKOFF: [u64; 3] = [8, 16, 32];
+
+pub fn now() -> String {
+    humantime::format_rfc3339_millis(SystemTime::now()).to_string()
+}
+
+/// What the engine reports to the shell. The shell re-reads the store.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Event {
+    /// A chat's messages or unread count changed.
+    Chat { peer: String },
+    /// A new incoming message (the shell decides whether to notify).
+    Incoming {
+        peer: String,
+        id: String,
+        preview: String,
+    },
+    /// A hub's connection state changed.
+    Hub { url: String },
+    /// The merged directory changed.
+    Directory,
+    /// Upload or download progress for one attachment.
+    Transfer {
+        local_id: String,
+        message_id: String,
+        upload: bool,
+        done: u64,
+        total: u64,
+    },
+}
+
+/// The platform side: events, opening picked files, where downloads go.
+pub trait Host: Send + Sync + 'static {
+    fn event(&self, ev: Event);
+    /// Open an attachment source: a path, or on Android a content:// URI.
+    fn open_source(&self, source: &str) -> std::io::Result<std::fs::File>;
+    /// Folder for downloaded attachments.
+    fn download_dir(&self) -> PathBuf;
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum HubState {
+    Connecting,
+    Connected,
+    /// Reachable but refused us, or not a hub. Needs the user.
+    Refused,
+    Disconnected,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct HubStatus {
+    pub url: String,
+    pub name: String,
+    pub state: HubState,
+    pub error: Option<String>,
+    /// Unix ms of the next reconnect attempt while disconnected.
+    pub retry_at_ms: Option<u64>,
+    pub max_attachment_bytes: u64,
+}
+
+struct HubRuntime {
+    client: HubClient,
+    status: HubStatus,
+    retry_now: Arc<Notify>,
+    stop: CancelFlag,
+}
+
+pub struct Engine {
+    store: Arc<Store>,
+    me: Identity,
+    profile: Mutex<Profile>,
+    host: Arc<dyn Host>,
+    hubs: Mutex<HashMap<String, HubRuntime>>,
+    queue_changed: Notify,
+    transfers: Mutex<HashMap<String, CancelFlag>>,
+    read_receipts: std::sync::atomic::AtomicBool,
+}
+
+fn unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+impl Engine {
+    pub fn new(
+        store: Arc<Store>,
+        me: Identity,
+        profile: Profile,
+        host: Arc<dyn Host>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            store,
+            me,
+            profile: Mutex::new(profile),
+            host,
+            hubs: Mutex::new(HashMap::new()),
+            queue_changed: Notify::new(),
+            transfers: Mutex::new(HashMap::new()),
+            read_receipts: std::sync::atomic::AtomicBool::new(true),
+        })
+    }
+
+    pub fn me(&self) -> &Identity {
+        &self.me
+    }
+
+    pub fn store(&self) -> &Store {
+        &self.store
+    }
+
+    /// Start a task per stored hub plus the sender. Call once, inside a runtime.
+    pub fn start(self: &Arc<Self>) -> Result<()> {
+        for h in self.store.hubs()? {
+            if let Ok(a) = HubAddress::parse(&h.url) {
+                self.spawn_hub(a, h.name, h.max_attachment_bytes);
+            }
+        }
+        let me = self.clone();
+        tokio::spawn(async move { me.sender_loop().await });
+        Ok(())
+    }
+
+    pub fn set_read_receipts(&self, on: bool) {
+        self.read_receipts
+            .store(on, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    // ------------------------------------------------------------ hubs
+
+    /// Add a hub (it is kept even while unreachable) and connect to it.
+    pub fn add_hub(self: &Arc<Self>, input: &str) -> Result<HubAddress> {
+        let addr = HubAddress::parse(input)?;
+        self.store.add_hub(addr.as_str(), &now())?;
+        if !self.hubs.lock().unwrap().contains_key(addr.as_str()) {
+            self.spawn_hub(addr.clone(), String::new(), None);
+        }
+        Ok(addr)
+    }
+
+    /// Remove a hub; with `unregister` also take our address off it.
+    pub async fn remove_hub(&self, url: &str, unregister: bool) -> Result<()> {
+        let rt = self.hubs.lock().unwrap().remove(url);
+        if let Some(rt) = rt {
+            rt.stop.cancel();
+            rt.retry_now.notify_one();
+            if unregister {
+                let _ = rt.client.unregister(&self.me).await;
+            }
+        }
+        self.store.remove_hub(url)?;
+        self.host.event(Event::Hub { url: url.into() });
+        self.host.event(Event::Directory);
+        Ok(())
+    }
+
+    pub fn retry_now(&self) {
+        for rt in self.hubs.lock().unwrap().values() {
+            rt.retry_now.notify_one();
+        }
+        self.queue_changed.notify_one();
+    }
+
+    pub fn hub_statuses(&self) -> Vec<HubStatus> {
+        let hubs = self.hubs.lock().unwrap();
+        let mut v: Vec<_> = hubs.values().map(|h| h.status.clone()).collect();
+        v.sort_by(|a, b| a.url.cmp(&b.url));
+        v
+    }
+
+    fn spawn_hub(self: &Arc<Self>, addr: HubAddress, name: String, max: Option<u64>) {
+        let rt = HubRuntime {
+            client: HubClient::new(addr.clone()),
+            status: HubStatus {
+                url: addr.to_string(),
+                name,
+                state: HubState::Connecting,
+                error: None,
+                retry_at_ms: None,
+                max_attachment_bytes: max.unwrap_or(crate::hub::LEGACY_MAX_ATTACHMENT_BYTES),
+            },
+            retry_now: Arc::new(Notify::new()),
+            stop: CancelFlag::default(),
+        };
+        let (client, retry, stop) = (rt.client.clone(), rt.retry_now.clone(), rt.stop.clone());
+        self.hubs.lock().unwrap().insert(addr.to_string(), rt);
+        let me = self.clone();
+        tokio::spawn(async move { me.hub_loop(client, retry, stop).await });
+    }
+
+    fn set_status(&self, url: &str, f: impl FnOnce(&mut HubStatus)) {
+        let changed = {
+            let mut hubs = self.hubs.lock().unwrap();
+            match hubs.get_mut(url) {
+                Some(h) => {
+                    let before = format!("{:?}", h.status);
+                    f(&mut h.status);
+                    before != format!("{:?}", h.status)
+                }
+                None => false,
+            }
+        };
+        if changed {
+            self.host.event(Event::Hub { url: url.into() });
+        }
+    }
+
+    fn connected_hubs(&self) -> Vec<(String, HubClient, u64)> {
+        self.hubs
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|h| h.status.state == HubState::Connected)
+            .map(|h| {
+                (
+                    h.status.url.clone(),
+                    h.client.clone(),
+                    h.status.max_attachment_bytes,
+                )
+            })
+            .collect()
+    }
+
+    async fn hub_loop(self: Arc<Self>, client: HubClient, retry: Arc<Notify>, stop: CancelFlag) {
+        let url = client.address().to_string();
+        let mut failures = 0usize;
+        while !stop.is_cancelled() {
+            match self.session(&client, &url, &stop).await {
+                Ok(()) => return, // stopped
+                Err(e) => {
+                    if stop.is_cancelled() {
+                        return;
+                    }
+                    let refused = matches!(e, Error::NotAHub(_)) || matches!(e.status(), Some(403));
+                    let wait = BACKOFF[failures.min(BACKOFF.len() - 1)];
+                    failures += 1;
+                    self.set_status(&url, |s| {
+                        s.state = if refused {
+                            HubState::Refused
+                        } else {
+                            HubState::Disconnected
+                        };
+                        s.error = Some(e.to_string());
+                        s.retry_at_ms = Some(unix_ms() + wait * 1000);
+                    });
+                    self.host.event(Event::Directory); // presence there is now unknown
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_secs(wait)) => {}
+                        _ = retry.notified() => { failures = 0; }
+                    }
+                    self.set_status(&url, |s| {
+                        s.state = HubState::Connecting;
+                        s.retry_at_ms = None;
+                    });
+                }
+            }
+        }
+    }
+
+    /// One connected session: probe, register, then poll until an error.
+    async fn session(&self, client: &HubClient, url: &str, stop: &CancelFlag) -> Result<()> {
+        let health = client.healthz().await?;
+        let profile = self.profile.lock().unwrap().clone();
+        client.register(&self.me, &profile).await?;
+        let max = health.max_attachment_bytes();
+        self.store
+            .hub_ok(url, &health.name, health.max_attachment_bytes, &now())?;
+        self.set_status(url, |s| {
+            s.name = health.name.clone();
+            s.state = HubState::Connected;
+            s.error = None;
+            s.retry_at_ms = None;
+            s.max_attachment_bytes = max;
+        });
+        self.queue_changed.notify_one();
+        while !stop.is_cancelled() {
+            let p = match client.poll(&self.me, crate::hub::POLL_WAIT_SECS).await {
+                Ok(p) => p,
+                Err(e) if e.status() == Some(401) => {
+                    // The hub forgot us (pruned roster): register again.
+                    client.register(&self.me, &profile).await?;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
+            if stop.is_cancelled() {
+                break;
+            }
+            self.store.set_roster(url, &p.roster)?;
+            self.host.event(Event::Directory);
+            for r in &p.receipts {
+                self.store.apply_receipt(r)?;
+                if let Some(m) = self.store.message(&r.id)? {
+                    self.host.event(Event::Chat { peer: m.peer });
+                }
+            }
+            if p.messages.is_empty() {
+                continue;
+            }
+            let t = now();
+            let mut ids = Vec::new();
+            for m in &p.messages {
+                // Persist first, then ack: the hub keeps it until we have it.
+                if self.store.insert_incoming(url, m, &t)? {
+                    let preview: String = m.body.chars().take(140).collect();
+                    self.host.event(Event::Incoming {
+                        peer: m.from.clone(),
+                        id: m.id.clone(),
+                        preview,
+                    });
+                }
+                self.host.event(Event::Chat {
+                    peer: m.from.clone(),
+                });
+                ids.push(m.id.clone());
+            }
+            client.ack(&self.me, &ids).await?;
+            let rec: Vec<_> = ids
+                .iter()
+                .map(|id| (id.clone(), "delivered", t.clone()))
+                .collect();
+            client.receipts(&self.me, &rec).await?;
+        }
+        Ok(())
+    }
+
+    // ---------------------------------------------------------- sending
+
+    pub fn send(&self, msg: NewOutgoing) -> Result<()> {
+        if msg.peer == self.me.address() {
+            return Err(Error::Invalid("that's you".into()));
+        }
+        self.store.queue_outgoing(&msg, &now())?;
+        self.host.event(Event::Chat {
+            peer: msg.peer.clone(),
+        });
+        self.queue_changed.notify_one();
+        Ok(())
+    }
+
+    /// Put a failed message back in the queue (Retry). Uploads restart from zero.
+    pub fn retry(&self, id: &str) -> Result<()> {
+        if let Some(m) = self.store.message(id)? {
+            for a in &m.attachments {
+                if a.state != "uploaded" {
+                    self.store
+                        .set_attachment(&a.local_id, "pending", None, None, None)?;
+                }
+            }
+            self.store.set_state(id, "queued", None)?;
+            self.host.event(Event::Chat { peer: m.peer });
+            self.queue_changed.notify_one();
+        }
+        Ok(())
+    }
+
+    pub fn cancel_transfer(&self, local_id: &str) {
+        if let Some(c) = self.transfers.lock().unwrap().get(local_id) {
+            c.cancel();
+        }
+    }
+
+    async fn sender_loop(self: Arc<Self>) {
+        loop {
+            let mut progressed = false;
+            if let Ok(queue) = self.store.queued() {
+                for m in queue {
+                    match self.send_one(&m.id).await {
+                        Ok(true) => progressed = true,
+                        Ok(false) => {}
+                        Err(_) => {}
+                    }
+                }
+            }
+            if !progressed {
+                tokio::select! {
+                    _ = self.queue_changed.notified() => {}
+                    _ = tokio::time::sleep(Duration::from_secs(30)) => {}
+                }
+            }
+        }
+    }
+
+    /// Try to send one queued message. Ok(true) = it left the queue.
+    async fn send_one(&self, id: &str) -> Result<bool> {
+        let Some(m) = self.store.message(id)? else {
+            return Ok(false);
+        };
+        let connected = self.connected_hubs();
+        if connected.is_empty() {
+            return Ok(false);
+        }
+        // Route: a connected hub whose roster lists the peer; else, if no
+        // roster lists it anywhere, the first connected hub (which answers
+        // 422 for an unknown address).
+        let reaching = self.store.hubs_reaching(&m.peer)?;
+        let route = connected
+            .iter()
+            .find(|(u, _, _)| reaching.contains(u))
+            .or_else(|| {
+                if reaching.is_empty() {
+                    connected.first()
+                } else {
+                    None
+                }
+            })
+            .cloned();
+        let Some((url, client, max)) = route else {
+            return Ok(false);
+        }; // its hubs are down: wait
+        let total: u64 = m.body.len() as u64 + m.attachments.iter().map(|a| a.bytes).sum::<u64>();
+        if !m.attachments.is_empty() && total > max {
+            self.fail(
+                &m.peer,
+                id,
+                &format!("too large for hub {url}: limit {max} bytes"),
+            )?;
+            return Ok(true);
+        }
+        self.store.set_state(id, "sending", None)?;
+        let mut hub_ids = Vec::new();
+        for a in &m.attachments {
+            if a.state == "uploaded" {
+                if let Some(h) = &a.hub_id {
+                    hub_ids.push(h.clone());
+                    continue;
+                }
+            }
+            let Some(source) = &a.source else { continue };
+            let file = match self.host.open_source(source) {
+                Ok(f) => tokio::fs::File::from_std(f),
+                Err(e) => {
+                    self.store.set_attachment(
+                        &a.local_id,
+                        "failed",
+                        None,
+                        None,
+                        Some(&e.to_string()),
+                    )?;
+                    self.fail(&m.peer, id, &format!("can't read {}: {e}", a.name))?;
+                    return Ok(true);
+                }
+            };
+            let cancel = CancelFlag::default();
+            self.transfers
+                .lock()
+                .unwrap()
+                .insert(a.local_id.clone(), cancel.clone());
+            self.store
+                .set_attachment(&a.local_id, "uploading", None, None, None)?;
+            let host = self.host.clone();
+            let (lid, mid) = (a.local_id.clone(), m.id.clone());
+            let progress: crate::hub::Progress = Arc::new(move |done, total| {
+                host.event(Event::Transfer {
+                    local_id: lid.clone(),
+                    message_id: mid.clone(),
+                    upload: true,
+                    done,
+                    total,
+                })
+            });
+            let r = client
+                .upload(&self.me, file, &a.name, Some(progress), cancel.clone())
+                .await;
+            self.transfers.lock().unwrap().remove(&a.local_id);
+            match r {
+                Ok(meta) => {
+                    self.store.set_attachment(
+                        &a.local_id,
+                        "uploaded",
+                        Some(&meta.id),
+                        None,
+                        None,
+                    )?;
+                    hub_ids.push(meta.id);
+                }
+                Err(e) => {
+                    let what = if cancel.is_cancelled() {
+                        "cancelled"
+                    } else {
+                        "failed"
+                    };
+                    self.store.set_attachment(
+                        &a.local_id,
+                        what,
+                        None,
+                        None,
+                        Some(&e.to_string()),
+                    )?;
+                    self.fail(&m.peer, id, &format!("upload {what}: {}", a.name))?;
+                    return Ok(true);
+                }
+            }
+        }
+        let out = Outgoing {
+            id: m.id.clone(),
+            to: m.peer.clone(),
+            body: m.body.clone(),
+            kind: m.kind.clone(),
+            thread_id: None,
+            sent_at: m.sent_at.clone(),
+            attachments: hub_ids,
+        };
+        match client.send(&self.me, &out).await {
+            Ok(r) => {
+                self.store.mark_sent(id, &url, &r.received_at)?;
+                self.host.event(Event::Chat { peer: m.peer });
+                Ok(true)
+            }
+            Err(e) if matches!(e.status(), Some(422) | Some(413) | Some(403)) => {
+                self.fail(&m.peer, id, &e.to_string())?;
+                Ok(true)
+            }
+            Err(_) => {
+                // Network trouble: back to the queue, the hub task reconnects.
+                self.store.set_state(id, "queued", None)?;
+                Ok(false)
+            }
+        }
+    }
+
+    fn fail(&self, peer: &str, id: &str, why: &str) -> Result<()> {
+        self.store.set_state(id, "failed", Some(why))?;
+        self.host.event(Event::Chat { peer: peer.into() });
+        Ok(())
+    }
+
+    // ---------------------------------------------------------- reading
+
+    /// The chat is on screen: mark it seen and send read receipts (if on).
+    pub async fn mark_read(&self, peer: &str) -> Result<()> {
+        let ids = self.store.mark_seen(peer)?;
+        if ids.is_empty() {
+            return Ok(());
+        }
+        self.host.event(Event::Chat { peer: peer.into() });
+        if !self
+            .read_receipts
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Ok(());
+        }
+        let t = now();
+        let clients: HashMap<String, HubClient> = self
+            .hubs
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(u, h)| (u.clone(), h.client.clone()))
+            .collect();
+        let mut by_hub: HashMap<String, Vec<(String, &str, String)>> = HashMap::new();
+        for (id, hub) in ids {
+            if let Some(h) = hub {
+                by_hub.entry(h).or_default().push((id, "read", t.clone()));
+            }
+        }
+        for (hub, items) in by_hub {
+            if let Some(c) = clients.get(&hub) {
+                let _ = c.receipts(&self.me, &items).await;
+            }
+        }
+        Ok(())
+    }
+
+    /// Download an incoming attachment into the host's download folder.
+    pub async fn download(&self, message_id: &str, local_id: &str) -> Result<PathBuf> {
+        let m = self
+            .store
+            .message(message_id)?
+            .ok_or_else(|| Error::Invalid("no such message".into()))?;
+        let a = m
+            .attachments
+            .iter()
+            .find(|a| a.local_id == local_id)
+            .ok_or_else(|| Error::Invalid("no such attachment".into()))?;
+        let hub_id = a
+            .hub_id
+            .clone()
+            .ok_or_else(|| Error::Invalid("not on a hub".into()))?;
+        let hub = m
+            .hub
+            .clone()
+            .ok_or_else(|| Error::Invalid("unknown hub".into()))?;
+        let client = self
+            .hubs
+            .lock()
+            .unwrap()
+            .get(&hub)
+            .map(|h| h.client.clone())
+            .ok_or_else(|| Error::Invalid(format!("hub {hub} was removed")))?;
+        let dir = self.host.download_dir();
+        tokio::fs::create_dir_all(&dir).await?;
+        let dest = unique_path(&dir, &a.name);
+        let cancel = CancelFlag::default();
+        self.transfers
+            .lock()
+            .unwrap()
+            .insert(local_id.into(), cancel.clone());
+        self.store
+            .set_attachment(local_id, "downloading", None, None, None)?;
+        let host = self.host.clone();
+        let (lid, mid) = (local_id.to_string(), message_id.to_string());
+        let progress: crate::hub::Progress = Arc::new(move |done, total| {
+            host.event(Event::Transfer {
+                local_id: lid.clone(),
+                message_id: mid.clone(),
+                upload: false,
+                done,
+                total,
+            })
+        });
+        let r = client
+            .download_file(&self.me, &hub_id, &dest, Some(progress), cancel.clone())
+            .await;
+        self.transfers.lock().unwrap().remove(local_id);
+        let out = match r {
+            Ok(_) => {
+                self.store.set_attachment(
+                    local_id,
+                    "done",
+                    None,
+                    Some(&dest.to_string_lossy()),
+                    None,
+                )?;
+                Ok(dest)
+            }
+            Err(e) => {
+                let state = match (&e, cancel.is_cancelled()) {
+                    (_, true) => "cancelled",
+                    (Error::Hub { status: 410, .. }, _) => "expired",
+                    _ => "failed",
+                };
+                self.store
+                    .set_attachment(local_id, state, None, None, Some(&e.to_string()))?;
+                Err(e)
+            }
+        };
+        self.host.event(Event::Chat { peer: m.peer });
+        out
+    }
+}
+
+/// `name`, or `name (2)`, `name (3)`... so a download never overwrites.
+/// The name is reduced to its last path component first.
+fn unique_path(dir: &std::path::Path, name: &str) -> PathBuf {
+    let base = std::path::Path::new(name)
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty() && s != "." && s != "..")
+        .unwrap_or_else(|| "file".into());
+    let first = dir.join(&base);
+    if !first.exists() {
+        return first;
+    }
+    let (stem, ext) = match base.rsplit_once('.') {
+        Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
+        _ => (base.clone(), String::new()),
+    };
+    (2..)
+        .map(|i| dir.join(format!("{stem} ({i}){ext}")))
+        .find(|p| !p.exists())
+        .expect("unbounded")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unique_path_never_escapes_or_overwrites() {
+        let d = tempfile::tempdir().unwrap();
+        assert_eq!(
+            unique_path(d.path(), "../../evil.txt"),
+            d.path().join("evil.txt")
+        );
+        std::fs::write(d.path().join("a.txt"), b"x").unwrap();
+        assert_eq!(unique_path(d.path(), "a.txt"), d.path().join("a (2).txt"));
+        assert_eq!(unique_path(d.path(), ".."), d.path().join("file"));
+    }
+}
