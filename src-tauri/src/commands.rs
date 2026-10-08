@@ -344,3 +344,23 @@ pub fn hc_draft(peer: String) -> R<Option<String>> {
 pub fn hc_set_draft(peer: String, body: String) -> R<()> {
     core::get()?.store.set_draft(&peer, &body).map_err(s)
 }
+
+#[derive(Serialize)]
+pub struct FileInfo {
+    name: String,
+    bytes: u64,
+}
+
+/// Name and size of a picked file (a path, or on Android a content:// URI),
+/// so the composer can check the hub's limit before anything uploads.
+#[tauri::command]
+pub fn hc_file_info(source: String) -> R<FileInfo> {
+    let c = core::get()?;
+    let f = c.platform().open_source(&source).map_err(s)?;
+    let bytes = f.metadata().map_err(s)?.len();
+    let name = c
+        .platform()
+        .source_name(&source)
+        .unwrap_or_else(|| "file".into());
+    Ok(FileInfo { name, bytes })
+}

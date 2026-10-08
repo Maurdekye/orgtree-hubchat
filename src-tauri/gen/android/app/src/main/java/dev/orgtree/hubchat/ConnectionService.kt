@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -68,6 +69,19 @@ class ConnectionService : Service() {
         ctx.contentResolver.openFileDescriptor(Uri.parse(uri), "r")?.detachFd() ?: -1
       } catch (e: Exception) {
         -1
+      }
+    }
+
+    /** Called from Rust: the display name of a content:// URI, or "". */
+    @JvmStatic
+    fun displayName(uri: String): String {
+      val ctx = appContext ?: return ""
+      return try {
+        ctx.contentResolver.query(Uri.parse(uri), arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+          if (it.moveToFirst()) it.getString(0) ?: "" else ""
+        } ?: ""
+      } catch (e: Exception) {
+        ""
       }
     }
 

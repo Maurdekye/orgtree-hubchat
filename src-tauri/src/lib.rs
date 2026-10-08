@@ -132,6 +132,7 @@ pub fn run() {
             commands::hc_delete_chat,
             commands::hc_draft,
             commands::hc_set_draft,
+            commands::hc_file_info,
         ])
         .setup(|app| {
             // On Android the ConnectionService creates the core (it outlives

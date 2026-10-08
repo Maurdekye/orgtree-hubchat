@@ -20,6 +20,13 @@ pub trait Platform: Send + Sync + 'static {
     /// Update the ongoing "connected" line (Android) / tray tooltip (desktop).
     fn status(&self, text: &str);
     fn open_source(&self, source: &str) -> std::io::Result<std::fs::File>;
+    /// The file name to show for a picked source (Android: the provider's
+    /// display name; elsewhere the last path component).
+    fn source_name(&self, source: &str) -> Option<String> {
+        std::path::Path::new(source)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+    }
     fn download_dir(&self) -> PathBuf;
 }
 
@@ -115,6 +122,10 @@ pub fn init(dir: PathBuf, platform: Arc<dyn Platform>) -> Result<&'static Core, 
 }
 
 impl Core {
+    pub fn platform(&self) -> &dyn Platform {
+        &*self.host.platform
+    }
+
     /// Called by the Tauri setup so events reach the UI.
     pub fn attach_ui(&self, app: AppHandle) {
         let _ = self.host.app.set(app);

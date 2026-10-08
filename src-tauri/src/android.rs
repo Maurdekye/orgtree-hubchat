@@ -106,6 +106,15 @@ impl crate::core::Platform for AndroidPlatform {
             std::fs::File::from_raw_fd(fd)
         })
     }
+    fn source_name(&self, source: &str) -> Option<String> {
+        if !source.starts_with("content://") {
+            return std::path::Path::new(source)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned());
+        }
+        let j = JNI.get()?;
+        call(&j.service, "displayName", &[source], true).filter(|n| !n.is_empty())
+    }
     fn download_dir(&self) -> PathBuf {
         self.dir.join("downloads")
     }
