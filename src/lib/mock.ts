@@ -2,8 +2,12 @@
 // browser (`npm run dev`). Same shapes as src/api.ts; a believable world:
 // two hubs (one down and retrying), an Orgtree org, a Claude Code session,
 // people, markdown, a file, a failed message and climbing receipts.
-// URL parameters: ?platform=android  ?onboarding=1
-import type { Api, Attachment, ChatSummary, Contact, HcEvent, HubStatus, Message, NewOutgoing, Probe, Resolved, State } from "../api";
+// URL parameters: ?platform=android  ?onboarding=1  ?update=1 (an update is
+// out)  ?scan=TEXT (what the fake camera reads)  ?pending=ADDRESS (a tapped
+// notification). Linking: a waiting device shows up on the third lookup;
+// a key file opens with any passphrase but "wrong".
+import type { Api, Attachment, ChatSummary, Contact, HcEvent, HubStatus, LinkEvent, LinkLookup, Message, NewOutgoing, Probe, Resolved, State } from "../api";
+import { toast } from "./toast";
 
 const params = new URLSearchParams(location.search);
 const GB = 1073741824;
@@ -30,7 +34,7 @@ const st: State = {
   read_receipts: true,
   platform: params.get("platform") === "android" ? "android" : "desktop",
   hubs: onboarding ? [] : [
-    { url: OFFICE, name: "office", state: "connected", error: null, retry_at_ms: null, max_attachment_bytes: GB, features: ["v2"] },
+    { url: OFFICE, name: "office", state: "connected", error: null, retry_at_ms: null, max_attachment_bytes: GB, features: ["v2"], version: "1.4.0" },
     { url: LAB, name: "lab", state: "disconnected", error: "connection refused (os error 10061)", retry_at_ms: now() + 14000, max_attachment_bytes: 25 * 1048576, features: [] },
   ],
 };
@@ -121,6 +125,9 @@ if (!onboarding) {
     error: "hub lab is unreachable and no other hub lists jonas.0b44d1",
   });
   add("nightly-ci.alex.8d21e0", false, at(3, "02:14"), "Nightly build **#418** passed in 41 min.", { kind: "status" });
+  // a download already in progress (the transfers chip / strip)
+  const big = add("nightly-ci.alex.8d21e0", false, at(0, "02:16"), "Full logs for #418.", { attachments: [att("nightly-logs-418.zip", 182 * 1048576, "downloading")] });
+  setTimeout(() => { void slowDownload(big); }, 1200);
 }
 
 // ------------------------------------------------------------------ events
@@ -142,6 +149,49 @@ function reconnect(h: HubStatus) {
     else { h.state = "connected"; h.error = null; }
     hubEv(h.url);
   }, 1100);
+}
+
+/** A download that creeps along (about 4 minutes), so the transfers UI shows. */
+async function slowDownload(m: Message) {
+  const a = m.attachments[0];
+  chatEv(m.peer);
+  let done = Math.round(a.bytes * 0.38);
+  while (done < a.bytes) {
+    if (a.state !== "downloading") return;
+    emit({ type: "transfer", local_id: a.local_id, message_id: m.id, upload: false, done, total: a.bytes });
+    await sleep(1000);
+    done = Math.min(a.bytes, done + Math.round(a.bytes / 400));
+  }
+  a.state = "done"; a.local_path = "C:\\Users\\alex\\Downloads\\" + a.name; chatEv(m.peer);
+}
+
+// --------------------------------------------------------------- linking
+const linkListeners = new Set<(e: LinkEvent) => void>();
+const linkEmit = (e: LinkEvent) => linkListeners.forEach((f) => f(e));
+let linkRun = 0;
+const lookups = new Map<string, number>();
+const KEY_QR = "hubchat-key:1:" + "Qm9vdHN0cmFwIGtleSBidW5kbGUgZm9yIGFsZXguM2JlMmM5IHdpdGggaHVicyBvZmZpY2UgYW5kIGxhYg".repeat(3);
+
+/** An identity arrived on this (onboarding) device, with the office hub. */
+function adopt(withHubs: boolean): string {
+  st.me = { id: "alex", address: "alex.3be2c9", name: "Alex Rivera", about: "Platform team" };
+  st.recovery_saved = true;
+  if (withHubs && !st.hubs.some((h) => h.url === OFFICE)) {
+    const h: HubStatus = { url: OFFICE, name: "office", state: "connecting", error: null, retry_at_ms: null, max_attachment_bytes: GB, features: ["v2"] };
+    st.hubs.push(h); reconnect(h);
+    dir = clone(SEED_DIR).map((c) => ({ ...c, hubs: [OFFICE] }));
+    setTimeout(() => emit({ type: "directory" }), 300);
+  }
+  return st.me.address;
+}
+function parseLink(input: string): { code: string; hub: string | null } {
+  let t = input.trim(); let hub: string | null = null;
+  const m = /^hubchat-link:([^@]+)@(.+)$/i.exec(t);
+  if (/^hubchat-link:/i.test(t) && !m) throw "damaged link QR code";
+  if (m) { t = m[1]; hub = m[2]; }
+  const raw = t.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (raw.length !== 16) throw "a link code has 16 letters and digits (XXXX-XXXX-XXXX-XXXX); got " + raw.length;
+  return { code: raw.replace(/(.{4})(?=.)/g, "$1-"), hub };
 }
 
 // -------------------------------------------------------------- pipeline
@@ -258,7 +308,7 @@ export const mockApi: Api = {
     await sleep(900);
     if (/unreach|10\.0\.9\.|10\.0\.0\.7/.test(url)) return { result: "unreachable", url, error: "connection refused (os error 10061)" };
     if (/example|google|github/.test(url)) return { result: "not_a_hub", url, error: "GET /healthz answered 404 Not Found" };
-    return { result: "connected", url, name: hubLabel(url), max_attachment_bytes: GB, features: ["v2"] };
+    return { result: "connected", url, name: hubLabel(url), max_attachment_bytes: GB, features: ["v2"], version: "1.4.0" };
   },
   addHub: async (input) => {
     const url = normHub(input);
@@ -327,5 +377,57 @@ export const mockApi: Api = {
   setDraft: async (peer, body) => { drafts[peer] = body; },
   fileInfo: async (source) => { const name = source.split(/[\\/]/).pop() || "file"; return { name, bytes: SIZES[name] ?? 12345 }; },
 
+  linkStart: async (hub, deviceName) => {
+    if (st.me) throw "this device already has an identity";
+    await sleep(700);
+    const my = ++linkRun;
+    const code = "K7QD-4MXP-9TRA-2HZE";
+    setTimeout(() => { if (linkRun === my) linkEmit({ state: "waiting", expires_in_s: 600 }); }, 100);
+    // the other device approves after a while (long enough to look at the code)
+    setTimeout(() => { if (linkRun === my) linkEmit({ state: "done", address: adopt(true) }); }, 45000);
+    void deviceName;
+    return { code, qr: "hubchat-link:" + code + "@" + (normHub(hub) || hub), hub: normHub(hub) || hub };
+  },
+  linkCancel: async () => { linkRun++; },
+  linkLookup: async (input): Promise<LinkLookup> => {
+    await sleep(500);
+    const { code, hub } = parseLink(input);
+    const n = (lookups.get(code) || 0) + 1; lookups.set(code, n);
+    const unknown = hub && !st.hubs.some((h) => h.url === normHub(hub)) ? hub : null;
+    const found = n >= 3 && !unknown;
+    return { code, address: "link." + code.replace(/-/g, "").slice(0, 6).toLowerCase(), device_name: found ? "Pixel 7a" : null, hubs: found ? [OFFICE] : [], unknown_hub: unknown };
+  },
+  linkApprove: async (code) => { await sleep(1300); lookups.delete(code); return OFFICE; },
+  keyQr: async () => { await sleep(200); return KEY_QR; },
+  restoreQr: async (text) => {
+    await sleep(600);
+    if (!/^hubchat-key:/.test(text)) throw "this QR code doesn't hold a Hubchat key";
+    return adopt(true);
+  },
+  keyFileExport: async (passphrase, dest) => {
+    await sleep(500);
+    if (passphrase.length < 8) throw "the passphrase needs at least 8 characters";
+    void dest;
+  },
+  keyFileImport: async (source, passphrase) => {
+    await sleep(800);
+    if (passphrase === "wrong") throw "wrong passphrase, or " + source.split(/[\\/]/).pop() + " isn't a Hubchat key file";
+    return adopt(true);
+  },
+  onLink: async (f) => { linkListeners.add(f); return () => { linkListeners.delete(f); }; },
+
+  takePendingChat: async () => {
+    const p = params.get("pending");
+    if (!p || pendingTaken) return null;
+    pendingTaken = true;
+    return p;
+  },
+  openAttachment: async (messageId, localId, reveal) => {
+    const a = find(messageId)?.attachments.find((x) => x.local_id === localId);
+    if (!a?.local_path) throw "not downloaded yet";
+    toast((reveal ? "Showing " : "Opening ") + a.name + (reveal ? " in its folder" : ""));
+  },
+
   onEvent: async (f) => { listeners.add(f); return () => { listeners.delete(f); }; },
 };
+let pendingTaken = false;

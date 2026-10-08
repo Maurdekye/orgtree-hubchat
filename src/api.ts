@@ -19,6 +19,8 @@ export interface HubStatus {
   retry_at_ms: number | null;
   max_attachment_bytes: number;
   features: string[];
+  /** The hub's software version, as it reports it (absent or null: unknown). */
+  version?: string | null;
 }
 
 export interface Me {
@@ -93,7 +95,7 @@ export interface Contact {
 }
 
 export type Probe =
-  | { result: "connected"; url: string; name: string; max_attachment_bytes: number; features: string[] }
+  | { result: "connected"; url: string; name: string; max_attachment_bytes: number; features: string[]; version?: string | null }
   | { result: "unreachable"; url: string; error: string }
   | { result: "not_a_hub"; url: string; error: string }
   | { result: "invalid"; error: string };
@@ -129,6 +131,27 @@ export type HcEvent =
   | { type: "directory" }
   | { type: "transfer"; local_id: string; message_id: string; upload: boolean; done: number; total: number };
 
+/** New device: what hc_link_start returns (the code to show, and its QR text). */
+export interface LinkStart { code: string; qr: string; hub: string }
+
+/** Progress of a link started with hc_link_start (Tauri event "hc-link"). */
+export type LinkEvent =
+  | { state: "waiting"; expires_in_s: number }
+  | { state: "done"; address: string }
+  | { state: "failed"; error: string }
+  | { state: "expired" };
+
+/** Signed-in device: the waiting device a code names. */
+export interface LinkLookup {
+  code: string;
+  address: string;
+  /** null: not in this device's directory yet (rosters refresh about once a minute). */
+  device_name: string | null;
+  hubs: string[];
+  /** A scanned QR named a hub this device doesn't use. */
+  unknown_hub: string | null;
+}
+
 /** The real commands. Names and argument shapes match commands.rs. */
 export const tauriApi = {
   state: () => invoke<State>("hc_state"),
@@ -162,6 +185,22 @@ export const tauriApi = {
   draft: (peer: string) => invoke<string | null>("hc_draft", { peer }),
   setDraft: (peer: string, body: string) => invoke<void>("hc_set_draft", { peer, body }),
   fileInfo: (source: string) => invoke<{ name: string; bytes: number }>("hc_file_info", { source }),
+
+  // linking a device (src-tauri/src/link.rs)
+  linkStart: (hub: string, deviceName: string) => invoke<LinkStart>("hc_link_start", { hub, deviceName }),
+  linkCancel: () => invoke<void>("hc_link_cancel"),
+  linkLookup: (input: string) => invoke<LinkLookup>("hc_link_lookup", { input }),
+  linkApprove: (code: string) => invoke<string>("hc_link_approve", { code }),
+  keyQr: () => invoke<string>("hc_key_qr"),
+  restoreQr: (text: string) => invoke<string>("hc_restore_qr", { text }),
+  keyFileExport: (passphrase: string, dest: string) => invoke<void>("hc_key_file_export", { passphrase, dest }),
+  keyFileImport: (source: string, passphrase: string) => invoke<string>("hc_key_file_import", { source, passphrase }),
+  onLink: (f: (e: LinkEvent) => void): Promise<UnlistenFn> => listen<LinkEvent>("hc-link", (e) => f(e.payload)),
+
+  /** Android: the chat a tapped notification named, taken once. */
+  takePendingChat: () => invoke<string | null>("hc_take_pending_chat"),
+  /** Open a downloaded attachment (or, desktop, show it in its folder). */
+  openAttachment: (messageId: string, localId: string, reveal: boolean) => invoke<void>("hc_open_attachment", { messageId, localId, reveal }),
 
   onEvent: (f: (e: HcEvent) => void): Promise<UnlistenFn> => listen<HcEvent>("hc", (e) => f(e.payload)),
 };

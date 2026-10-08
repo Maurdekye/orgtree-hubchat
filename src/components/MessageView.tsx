@@ -5,7 +5,7 @@ import { api, type Attachment, type Message } from "../api";
 import { Icon, iconHTML } from "../lib/icons";
 import { isLong, num, time } from "../lib/format";
 import { esc, md } from "../lib/md";
-import { copyText, errText, openFile, openLink, revealFile } from "../lib/native";
+import { copyText, errText, openAttachment, openFile, openLink } from "../lib/native";
 import { attView, msgTime, preview, tickInfo, type Kind } from "../lib/peers";
 import { useTransfer } from "../lib/store";
 import { toast } from "../lib/toast";
@@ -20,14 +20,15 @@ function metaHTML(m: Message): string {
 }
 
 export function AttCard({ a, m }: { a: Attachment; m: Message }) {
+  const platform = usePlatform();
   const prog = useTransfer(a.local_id);
   const v = attView(a, m, prog && (a.state === "uploading" || a.state === "downloading") ? prog : undefined);
   const download = () => api.download(m.id, a.local_id).catch((e) => toast("Download failed: " + errText(e)));
   const click = () => {
     if (v.download || v.retry === "download") void download();
     else if (v.retry === "send") api.retry(m.id).catch((e) => toast(errText(e)));
-    else if (v.open && a.local_path) openFile(a.local_path).catch((e) => toast(errText(e)));
-    else if (m.outgoing && a.source && v.st === "local") openFile(a.source).catch(() => {});
+    else if (v.open && a.local_path) openAttachment(m.id, a.local_id, false).catch((e) => toast(errText(e)));
+    else if (m.outgoing && a.source && v.st === "local" && !a.source.startsWith("content://")) openFile(a.source).catch(() => {});
   };
   return (
     <div className={"att-file " + v.st} onClick={click} title={a.name} role="button">
@@ -36,7 +37,7 @@ export function AttCard({ a, m }: { a: Attachment; m: Message }) {
         <span className="att-n">{a.name}</span>
         <span className="att-s">{v.sub}{v.retry ? " · Retry" : ""}</span>
         {v.bar != null ? <span className="att-bar"><i style={{ width: v.bar + "%" }} /></span> : null}
-        {v.open && a.local_path ? <button className="link" style={{ fontSize: 12, alignSelf: "flex-start", marginTop: 2 }} onClick={(e) => { e.stopPropagation(); revealFile(a.local_path!).catch(() => {}); }}>Show in folder</button> : null}
+        {v.open && a.local_path && platform === "desktop" ? <button className="link" style={{ fontSize: 12, alignSelf: "flex-start", marginTop: 2 }} onClick={(e) => { e.stopPropagation(); openAttachment(m.id, a.local_id, true).catch((err) => toast(errText(err))); }}>Show in folder</button> : null}
       </span>
       {v.download ? <span className="att-dl"><Icon name="download" /></span> : null}
       {v.cancel ? <button className="att-x" title={m.outgoing ? "Cancel upload" : "Cancel download"} onClick={(e) => { e.stopPropagation(); api.cancelTransfer(a.local_id).catch(() => {}); }}><Icon name="close" /></button> : null}
