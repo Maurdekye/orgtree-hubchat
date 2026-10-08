@@ -429,7 +429,10 @@ impl Store {
 
     /// Mark incoming messages in a chat as seen; returns the ids that changed
     /// (they owe the sender a read receipt).
-    pub fn mark_seen(&self, peer: &str) -> Result<Vec<(String, Option<String>)>> {
+    /// Mark a chat's incoming messages read, keeping when (Message info shows
+    /// it; a v2 hub's read time replaces it when it syncs). Returns the
+    /// newly read ones, for the receipts.
+    pub fn mark_seen(&self, peer: &str, now: &str) -> Result<Vec<(String, Option<String>)>> {
         self.with(|c| {
             let tx = c.transaction()?;
             let ids: Vec<(String, Option<String>)> = {
@@ -440,8 +443,8 @@ impl Store {
                 rows.collect::<rusqlite::Result<_>>()?
             };
             tx.execute(
-                "UPDATE messages SET seen=1 WHERE peer=? AND outgoing=0 AND seen=0",
-                [peer],
+                "UPDATE messages SET seen=1, read_at=COALESCE(read_at, ?) WHERE peer=? AND outgoing=0 AND seen=0",
+                [now, peer],
             )?;
             tx.commit()?;
             Ok(ids)
@@ -824,8 +827,12 @@ mod tests {
         assert_eq!(chats.len(), 1);
         assert_eq!(chats[0].unread, 1);
         assert_eq!(chats[0].last.attachments[0].hub_id.as_deref(), Some("a1"));
-        assert_eq!(s.mark_seen("maya.111111").unwrap().len(), 1);
+        assert_eq!(s.mark_seen("maya.111111", "2026-10-09T00:00:00Z").unwrap().len(), 1);
         assert_eq!(s.chats().unwrap()[0].unread, 0);
+        // when it was read is kept (Message info)
+        let m = s.message("m1").unwrap().unwrap();
+        assert_eq!(m.read_at.as_deref(), Some("2026-10-09T00:00:00Z"));
+        assert!(s.mark_seen("maya.111111", "2026-10-09T01:00:00Z").unwrap().is_empty());
     }
 
     #[test]

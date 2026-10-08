@@ -1150,7 +1150,7 @@ impl Engine {
 
     /// The chat is on screen: mark it seen and send read receipts (if on).
     pub async fn mark_read(&self, peer: &str) -> Result<()> {
-        let ids = self.store.mark_seen(peer)?;
+        let ids = self.store.mark_seen(peer, &now())?;
         if ids.is_empty() {
             return Ok(());
         }
