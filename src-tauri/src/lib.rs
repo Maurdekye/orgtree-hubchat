@@ -127,6 +127,7 @@ pub fn run() {
             commands::hc_set_profile,
             commands::hc_set_read_receipts,
             commands::hc_probe_hub,
+            commands::hc_probe_link_hubs,
             commands::hc_add_hub,
             commands::hc_remove_hub,
             commands::hc_retry_now,

@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use hubchat_core::hub::{CancelFlag, Profile};
-use hubchat_core::link::{self, Bundle};
+use hubchat_core::link::{self, Bundle, LinkUrl};
 use hubchat_core::{HubAddress, HubClient};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime};
@@ -61,7 +61,10 @@ pub struct LinkStart {
 }
 
 /// Put the bundle to use on this device: identity, profile, hubs.
-fn adopt(bundle: Bundle) -> R<String> {
+/// `via`: where this device reached the hub the identity came through;
+/// `aliases`: the other addresses the link named for that hub. Both shape
+/// the hub list (link::hubs_for_device); None and empty for a QR or a file.
+fn adopt(bundle: Bundle, via: Option<&str>, aliases: &[String]) -> R<String> {
     let c = core::get()?;
     let me = bundle.identity().map_err(s)?;
     let address = me.address();
@@ -72,15 +75,15 @@ fn adopt(bundle: Bundle) -> R<String> {
     c.adopt_identity(me)?;
     let e = c.engine()?;
     let _g = c.rt.enter();
-    for h in &bundle.hubs {
-        let _ = e.add_hub(h);
+    for h in link::hubs_for_device(&bundle.hubs, via, aliases) {
+        let _ = e.add_hub(&h);
     }
     Ok(address)
 }
 
 /// The identity a link carries just arrived: adopt it on a fresh device;
 /// on a signed-in one, compare and (if different) hold it for the user.
-fn arrived(bundle: Bundle) -> LinkEvent {
+fn arrived(bundle: Bundle, via: &str, aliases: &[String]) -> LinkEvent {
     let current = core::get()
         .ok()
         .and_then(|c| c.engine().ok())
@@ -90,34 +93,45 @@ fn arrived(bundle: Bundle) -> LinkEvent {
         Err(e) => return LinkEvent::Failed { error: s(e) },
     };
     match current {
-        None => match adopt(bundle) {
+        None => match adopt(bundle, Some(via), aliases) {
             Ok(address) => LinkEvent::Done { address },
             Err(error) => LinkEvent::Failed { error },
         },
         Some(from) if from == to => LinkEvent::Same { address: to },
         Some(from) => {
             // Memory only: an unadopted key is never written to disk.
-            *PENDING_SWITCH.lock().unwrap() = Some(bundle);
+            *PENDING_SWITCH.lock().unwrap() = Some(Pending {
+                bundle,
+                via: via.to_string(),
+                aliases: aliases.to_vec(),
+            });
             LinkEvent::Switch { from, to }
         }
     }
 }
 
-static PENDING_SWITCH: Mutex<Option<Bundle>> = Mutex::new(None);
+/// What a link brought a signed-in device, until the user decides.
+struct Pending {
+    bundle: Bundle,
+    via: String,
+    aliases: Vec<String>,
+}
+
+static PENDING_SWITCH: Mutex<Option<Pending>> = Mutex::new(None);
 
 /// The user confirmed: leave the current identity on this device (off the
 /// device lists of v2 hubs; key and local data forgotten) and adopt the one
 /// the link brought.
 #[tauri::command]
 pub async fn hc_link_switch() -> R<String> {
-    let bundle = PENDING_SWITCH
+    let p = PENDING_SWITCH
         .lock()
         .unwrap()
         .take()
         .ok_or("nothing to switch to: link again")?;
     let c = core::get()?;
     c.leave_identity().await?;
-    adopt(bundle)
+    adopt(p.bundle, Some(&p.via), &p.aliases)
 }
 
 /// The user kept the current identity: drop what the link brought.
@@ -154,6 +168,7 @@ pub async fn hc_link_start<R2: Runtime>(
     hub: String,
     device_name: String,
     code: Option<String>,
+    aliases: Option<Vec<String>>,
 ) -> R<LinkStart> {
     let c = core::get()?;
     // A signed-in device may join too: what arrives is held for a decision
@@ -161,7 +176,7 @@ pub async fn hc_link_start<R2: Runtime>(
     let addr = HubAddress::parse(&hub).map_err(s)?;
     // A code from a scanned/typed QR (the other device made it), or our own.
     let code = match code {
-        Some(c) => format_code(&link::normalize_code(&c).map_err(s)?),
+        Some(c) => link::format_code(&link::normalize_code(&c).map_err(s)?),
         None => link::new_link_code(),
     };
     let temp = link::link_identity(&code).map_err(s)?;
@@ -188,6 +203,8 @@ pub async fn hc_link_start<R2: Runtime>(
         old.cancel();
     }
     let code2 = code.clone();
+    let via = addr.to_string();
+    let aliases = aliases.unwrap_or_default();
     c.rt.spawn(async move {
         let t0 = Instant::now();
         let _ = app.emit(
@@ -219,7 +236,7 @@ pub async fn hc_link_start<R2: Runtime>(
                 let _ = client.ack(&temp, &ids).await;
             }
             if let Some(bundle) = found {
-                break Some(arrived(bundle));
+                break Some(arrived(bundle, &via, &aliases));
             }
         };
         let _ = client.unregister(&temp).await;
@@ -228,11 +245,15 @@ pub async fn hc_link_start<R2: Runtime>(
         }
     });
     let hub = addr.to_string();
-    Ok(LinkStart {
-        qr: link_url(&code, &hub, "take"),
-        code,
-        hub,
-    })
+    let (host, ips) = local_addresses();
+    let qr = LinkUrl {
+        code: link::normalize_code(&code).map_err(s)?,
+        hubs: link::hub_aliases(&hub, host.as_deref(), &ips),
+        hub_name: None,
+        role: Some("take".into()),
+    }
+    .to_url();
+    Ok(LinkStart { qr, code, hub })
 }
 
 #[tauri::command]
@@ -256,77 +277,62 @@ pub struct LinkLookup {
     unknown_hub: Option<String>,
 }
 
-/// The link QR is a URL so a phone camera opens Hubchat with it
-/// (user 19:12Z): `hubchat://link?code=XXXX-XXXX-XXXX-XXXX&hub=<url>&role=…`.
-/// `role=give`: a signed-in device offers its identity (the scanner joins);
-/// `role=take`: a new device asks for one (the scanner approves).
-pub fn link_url(code: &str, hub: &str, role: &str) -> String {
-    let enc = |v: &str| url::form_urlencoded::byte_serialize(v.as_bytes()).collect::<String>();
-    format!(
-        "hubchat://link?code={}&hub={}&role={role}",
-        enc(code),
-        enc(hub)
-    )
+/// This machine's name and the addresses other devices may reach it at:
+/// the tailnet's (Tailscale) and the one its default route leaves by.
+/// Nothing on Android: a phone is not where a hub runs.
+fn local_addresses() -> (Option<String>, Vec<std::net::IpAddr>) {
+    if cfg!(target_os = "android") {
+        return (None, Vec::new());
+    }
+    let host = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .ok();
+    // Connecting a UDP socket sends nothing; it only picks the route.
+    let toward = |dest: &str| -> Option<std::net::IpAddr> {
+        let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+        sock.connect(dest).ok()?;
+        Some(sock.local_addr().ok()?.ip())
+    };
+    let mut ips = Vec::new();
+    // Tailscale's resolver address is routed through the tailnet when it is up.
+    if let Some(ip) = toward("100.100.100.100:53").filter(is_tailnet) {
+        ips.push(ip);
+    }
+    if let Some(ip) = toward("1.1.1.1:53") {
+        if !ips.contains(&ip) {
+            ips.push(ip);
+        }
+    }
+    (host, ips)
 }
 
-/// `give`, `take`, or None when the input doesn't say (a typed code).
-fn link_role(input: &str) -> Option<String> {
-    let t = input.trim();
-    if t.starts_with("hubchat-link:") {
-        return Some("take".into());
-    }
-    let u = url::Url::parse(t)
-        .ok()
-        .filter(|u| u.scheme() == "hubchat")?;
-    let r = u
-        .query_pairs()
-        .find(|(n, _)| n == "role")
-        .map(|(_, v)| v.into_owned())?;
-    matches!(r.as_str(), "give" | "take").then_some(r)
-}
-
-fn format_code(c: &str) -> String {
-    format!("{}-{}-{}-{}", &c[..4], &c[4..8], &c[8..12], &c[12..])
-}
-
-/// A typed code, the link URL, or the older `hubchat-link:CODE@HUB` text.
-pub fn parse_code_or_qr(input: &str) -> R<(String, Option<String>)> {
-    let t = input.trim();
-    if let Some(rest) = t.strip_prefix("hubchat-link:") {
-        let (code, hub) = rest.split_once('@').ok_or("damaged link QR code")?;
-        return Ok((
-            link::normalize_code(code).map_err(s)?,
-            Some(hub.to_string()),
-        ));
-    }
-    if t.starts_with("hubchat://") {
-        let u = url::Url::parse(t).map_err(|_| "damaged link QR code")?;
-        let get = |k: &str| {
-            u.query_pairs()
-                .find(|(n, _)| n == k)
-                .map(|(_, v)| v.into_owned())
-        };
-        let code = get("code").ok_or("the link has no code")?;
-        return Ok((link::normalize_code(&code).map_err(s)?, get("hub")));
-    }
-    Ok((link::normalize_code(t).map_err(s)?, None))
+/// 100.64.0.0/10, where Tailscale gives out addresses.
+fn is_tailnet(ip: &std::net::IpAddr) -> bool {
+    matches!(ip, std::net::IpAddr::V4(v4) if v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
 }
 
 #[derive(Serialize)]
 pub struct ParsedLink {
     code: String,
+    /// The likeliest address of the link's hub.
     hub: Option<String>,
+    /// Every address the link names for it, the likeliest first.
+    hubs: Vec<String>,
+    /// The hub's name, to check the right hub answered.
+    hub_name: Option<String>,
     role: Option<String>,
 }
 
 /// For the UI: what a scanned or opened link holds.
 #[tauri::command]
 pub fn hc_parse_link(input: String) -> R<ParsedLink> {
-    let (code, hub) = parse_code_or_qr(&input)?;
+    let l = LinkUrl::parse(&input).map_err(s)?;
     Ok(ParsedLink {
-        code: format_code(&code),
-        hub,
-        role: link_role(&input),
+        code: link::format_code(&l.code),
+        hub: l.hubs.first().cloned(),
+        hubs: l.hubs,
+        hub_name: l.hub_name,
+        role: l.role,
     })
 }
 
@@ -334,7 +340,11 @@ pub fn hc_parse_link(input: String) -> R<ParsedLink> {
 pub struct LinkOffer {
     code: String,
     qr: String,
+    /// The hub as this device knows it.
     hub: String,
+    /// What the QR names it: as other devices may reach it (Fix 2,
+    /// coordinator 20:28Z: localhost is no address for a phone).
+    hubs: Vec<String>,
 }
 
 /// Signed-in device: make a one-time code for a NEW device to scan
@@ -355,18 +365,34 @@ pub fn hc_link_offer(hub: Option<String>) -> R<LinkOffer> {
             .map(|h| h.url.clone())
             .ok_or("add a hub first: the new device links through one")?,
     };
+    let hub_name = statuses
+        .iter()
+        .find(|h| h.url == hub)
+        .map(|h| h.name.clone())
+        .filter(|n| !n.trim().is_empty());
+    let (host, ips) = local_addresses();
+    let hubs = link::hub_aliases(&hub, host.as_deref(), &ips);
     let code = link::new_link_code();
+    let qr = LinkUrl {
+        code: link::normalize_code(&code).map_err(s)?,
+        hubs: hubs.clone(),
+        hub_name,
+        role: Some("give".into()),
+    }
+    .to_url();
     Ok(LinkOffer {
-        qr: link_url(&code, &hub, "give"),
+        qr,
         code,
         hub,
+        hubs,
     })
 }
 
 #[tauri::command]
 pub fn hc_link_lookup(input: String) -> R<LinkLookup> {
     let c = core::get()?;
-    let (code, hub) = parse_code_or_qr(&input)?;
+    let l = LinkUrl::parse(&input).map_err(s)?;
+    let code = l.code;
     let address = link::link_identity(&code).map_err(s)?.address();
     let entry = c
         .store
@@ -381,11 +407,16 @@ pub fn hc_link_lookup(input: String) -> R<LinkLookup> {
         .into_iter()
         .map(|h| h.url)
         .collect();
-    let unknown_hub = hub.filter(|h| {
+    let ours = |h: &String| {
         HubAddress::parse(h)
-            .map(|a| !mine.contains(&a.to_string()))
-            .unwrap_or(true)
-    });
+            .map(|a| mine.contains(&a.to_string()))
+            .unwrap_or(false)
+    };
+    let unknown_hub = if l.hubs.iter().any(ours) {
+        None
+    } else {
+        l.hubs.first().cloned()
+    };
     Ok(LinkLookup {
         code,
         address,
@@ -418,7 +449,7 @@ pub fn hc_key_qr() -> R<String> {
 
 #[tauri::command]
 pub fn hc_restore_qr(text: String) -> R<String> {
-    adopt(link::from_qr(&text).map_err(s)?)
+    adopt(link::from_qr(&text).map_err(s)?, None, &[])
 }
 
 /// Write the passphrase-locked key file to `dest` (a path, or on Android a
@@ -458,5 +489,5 @@ pub fn hc_key_file_import(source: String, passphrase: String) -> R<String> {
         .take(1 << 20)
         .read_to_string(&mut text)
         .map_err(s)?;
-    adopt(link::from_key_file(&text, &passphrase).map_err(s)?)
+    adopt(link::from_key_file(&text, &passphrase).map_err(s)?, None, &[])
 }

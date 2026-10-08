@@ -2,6 +2,7 @@
 //! runtime; the UI listens to `hc` events and re-reads what changed.
 
 use std::future::Future;
+use std::time::Duration;
 
 use hubchat_core::engine::{Engine, HubStatus};
 use hubchat_core::hub::Health;
@@ -184,26 +185,80 @@ pub enum Probe {
 /// Check an address before adding it (onboarding and Settings › Hubs).
 #[tauri::command]
 pub async fn hc_probe_hub(input: String) -> R<Probe> {
-    let addr = match HubAddress::parse(&input) {
-        Ok(a) => a,
-        Err(e) => return Ok(Probe::Invalid { error: s(e) }),
-    };
-    let url = addr.to_string();
+    on_core(async move { Ok(probe(&input, None, Duration::from_secs(30)).await) }).await
+}
+
+/// A link's hub under each address the link names, the likeliest first
+/// (coordinator 20:28Z): the likeliest that answers as the hub the link
+/// names wins; when none does, the first address's failure. All are tried
+/// at once, 5 s each at most.
+#[tauri::command]
+pub async fn hc_probe_link_hubs(hubs: Vec<String>, name: Option<String>) -> R<Probe> {
+    if hubs.is_empty() {
+        return Ok(Probe::Invalid {
+            error: "the link names no hub".into(),
+        });
+    }
     on_core(async move {
-        let r: Result<Health, _> = HubClient::new(addr).healthz().await;
-        Ok(match r {
-            Ok(h) => Probe::Connected {
-                url,
-                max_attachment_bytes: h.max_attachment_bytes(),
-                name: h.name,
-                features: h.features,
-                version: h.version,
-            },
-            Err(hubchat_core::Error::NotAHub(e)) => Probe::NotAHub { url, error: e },
-            Err(e) => Probe::Unreachable { url, error: s(e) },
-        })
+        let mut set = tokio::task::JoinSet::new();
+        for (i, h) in hubs.iter().cloned().enumerate() {
+            let name = name.clone();
+            set.spawn(async move { (i, probe(&h, name.as_deref(), Duration::from_secs(5)).await) });
+        }
+        let mut done: Vec<Option<Probe>> = hubs.iter().map(|_| None).collect();
+        let connected = |p: &Option<Probe>| matches!(p, Some(Probe::Connected { .. }));
+        while let Some(r) = set.join_next().await {
+            let Ok((i, p)) = r else { continue };
+            done[i] = Some(p);
+            // the first that answered, once every likelier one has failed
+            let w = done.iter().take_while(|p| p.is_some()).position(connected);
+            if let Some(w) = w {
+                set.abort_all();
+                return Ok(done[w].take().expect("answered"));
+            }
+        }
+        if let Some(w) = done.iter().position(connected) {
+            return Ok(done[w].take().expect("answered"));
+        }
+        Ok(done
+            .into_iter()
+            .next()
+            .flatten()
+            .unwrap_or(Probe::Invalid {
+                error: "no address answered".into(),
+            }))
     })
     .await
+}
+
+/// /healthz at `input` within `limit`; `name`: the hub that must answer.
+async fn probe(input: &str, name: Option<&str>, limit: Duration) -> Probe {
+    let addr = match HubAddress::parse(input) {
+        Ok(a) => a,
+        Err(e) => return Probe::Invalid { error: s(e) },
+    };
+    let url = addr.to_string();
+    let r: Result<Result<Health, _>, _> =
+        tokio::time::timeout(limit, HubClient::new(addr).healthz()).await;
+    match r {
+        Err(_) => Probe::Unreachable {
+            url,
+            error: format!("no answer within {} s", limit.as_secs()),
+        },
+        Ok(Ok(h)) if name.is_some_and(|n| n != h.name) => Probe::NotAHub {
+            url,
+            error: format!("another hub answers there ({})", h.name),
+        },
+        Ok(Ok(h)) => Probe::Connected {
+            url,
+            max_attachment_bytes: h.max_attachment_bytes(),
+            name: h.name,
+            features: h.features,
+            version: h.version,
+        },
+        Ok(Err(hubchat_core::Error::NotAHub(e))) => Probe::NotAHub { url, error: e },
+        Ok(Err(e)) => Probe::Unreachable { url, error: s(e) },
+    }
 }
 
 #[tauri::command]

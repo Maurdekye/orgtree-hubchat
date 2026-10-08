@@ -226,6 +226,186 @@ pub fn from_key_file(contents: &str, passphrase: &str) -> Result<Bundle> {
     serde_json::from_slice(&plain).map_err(|_| Error::Invalid("damaged key file".into()))
 }
 
+// ------------------------------------------------- the link QR as a URL
+
+/// What a link QR carries: a URL a phone camera opens in Hubchat (user
+/// 19:12Z), `hubchat://link?code=…&hub=…[&hub=…][&name=…]&role=give|take`.
+/// Several `hub`s are one hub under the addresses another device may reach
+/// it at, the likeliest first; `name` is that hub's name, so the device
+/// that scans can tell it reached the right one (coordinator 20:28Z).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkUrl {
+    /// Normalised (16 characters, no separators).
+    pub code: String,
+    pub hubs: Vec<String>,
+    pub hub_name: Option<String>,
+    /// `give`: a signed-in device offers its identity (the scanner joins);
+    /// `take`: a new device asks for one (the scanner approves). None for a
+    /// typed code.
+    pub role: Option<String>,
+}
+
+/// XXXX-XXXX-XXXX-XXXX from a normalised code.
+pub fn format_code(c: &str) -> String {
+    if c.len() != CODE_CHARS {
+        return c.to_string();
+    }
+    format!("{}-{}-{}-{}", &c[..4], &c[4..8], &c[8..12], &c[12..])
+}
+
+impl LinkUrl {
+    pub fn to_url(&self) -> String {
+        let enc = |v: &str| url::form_urlencoded::byte_serialize(v.as_bytes()).collect::<String>();
+        let mut s = format!("hubchat://link?code={}", enc(&format_code(&self.code)));
+        for h in &self.hubs {
+            s.push_str(&format!("&hub={}", enc(h)));
+        }
+        if let Some(n) = &self.hub_name {
+            s.push_str(&format!("&name={}", enc(n)));
+        }
+        if let Some(r) = &self.role {
+            s.push_str(&format!("&role={}", enc(r)));
+        }
+        s
+    }
+
+    /// A typed code, the link URL, or the older `hubchat-link:CODE@HUB` text
+    /// (a waiting new device's: role `take`).
+    pub fn parse(input: &str) -> Result<Self> {
+        let t = input.trim();
+        let damaged = || Error::Invalid("damaged link QR code".into());
+        if let Some(rest) = t.strip_prefix("hubchat-link:") {
+            let (code, hub) = rest.split_once('@').ok_or_else(damaged)?;
+            return Ok(LinkUrl {
+                code: normalize_code(code)?,
+                hubs: vec![hub.to_string()],
+                hub_name: None,
+                role: Some("take".into()),
+            });
+        }
+        if t.starts_with("hubchat://") {
+            let u = url::Url::parse(t).map_err(|_| damaged())?;
+            let all = |k: &str| -> Vec<String> {
+                u.query_pairs()
+                    .filter(|(n, _)| n == k)
+                    .map(|(_, v)| v.into_owned())
+                    .filter(|v| !v.trim().is_empty())
+                    .collect()
+            };
+            let code = all("code")
+                .into_iter()
+                .next()
+                .ok_or_else(|| Error::Invalid("the link has no code".into()))?;
+            return Ok(LinkUrl {
+                code: normalize_code(&code)?,
+                hubs: all("hub"),
+                hub_name: all("name").into_iter().next(),
+                role: all("role")
+                    .into_iter()
+                    .next()
+                    .filter(|r| matches!(r.as_str(), "give" | "take")),
+            });
+        }
+        Ok(LinkUrl {
+            code: normalize_code(t)?,
+            hubs: Vec::new(),
+            hub_name: None,
+            role: None,
+        })
+    }
+}
+
+/// True for a hub address that names the machine it is used on (localhost,
+/// 127.0.0.0/8, ::1, 0.0.0.0): on another device it would name that device.
+pub fn is_loopback_hub(url: &str) -> bool {
+    let Ok(a) = crate::HubAddress::parse(url) else {
+        return false;
+    };
+    let Ok(u) = url::Url::parse(&a.to_string()) else {
+        return false;
+    };
+    match u.host() {
+        Some(url::Host::Domain(d)) => {
+            let d = d.trim_end_matches('.').to_ascii_lowercase();
+            d == "localhost" || d.ends_with(".localhost")
+        }
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback() || ip.is_unspecified(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback() || ip.is_unspecified(),
+        None => false,
+    }
+}
+
+/// The addresses another device may reach a hub at. A hub this device
+/// reaches by a loopback address is offered under `hostname` and each of
+/// `ips` (same scheme and port), then under the loopback address itself
+/// (for a second app on this machine). Any other address is offered as is.
+pub fn hub_aliases(url: &str, hostname: Option<&str>, ips: &[std::net::IpAddr]) -> Vec<String> {
+    let norm = crate::HubAddress::parse(url)
+        .map(|a| a.to_string())
+        .unwrap_or_else(|_| url.to_string());
+    if !is_loopback_hub(&norm) {
+        return vec![norm];
+    }
+    let Ok(u) = url::Url::parse(&norm) else {
+        return vec![norm];
+    };
+    let port = u.port().map(|p| format!(":{p}")).unwrap_or_default();
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |host: String| {
+        let a = format!("{}://{host}{port}", u.scheme());
+        if let Ok(a) = crate::HubAddress::parse(&a) {
+            let a = a.to_string();
+            if !out.contains(&a) && !is_loopback_hub(&a) {
+                out.push(a);
+            }
+        }
+    };
+    if let Some(h) = hostname.map(str::trim).filter(|h| !h.is_empty()) {
+        push(h.to_ascii_lowercase());
+    }
+    for ip in ips {
+        if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
+            continue;
+        }
+        push(match ip {
+            std::net::IpAddr::V4(v4) => v4.to_string(),
+            std::net::IpAddr::V6(v6) => format!("[{v6}]"),
+        });
+    }
+    out.push(norm);
+    out
+}
+
+/// The hubs a device that received an identity through a link should use:
+/// `via` (where it reached the link's hub) first, then the bundle's hubs,
+/// except other names for that same hub (`aliases`, from the link) and,
+/// once `via` is known, loopback addresses (on this device they would name
+/// this device; user setup 2026-10-08: the PC reaches its own hub as
+/// localhost:7370, the phone through Tailscale).
+pub fn hubs_for_device(bundle_hubs: &[String], via: Option<&str>, aliases: &[String]) -> Vec<String> {
+    let norm = |h: &str| {
+        crate::HubAddress::parse(h)
+            .map(|a| a.to_string())
+            .unwrap_or_else(|_| h.to_string())
+    };
+    let aliases: Vec<String> = aliases.iter().map(|a| norm(a)).collect();
+    let mut out: Vec<String> = Vec::new();
+    if let Some(v) = via {
+        out.push(norm(v));
+    }
+    for h in bundle_hubs {
+        let h = norm(h);
+        if out.contains(&h) {
+            continue;
+        }
+        if via.is_some() && (aliases.contains(&h) || is_loopback_hub(&h)) {
+            continue;
+        }
+        out.push(h);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,5 +456,119 @@ mod tests {
             b.identity().unwrap().address()
         );
         assert!(from_key_file(&f, "wrong horse!").is_err());
+    }
+
+    #[test]
+    fn link_url_round_trip_with_several_hubs() {
+        let code = normalize_code(&new_link_code()).unwrap();
+        let l = LinkUrl {
+            code: code.clone(),
+            hubs: vec!["http://home-pc:7370".into(), "http://100.101.102.103:7370".into()],
+            hub_name: Some("maurdekye net".into()),
+            role: Some("give".into()),
+        };
+        let url = l.to_url();
+        assert!(url.starts_with("hubchat://link?code="));
+        assert!(url.contains(&format_code(&code)));
+        assert_eq!(LinkUrl::parse(&url).unwrap(), l);
+        // A typed code, and the older text form.
+        let typed = LinkUrl::parse(&format_code(&code).to_lowercase()).unwrap();
+        assert_eq!((typed.code, typed.hubs.len(), typed.role), (code.clone(), 0, None));
+        let old = LinkUrl::parse(&format!("hubchat-link:{code}@http://hub:7370")).unwrap();
+        assert_eq!(old.hubs, vec!["http://hub:7370".to_string()]);
+        assert_eq!(old.role.as_deref(), Some("take"));
+        // An unknown role is no role; a link without a code is refused.
+        let odd = LinkUrl::parse(&format!("hubchat://link?code={code}&role=steal")).unwrap();
+        assert_eq!(odd.role, None);
+        assert!(LinkUrl::parse("hubchat://link?hub=x").is_err());
+    }
+
+    #[test]
+    fn loopback_hubs() {
+        for h in [
+            "localhost:7370",
+            "http://localhost:7370",
+            "127.0.0.1:7397",
+            "http://127.8.0.1",
+            "[::1]:7370",
+            "0.0.0.0:7370",
+            "LOCALHOST",
+        ] {
+            assert!(is_loopback_hub(h), "{h}");
+        }
+        for h in [
+            "home-pc:7370",
+            "100.101.102.103:7370",
+            "https://hub.example.org",
+            "192.168.1.20:7370",
+            "not a hub ::",
+        ] {
+            assert!(!is_loopback_hub(h), "{h}");
+        }
+    }
+
+    #[test]
+    fn aliases_for_a_loopback_hub() {
+        let ips: Vec<std::net::IpAddr> = vec![
+            "100.101.102.103".parse().unwrap(),
+            "192.168.1.20".parse().unwrap(),
+            "127.0.0.1".parse().unwrap(),
+            "100.101.102.103".parse().unwrap(),
+        ];
+        assert_eq!(
+            hub_aliases("http://localhost:7370", Some("HOME-PC"), &ips),
+            vec![
+                "http://home-pc:7370",
+                "http://100.101.102.103:7370",
+                "http://192.168.1.20:7370",
+                "http://localhost:7370",
+            ]
+        );
+        // Another hub is offered as it is; no hostname or IPs: just itself.
+        assert_eq!(
+            hub_aliases("star-system:7370", Some("home-pc"), &ips),
+            vec!["http://star-system:7370"]
+        );
+        assert_eq!(
+            hub_aliases("127.0.0.1:7397", None, &[]),
+            vec!["http://127.0.0.1:7397"]
+        );
+    }
+
+    #[test]
+    fn hubs_after_a_link() {
+        let bundle = vec![
+            "http://localhost:7370".to_string(),
+            "http://star-system:7370".to_string(),
+        ];
+        // The phone reached the PC's localhost hub through Tailscale.
+        assert_eq!(
+            hubs_for_device(
+                &bundle,
+                Some("home-pc:7370"),
+                &["http://home-pc:7370".into(), "http://localhost:7370".into()]
+            ),
+            vec!["http://home-pc:7370", "http://star-system:7370"]
+        );
+        // The user typed another address for a hub the bundle names otherwise.
+        assert_eq!(
+            hubs_for_device(
+                &["http://hub.lan:7370".to_string()],
+                Some("100.1.2.3:7370"),
+                &["http://hub.lan:7370".into()]
+            ),
+            vec!["http://100.1.2.3:7370"]
+        );
+        // Same machine (tests): the loopback hub is the one it reached.
+        assert_eq!(
+            hubs_for_device(
+                &["http://127.0.0.1:7397".to_string()],
+                Some("http://127.0.0.1:7397"),
+                &[]
+            ),
+            vec!["http://127.0.0.1:7397"]
+        );
+        // No link (QR, key file): the bundle as it is.
+        assert_eq!(hubs_for_device(&bundle, None, &[]), bundle);
     }
 }
