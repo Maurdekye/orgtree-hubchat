@@ -1,6 +1,7 @@
 package dev.orgtree.hubchat
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -17,5 +18,16 @@ class MainActivity : TauriActivity() {
       ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
     }
     ConnectionService.start(this)
+    takePeer(intent)
+  }
+
+  // A tapped message notification names its chat; the UI picks it up.
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    takePeer(intent)
+  }
+
+  private fun takePeer(intent: Intent?) {
+    intent?.getStringExtra("peer")?.let { ConnectionService.pendingPeer = it }
   }
 }

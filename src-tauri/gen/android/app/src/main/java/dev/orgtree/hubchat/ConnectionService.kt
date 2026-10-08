@@ -72,6 +72,45 @@ class ConnectionService : Service() {
       }
     }
 
+    /** The chat a tapped notification asked for; the UI takes it once. */
+    @Volatile var pendingPeer: String = ""
+
+    @JvmStatic
+    fun takePendingPeer(): String {
+      val p = pendingPeer
+      pendingPeer = ""
+      return p
+    }
+
+    /**
+     * Called from Rust after a download: copy the file into the shared
+     * Downloads collection (Android 10+) so other apps and the Files app see
+     * it. Returns the new content:// URI, or "" to keep the private copy.
+     */
+    @JvmStatic
+    fun publishDownload(path: String, name: String): String {
+      val ctx = appContext ?: return ""
+      if (Build.VERSION.SDK_INT < 29) return ""
+      return try {
+        val values = android.content.ContentValues().apply {
+          put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name)
+          put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val coll = android.provider.MediaStore.Downloads.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val uri = ctx.contentResolver.insert(coll, values) ?: return ""
+        ctx.contentResolver.openOutputStream(uri)?.use { out ->
+          java.io.File(path).inputStream().use { it.copyTo(out, 256 * 1024) }
+        }
+        values.clear()
+        values.put(android.provider.MediaStore.Downloads.IS_PENDING, 0)
+        ctx.contentResolver.update(uri, values, null, null)
+        java.io.File(path).delete()
+        uri.toString()
+      } catch (e: Exception) {
+        ""
+      }
+    }
+
     /** Called from Rust: the display name of a content:// URI, or "". */
     @JvmStatic
     fun displayName(uri: String): String {

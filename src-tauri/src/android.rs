@@ -115,6 +115,20 @@ impl crate::core::Platform for AndroidPlatform {
         let j = JNI.get()?;
         call(&j.service, "displayName", &[source], true).filter(|n| !n.is_empty())
     }
+    fn publish_download(&self, path: &std::path::Path, name: &str) -> Option<String> {
+        let j = JNI.get()?;
+        call(
+            &j.service,
+            "publishDownload",
+            &[&path.to_string_lossy(), name],
+            true,
+        )
+        .filter(|u| !u.is_empty())
+    }
+    fn take_pending_chat(&self) -> Option<String> {
+        let j = JNI.get()?;
+        call(&j.service, "takePendingPeer", &[], true).filter(|p| !p.is_empty())
+    }
     fn download_dir(&self) -> PathBuf {
         self.dir.join("downloads")
     }

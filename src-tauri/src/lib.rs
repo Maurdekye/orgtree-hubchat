@@ -134,6 +134,7 @@ pub fn run() {
             commands::hc_draft,
             commands::hc_set_draft,
             commands::hc_file_info,
+            commands::hc_take_pending_chat,
             link::hc_link_start,
             link::hc_link_cancel,
             link::hc_link_lookup,

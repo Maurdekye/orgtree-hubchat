@@ -28,6 +28,15 @@ pub trait Platform: Send + Sync + 'static {
             .map(|n| n.to_string_lossy().into_owned())
     }
     fn download_dir(&self) -> PathBuf;
+    /// After a download: move it where the user finds downloads (Android:
+    /// the shared Downloads collection). Returns the new location, if moved.
+    fn publish_download(&self, _path: &std::path::Path, _name: &str) -> Option<String> {
+        None
+    }
+    /// A chat a tapped notification asked to open (taken once).
+    fn take_pending_chat(&self) -> Option<String> {
+        None
+    }
 }
 
 pub struct Core {

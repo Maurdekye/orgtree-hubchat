@@ -308,13 +308,28 @@ pub fn hc_cancel_transfer(local_id: String) -> R<()> {
 #[tauri::command]
 pub async fn hc_download(message_id: String, local_id: String) -> R<String> {
     let e = engine()?;
-    on_core(async move {
-        e.download(&message_id, &local_id)
-            .await
-            .map(|p| p.to_string_lossy().into_owned())
-            .map_err(s)
-    })
-    .await
+    let (mid, lid) = (message_id.clone(), local_id.clone());
+    let path = on_core(async move { e.download(&mid, &lid).await.map_err(s) }).await?;
+    let c = core::get()?;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    match c.platform().publish_download(&path, &name) {
+        Some(moved) => {
+            c.store
+                .set_attachment(&local_id, "done", None, Some(&moved), None)
+                .map_err(s)?;
+            Ok(moved)
+        }
+        None => Ok(path.to_string_lossy().into_owned()),
+    }
+}
+
+/// The chat a tapped notification asked for (Android), taken once.
+#[tauri::command]
+pub fn hc_take_pending_chat() -> R<Option<String>> {
+    Ok(core::get()?.platform().take_pending_chat())
 }
 
 #[tauri::command]
