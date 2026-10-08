@@ -35,3 +35,26 @@
 .cam-hint { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; padding: 10px 20px 18px; }
 .cam-hint .vf { width: 200px; height: 200px; position: relative; border-radius: 18px; background: radial-gradient(circle at 40% 35%, #2a2a2a, #121212 70%); overflow: hidden; }
 .cam-hint .vf::before { content: ""; position: absolute; inset: 14px; border: 3px solid transparent; border-radius: 14px; border-top-color: #fff; border-bottom-color: #fff; clip-path: polygon(0 0, 22% 0, 22% 100%, 0 100%, 0 0, 100% 0, 100% 100%, 78% 100%, 78% 0); }
+
+/* link a device: this phone shows a QR code */
+.offer { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 0 20px; }
+.offer .qrbox { background: #fff; padding: 12px; border-radius: 16px; line-height: 0; }
+.offer .paircode { font: 700 21px var(--mono); letter-spacing: .06em; color: var(--ink-strong); white-space: nowrap; margin-top: 6px; }
+.offer-hub { font-size: 13px; color: var(--dim); text-align: center; overflow-wrap: anywhere; }
+.offer-how { margin: 12px 20px; font-size: 14px; color: var(--ink); text-align: center; line-height: 1.45; }
+.lc-pane .waiting { display: flex; align-items: center; gap: 10px; margin: 0 20px 6px; padding: 12px 14px; border-radius: 14px; background: var(--panel); font-size: 14px; color: var(--dim); }
+.lc-pane .waiting .cd { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--faint); }
+
+/* onboarding: scan the PC's link QR (user 19:12Z) */
+.method.primary { background: var(--accent-soft); border-color: transparent; }
+.method.primary .fi { background: var(--accent); color: #fff; }
+.fhint { margin: 14px 20px 4px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.fhint-img { position: relative; width: 100%; max-width: 360px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); line-height: 0; }
+.fhint-img img { width: 100%; height: auto; display: block; }
+.fhint-ring { position: absolute; border-radius: 10px; box-shadow: 0 0 0 3px var(--accent), 0 0 0 999px rgba(0, 0, 0, .45); animation: fhint-pulse 1.6s ease-in-out infinite; }
+@keyframes fhint-pulse { 50% { box-shadow: 0 0 0 5px var(--accent), 0 0 0 999px rgba(0, 0, 0, .45); } }
+.fhint figcaption { font-size: 13.5px; color: var(--ink); text-align: center; }
+.ob-alt { display: flex; justify-content: center; margin: 10px 20px 4px; }
+.ob-alt .link { font-size: 14.5px; padding: 8px 12px; }
+.ob-sub { margin: 18px 24px 10px; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); }
+.ob .hublist-ob .hl .link { flex: none; }

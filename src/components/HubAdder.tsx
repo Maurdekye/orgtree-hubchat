@@ -13,9 +13,10 @@ import { NoteCard, usePlatform } from "./ui";
 
 type Phase = { k: "idle" } | { k: "checking"; input: string } | { k: "result"; p: Probe } | { k: "adding" } | { k: "error"; msg: string };
 
-export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel }: { onAdded?: (url: string, name: string) => void; onPick?: (url: string, name: string) => void; existing: string[]; autoFocus?: boolean; onCancel?: () => void }) {
+/** `initial`: an address to start from (a scanned link's hub this device couldn't reach). */
+export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel, initial }: { onAdded?: (url: string, name: string) => void; onPick?: (url: string, name: string) => void; existing: string[]; autoFocus?: boolean; onCancel?: () => void; initial?: string }) {
   const platform = usePlatform();
-  const [value, setValue] = useState("");
+  const [value, setValue] = useState(initial ?? "");
   const [ph, setPh] = useState<Phase>({ k: "idle" });
 
   const check = async () => {

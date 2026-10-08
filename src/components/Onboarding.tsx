@@ -1,35 +1,49 @@
 // First run. The fork: create a new identity (id → address → hubs → recovery
-// words) or bring an existing one: link through a hub (this device shows a
-// code, the other approves it), scan a QR code (Android), a key file, or the
+// words) or bring an existing one. Main path (user 19:12-19:13Z): the other
+// device shows a link QR, this phone scans it (or types its code), joins
+// through the hub and waits for the other device to approve. Also: this device
+// shows a code for the other one to approve, a key QR, a key file, or the
 // recovery words. A bundle that brings hubs goes straight to the app; the
 // words (or a bundle without hubs) go on to the add-hubs step.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { copyWords, downloadWords } from "../lib/recovery";
-import { api, type LinkStart } from "../api";
+import { api, type LinkStart, type Probe } from "../api";
 import { Icon, Logo, type IconName } from "../lib/icons";
 import { baseName, errText, pickKeyFile, scanQr } from "../lib/native";
 import { getSnap, refreshAll, refreshState, setOnboarding, useSnap } from "../lib/store";
 import { splitAddr } from "../lib/peers";
 import { toast } from "../lib/toast";
 import { HubAdder } from "./HubAdder";
+import { usePendingLink } from "../lib/visibility";
+import { formatCode } from "./LinkDevice";
 import { NoteCard, QR, useNow, usePlatform } from "./ui";
+import footerCrop from "../assets/desktop-footer-qr.png";
+import footerQr from "../assets/desktop-footer-qr.json";
 
-type Step = "welcome" | "id" | "addr" | "hub" | "key" | "method" | "restore" | "linkhub" | "linkname" | "linkcode" | "scan" | "keyfile";
-type Flow = "new" | "words" | "link" | "qr" | "file";
+type Step = "welcome" | "id" | "addr" | "hub" | "key" | "method" | "restore" | "linkhub" | "linkname" | "linkcode" | "scan" | "keyfile"
+  | "typecode" | "joinname" | "joinhub" | "join";
+// join: scan the other device's link QR; type: type its code (and the hub)
+type Flow = "new" | "words" | "link" | "qr" | "file" | "join" | "type";
 const FLOW: Record<Flow, Step[]> = {
   new: ["welcome", "id", "addr", "hub", "key"],
   words: ["welcome", "method", "restore", "hub"],
   link: ["welcome", "method", "linkhub", "linkname", "linkcode"],
   qr: ["welcome", "method", "scan", "hub"],
   file: ["welcome", "method", "keyfile", "hub"],
+  join: ["welcome", "method", "scan", "joinname", "join"],
+  type: ["welcome", "method", "typecode", "joinname", "join"],
 };
-const VIA: Record<Flow, string> = { new: "", words: "Your words", link: "Linking", qr: "The QR code", file: "Your key file" };
+const VIA: Record<Flow, string> = { new: "", words: "Your words", link: "Linking", qr: "The QR code", file: "Your key file", join: "Linking", type: "Linking" };
+
+/** The other device's code, and the hub to join it through (verified: this device reached it). */
+interface Join { code: string; hub: string | null; ok?: { url: string; name: string } }
 
 interface Action { label: ReactNode; onClick: () => void; primary?: boolean; disabled?: boolean }
 
 function Frame({ step, flow, back, actions, wide, children }: { step: Step; flow: Flow; back?: () => void; actions: Action[]; wide?: boolean; children: ReactNode }) {
   const platform = usePlatform();
-  const dots = step === "welcome" ? null : <div className="dots">{FLOW[flow].map((s) => <i key={s} className={s === step ? "on" : ""} />)}</div>;
+  const cur = step === "joinhub" ? "joinname" : step;
+  const dots = step === "welcome" ? null : <div className="dots">{FLOW[flow].map((s) => <i key={s} className={s === cur ? "on" : ""} />)}</div>;
   const btn = (a: Action, i: number, block: boolean) => (
     <button key={i} className={"btn" + (a.primary ? " primary" : " ghost") + (block ? " block" : "")} onClick={a.onClick} disabled={a.disabled}>{a.label}</button>
   );
@@ -75,11 +89,46 @@ function Opt({ cls, ic, t, s, tag, onClick }: { cls: string; ic: IconName; t: st
 const Tag = ({ acc, children }: { acc?: boolean; children: ReactNode }) => <> <span className={"chip" + (acc ? " acc" : "")}>{children}</span></>;
 const pad = (platform: string) => (platform === "android" ? { padding: "0 20px" } : undefined);
 
+/** What the browser mock's camera reads by default: a PC's link QR. */
+const MOCK_LINK_QR = "hubchat://link?code=M3PX-7QRT-K2ZD-9HAW&hub=" + encodeURIComponent("http://hub.office.lan:7370");
+
+/** The device-name field the other device shows when it asks to approve. */
+function DevName({ value, set, onEnter, help }: { value: string; set: (v: string) => void; onEnter: () => void; help?: ReactNode }) {
+  const platform = usePlatform();
+  return (
+    <div className="field">
+      <label htmlFor="ob-dev">Device name</label>
+      <label className="input"><Icon name={platform === "android" ? "phone" : "computer"} />
+        <input id="ob-dev" value={value} autoFocus={platform === "desktop"} maxLength={48} autoComplete="off" onChange={(e) => set(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") onEnter(); }} />
+      </label>
+      {help ? <div className="help">{help}</div> : null}
+    </div>
+  );
+}
+
+/** A real crop of the desktop sidebar footer (tools/make-footer-crop.mjs) with
+ *  its QR button ringed: where to click on the PC to show the link QR. */
+function FooterHint() {
+  const q = footerQr;
+  return (
+    <figure className="fhint">
+      <div className="fhint-img">
+        <img src={footerCrop} alt="The bottom of Hubchat's chat list on a PC: your address, the copy button and the QR code button" />
+        <i className="fhint-ring" style={{ left: `calc(${q.x}% - 5px)`, top: `calc(${q.y}% - 5px)`, width: `calc(${q.w}% + 10px)`, height: `calc(${q.h}% + 10px)` }} />
+      </div>
+      <figcaption>On your PC, click this button in Hubchat to show the code.</figcaption>
+    </figure>
+  );
+}
+
 // ------------------------------------------------- link: this device waits
 type Wait = { k: "starting" } | { k: "waiting"; s: LinkStart; until: number } | { k: "failed"; msg: string } | { k: "expired" };
 
-/** Show the code and its QR, listen for approval, count down 10 minutes. */
-function LinkWait({ hub, hubName, name, onDone, onCancel, step, flow }: { hub: string; hubName: string; name: string; onDone: (address: string) => void; onCancel: () => void; step: Step; flow: Flow }) {
+/** Show the code and its QR, listen for approval, count down 10 minutes.
+ *  With `code` (the other device's code, scanned or typed) this device joins
+ *  that code instead and shows no code of its own; `other` then offers a new
+ *  scan (or a new typed code) when it fails or runs out. */
+function LinkWait({ hub, hubName, name, code, other, onDone, onCancel, step, flow }: { hub: string; hubName: string; name: string; code?: string; other?: Action; onDone: (address: string) => void; onCancel: () => void; step: Step; flow: Flow }) {
   const platform = usePlatform();
   const [st, setSt] = useState<Wait>({ k: "starting" });
   const [attempt, setAttempt] = useState(0);
@@ -109,15 +158,46 @@ function LinkWait({ hub, hubName, name, onDone, onCancel, step, flow }: { hub: s
     if (startedFor.current === attempt) return;
     startedFor.current = attempt;
     setSt({ k: "starting" });
-    api.linkStart(hub, name).then(
+    api.linkStart(hub, name, code ?? null).then(
       (s) => setSt({ k: "waiting", s, until: Date.now() + 600e3 }),
       (e) => setSt({ k: "failed", msg: errText(e) }),
     );
-  }, [attempt, hub, name]);
+  }, [attempt, hub, name, code]);
 
   const cancel = () => { finished.current = true; void api.linkCancel().catch(() => {}); onCancel(); };
   const again = () => setAttempt((a) => a + 1);
   const device = platform === "android" ? "phone" : "PC";
+  const otherDev = platform === "android" ? "your PC" : "your other device";
+  if (code) {
+    let jb: ReactNode;
+    if (st.k === "waiting") {
+      const left = Math.max(0, Math.ceil((st.until - now) / 1000));
+      const mmss = Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0");
+      jb = (
+        <>
+          <div className="approve"><Icon name={platform === "android" ? "phone" : "computer"} /><div className="t"><b>“{name}”</b><span>Asking to be linked · code {st.s.code}</span></div></div>
+          <div className="waiting"><span className="spin" /><span>Waiting for you to approve it on {otherDev}…</span><span className="cd" title="The code works for 10 minutes">{mmss}</span></div>
+          <div className="help" style={{ marginTop: 10, ...pad(platform) }}>{otherDev === "your PC" ? "Your PC" : "Your other device"} shows <b>Link “{name}”?</b> under <b>Link a device › Show a QR code</b>. Your key, hub list and profile come back sealed with the code through {hubName}: the hub carries them but can't read them.</div>
+        </>
+      );
+    } else if (st.k === "starting") {
+      jb = <div className="probe-card busy"><span className="spin" /><div>Joining through {hubName}…</div></div>;
+    } else if (st.k === "expired") {
+      jb = <div className="probe-card bad"><Icon name="hourglass" /><div><b>The code expired</b>It wasn't approved within 10 minutes. Show a new code on {otherDev} ({otherDev === "your PC" ? "the QR button, or " : ""}Link a device › Show a QR code) and try again.</div></div>;
+    } else {
+      jb = <div className="probe-card bad"><Icon name="error" /><div><b>Linking didn't work</b>{st.msg}</div></div>;
+    }
+    const acts: Action[] = st.k === "waiting" || st.k === "starting"
+      ? [{ label: "Cancel", onClick: cancel }]
+      : [...(other ? [{ ...other, primary: true }] : []), ...(st.k === "failed" ? [{ label: "Try again", primary: !other, onClick: again }] : []), { label: "Cancel", onClick: cancel }];
+    return (
+      <Frame step={step} flow={flow} back={cancel} wide actions={acts}>
+        <h2>Approve this {device} on {otherDev}</h2>
+        <p className="lead">A request from <b>“{name}”</b> is waiting there. Tap <b>Approve</b> on {otherDev} to bring your identity to this {device}.</p>
+        {jb}
+      </Frame>
+    );
+  }
   let body: ReactNode;
   if (st.k === "waiting") {
     const left = Math.max(0, Math.ceil((st.until - now) / 1000));
@@ -173,6 +253,10 @@ export function Onboarding() {
   const [devName, setDevName] = useState(platform === "android" ? "Android phone" : "Windows PC");
   const [keyFile, setKeyFile] = useState<string | null>(null);
   const [pass, setPass] = useState("");
+  const [join, setJoin] = useState<Join | null>(null);
+  const [joinProbe, setJoinProbe] = useState<Probe | null>(null);
+  const [code, setCode] = useState("");
+  const otherDev = platform === "android" ? "your PC" : "your other device";
 
   const finish = async () => { setOnboarding(false); await refreshAll(); };
   useEffect(() => {
@@ -194,6 +278,49 @@ export function Onboarding() {
     if (getSnap().state?.hubs.length) { toast("Welcome back"); await finish(); }
     else go("hub");
   };
+
+  /** Join the other device's code through `hub` (checked next, on the name step). */
+  const joinWith = (c: string, hub: string | null, f: Flow) => {
+    setJoin({ code: c, hub }); setJoinProbe(null); setFlow(f); go("joinname");
+  };
+  // a phone camera opened a hubchat:// link (the PC's QR): straight to joining it
+  usePendingLink((input) => {
+    if (getSnap().state?.me) return;
+    api.parseLink(input).then((p) => joinWith(p.code, p.hub, "join"), (e) => toast(errText(e)));
+  });
+  // the name step checks that this device reaches the code's hub; if not, ask for an address that works
+  useEffect(() => {
+    if (step !== "joinname" || !join || join.ok) return;
+    if (!join.hub) { go("joinhub"); return; }
+    let live = true;
+    api.probeHub(join.hub).then((p) => {
+      if (!live) return;
+      if (p.result === "connected") setJoin((j) => (j ? { ...j, ok: { url: p.url, name: p.name } } : j));
+      else { setJoinProbe(p); go("joinhub"); }
+    }, (e) => { if (live) { setJoinProbe({ result: "invalid", error: errText(e) }); go("joinhub"); } });
+    return () => { live = false; };
+  }, [step, join]);
+
+  /** Scan the other device's link QR (a key QR restores straight away, as before). */
+  const scanLink = async () => {
+    setBusy(true); setErr(null);
+    try {
+      const t = (await scanQr(MOCK_LINK_QR))?.trim();
+      if (!t) { setBusy(false); return; }
+      if (/^hubchat-key/i.test(t)) { setFlow("qr"); const a = await api.restoreQr(t); await arrived(a); return; }
+      if (/^hubchat-link:/i.test(t)) {
+        setErr("That code comes from a device that is waiting to be linked itself. Scan the code your signed-in device shows: on your PC, click the QR button at the bottom of Hubchat's chat list.");
+        setBusy(false); return;
+      }
+      if (!/^hubchat:\/\//i.test(t)) {
+        setErr("That QR code isn't from Hubchat. On your PC, click the QR button at the bottom of Hubchat's chat list, then scan the code it shows.");
+        setBusy(false); return;
+      }
+      const p = await api.parseLink(t);
+      joinWith(p.code, p.hub, "join");
+    } catch (e) { setErr(errText(e)); setBusy(false); }
+  };
+  const startScan = () => { pick("join", "scan"); void scanLink(); };
 
   if (step === "welcome") {
     return (
@@ -319,13 +446,33 @@ export function Onboarding() {
   }
 
   if (step === "method") {
+    if (platform === "android") {
+      return (
+        <Frame step={step} flow={flow} back={() => go("welcome")} wide actions={[]}>
+          <h2>Bring your identity to this phone</h2>
+          <p className="lead">Your identity is a key, and your address comes with it: there is no id to choose. The easiest way: your PC shows a QR code, this phone scans it.</p>
+          <div className="methods">
+            <Opt cls="method primary" ic="qr" t="Scan the QR code from your other device" s="This phone joins through your hub; you approve it on the PC. Your key, hubs and profile arrive sealed." onClick={startScan} />
+          </div>
+          <FooterHint />
+          <div className="ob-alt"><button className="link" onClick={() => { setCode(""); pick("type", "typecode"); }}>Type the code instead</button></div>
+          <div className="ob-sub">Other ways</div>
+          <div className="methods">
+            <Opt cls="method" ic="link" t="Show a code on this phone instead" s="This phone shows a code and your other device approves it." onClick={() => pick("link", "linkhub")} />
+            <Opt cls="method" ic="file" t="Key file" s="Open a key file saved from Hubchat, with its passphrase." onClick={() => pick("file", "keyfile")} />
+            <Opt cls="method" ic="key" t="Recovery words" s="Type the 24 words you saved when you made your identity." onClick={() => pick("words", "restore")} />
+          </div>
+        </Frame>
+      );
+    }
     return (
       <Frame step={step} flow={flow} back={() => go("welcome")} wide actions={[]}>
         <h2>Bring your identity to this {device}</h2>
         <p className="lead">Your identity is a key, and your address comes with it: there is no id to choose. How should this {device} get it?</p>
         <div className="methods">
           <Opt cls="method" ic="link" t="Link through a hub" s={"This " + device + " shows a code and your other device approves it. Your key, hubs and profile arrive sealed with that code."} tag={<Tag acc>Recommended</Tag>} onClick={() => pick("link", "linkhub")} />
-          <Opt cls="method" ic="qr" t="Scan a QR code" s="Your other device shows your key as a QR code. No network needed." tag={platform === "desktop" ? <Tag>Needs a camera</Tag> : undefined} onClick={() => pick("qr", "scan")} />
+          <Opt cls="method" ic="dialpad" t="Type a code from your other device" s="Your other device shows a code under Link a device › Show a QR code. Type it here, and approve this PC there." onClick={() => { setCode(""); pick("type", "typecode"); }} />
+          <Opt cls="method" ic="qr" t="Scan a QR code" s="Your other device shows your key as a QR code. No network needed." tag={<Tag>Needs a camera</Tag>} onClick={() => pick("qr", "scan")} />
           <Opt cls="method" ic="file" t="Key file" s="Open a key file saved from Hubchat, with its passphrase." onClick={() => pick("file", "keyfile")} />
           <Opt cls="method" ic="key" t="Recovery words" s="Type the 24 words you saved when you made your identity." onClick={() => pick("words", "restore")} />
         </div>
@@ -349,19 +496,86 @@ export function Onboarding() {
       <Frame step={step} flow={flow} back={() => go("linkhub")} actions={[{ label: "Show the code", primary: true, disabled: !ok, onClick: () => go("linkcode") }]}>
         <h2>Name this {device}</h2>
         <p className="lead">Your other device shows this name when it asks you to approve, so you can tell it's this {device}.</p>
-        <div className="field">
-          <label htmlFor="ob-dev">Device name</label>
-          <label className="input"><Icon name={platform === "android" ? "phone" : "computer"} />
-            <input id="ob-dev" value={devName} autoFocus maxLength={48} autoComplete="off" onChange={(e) => setDevName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && ok) go("linkcode"); }} />
-          </label>
-          <div className="help">Linking through <b>{linkHub?.name}</b> <span className="mono">{linkHub?.url}</span></div>
-        </div>
+        <DevName value={devName} set={setDevName} onEnter={() => { if (ok) go("linkcode"); }}
+          help={<>Linking through <b>{linkHub?.name}</b> <span className="mono">{linkHub?.url}</span></>} />
       </Frame>
     );
   }
 
   if (step === "linkcode" && linkHub) {
     return <LinkWait step={step} flow={flow} hub={linkHub.url} hubName={linkHub.name} name={devName.trim()} onDone={(a) => void arrived(a)} onCancel={() => go("method")} />;
+  }
+
+  if (step === "typecode") {
+    const isUrl = /^hubchat:\/\//i.test(code.trim());
+    const ok = isUrl || code.replace(/[^A-Za-z0-9]/g, "").length === 16;
+    const ready = ok && (!!linkHub || isUrl) && !busy;
+    const typed = async () => {
+      if (!ready) return;
+      setBusy(true); setErr(null);
+      try {
+        const p = await api.parseLink(code);
+        const hub = p.hub ?? linkHub?.url ?? null;
+        setJoin({ code: p.code, hub, ok: linkHub && hub === linkHub.url ? linkHub : undefined }); setJoinProbe(null);
+        go("joinname");
+      } catch (e) { setErr(errText(e)); setBusy(false); }
+    };
+    return (
+      <Frame step={step} flow={flow} back={() => go("method")} wide
+        actions={[{ label: busy ? "Checking…" : "Continue", primary: true, disabled: !ready, onClick: () => void typed() }]}>
+        <h2>Type the code from your other device</h2>
+        <p className="lead">On {otherDev}: {platform === "android" ? "click the QR button at the bottom of Hubchat's chat list" : "Settings › Devices › Link a device › Show a QR code"}. Type the code it shows under the QR code, and the hub it names.</p>
+        <div className="field">
+          <label htmlFor="ob-code">Code</label>
+          <label className={"input lc-code" + (err ? " bad" : "")} style={{ height: 50 }}>
+            <input id="ob-code" value={code} placeholder="XXXX-XXXX-XXXX-XXXX" autoFocus autoComplete="off" autoCapitalize="characters" spellCheck={false}
+              onChange={(e) => { setCode(formatCode(e.target.value)); setErr(null); }} onKeyDown={(e) => { if (e.key === "Enter") void typed(); }} />
+          </label>
+          {err ? <div className="help bad">{err}</div> : <div className="help">16 letters and digits. Capitals and dashes don't matter.</div>}
+        </div>
+        {isUrl ? null : linkHub ? (
+          <div className="field">
+            <label>Hub</label>
+            <div className="hublist-ob" style={{ margin: 0 }}><div className="hl"><Icon name="check_circle" /><span><b>{linkHub.name}</b> <span className="mono">{linkHub.url}</span></span>
+              <button className="link" style={{ marginLeft: "auto" }} onClick={() => setLinkHub(null)}>Change</button></div></div>
+          </div>
+        ) : <HubAdder existing={[]} onPick={(url, n) => setLinkHub({ url, name: n })} />}
+      </Frame>
+    );
+  }
+
+  if (step === "joinname" && join) {
+    const ok = !!devName.trim() && !!join.ok;
+    return (
+      <Frame step={step} flow={flow} back={() => go(flow === "type" ? "typecode" : "method")} actions={[{ label: "Continue", primary: true, disabled: !ok, onClick: () => go("join") }]}>
+        <h2>Name this {device}</h2>
+        <p className="lead">{platform === "android" ? "Your PC" : "Your other device"} shows this name when it asks you to approve, so you can tell it's this {device}.</p>
+        <DevName value={devName} set={setDevName} onEnter={() => { if (ok) go("join"); }}
+          help={join.ok ? <>Code <span className="mono">{join.code}</span> · through <b>{join.ok.name}</b> <span className="mono">{join.ok.url}</span></> : undefined} />
+        {join.ok ? null : <div className="probe-card busy"><span className="spin" /><div>Reaching the hub at <span className="mono">{join.hub}</span>…</div></div>}
+      </Frame>
+    );
+  }
+
+  if (step === "joinhub" && join) {
+    const why = joinProbe && joinProbe.result !== "connected" ? joinProbe.error : null;
+    return (
+      <Frame step={step} flow={flow} back={() => go(flow === "type" ? "typecode" : "method")} wide actions={[]}>
+        <h2>Which address reaches your hub?</h2>
+        {join.hub
+          ? <p className="lead">The code goes through <span className="mono">{join.hub}</span>, but this {device} can't reach that address{why ? <> ({why})</> : null}.</p>
+          : <p className="lead">Enter the hub {otherDev} uses.</p>}
+        {join.hub ? <NoteCard icon="dns">{platform === "android" ? "Your PC" : "Your other device"} reached the hub at this address; enter the address this {device} can use (for example its Tailscale name).</NoteCard> : null}
+        <HubAdder key={join.hub ?? ""} existing={[]} initial={join.hub ?? ""} autoFocus onPick={(url, n) => { setJoin({ ...join, hub: url, ok: { url, name: n } }); go("joinname"); }} />
+      </Frame>
+    );
+  }
+
+  if (step === "join" && join?.ok) {
+    const other: Action | undefined = flow === "type"
+      ? { label: "Type a new code", onClick: () => { setCode(""); go("typecode"); } }
+      : platform === "android" ? { label: <><Icon name="camera" />Scan again</>, onClick: () => { go("scan"); void scanLink(); } } : undefined;
+    return <LinkWait step={step} flow={flow} hub={join.ok.url} hubName={join.ok.name} name={devName.trim()} code={join.code} other={other} onDone={(a) => void arrived(a)} onCancel={() => go("method")} />;
   }
 
   if (step === "scan") {
@@ -372,32 +586,21 @@ export function Onboarding() {
           <p className="lead">Scanning your key needs a camera, and PCs rarely have one that can read a phone's screen. Use one of these instead:</p>
           <div className="methods">
             <Opt cls="method" ic="link" t="Link through a hub" s="This PC shows a code and your phone approves it." tag={<Tag acc>Recommended</Tag>} onClick={() => pick("link", "linkhub")} />
+            <Opt cls="method" ic="dialpad" t="Type a code from your other device" s="Your phone shows a code under Link a device › Show a QR code. Type it here." onClick={() => { setCode(""); pick("type", "typecode"); }} />
             <Opt cls="method" ic="file" t="Key file" s="Save a key file on your other device, then open it here." onClick={() => pick("file", "keyfile")} />
             <Opt cls="method" ic="key" t="Recovery words" s="Type the 24 words you saved." onClick={() => pick("words", "restore")} />
           </div>
         </Frame>
       );
     }
-    const scan = async () => {
-      setBusy(true); setErr(null);
-      try {
-        const t = await scanQr("hubchat-key:MOCK");
-        if (!t) { setBusy(false); return; }
-        if (/^hubchat-link:/i.test(t.trim())) {
-          setErr("That is a link code from a device that is waiting to be linked. It works the other way round: this phone should show a code. Go back and choose “Link through a hub”, or on your other device open Settings › Devices › Link a device › Show my key as a QR code.");
-          setBusy(false); return;
-        }
-        const a = await api.restoreQr(t);
-        await arrived(a);
-      } catch (e) { setErr(errText(e)); setBusy(false); }
-    };
     return (
-      <Frame step={step} flow={flow} back={() => go("method")} actions={[{ label: busy ? "Scanning…" : <><Icon name="camera" />Open the camera</>, primary: true, disabled: busy, onClick: scan }]}>
-        <h2>Scan your key</h2>
-        <p className="lead">On your other device open <b>Settings › Devices › Link a device › Show my key as a QR code</b>, then scan it with this phone.</p>
-        <div className="cam-hint"><div className="vf" /></div>
+      <Frame step={step} flow={flow} back={() => go("method")} actions={[{ label: busy ? "Scanning…" : <><Icon name="camera" />Open the camera</>, primary: true, disabled: busy, onClick: () => void scanLink() }]}>
+        <h2>Scan the QR code from your other device</h2>
+        <p className="lead">On your PC, open Hubchat and click the QR button at the bottom of the chat list (or <b>Settings › Devices › Link a device</b>). Then scan the code it shows.</p>
+        <FooterHint />
         {err ? <div className="probe-card bad"><Icon name="error" /><div><b>Couldn't use that code</b>{err}</div></div>
-          : <div className="help" style={pad(platform)}>The QR code carries your key, your id, your profile and your hub list. Nothing goes over the network.</div>}
+          : <div className="help" style={{ marginTop: 12, ...pad(platform) }}>A QR code of your key (<b>Link a device › My key as a QR code</b>) works here too, with no network.</div>}
+        <div className="ob-alt"><button className="link" onClick={() => { setCode(""); pick("type", "typecode"); }}>Type the code instead</button></div>
       </Frame>
     );
   }
