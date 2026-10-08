@@ -46,3 +46,14 @@
 .titlebar .window-control:active { background: var(--panel); color: var(--ink-strong); }
 .titlebar .window-control.close:hover { background: #c42b1c; color: #fff; }
 .titlebar .window-control.close:active { background: #b02619; color: #fff; }
+
+/* link a device: this PC shows a QR code (user 19:12Z) */
+.side-foot .icon-btn + .icon-btn { margin-left: 0; }
+.offer { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.offer .qrbox { background: #fff; padding: 10px; border-radius: 12px; line-height: 0; }
+.offer .paircode { margin: 10px 0 2px; }
+.offer-hub { font-size: 12.5px; color: var(--dim); }
+.offer-hub .mono { font-size: 12px; }
+.offer-how { margin-top: 14px; font-size: 13.5px; color: var(--ink); text-align: center; line-height: 1.5; }
+.offer + .offer-how + .waiting { margin-top: 14px; }
+.ob .hublist-ob .hl .link { flex: none; }

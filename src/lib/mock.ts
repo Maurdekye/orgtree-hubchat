@@ -4,8 +4,10 @@
 // people, markdown, a file, a failed message and climbing receipts.
 // URL parameters: ?platform=android  ?onboarding=1  ?update=1 (an update is
 // out)  ?scan=TEXT (what the fake camera reads)  ?pending=ADDRESS (a tapped
-// notification). Linking: a waiting device shows up on the third lookup;
-// a key file opens with any passphrase but "wrong".
+// notification)  ?link=TEXT (the hubchat:// link Android opened the app with).
+// Linking: a waiting device shows up on the third lookup; a device joining a
+// code is approved after 45 s; a key file opens with any passphrase but
+// "wrong". Hubs on 127.0.0.1 / localhost can't be reached from the "phone".
 import type { Api, Attachment, ChatSummary, Contact, HcEvent, HubStatus, LinkEvent, LinkLookup, Message, NewOutgoing, Probe, Resolved, State } from "../api";
 import { toast } from "./toast";
 
@@ -189,6 +191,13 @@ function parseLink(input: string): { code: string; hub: string | null } {
   const m = /^hubchat-link:([^@]+)@(.+)$/i.exec(t);
   if (/^hubchat-link:/i.test(t) && !m) throw "damaged link QR code";
   if (m) { t = m[1]; hub = m[2]; }
+  else if (/^hubchat:\/\//i.test(t)) {
+    let u: URL;
+    try { u = new URL(t); } catch { throw "damaged link QR code"; }
+    const c = u.searchParams.get("code");
+    if (!c) throw "the link has no code";
+    t = c; hub = u.searchParams.get("hub");
+  }
   const raw = t.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (raw.length !== 16) throw "a link code has 16 letters and digits (XXXX-XXXX-XXXX-XXXX); got " + raw.length;
   return { code: raw.replace(/(.{4})(?=.)/g, "$1-"), hub };
@@ -306,7 +315,7 @@ export const mockApi: Api = {
     const url = normHub(input);
     if (!url) return { result: "invalid", error: "not a hub address: " + JSON.stringify(input.trim()) };
     await sleep(900);
-    if (/unreach|10\.0\.9\.|10\.0\.0\.7/.test(url)) return { result: "unreachable", url, error: "connection refused (os error 10061)" };
+    if (/unreach|10\.0\.9\.|10\.0\.0\.7|127\.0\.0\.1|localhost/.test(url)) return { result: "unreachable", url, error: "connection refused (os error 10061)" };
     if (/example|google|github/.test(url)) return { result: "not_a_hub", url, error: "GET /healthz answered 404 Not Found" };
     return { result: "connected", url, name: hubLabel(url), max_attachment_bytes: GB, features: ["v2"], version: "1.4.0" };
   },
@@ -382,11 +391,11 @@ export const mockApi: Api = {
   ] }),
   fileInfo: async (source) => { const name = source.split(/[\\/]/).pop() || "file"; return { name, bytes: SIZES[name] ?? 12345 }; },
 
-  linkStart: async (hub, deviceName) => {
+  linkStart: async (hub, deviceName, joinCode) => {
     if (st.me) throw "this device already has an identity";
     await sleep(700);
     const my = ++linkRun;
-    const code = "K7QD-4MXP-9TRA-2HZE";
+    const code = joinCode ? parseLink(joinCode).code : "K7QD-4MXP-9TRA-2HZE";
     setTimeout(() => { if (linkRun === my) linkEmit({ state: "waiting", expires_in_s: 600 }); }, 100);
     // the other device approves after a while (long enough to look at the code)
     setTimeout(() => { if (linkRun === my) linkEmit({ state: "done", address: adopt(true) }); }, 45000);
@@ -394,6 +403,14 @@ export const mockApi: Api = {
     return { code, qr: "hubchat-link:" + code + "@" + (normHub(hub) || hub), hub: normHub(hub) || hub };
   },
   linkCancel: async () => { linkRun++; },
+  linkOffer: async (hub) => {
+    await sleep(300);
+    const url = hub ? normHub(hub) : (st.hubs.find((h) => h.state === "connected") || st.hubs[0])?.url;
+    if (!url) throw "add a hub first: the new device links through one";
+    const code = Array.from({ length: 4 }, () => Array.from({ length: 4 }, () => "ABCDEFGHJKMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 31)]).join("")).join("-");
+    return { code, qr: "hubchat://link?code=" + encodeURIComponent(code) + "&hub=" + encodeURIComponent(url), hub: url };
+  },
+  parseLink: async (input) => parseLink(input),
   linkLookup: async (input): Promise<LinkLookup> => {
     await sleep(500);
     const { code, hub } = parseLink(input);
@@ -421,6 +438,12 @@ export const mockApi: Api = {
   },
   onLink: async (f) => { linkListeners.add(f); return () => { linkListeners.delete(f); }; },
 
+  takePendingLink: async () => {
+    const p = params.get("link");
+    if (!p || linkTaken) return null;
+    linkTaken = true;
+    return p;
+  },
   takePendingChat: async () => {
     const p = params.get("pending");
     if (!p || pendingTaken) return null;
@@ -436,3 +459,4 @@ export const mockApi: Api = {
   onEvent: async (f) => { listeners.add(f); return () => { listeners.delete(f); }; },
 };
 let pendingTaken = false;
+let linkTaken = false;

@@ -145,8 +145,12 @@ export type HcEvent =
   | { type: "directory" }
   | { type: "transfer"; local_id: string; message_id: string; upload: boolean; done: number; total: number };
 
-/** New device: what hc_link_start returns (the code to show, and its QR text). */
+/** What hc_link_start (new device) and hc_link_offer (signed-in device)
+ *  return: the one-time code, its QR text and the hub it goes through. */
 export interface LinkStart { code: string; qr: string; hub: string }
+
+/** What a typed code, a hubchat://link URL or an older hubchat-link: text holds. */
+export interface ParsedLink { code: string; hub: string | null }
 
 /** Progress of a link started with hc_link_start (Tauri event "hc-link"). */
 export type LinkEvent =
@@ -203,7 +207,12 @@ export const tauriApi = {
   saveRecovery: (dest: string | null) => invoke<string>("hc_save_recovery", { dest }),
 
   // linking a device (src-tauri/src/link.rs)
-  linkStart: (hub: string, deviceName: string) => invoke<LinkStart>("hc_link_start", { hub, deviceName }),
+  /** New device. With `code` it joins the code another device shows (hc_link_offer)
+   *  instead of making its own; either way "hc-link" events follow. */
+  linkStart: (hub: string, deviceName: string, code?: string | null) => invoke<LinkStart>("hc_link_start", { hub, deviceName, code: code ?? null }),
+  /** Signed-in device: a one-time code (and QR) for a new device to scan or type. */
+  linkOffer: (hub?: string | null) => invoke<LinkStart>("hc_link_offer", { hub: hub ?? null }),
+  parseLink: (input: string) => invoke<ParsedLink>("hc_parse_link", { input }),
   linkCancel: () => invoke<void>("hc_link_cancel"),
   linkLookup: (input: string) => invoke<LinkLookup>("hc_link_lookup", { input }),
   linkApprove: (code: string) => invoke<string>("hc_link_approve", { code }),
@@ -215,6 +224,8 @@ export const tauriApi = {
 
   /** Android: the chat a tapped notification named, taken once. */
   takePendingChat: () => invoke<string | null>("hc_take_pending_chat"),
+  /** Android: the hubchat:// link the system opened the app with, taken once. */
+  takePendingLink: () => invoke<string | null>("hc_take_pending_link"),
   /** Open a downloaded attachment (or, desktop, show it in its folder). */
   openAttachment: (messageId: string, localId: string, reveal: boolean) => invoke<void>("hc_open_attachment", { messageId, localId, reveal }),
 

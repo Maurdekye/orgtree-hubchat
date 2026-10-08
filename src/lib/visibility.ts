@@ -54,3 +54,21 @@ export function useMessage(id: string | null, peer: string | null): Message | nu
 }
 
 export const myAddress = () => getSnap().state?.me?.address || "";
+
+/** Android: a hubchat:// link the system opened the app with (a phone camera
+ *  scanning another device's link QR). Taken at start and whenever the app
+ *  comes back to the foreground; `f` gets each link once. */
+export function usePendingLink(f: (link: string) => void): void {
+  const ref = useRef(f);
+  ref.current = f;
+  useEffect(() => {
+    const take = () => {
+      if (document.visibilityState !== "visible") return;
+      api.takePendingLink().then((l) => { if (l) ref.current(l); }, () => {});
+    };
+    take();
+    window.addEventListener("focus", take);
+    document.addEventListener("visibilitychange", take);
+    return () => { window.removeEventListener("focus", take); document.removeEventListener("visibilitychange", take); };
+  }, []);
+}

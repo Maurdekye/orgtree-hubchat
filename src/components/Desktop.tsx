@@ -6,12 +6,13 @@ import { Icon, Logo } from "../lib/icons";
 import { copyText } from "../lib/native";
 import { hubSummary } from "../lib/peers";
 import { useSnap } from "../lib/store";
-import { useForeground, useMessage, useReadTracking } from "../lib/visibility";
+import { useForeground, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { startUpdateChecks } from "../lib/updates";
 import { HubBanner, RecoveryBanner, UpdateBanner } from "./Banners";
 import { ChatRows, EmptyChats, useFilteredChats, type ChatFilter } from "./ChatList";
 import { Conversation } from "./Conversation";
 import { Directory } from "./Directory";
+import { LinkDeviceModal, type LinkTab } from "./LinkDevice";
 import { MessageInfoBody } from "./MessageInfo";
 import { MessageView } from "./MessageView";
 import { NewChatInput, NewChatResults, useResolve } from "./NewChat";
@@ -19,7 +20,7 @@ import { SettingsModal, type SetTab } from "./Settings";
 import { TransfersChip } from "./Transfers";
 import { Addr, Avatar, Modal, ModalHead, Toasts } from "./ui";
 
-type Overlay = null | { k: "newchat"; q: string } | { k: "directory" } | { k: "settings"; tab: SetTab };
+type Overlay = null | { k: "newchat"; q: string } | { k: "directory" } | { k: "settings"; tab: SetTab } | { k: "link"; tab: LinkTab; input?: string };
 
 function NewChatModal({ initial, onOpen, onClose, onDirectory }: { initial: string; onOpen: (a: string) => void; onClose: () => void; onDirectory: () => void }) {
   const [q, setQ] = useState(initial);
@@ -71,6 +72,8 @@ export function Desktop() {
   const open = useCallback((peer: string) => { setChat(peer); setOv(null); setInfo((i) => (i && i.peer === peer ? i : null)); }, []);
   const onInfo = useCallback((m: Message) => setInfo({ id: m.id, peer: m.peer }), []);
   const settings = (tab: SetTab) => setOv({ k: "settings", tab });
+  // a hubchat:// link the system opened us with: a new device showed it, approve it here
+  usePendingLink((input) => setOv({ k: "link", tab: "approve", input }));
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -121,6 +124,7 @@ export function Desktop() {
             <span>You</span>
             <span className="addr ell" title="Your address: share it so people and agents can reach you"><Addr a={me.address} net /></span>
             <button className="icon-btn" onClick={() => copyText("@net:" + me.address, "Address copied")} title="Copy your address" aria-label="Copy your address"><Icon name="copy" /></button>
+            <button className="icon-btn side-qr" onClick={() => setOv({ k: "link", tab: "offer" })} title="Link a device: show QR code" aria-label="Link a device"><Icon name="qr" /></button>
           </div>
         </aside>
         {chat ? <Conversation key={chat} peer={chat} onInfo={onInfo} onOpenAddr={open} /> : (
@@ -138,6 +142,7 @@ export function Desktop() {
       </div>
       {ov?.k === "newchat" ? <NewChatModal initial={ov.q} onOpen={open} onClose={() => setOv(null)} onDirectory={() => setOv({ k: "directory" })} /> : null}
       {ov?.k === "directory" ? <Directory onOpen={open} onClose={() => setOv(null)} /> : null}
+      {ov?.k === "link" ? <LinkDeviceModal initial={ov.tab} input={ov.input} onClose={() => setOv(null)} onRecovery={() => settings("recovery")} /> : null}
       {ov?.k === "settings" ? <SettingsModal tab={ov.tab} setTab={(t) => setOv({ k: "settings", tab: t })} onClose={() => setOv(null)} /> : null}
       <Toasts />
     </div>

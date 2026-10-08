@@ -5,7 +5,7 @@ import type { Message } from "../api";
 import { Icon } from "../lib/icons";
 import { displayName, kindOf } from "../lib/peers";
 import { useSnap } from "../lib/store";
-import { useForeground, useMessage, useReadTracking } from "../lib/visibility";
+import { useForeground, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { HubBanner, RecoveryBanner } from "./Banners";
 import { ChatRows, EmptyChats, useFilteredChats, type ChatFilter } from "./ChatList";
 import { Conversation } from "./Conversation";
@@ -14,14 +14,14 @@ import { MessageInfoBody } from "./MessageInfo";
 import { MessageView } from "./MessageView";
 import { NewChatInput, NewChatResults, useResolve } from "./NewChat";
 import { api } from "../api";
-import { LinkDevice } from "./LinkDevice";
+import { LinkDevice, type LinkTab } from "./LinkDevice";
 import { SettingsList, SettingsSection, TABS, type SetTab } from "./Settings";
 import { TransfersStrip } from "./Transfers";
 import { Toasts } from "./ui";
 
 type Scr =
   | { s: "chats" } | { s: "conv"; p: string } | { s: "msginfo"; id: string; p: string }
-  | { s: "newchat" } | { s: "directory" } | { s: "settings" } | { s: "set"; tab: SetTab } | { s: "link" };
+  | { s: "newchat" } | { s: "directory" } | { s: "settings" } | { s: "set"; tab: SetTab } | { s: "link"; tab?: LinkTab; input?: string };
 
 function Chats({ go }: { go: (s: Scr) => void }) {
   const [filter, setFilter] = useState<ChatFilter>("all");
@@ -140,6 +140,10 @@ export function Android() {
     return () => { window.removeEventListener("focus", take); document.removeEventListener("visibilitychange", take); };
   }, [go]);
 
+  // a phone camera opened a hubchat:// link: a new device showed that code, so
+  // look it up on Link a device › Approve a code
+  usePendingLink((input) => go({ s: "link", tab: "approve", input }));
+
   const onInfo = useCallback((m: Message) => go({ s: "msginfo", id: m.id, p: m.peer }), [go]);
   const openChat = useCallback((a: string) => go({ s: "conv", p: a }), [go]);
 
@@ -160,7 +164,7 @@ export function Android() {
     case "link": screen = (
       <>
         <div className="appbar flat"><button className="icon-btn" onClick={back} aria-label="Back"><Icon name="back" /></button><div className="title">Link a device</div></div>
-        <div className="scr-body"><LinkDevice onClose={back} onRecovery={() => go({ s: "set", tab: "recovery" })} /></div>
+        <div className="scr-body"><LinkDevice key={top.input || ""} initial={top.tab} input={top.input} onClose={back} onRecovery={() => go({ s: "set", tab: "recovery" })} /></div>
       </>
     ); break;
   }

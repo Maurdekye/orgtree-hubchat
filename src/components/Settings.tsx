@@ -216,7 +216,7 @@ function Devices({ onLink, goTab }: { onLink?: () => void; goTab?: (t: SetTab) =
           <Row icon={platform === "android" ? "phone" : "computer"} t1={<>{self} <span className="chip">this device</span></>} t2={<>Holds your key · <span className="mono"><Addr a={me.address} net /></span></>} />
           {platform === "android"
             ? <div className="pad" style={{ marginTop: 6 }}><button className="btn block" onClick={link}><Icon name="link" />Link a device</button></div>
-            : <div className="set-row"><button className="btn" onClick={link}><Icon name="link" />Link a device</button><span className="help">Bring your identity to a new phone or PC: approve its code, show your key as a QR code, or save a key file.</span></div>}
+            : <div className="set-row"><button className="btn" onClick={link}><Icon name="link" />Link a device</button><span className="help">Bring your identity to a new phone or PC: show a QR code for it to scan, approve its code, show your key as a QR code, or save a key file.</span></div>}
         </Card>
         {others.length ? (
           <Card>
