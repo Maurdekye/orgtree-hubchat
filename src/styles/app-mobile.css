@@ -1,0 +1,12 @@
+/* Android-only additions (full screen, safe areas from .screen). */
+.scr-anim.enter { animation: push .22s cubic-bezier(.2, .8, .2, 1); }
+.scr-anim.back { animation: pop2 .2s ease; }
+.scr-anim > .scr { position: absolute; inset: 0; }
+.fab { bottom: calc(24px + env(safe-area-inset-bottom)); }
+.composer { padding-bottom: 10px; }
+.strip .icon-btn .ic { width: 18px; height: 18px; }
+.ob-body .fork { display: flex; flex-direction: column; gap: 10px; margin-bottom: 8px; }
+.card .li .btn { height: 36px; padding: 0 12px; font-size: 13px; }
+.set-row, .li .help { overflow-wrap: anywhere; }
+.qrwrap.big .help { max-width: 320px; }
+.keyacts .saved { margin-left: auto; }

@@ -1,0 +1,331 @@
+// In-memory stand-in for the Rust core, used when the UI runs in a plain
+// browser (`npm run dev`). Same shapes as src/api.ts; a believable world:
+// two hubs (one down and retrying), an Orgtree org, a Claude Code session,
+// people, markdown, a file, a failed message and climbing receipts.
+// URL parameters: ?platform=android  ?onboarding=1
+import type { Api, Attachment, ChatSummary, Contact, HcEvent, HubStatus, Message, NewOutgoing, Probe, Resolved, State } from "../api";
+
+const params = new URLSearchParams(location.search);
+const GB = 1073741824;
+const iso = (t: number) => new Date(t).toISOString();
+const now = () => Date.now();
+const uid = () => Math.random().toString(16).slice(2, 10) + Math.random().toString(16).slice(2, 10);
+const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+const sleep = (n: number) => new Promise((r) => setTimeout(r, n));
+
+/** A time `days` ago at hh:mm local. */
+function at(days: number, hm: string): number {
+  const d = new Date(); d.setDate(d.getDate() - days);
+  const [h, m] = hm.split(":").map(Number); d.setHours(h, m, 0, 0);
+  return Math.min(d.getTime(), now() - 60000);
+}
+
+const OFFICE = "http://hub.office.lan:7370";
+const LAB = "http://10.0.0.7:7370";
+const onboarding = params.get("onboarding") === "1";
+
+const st: State = {
+  me: onboarding ? null : { id: "alex", address: "alex.3be2c9", name: "Alex Rivera", about: "Platform team" },
+  recovery_saved: false,
+  read_receipts: true,
+  platform: params.get("platform") === "android" ? "android" : "desktop",
+  hubs: onboarding ? [] : [
+    { url: OFFICE, name: "office", state: "connected", error: null, retry_at_ms: null, max_attachment_bytes: GB, features: ["v2"] },
+    { url: LAB, name: "lab", state: "disconnected", error: "connection refused (os error 10061)", retry_at_ms: now() + 14000, max_attachment_bytes: 25 * 1048576, features: [] },
+  ],
+};
+
+function contact(address: string, kind: string, name: { org?: string; user?: string }, blurb: string, online: boolean, seen: number | null, hubs: string[]): Contact {
+  return { address, kind, org_name: name.org || "", username: name.user || "", blurb, online, last_seen: seen ? iso(seen) : null, hubs };
+}
+const SEED_DIR: Contact[] = [
+  contact("orgtree.alex.7c41d2", "org", { org: "Orgtree" }, "Alex's Orgtree: the platform org", true, now() - 30000, [OFFICE]),
+  contact("hubchat-ui.alex.a3f9c1", "chat", { user: "hubchat-ui" }, "Claude Code · C:\\Users\\alex\\code\\hubchat", true, now() - 10000, [OFFICE, LAB]),
+  contact("maya.e71f2b", "person", { user: "Maya Lin" }, "Design · Android", false, now() - 3 * 3600e3, [OFFICE]),
+  contact("jonas.0b44d1", "person", { user: "Jonas Park" }, "Runs the lab hub", false, now() - 26 * 3600e3, [LAB]),
+  contact("research.alex.5b0e9a", "org", { org: "Research" }, "Literature and benchmarks", false, now() - 2 * 864e5, [OFFICE]),
+  contact("nightly-ci.alex.8d21e0", "chat", { user: "nightly-ci" }, "Builds every night at 02:00", true, now() - 5000, [OFFICE]),
+  contact("kim.19ac02", "person", { user: "Kim Okafor" }, "", false, now() - 12 * 864e5, [OFFICE]),
+];
+let dir: Contact[] = onboarding ? [] : clone(SEED_DIR);
+
+const msgs: Message[] = [];
+const drafts: Record<string, string> = {};
+
+function att(name: string, b: number, state: string, extra?: Partial<Attachment>): Attachment {
+  return { local_id: uid(), hub_id: "h" + uid().slice(0, 6), name, bytes: b, source: null, local_path: null, state, error: null, ...extra };
+}
+function add(peer: string, outgoing: boolean, t: number, body: string, o: Partial<Message> = {}): Message {
+  const m: Message = {
+    id: uid(), peer, outgoing, hub: OFFICE, body, kind: null, reply_to: null,
+    sent_at: iso(t), received_at: iso(t + 400), created_at: iso(t), state: outgoing ? "read" : "received",
+    fetched_at: outgoing ? iso(t + 2000) : null, delivered_at: outgoing ? iso(t + 2600) : null, read_at: outgoing ? iso(t + 60000) : null,
+    error: null, seen: true, attachments: [], ...o,
+  };
+  msgs.push(m);
+  return m;
+}
+
+const LONG_REVIEW = `## Review: transfer code in \`engine.rs\`
+
+Overall the structure is sound. A few things worth fixing before rc4:
+
+1. **Upload retries restart from zero.** The hub can't resume, so that is expected, but the UI should say so; right now the progress bar jumps back without a word.
+2. **Cancel races the final POST.** If the user cancels after the last chunk is written but before \`/api/send\`, the message is still sent. Check the cancel flag once more right before sending.
+3. **Progress events are too chatty.** Every 64 KB chunk emits an event; on a 1 GB file that is 16,384 events. Throttle to ~10 per second.
+
+| Area | Severity | Suggested fix |
+| --- | --- | --- |
+| Retry from zero | low | copy in the failed line |
+| Cancel race | **high** | re-check before send |
+| Event volume | medium | throttle to 100 ms |
+
+\`\`\`rust
+// before sending, after the last upload
+if self.cancelled(&msg.id) {
+    return Err(Error::Cancelled);
+}
+\`\`\`
+
+Smaller notes:
+- \`download()\` writes straight into the final path; write to \`.part\` and rename when done, so a crash never leaves a half file that looks complete.
+- The backoff constant (8, 16, 32 s) matches the design. Good.
+- \`hubs_reaching\` orders online hubs first: good, keep it.
+- Consider logging the hub's \`max_attachment_bytes\` once per connect; it helps when someone asks why a file was refused.
+
+I ran the test suite locally: 212 passed, 0 failed. The two ignored tests are the network ones that need a live hub.
+
+Let me know if you want me to make these changes on a branch; I can have them ready in about twenty minutes.`;
+
+if (!onboarding) {
+  const OG = "orgtree.alex.7c41d2";
+  add(OG, false, at(1, "17:40"), "rc3 is ready: **1,286 tests passed**, 0 failed.\n\n- installer signed\n- Android build green\n- one flaky test quarantined (`net::retry_backoff`)", { kind: "status" });
+  add(OG, true, at(1, "17:42"), "Great. Ship it to the beta channel.");
+  const q = add(OG, false, at(0, "09:12"), "Keep the old log location as a fallback, or switch cleanly?", { kind: "question" });
+  add(OG, true, at(0, "09:15"), "Switch cleanly, and put it in the release notes.", { reply_to: q.id });
+  add(OG, false, at(0, "09:20"), "Done. Here is the change:\n```diff\n- let dir = legacy_log_dir();\n+ let dir = app_log_dir();\n```\nSummary attached.", { attachments: [att("rc3-test-summary.txt", 24 * 1024, "remote")] });
+  add(OG, true, at(0, "09:31"), "Thanks! Can you also check the updater manifest?", { state: "delivered", read_at: null });
+
+  const CC = "hubchat-ui.alex.a3f9c1";
+  add(CC, true, at(0, "08:02"), "Please review the transfer code in engine.rs", { attachments: [att("engine.rs", 48 * 1024, "uploaded", { source: "E:\\src\\engine.rs" })] });
+  add(CC, false, at(0, "08:09"), LONG_REVIEW, { seen: false });
+  add(CC, false, at(0, "08:10"), "Also: @net:research.alex.5b0e9a has benchmark numbers for the throttle, if you want a second opinion.", { seen: false });
+
+  const MAYA = "maya.e71f2b";
+  add(MAYA, false, at(1, "16:05"), "Are we still on for the demo on Friday?");
+  add(MAYA, true, at(1, "16:20"), "Yes, 14:00 in the lab.");
+  add(MAYA, true, at(0, "10:02"), "I'll bring the Pixel for the Android build.", { state: "sent", fetched_at: null, delivered_at: null, read_at: null });
+
+  add("jonas.0b44d1", true, at(2, "11:30"), "Can you send me the hub logs from the lab?", {
+    state: "failed", hub: null, received_at: null, sent_at: null, fetched_at: null, delivered_at: null, read_at: null,
+    error: "hub lab is unreachable and no other hub lists jonas.0b44d1",
+  });
+  add("nightly-ci.alex.8d21e0", false, at(3, "02:14"), "Nightly build **#418** passed in 41 min.", { kind: "status" });
+}
+
+// ------------------------------------------------------------------ events
+const listeners = new Set<(e: HcEvent) => void>();
+const emit = (e: HcEvent) => listeners.forEach((f) => f(e));
+const chatEv = (peer: string) => emit({ type: "chat", peer });
+const hubEv = (url: string) => emit({ type: "hub", url });
+
+// the lab hub keeps failing; its countdown runs and it retries on schedule
+setInterval(() => {
+  for (const h of st.hubs) {
+    if (h.state === "disconnected" && h.retry_at_ms && h.retry_at_ms <= now()) reconnect(h);
+  }
+}, 1000);
+function reconnect(h: HubStatus) {
+  h.state = "connecting"; h.retry_at_ms = null; hubEv(h.url);
+  setTimeout(() => {
+    if (/10\.0\.0\.7|unreach|10\.0\.9\./.test(h.url)) { h.state = "disconnected"; h.error = "connection refused (os error 10061)"; h.retry_at_ms = now() + 16000; }
+    else { h.state = "connected"; h.error = null; }
+    hubEv(h.url);
+  }, 1100);
+}
+
+// -------------------------------------------------------------- pipeline
+const find = (id: string) => msgs.find((m) => m.id === id);
+const contactOf = (a: string) => dir.find((c) => c.address === a);
+
+async function upload(m: Message): Promise<boolean> {
+  for (const a of m.attachments) {
+    if (a.state === "uploaded") continue;
+    a.state = "uploading"; chatEv(m.peer);
+    const total = a.bytes; let done = 0;
+    const step = Math.max(1, Math.round(total / 24));
+    while (done < total) {
+      await sleep(140);
+      if (a.state === "cancelled") return false;
+      done = Math.min(total, done + step);
+      emit({ type: "transfer", local_id: a.local_id, message_id: m.id, upload: true, done, total });
+    }
+    a.state = "uploaded"; chatEv(m.peer);
+  }
+  return true;
+}
+
+async function pipeline(m: Message) {
+  m.state = "queued"; m.error = null; chatEv(m.peer);
+  await sleep(300);
+  const c = contactOf(m.peer);
+  const hub = st.hubs.find((h) => h.state === "connected" && c?.hubs.includes(h.url));
+  if (!c) {
+    await sleep(600);
+    m.state = "failed"; m.error = "no hub knows " + m.peer + " (address not found)"; chatEv(m.peer); return;
+  }
+  if (!hub) return; // waits, like the core does, until a hub reaches them
+  m.state = "sending"; chatEv(m.peer);
+  if (!(await upload(m))) { m.state = "failed"; m.error = "upload cancelled"; chatEv(m.peer); return; }
+  await sleep(500);
+  m.state = "sent"; m.hub = hub.url; m.sent_at = iso(now()); m.received_at = iso(now()); chatEv(m.peer);
+  if (!c.online) return;
+  await sleep(1300); m.state = "fetched"; m.fetched_at = iso(now()); chatEv(m.peer);
+  await sleep(500); m.state = "delivered"; m.delivered_at = iso(now()); chatEv(m.peer);
+  await sleep(2500); m.state = "read"; m.read_at = iso(now()); chatEv(m.peer);
+  if (c.kind === "org" || c.kind === "chat") {
+    await sleep(2500);
+    const r = add(m.peer, false, now(), c.kind === "org" ? "Got it. An agent is on it; I'll report back here." : "On it. I'll reply in this chat when I'm done.", { seen: false, reply_to: m.id });
+    emit({ type: "incoming", peer: m.peer, id: r.id, preview: r.body });
+    chatEv(m.peer);
+  }
+}
+
+function chatsList(): ChatSummary[] {
+  const by = new Map<string, Message[]>();
+  for (const m of msgs) { const l = by.get(m.peer) || []; l.push(m); by.set(m.peer, l); }
+  const out: ChatSummary[] = [];
+  for (const [peer, l] of by) {
+    l.sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
+    out.push({ peer, last: clone(l[l.length - 1]), unread: l.filter((m) => !m.outgoing && !m.seen).length });
+  }
+  return out.sort((a, b) => Date.parse(b.last.created_at) - Date.parse(a.last.created_at));
+}
+
+const WORDS = "amber anchor apple arrow atlas badge basket beacon birch blossom bracket breeze bridge cabin canyon cedar circle cliff clover comet copper coral cotton crater".split(" ");
+const SIZES: Record<string, number> = { "nightly-logs.zip": 182 * 1048576, "screenshot-rc3.png": 412 * 1024, "release-notes.md": 6 * 1024 };
+
+function normHub(raw: string): string | null {
+  let a = raw.trim().replace(/\/+$/, "");
+  if (!a || /\s/.test(a)) return null;
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(a)) a = "http://" + a;
+  try {
+    const u = new URL(a);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    if (u.protocol === "http:" && !u.port) u.port = "7370";
+    return u.protocol + "//" + u.host;
+  } catch { return null; }
+}
+const hubLabel = (url: string) => { const h = new URL(url).hostname.split("."); return h[0] === "hub" && h[1] ? h[1] : /^\d+$/.test(h[0]) ? "hub-" + h[h.length - 1] : h[0]; };
+
+export const mockApi: Api = {
+  state: async () => clone(st),
+  uiState: async () => {},
+
+  checkId: async (id) => {
+    let error: string | null = null;
+    if (!id) error = "Choose an id.";
+    else if (id.length < 2) error = "An id has at least 2 characters.";
+    else if (id.length > 24) error = "An id has at most 24 characters.";
+    else if (!/^[a-z0-9]/.test(id)) error = "An id starts with a letter or a number.";
+    else if (!/^[a-z0-9-]+$/.test(id)) error = "Use a–z, 0–9 and “-” only.";
+    return { ok: !error, error, max_len: 24 };
+  },
+  createIdentity: async (id, name) => {
+    await sleep(500);
+    st.me = { id, address: id + "." + uid().slice(0, 6), name: name.trim(), about: "" };
+    st.recovery_saved = false;
+    return st.me.address;
+  },
+  restoreWords: async (words) => {
+    await sleep(400);
+    const w = words.toLowerCase().split(/[^a-z]+/).filter(Boolean);
+    if (w.length !== 24) throw "recovery words are exactly 24 words; got " + w.length;
+    const bad = w.find((x) => x.length < 3);
+    if (bad) throw "\"" + bad + "\" is not on the word list";
+    st.me = { id: "alex", address: "alex.3be2c9", name: "Alex Rivera", about: "" };
+    st.recovery_saved = true;
+    return st.me.address;
+  },
+  recoveryWords: async () => [...WORDS],
+  recoverySaved: async () => { st.recovery_saved = true; },
+  setProfile: async (name, about) => { await sleep(250); if (st.me) { st.me.name = name.trim(); st.me.about = about.trim(); } },
+  setReadReceipts: async (on) => { st.read_receipts = on; },
+
+  probeHub: async (input): Promise<Probe> => {
+    const url = normHub(input);
+    if (!url) return { result: "invalid", error: "not a hub address: " + JSON.stringify(input.trim()) };
+    await sleep(900);
+    if (/unreach|10\.0\.9\.|10\.0\.0\.7/.test(url)) return { result: "unreachable", url, error: "connection refused (os error 10061)" };
+    if (/example|google|github/.test(url)) return { result: "not_a_hub", url, error: "GET /healthz answered 404 Not Found" };
+    return { result: "connected", url, name: hubLabel(url), max_attachment_bytes: GB, features: ["v2"] };
+  },
+  addHub: async (input) => {
+    const url = normHub(input);
+    if (!url) throw "not a hub address";
+    if (st.hubs.some((h) => h.url === url)) throw "you already added this hub";
+    const h: HubStatus = { url, name: hubLabel(url), state: "connecting", error: null, retry_at_ms: null, max_attachment_bytes: GB, features: ["v2"] };
+    st.hubs.push(h);
+    reconnect(h);
+    if (!dir.length) {
+      setTimeout(() => { dir = clone(SEED_DIR).map((c) => ({ ...c, hubs: [url] })); emit({ type: "directory" }); }, 1300);
+    }
+    return url;
+  },
+  removeHub: async (url) => { await sleep(300); st.hubs = st.hubs.filter((h) => h.url !== url); dir = dir.map((c) => ({ ...c, hubs: c.hubs.filter((x) => x !== url) })).filter((c) => c.hubs.length); hubEv(url); emit({ type: "directory" }); },
+  retryNow: async () => { for (const h of st.hubs) if (h.state === "disconnected") reconnect(h); },
+
+  directory: async () => clone(dir),
+  resolve: async (input): Promise<Resolved> => {
+    const raw = input.trim().replace(/^@net:/, "").toLowerCase();
+    const valid = !!raw && /^[a-z0-9._-]+$/.test(raw);
+    const exact = dir.find((d) => d.address === raw) || null;
+    const matches = !exact && valid ? dir.filter((d) => d.address.startsWith(raw + ".")) : [];
+    return { exact: clone(exact), matches: clone(matches), is_me: raw === st.me?.address, valid, address: raw };
+  },
+  chats: async () => chatsList(),
+  chat: async (peer) => clone(msgs.filter((m) => m.peer === peer).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))),
+  message: async (id) => { const m = find(id); return m ? clone(m) : null; },
+  send: async (n: NewOutgoing) => {
+    const m = add(n.peer, true, now(), n.body, {
+      id: n.id, kind: n.kind ?? null, reply_to: n.reply_to ?? null, state: "queued", hub: null,
+      sent_at: null, received_at: null, fetched_at: null, delivered_at: null, read_at: null,
+      attachments: (n.attachments || []).map((a) => att(a.name, a.bytes, "pending", { source: a.source, hub_id: null })),
+    });
+    void pipeline(m);
+  },
+  retry: async (id) => {
+    const m = find(id); if (!m) throw "no such message";
+    m.attachments.forEach((a) => { if (a.state !== "uploaded") a.state = "pending"; });
+    void pipeline(m);
+  },
+  cancelTransfer: async (localId) => {
+    for (const m of msgs) for (const a of m.attachments) if (a.local_id === localId) { a.state = "cancelled"; chatEv(m.peer); }
+  },
+  download: async (messageId, localId) => {
+    const m = find(messageId); const a = m?.attachments.find((x) => x.local_id === localId);
+    if (!m || !a) throw "no such attachment";
+    a.state = "downloading"; a.error = null; chatEv(m.peer);
+    let done = 0; const step = Math.max(1, Math.round(a.bytes / 16));
+    while (done < a.bytes) {
+      await sleep(120);
+      if (a.state === "cancelled") { chatEv(m.peer); throw "download cancelled"; }
+      done = Math.min(a.bytes, done + step);
+      emit({ type: "transfer", local_id: a.local_id, message_id: m.id, upload: false, done, total: a.bytes });
+    }
+    a.state = "done"; a.local_path = "C:\\Users\\alex\\Downloads\\" + a.name; chatEv(m.peer);
+    return a.local_path;
+  },
+  markRead: async (peer) => {
+    let n = 0;
+    for (const m of msgs) if (m.peer === peer && !m.outgoing && !m.seen) { m.seen = true; n++; }
+    if (n) chatEv(peer);
+  },
+  deleteMessage: async (id) => { const i = msgs.findIndex((m) => m.id === id); if (i >= 0) { const p = msgs[i].peer; msgs.splice(i, 1); chatEv(p); } },
+  deleteChat: async (peer) => { for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].peer === peer) msgs.splice(i, 1); chatEv(peer); },
+  draft: async (peer) => drafts[peer] ?? null,
+  setDraft: async (peer, body) => { drafts[peer] = body; },
+  fileInfo: async (source) => { const name = source.split(/[\\/]/).pop() || "file"; return { name, bytes: SIZES[name] ?? 12345 }; },
+
+  onEvent: async (f) => { listeners.add(f); return () => { listeners.delete(f); }; },
+};

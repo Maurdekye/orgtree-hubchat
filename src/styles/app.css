@@ -1,0 +1,26 @@
+/* Hubchat app additions on top of the design's sheets (loaded last). */
+.boot { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: var(--bg); color: var(--dim); font-size: 13px; }
+.boot .err { color: var(--bad); max-width: 460px; text-align: center; }
+
+/* refused is red; ordinary trouble stays amber */
+.banner.bad { background: var(--bad-soft); }
+.banner.bad .ic, .strip.bad .ic { color: var(--bad); }
+.banner .icon-btn { margin-left: 0; }
+.banner .btn + .icon-btn { margin-left: 2px; }
+.hubst.refused { color: var(--bad); }
+.hubst.refused .dot { background: var(--bad); }
+.hubpill .ic { margin-left: -2px; }
+
+/* QR codes (address) */
+.qrbox { display: inline-block; background: #fff; padding: 10px; border-radius: 12px; line-height: 0; flex: none; }
+.qrbox img { display: block; image-rendering: pixelated; }
+
+/* onboarding: methods that come in the next build */
+.method[disabled]:hover, .fork-opt[disabled]:hover { border-color: var(--line); background: var(--bg); }
+.method .chip { font-weight: 600; }
+
+/* the message text block keeps the bubble's paragraph rules */
+.mtext > p:last-child { margin-bottom: 0; }
+.att-file .link { font-weight: 600; }
+.keyacts .saved { white-space: nowrap; }
+.set-row .help { flex: 1; }

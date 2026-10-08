@@ -1,0 +1,129 @@
+// The UI's data layer: one small external store holding what the core reports
+// (state, chat list, directory) plus in-memory transfer progress. It loads
+// once and re-reads only what an `hc` event says changed; transfer progress
+// is kept apart so a progress tick re-renders only the file card it concerns.
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { api, type ChatSummary, type Contact, type HcEvent, type Message, type State } from "../api";
+import { errText } from "./native";
+
+export interface Snap {
+  ready: boolean;
+  /** Set when the core could not be read at all. */
+  error: string | null;
+  state: State | null;
+  chats: ChatSummary[];
+  directory: Contact[];
+  /** address -> contact, rebuilt with the directory. */
+  byAddr: Map<string, Contact>;
+  /** Onboarding stays up until its last step, even after the identity exists. */
+  onboarding: boolean;
+  /** Drafts typed this session (chat-list "Draft:" previews). */
+  drafts: Record<string, string>;
+}
+
+let snap: Snap = { ready: false, error: null, state: null, chats: [], directory: [], byAddr: new Map(), onboarding: false, drafts: {} };
+const subs = new Set<() => void>();
+function set(p: Partial<Snap>) { snap = { ...snap, ...p }; subs.forEach((f) => f()); }
+const subscribe = (f: () => void) => { subs.add(f); return () => { subs.delete(f); }; };
+
+export const getSnap = () => snap;
+export function useSnap(): Snap { return useSyncExternalStore(subscribe, getSnap); }
+
+// ------------------------------------------------------------------ loads
+export async function refreshState(): Promise<void> {
+  try { set({ state: await api.state(), error: null }); } catch (e) { set({ error: errText(e) }); }
+}
+export async function refreshChats(): Promise<void> {
+  if (!snap.state?.me) return;
+  try { set({ chats: await api.chats() }); } catch (e) { console.warn("hc_chats", e); }
+}
+export async function refreshDirectory(): Promise<void> {
+  if (!snap.state?.me) return;
+  try {
+    const directory = await api.directory();
+    set({ directory, byAddr: new Map(directory.map((c) => [c.address, c])) });
+  } catch (e) { console.warn("hc_directory", e); }
+}
+export async function refreshAll(): Promise<void> {
+  await refreshState();
+  await Promise.all([refreshChats(), refreshDirectory()]);
+}
+
+/** Coalesce bursts of events into one re-read per kind. */
+const pending = { state: false, chats: false, dir: false };
+let timer: ReturnType<typeof setTimeout> | null = null;
+function schedule(k: keyof typeof pending) {
+  pending[k] = true;
+  if (timer) return;
+  timer = setTimeout(() => {
+    timer = null;
+    const p = { ...pending }; pending.state = pending.chats = pending.dir = false;
+    if (p.state) void refreshState();
+    if (p.chats) void refreshChats();
+    if (p.dir) void refreshDirectory();
+  }, 40);
+}
+
+// ------------------------------------------------------- per-chat changes
+const chatSubs = new Map<string, Set<() => void>>();
+export function onChatChange(peer: string, f: () => void): () => void {
+  let s = chatSubs.get(peer); if (!s) chatSubs.set(peer, (s = new Set()));
+  s.add(f);
+  return () => { s!.delete(f); };
+}
+function chatChanged(peer: string) { chatSubs.get(peer)?.forEach((f) => f()); }
+
+/** A chat's messages, re-read whenever the core says that chat changed. */
+export function useMessages(peer: string | null): { msgs: Message[]; loaded: boolean; reload: () => void } {
+  const [data, setData] = useState<{ peer: string | null; msgs: Message[]; loaded: boolean }>({ peer: null, msgs: [], loaded: false });
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!peer) return;
+    let live = true;
+    api.chat(peer).then((msgs) => { if (live) setData({ peer, msgs, loaded: true }); }, (e) => console.warn("hc_chat", e));
+    return () => { live = false; };
+  }, [peer, tick]);
+  useEffect(() => (peer ? onChatChange(peer, () => setTick((t) => t + 1)) : undefined), [peer]);
+  const same = data.peer === peer;
+  return { msgs: same ? data.msgs : [], loaded: same && data.loaded, reload: () => setTick((t) => t + 1) };
+}
+
+// -------------------------------------------------------------- transfers
+export interface Progress { done: number; total: number; upload: boolean; message_id: string }
+const transfers = new Map<string, Progress>();
+const tsubs = new Set<() => void>();
+export function useTransfer(localId: string): Progress | undefined {
+  return useSyncExternalStore((f) => { tsubs.add(f); return () => { tsubs.delete(f); }; }, () => transfers.get(localId));
+}
+
+// ------------------------------------------------------------------- misc
+export function setOnboarding(on: boolean) { set({ onboarding: on }); }
+export function noteDraft(peer: string, body: string) {
+  if ((snap.drafts[peer] || "") === body) return;
+  set({ drafts: { ...snap.drafts, [peer]: body } });
+}
+
+function onEvent(e: HcEvent) {
+  switch (e.type) {
+    case "chat": schedule("chats"); chatChanged(e.peer); break;
+    case "incoming": schedule("chats"); chatChanged(e.peer); break;
+    case "hub": schedule("state"); break;
+    case "directory": schedule("dir"); break;
+    case "transfer":
+      transfers.set(e.local_id, { done: e.done, total: e.total, upload: e.upload, message_id: e.message_id });
+      tsubs.forEach((f) => f());
+      break;
+  }
+}
+
+let started = false;
+/** Load everything once and start listening. */
+export async function startStore(): Promise<void> {
+  if (started) return;
+  started = true;
+  void api.onEvent(onEvent);
+  await refreshState();
+  if (snap.state && !snap.state.me) set({ onboarding: true });
+  await Promise.all([refreshChats(), refreshDirectory()]);
+  set({ ready: true });
+}

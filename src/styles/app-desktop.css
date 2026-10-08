@@ -1,0 +1,6 @@
+/* Desktop-only additions (native window frame: no custom title bar). */
+.app { min-width: 760px; }
+.side-head > span .av { margin-right: 0; }
+.mi-preview .msg-actions { display: none !important; }
+.settings .set-body .note-card { margin-bottom: 4px; }
+.addhub .field { margin-bottom: 10px; }

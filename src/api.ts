@@ -1,6 +1,10 @@
 // The UI's whole interface to the Rust core (src-tauri/src/commands.rs).
 // The core owns hubs, identity, messages and transfers; the UI renders what
 // these calls return and re-reads when an `hc` event says something changed.
+//
+// Outside Tauri (a plain browser during `npm run dev`) main.tsx installs the
+// in-memory mock from src/lib/mock.ts over `api` before the first render, so
+// the UI can be developed and screenshotted without the Rust core.
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 
@@ -125,7 +129,8 @@ export type HcEvent =
   | { type: "directory" }
   | { type: "transfer"; local_id: string; message_id: string; upload: boolean; done: number; total: number };
 
-export const api = {
+/** The real commands. Names and argument shapes match commands.rs. */
+export const tauriApi = {
   state: () => invoke<State>("hc_state"),
   uiState: (foreground: boolean, chat: string | null) => invoke<void>("hc_ui_state", { foreground, chat }),
 
@@ -160,6 +165,19 @@ export const api = {
 
   onEvent: (f: (e: HcEvent) => void): Promise<UnlistenFn> => listen<HcEvent>("hc", (e) => f(e.payload)),
 };
+
+export type Api = typeof tauriApi;
+
+/** What the UI calls: the real commands, or the mock when not in Tauri. */
+export const api: Api = { ...tauriApi };
+
+/** Replace the implementation (the browser mock). Call before rendering. */
+export function installApi(impl: Api): void {
+  Object.assign(api, impl);
+}
+
+/** True inside the Tauri webview (desktop or Android). */
+export const isTauri: boolean = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 /** A fresh client-side message id (the hub dedupes retries by it). */
 export function newId(): string {

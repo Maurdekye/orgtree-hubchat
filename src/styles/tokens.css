@@ -1,0 +1,97 @@
+/* Hubchat design tokens.
+   Neutrals, status colours and the terracotta accent are Orgtree's own
+   (apps/desktop/renderer/src/styles.css, dark "Charcoal" + Light) so the two
+   apps read as family. Hubchat-only additions: bubble fills, the kind tints
+   (org = terracotta, Claude Code session = sky, person = neutral; the hub web
+   UI's own colour axis) and a rounder shape scale for a chat app. */
+:root, .theme-dark {
+  color-scheme: dark;
+  --bg: #1f1f1f;          /* conversation */
+  --side: #181818;        /* sidebar, bars */
+  --panel: #252526;       /* cards, menus, modals */
+  --panel-2: #2d2d30;     /* hover, selected */
+  --panel-3: #333336;
+  --input: #313131;
+  --ink-strong: #e8e8e8;
+  --ink: #cccccc;
+  --dim: #9d9d9d;
+  --faint: #6e6e6e;
+  --line: #3c3c3c;
+  --line-soft: #2b2b2b;
+  --accent: #d97757;
+  --accent-hover: #e99b81;
+  --accent-text: #e3896b;
+  --accent-soft: rgba(217, 119, 87, .16);
+  --accent-ink: #17191d;
+  --ok: #6fd377;
+  --warn: #e5c07b;
+  --bad: #f14c4c;
+  --sky: #7cc0ff;
+  --ok-soft: rgba(111, 211, 119, .13);
+  --warn-soft: rgba(229, 192, 123, .13);
+  --bad-soft: rgba(241, 76, 76, .13);
+  --sky-soft: rgba(124, 192, 255, .13);
+  --in: #2c2c2f;          /* incoming bubble */
+  --in-ink: #e8e8e8;
+  --out: #55322a;         /* outgoing bubble: deep terracotta */
+  --out-ink: #f6e9e3;
+  --out-dim: #cfa597;
+  --code-bg: #161616;
+  --k-org: #e3896b;  --k-org-bg: rgba(217, 119, 87, .20);
+  --k-chat: #7cc0ff; --k-chat-bg: rgba(124, 192, 255, .17);
+  --k-person: #d4d4d4; --k-person-bg: #3a3a3d;
+  --k-me: #f2c2b0; --k-me-bg: #6b3a2c;
+  --shadow: 0 2px 8px rgba(0, 0, 0, .36);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, .55);
+  --scrim: rgba(0, 0, 0, .5);
+  --flash: rgba(217, 119, 87, .28);
+}
+.theme-light {
+  color-scheme: light;
+  --bg: #f6f7f9;
+  --side: #eceff3;
+  --panel: #ffffff;
+  --panel-2: #e8ebef;
+  --panel-3: #dfe3e8;
+  --input: #ffffff;
+  --ink-strong: #161b22;
+  --ink: #2d333b;
+  --dim: #57606a;
+  --faint: #8b949e;
+  --line: #c5ccd4;
+  --line-soft: #dce1e7;
+  --accent: #d97757;
+  --accent-hover: #c8643f;
+  --accent-text: #b04f2c;
+  --accent-soft: rgba(217, 119, 87, .16);
+  --accent-ink: #17191d;
+  --ok: #23722d;
+  --warn: #805b0b;
+  --bad: #bf2929;
+  --sky: #23679e;
+  --ok-soft: rgba(35, 114, 45, .10);
+  --warn-soft: rgba(128, 91, 11, .10);
+  --bad-soft: rgba(191, 41, 41, .09);
+  --sky-soft: rgba(35, 103, 158, .10);
+  --in: #ffffff;
+  --in-ink: #161b22;
+  --out: #f9dccf;
+  --out-ink: #2a1912;
+  --out-dim: #8a5a48;
+  --code-bg: #f3f4f6;
+  --k-org: #b04f2c;  --k-org-bg: rgba(217, 119, 87, .18);
+  --k-chat: #23679e; --k-chat-bg: rgba(35, 103, 158, .13);
+  --k-person: #3b4450; --k-person-bg: #dde2e8;
+  --k-me: #7a3420; --k-me-bg: #f3c9b8;
+  --shadow: 0 2px 8px rgba(0, 0, 0, .14);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, .18);
+  --scrim: rgba(20, 24, 30, .32);
+  --flash: rgba(217, 119, 87, .25);
+}
+:root {
+  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+  --r-xs: 4px; --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-xl: 18px;
+  --bubble-r: 12px;
+}
