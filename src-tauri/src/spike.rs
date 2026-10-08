@@ -103,19 +103,31 @@ pub async fn spike_roundtrip<R: Runtime>(
         .open(fp, OpenOptions::new().read(true).clone())
         .map_err(|e| format!("open {path}: {e}"))?;
     let file = tokio::fs::File::from_std(file);
-    log(&c.dir, &format!("roundtrip start {name} rss_peak={:?}", peak_rss_kb()));
+    log(
+        &c.dir,
+        &format!("roundtrip start {name} rss_peak={:?}", peak_rss_kb()),
+    );
 
     let t0 = Instant::now();
     let att = c
         .client
-        .upload(&c.me, file, &name, Some(progress(&app, "upload")), CancelFlag::default())
+        .upload(
+            &c.me,
+            file,
+            &name,
+            Some(progress(&app, "upload")),
+            CancelFlag::default(),
+        )
         .await
         .map_err(|e| e.to_string())?;
     let upload_ms = t0.elapsed().as_millis();
 
     let mut out = Outgoing::new(&c.me.address(), &format!("spike round trip: {name}"));
     out.attachments.push(att.id.clone());
-    c.client.send(&c.me, &out).await.map_err(|e| e.to_string())?;
+    c.client
+        .send(&c.me, &out)
+        .await
+        .map_err(|e| e.to_string())?;
 
     let cache = app.path().app_cache_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
@@ -123,7 +135,13 @@ pub async fn spike_roundtrip<R: Runtime>(
     let t1 = Instant::now();
     let got = c
         .client
-        .download_file(&c.me, &att.id, &dest, Some(progress(&app, "download")), CancelFlag::default())
+        .download_file(
+            &c.me,
+            &att.id,
+            &dest,
+            Some(progress(&app, "download")),
+            CancelFlag::default(),
+        )
         .await
         .map_err(|e| e.to_string())?;
     let download_ms = t1.elapsed().as_millis();
@@ -151,11 +169,16 @@ pub async fn spike_roundtrip<R: Runtime>(
     Ok(r)
 }
 
-fn same_bytes<R: Runtime>(app: &AppHandle<R>, src: &str, dest: &std::path::Path) -> std::io::Result<bool> {
+fn same_bytes<R: Runtime>(
+    app: &AppHandle<R>,
+    src: &str,
+    dest: &std::path::Path,
+) -> std::io::Result<bool> {
     use std::io::Read;
-    let mut a = app
-        .fs()
-        .open(FilePath::from_str(src).map_err(std::io::Error::other)?, OpenOptions::new().read(true).clone())?;
+    let mut a = app.fs().open(
+        FilePath::from_str(src).map_err(std::io::Error::other)?,
+        OpenOptions::new().read(true).clone(),
+    )?;
     let mut b = std::fs::File::open(dest)?;
     let (mut x, mut y) = (vec![0u8; 1 << 20], vec![0u8; 1 << 20]);
     loop {
@@ -183,11 +206,22 @@ fn same_bytes<R: Runtime>(app: &AppHandle<R>, src: &str, dest: &std::path::Path)
 /// Copy a downloaded file to a user-chosen destination (on Android a
 /// content:// URI from the save dialog).
 #[tauri::command]
-pub async fn spike_save<R: Runtime>(app: AppHandle<R>, src: String, dest: String) -> Result<u64, String> {
+pub async fn spike_save<R: Runtime>(
+    app: AppHandle<R>,
+    src: String,
+    dest: String,
+) -> Result<u64, String> {
     let fp = FilePath::from_str(&dest).map_err(|e| e.to_string())?;
     let mut out = app
         .fs()
-        .open(fp, OpenOptions::new().write(true).create(true).truncate(true).clone())
+        .open(
+            fp,
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .clone(),
+        )
         .map_err(|e| format!("open {dest}: {e}"))?;
     let mut inp = std::fs::File::open(&src).map_err(|e| e.to_string())?;
     let n = std::io::copy(&mut inp, &mut out).map_err(|e| e.to_string())?;

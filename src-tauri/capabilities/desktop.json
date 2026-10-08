@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "desktop",
+  "description": "Desktop-only: self-update and relaunch",
+  "platforms": ["windows", "linux", "macOS"],
+  "windows": ["main"],
+  "permissions": ["updater:default", "process:default"]
+}
