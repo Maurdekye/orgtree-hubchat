@@ -10,7 +10,7 @@ automatically.
 | Windows | `build-windows.yml` | windows-2025 | `Hubchat_<v>_x64-setup.exe` (+ `.sig`) |
 | macOS (Apple Silicon and Intel) | `build-macos.yml` | macos-15 | `Hubchat_<v>_universal.dmg`, `Hubchat_<v>_universal.app.tar.gz` (+ `.sig`) |
 | Linux (x86_64) | `build-linux.yml` | ubuntu-22.04 | `Hubchat_<v>_amd64.AppImage` (+ `.sig`), `Hubchat_<v>_amd64.deb` (+ `.sig`) |
-| Android (arm64) | `build-android.yml` | ubuntu-24.04 | `Hubchat_<v>_arm64.apk` and the same file as `Hubchat-android.apk` |
+| Android (arm64) | `build-android.yml` | ubuntu-24.04 | `Hubchat_<v>_arm64.apk` (+ `.sig`) and the same file as `Hubchat-android.apk` |
 | all | `release.yml` | ubuntu-24.04 | `latest.json` (the updater feed), `SHA256SUMS.txt` |
 
 `release.yml` runs the four builds, then:
@@ -22,6 +22,8 @@ automatically.
      published APK.
    - It then signs every updater file with the Tauri updater key, binding the
      version (`--app-version`, because `tauri.conf.json` sets `requireSignedVersion`).
+     The APK is one of them, signed after apksigner, so its `.sig` covers the APK as
+     shipped.
    - The builds themselves only ever hold throwaway keys.
 2. **stage**: writes `latest.json` from the platforms' updater entries, and
    `SHA256SUMS.txt`.
@@ -64,9 +66,10 @@ gh release download v<v> -R Maurdekye/orgtree-hubchat -D check-v<v>
 cd check-v<v> && sha256sum -c SHA256SUMS.txt
 ```
 
-- `latest.json` has one entry per desktop platform: `windows-x86_64`,
-  `darwin-aarch64`, `darwin-x86_64`, `linux-x86_64` and `linux-x86_64-deb`. Each URL
-  points at this release, and each signature equals the matching `.sig` file.
+- `latest.json` has one entry per platform: `windows-x86_64`, `darwin-aarch64`,
+  `darwin-x86_64`, `linux-x86_64`, `linux-x86_64-deb` and `android-aarch64` (the
+  versioned APK; desktop updaters ignore it). Each URL points at this release, and
+  each signature equals the matching `.sig` file.
 - Install the Windows setup and the APK on a test machine or phone if the release
   changes anything risky.
 
@@ -107,6 +110,9 @@ manual run can test any tag or commit:
 ```
 gh workflow run release.yml -R Maurdekye/orgtree-hubchat -f ref=v<v>
 ```
+
+A manual run is always a test, even one started from a tag: only a pushed tag
+makes a release.
 
 Throwaway-signed files can't update or install over a real Hubchat. Never publish
 them.
@@ -154,7 +160,8 @@ hosting the files. With the same versions as the pins below:
   `npx tauri build --bundles appimage,deb` with the key variables.
 - **Android**:
   - Linux: `npx tauri android build --target aarch64 --apk --split-per-abi` (unsigned),
-    then the same `apksigner sign` command as `.github/ci/release/sign.sh`.
+    then the same `apksigner sign` command as `.github/ci/release/sign.sh`, then
+    `npx tauri signer sign --app-version <v>` over the signed APK for its `.sig`.
   - Windows: `scripts/android-build.sh release` with `HUBCHAT_ANDROID_KEYSTORE`
     pointing at a keystore.properties file.
 - Then `latest.json` and `SHA256SUMS.txt`: put each platform's `updater-*.json` in
