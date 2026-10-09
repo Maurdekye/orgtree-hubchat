@@ -58,21 +58,30 @@ export function useSetupChat(open: (peer: string) => void): void {
   }, []);
 }
 
-/** Android's fixed-name APK: Update's fallback when no update is found. */
+/** Android's fixed-name APK: Update's fallback when the check fails. */
 const APK = "https://github.com/Maurdekye/orgtree-hubchat/releases/latest/download/Hubchat-android.apk";
 
-/** "This code needs a newer Hubchat" › Update (hubchat-opus 11:38Z, 15:32Z):
- *  the updates module installs the update it knows of, checking first if it
- *  knows none (on Android the in-app update, with its steps in the update
- *  banner, so this screen closes). Only when the check finds nothing or fails does Android open the
- *  newest APK in the browser. */
+/** "This code needs a newer Hubchat" › Update (hubchat-opus 11:38Z, 15:32Z,
+ *  16:12Z): the updates module installs the update it knows of, checking
+ *  first if it knows none (on Android the in-app update, with its steps in
+ *  the update banner, so this screen closes). When nothing newer is out (this
+ *  Orgtree is ahead of every Hubchat release) it says so; when the check
+ *  fails, Android opens the newest APK in the browser to try by hand. */
 export async function updateHubchat(platform: "desktop" | "android", known: Available | null): Promise<void> {
-  const a = known ?? await checkForUpdate().catch(() => null);
-  // the update banner shows the steps, so this screen steps aside; the app
-  // restarts once installed, and the code is scanned again then
-  if (a) { endSetup(); await a.install(); return; }
-  if (platform === "android") await openLink(APK);
-  else toast("No newer Hubchat is out yet.");
+  let a = known;
+  if (!a) {
+    try { a = await checkForUpdate(); }
+    catch (e) {
+      console.warn("update check", e);
+      if (platform === "android") await openLink(APK);
+      else toast("Couldn't check for a newer Hubchat.");
+      return;
+    }
+  }
+  if (!a) { toast("No newer Hubchat is out yet."); return; }
+  // the app restarts once installed, and the code is scanned again then
+  endSetup();
+  await a.install();
 }
 
 /** Open Tailscale or the Wi-Fi settings (Android); false when nothing opened. */

@@ -3,8 +3,8 @@
 // two hubs (one down and retrying), an Orgtree org, an agent session,
 // people, markdown, a file, a failed message and climbing receipts.
 // URL parameters: ?platform=android  ?onboarding=1  ?update=1 (an update is
-// out)  ?scan=TEXT (what the fake camera reads)  ?pending=ADDRESS (a tapped
-// notification)  ?link=TEXT (the hubchat:// link Android opened the app with)
+// out; =down: the check fails)  ?scan=TEXT (what the fake camera reads)
+// ?pending=ADDRESS (a tapped notification)  ?link=TEXT (the hubchat:// link Android opened the app with)
 // ?approve=S (the other device approves a link after S seconds)  ?lab=up (the
 // lab hub starts connected: the hubchat-ui session is then on two hubs, for
 // the hub picker). Pat Peer's chat is lazy history: this device holds only
@@ -690,10 +690,12 @@ export const mockApi: Api = {
   },
   // Android's in-app update, acted out: ?update=1 offers 0.2.0; the first
   // Update asks for Android's permission, then it downloads and Android's
-  // window "opens"; ?update=bad fails the signature check
+  // window "opens"; ?update=bad fails the signature check; ?update=down fails
+  // the check itself
   appUpdateCheck: async () => {
     await sleep(300);
     const u = new URLSearchParams(location.search).get("update");
+    if (u === "down") throw "the update feed can't be reached";
     return u === "1" || u === "bad" ? { version: "0.2.0", notes: "Markdown and fixes.", url: "https://example.com/Hubchat_0.2.0_arm64.apk", signature: "mock" } : null;
   },
   appUpdateInstall: async () => {

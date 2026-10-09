@@ -80,7 +80,9 @@ async function checkRaw(): Promise<Available | null> {
   }
   if (!isTauri) {
     await new Promise((r) => setTimeout(r, 700));
-    if (new URLSearchParams(location.search).get("update") !== "1") return null;
+    const u = new URLSearchParams(location.search).get("update");
+    if (u === "down") throw "the update feed can't be reached";
+    if (u !== "1") return null;
     return { version: "0.2.0", install: async () => { await new Promise((r) => setTimeout(r, 1500)); location.reload(); } };
   }
   // a test build runs beside the real app; the real release would install the
