@@ -347,6 +347,7 @@ pub fn run() {
             commands::hc_take_pending_chat,
             commands::hc_open_attachment,
             media::hc_attachment_preview,
+            media::hc_file_preview,
             media::hc_save_pasted,
             link::hc_link_start,
             link::hc_link_cancel,

@@ -130,6 +130,24 @@ pub async fn hc_attachment_preview(message_id: String, local_id: String) -> R<ta
     std::fs::read(&copy).map(tauri::ipc::Response::new).map_err(s)
 }
 
+/// The bytes of an image the composer holds (picked, dropped or pasted, not
+/// sent yet), for its thumbnail (user 2026-10-09 07:06Z): the same images
+/// and size limit as the chat's previews.
+#[tauri::command]
+pub async fn hc_file_preview(source: String, name: String) -> R<tauri::ipc::Response> {
+    if !is_image(&name) {
+        return Err("no preview for this file".into());
+    }
+    let c = core::get()?;
+    let f = c.platform().open_source(&source).map_err(s)?;
+    let mut b = Vec::new();
+    f.take(MAX_PREVIEW_BYTES + 1).read_to_end(&mut b).map_err(s)?;
+    if b.len() as u64 > MAX_PREVIEW_BYTES {
+        return Err("too big for a preview".into());
+    }
+    Ok(tauri::ipc::Response::new(b))
+}
+
 /// After Delete chat: the copies of every message that is gone.
 pub fn forget_gone() {
     if let Ok(c) = core::get() {
