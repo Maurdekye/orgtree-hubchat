@@ -52,6 +52,10 @@ automatically.
 6. A draft release `v<v>` appears with every asset. The run's summary lists each
    file's size and SHA-256.
 
+The pipeline is the only way a release is made. Don't also run the old local publish
+script for the tag: the workflow would then fail at the draft step, because the
+release already exists.
+
 ## Checking and publishing the draft
 
 ```
@@ -106,6 +110,9 @@ gh workflow run release.yml -R Maurdekye/orgtree-hubchat -f ref=v<v>
 
 Throwaway-signed files can't update or install over a real Hubchat. Never publish
 them.
+
+The first full test (run 37927908831, 2026-10-09, building v0.1.2) took about 18
+minutes from a cold cache. The macOS build is the slowest.
 
 ## Secrets and the release environment
 
