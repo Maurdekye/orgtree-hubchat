@@ -74,7 +74,7 @@ export async function scanQr(mockText: string): Promise<string | null> {
 
 /** The app's version (tauri.conf.json). */
 export async function appVersion(): Promise<string> {
-  if (!isTauri) return "0.1.3";
+  if (!isTauri) return "1.0.0";
   const { getVersion } = await import("@tauri-apps/api/app");
   return await getVersion();
 }
