@@ -186,6 +186,7 @@ export function Desktop() {
             <div className="clist scroll rail-list">
               <RailRows rows={rows} selected={chat} onOpen={open} onInfo={contactInfo} />
             </div>
+            <div className="rail-ver"><AppVersion /></div>
           </aside>
         ) : (
         <aside className="side">
