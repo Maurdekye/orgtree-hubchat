@@ -160,10 +160,11 @@ hosting the files. With the same versions as the pins below:
   `npx tauri build --bundles appimage,deb` with the key variables.
 - **Android**:
   - Linux: `npx tauri android build --target aarch64 --apk --split-per-abi` (unsigned),
-    then the same `apksigner sign` command as `.github/ci/release/sign.sh`, then
-    `npx tauri signer sign --app-version <v>` over the signed APK for its `.sig`.
+    then the same `apksigner sign` command as `.github/ci/release/sign.sh`.
   - Windows: `scripts/android-build.sh release` with `HUBCHAT_ANDROID_KEYSTORE`
     pointing at a keystore.properties file.
+  - Either way, `npx tauri signer sign --app-version <v>` over the signed APK
+    makes its `.sig`.
 - Then `latest.json` and `SHA256SUMS.txt`: put each platform's `updater-*.json` in
   the folder (the build workflows show their shape) and run
   `MODE=release VERSION=<v> node .github/ci/release/assemble.mjs <folder>` from a
