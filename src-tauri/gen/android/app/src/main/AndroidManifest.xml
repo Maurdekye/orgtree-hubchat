@@ -8,6 +8,9 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- in-app updates from Hubchat's GitHub releases (user 2026-10-09 08:29Z) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- without it Android 12+ ignores USER_ACTION_NOT_REQUIRED and asks for a tap on
+         every update, even after the user tapped Update in Hubchat (measured on API 35) -->
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
