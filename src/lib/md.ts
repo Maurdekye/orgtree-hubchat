@@ -52,6 +52,10 @@ const marked = new Marked({
     // not a code block, and a line over "---" is not a heading.
     code: () => undefined,
     lheading: () => undefined,
+    // Raw HTML is only ever text here. As a block it would swallow every
+    // line up to the next blank one, markdown included; as inline it is
+    // escaped where it stands.
+    html: () => undefined,
   },
   extensions: [{
     name: "addr",
@@ -100,7 +104,8 @@ const PURIFY = {
 };
 // the only attributes that can lead anywhere: data-href must be http(s)
 DOMPurify.addHook("afterSanitizeAttributes", (n) => {
-  if (n.hasAttribute("data-href") && !safeUrl(n.getAttribute("data-href"))) { n.removeAttribute("data-href"); n.removeAttribute("class"); }
+  if (n.hasAttribute("data-href") && !safeUrl(n.getAttribute("data-href"))) n.removeAttribute("data-href");
+  if (n.nodeName === "A" && n.classList.contains("md-a") && !n.hasAttribute("data-href")) n.removeAttribute("class");
   if (n.hasAttribute("data-act") && n.getAttribute("data-act") !== "copy-code") n.removeAttribute("data-act");
 });
 
