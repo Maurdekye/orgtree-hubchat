@@ -71,6 +71,10 @@ pub struct SyncResult {
     pub more: bool,
     #[serde(default)]
     pub reset: bool,
+    /// The address's OTHER devices in use as of this answer (hubs with the
+    /// "active" feature): a message it brings needs no notification here.
+    #[serde(default)]
+    pub active: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -118,6 +122,16 @@ impl HubClient {
         });
         self.post_json(me, "/api/sync", &body, Duration::from_secs(wait + 30))
             .await
+    }
+
+    /// This device is in use (true; it counts for 90 s, so repeat it about
+    /// every minute) or not any more (false). Hubs with the "active" feature.
+    pub async fn set_active(&self, me: &Identity, device_id: &str, active: bool) -> Result<()> {
+        let body = serde_json::json!({ "device_id": device_id, "active": active });
+        let _: serde_json::Value = self
+            .post_json(me, "/api/devices/active", &body, Duration::from_secs(20))
+            .await?;
+        Ok(())
     }
 
     /// The whole body of a long message (sync cut it at 20,000 characters).

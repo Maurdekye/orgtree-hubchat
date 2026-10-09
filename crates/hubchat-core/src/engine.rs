@@ -58,6 +58,9 @@ pub enum Event {
         peer: String,
         id: String,
         preview: String,
+        /// Another of our devices was in use when it came (user 23:50Z):
+        /// no notification here.
+        quiet: bool,
     },
     /// A hub's connection state changed.
     Hub { url: String },
@@ -138,6 +141,9 @@ pub struct Engine {
     read_receipts: std::sync::atomic::AtomicBool,
     /// This installation's (device_id, device_name) for v2 sync.
     device: Mutex<(String, String)>,
+    /// This device is in use (focused, recently touched): our other devices
+    /// keep quiet while it is (user 23:50Z).
+    active: std::sync::atomic::AtomicBool,
 }
 
 fn unix_ms() -> u64 {
@@ -164,6 +170,7 @@ impl Engine {
             stopped: std::sync::atomic::AtomicBool::new(false),
             transfers: Mutex::new(HashMap::new()),
             read_receipts: std::sync::atomic::AtomicBool::new(true),
+            active: std::sync::atomic::AtomicBool::new(false),
             device: Mutex::new((
                 format!("hc-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]),
                 "Hubchat".into(),
@@ -188,7 +195,46 @@ impl Engine {
         }
         let me = self.clone();
         tokio::spawn(async move { me.sender_loop().await });
+        // in use: say so again before the hub's 90 s run out
+        let me = self.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                if me.stopped.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+                if me.active.load(std::sync::atomic::Ordering::Relaxed) {
+                    me.report_active(true).await;
+                }
+            }
+        });
         Ok(())
+    }
+
+    /// The UI says whether this device is in use (focused, touched in the
+    /// last few minutes). A change is told to every hub that can carry it.
+    pub fn set_active(self: &Arc<Self>, on: bool) {
+        if self.active.swap(on, std::sync::atomic::Ordering::Relaxed) != on {
+            let me = self.clone();
+            tokio::spawn(async move { me.report_active(on).await });
+        }
+    }
+
+    /// Tell each hub with the "active" feature (best effort: a hub that
+    /// misses it lets the last word expire after 90 s).
+    async fn report_active(&self, on: bool) {
+        let (device_id, _) = self.device();
+        let clients: Vec<HubClient> = self
+            .hubs
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|h| h.status.features.iter().any(|f| f == "active"))
+            .map(|h| h.client.clone())
+            .collect();
+        for c in clients {
+            let _ = c.set_active(&self.me, &device_id, on).await;
+        }
     }
 
     /// Name this installation for v2 hubs (stable id, shown name). Call
@@ -578,6 +624,7 @@ impl Engine {
                         peer: m.from.clone(),
                         id: m.id.clone(),
                         preview,
+                        quiet: false,
                     });
                 }
                 self.host.event(Event::Chat {
@@ -729,6 +776,7 @@ impl Engine {
                                 peer: m.env.from.clone(),
                                 id: m.env.id.clone(),
                                 preview,
+                                quiet: !r.active.is_empty(),
                             });
                         }
                         peers.insert(if incoming {

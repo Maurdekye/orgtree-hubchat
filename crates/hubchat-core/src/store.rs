@@ -465,6 +465,18 @@ impl Store {
         })
     }
 
+    /// How many of a chat's incoming messages are not read yet (on any of
+    /// our devices: a v2 hub's read time marks them read here too).
+    pub fn unread(&self, peer: &str) -> Result<u64> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT COUNT(*) FROM messages WHERE peer=? AND outgoing=0 AND seen=0",
+                [peer],
+                |r| r.get(0),
+            )
+        })
+    }
+
     pub fn chats(&self) -> Result<Vec<ChatSummary>> {
         let peers: Vec<(String, String, u64)> = self.with(|c| {
             let mut st = c.prepare(

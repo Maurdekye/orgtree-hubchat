@@ -408,3 +408,67 @@ async fn a_check_takes_in_what_arrived_and_returns() {
     a.shutdown();
     b.shutdown();
 }
+
+/// While one of an identity's devices is in use, a message to it makes no
+/// notification on its other devices (user 23:50Z; hub feature "active",
+/// mailhub a2207f5). Needs a hub with that feature; skipped otherwise.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn another_device_in_use_keeps_this_one_quiet() {
+    let Ok(hub) = std::env::var("HUBCHAT_V2_HUB") else {
+        eprintln!("SKIPPED: set HUBCHAT_V2_HUB to a scratch mail hub v2.0");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let ann = Identity::generate(&uid("acta")).unwrap();
+    let bob = Identity::generate(&uid("actb")).unwrap();
+    let (pc, _hpc) = device(&ann, "ann-pc", dir.path());
+    let (phone, hphone) = device(&ann, "ann-phone", dir.path());
+    let (b, _hb) = device(&bob, "bob-pc", dir.path());
+    for e in [&pc, &phone, &b] {
+        e.start().unwrap();
+        e.add_hub(&hub).unwrap();
+    }
+    for e in [&pc, &phone, &b] {
+        until("connected", 15, || {
+            e.hub_statuses()
+                .iter()
+                .any(|s| s.state == HubState::Connected)
+        })
+        .await;
+    }
+    if !pc.hub_statuses()[0].features.iter().any(|f| f == "active") {
+        eprintln!("SKIPPED: this hub has no 'active' feature");
+        return;
+    }
+    let quiet_of = |id: &str| {
+        hphone.events.lock().unwrap().iter().find_map(|e| match e {
+            Event::Incoming { id: i, quiet, .. } if i == id => Some(*quiet),
+            _ => None,
+        })
+    };
+
+    // nobody using a device: the phone notifies
+    let m0 = uid("m0-");
+    b.send(msg(&m0, &ann.address(), "nobody looking")).unwrap();
+    until("phone gets m0", 20, || quiet_of(&m0).is_some()).await;
+    assert_eq!(quiet_of(&m0), Some(false), "no device in use");
+
+    // the PC in use: the phone keeps quiet
+    pc.set_active(true);
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let m1 = uid("m1-");
+    b.send(msg(&m1, &ann.address(), "while the pc is in use")).unwrap();
+    until("phone gets m1", 20, || quiet_of(&m1).is_some()).await;
+    assert_eq!(quiet_of(&m1), Some(true), "the pc is in use");
+
+    // the PC put down: the phone notifies again
+    pc.set_active(false);
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let m2 = uid("m2-");
+    b.send(msg(&m2, &ann.address(), "the pc was put down")).unwrap();
+    until("phone gets m2", 20, || quiet_of(&m2).is_some()).await;
+    assert_eq!(quiet_of(&m2), Some(false), "the pc was put down");
+    for e in [&pc, &phone, &b] {
+        e.shutdown();
+    }
+}
