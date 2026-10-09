@@ -455,3 +455,19 @@
 .pop.ctx { min-width: 190px; z-index: 95; } /* above toasts (90), below the title bar (100) */
 .pop .mi.on { background: var(--panel-2); color: var(--ink-strong); }
 .pop .mi[aria-disabled="true"]:hover { background: transparent; color: inherit; }
+
+/* the chat list collapsed to a rail of avatars (user 2026-10-09 08:39Z) */
+.side.rail { width: 68px; align-items: center; gap: 4px; padding-top: 10px; }
+.side.rail .rail-me { cursor: pointer; margin: 4px 0; display: inline-flex; }
+.side.rail .tb-xfer { width: 36px; height: 36px; padding: 0; margin: 0; border-radius: 50%; justify-content: center; }
+.side.rail .tb-xfer > span { display: none; }
+.side.rail .hubpill.rail-hub { width: 36px; height: 30px; margin: 2px 0 6px; padding: 0; justify-content: center; }
+.rail-list { align-self: stretch; padding: 6px 0 8px; display: flex; flex-direction: column; align-items: center; gap: 6px; border-top: 1px solid var(--line-soft); }
+.rrow { position: relative; display: inline-flex; padding: 3px; border: 0; border-radius: 14px; background: transparent; flex: none; --ring: var(--side); }
+.rrow:hover { background: var(--panel); --ring: var(--panel); }
+.rrow.sel { background: var(--panel-2); --ring: var(--panel-2); }
+.rrow.sel::before { content: ""; position: absolute; left: -10px; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
+.rrow .badge { position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px; padding: 0 5px; font-size: 10.5px; box-shadow: 0 0 0 2px var(--side); }
+.side-sub { display: flex; align-items: center; justify-content: space-between; padding-right: 10px; }
+.side-sub .hubpill { margin-bottom: 8px; min-width: 0; }
+.side-sub .icon-btn { margin-bottom: 4px; }

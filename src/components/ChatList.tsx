@@ -71,6 +71,29 @@ export function ChatRows({ rows, selected, onOpen, onInfo }: { rows: ReturnType<
   );
 }
 
+/** The collapsed chat list (desktop, user 2026-10-09 08:39Z): one avatar per
+ *  chat with its presence dot and unread badge; the name shows on hover. */
+export function RailRows({ rows, selected, onOpen, onInfo }: { rows: ReturnType<typeof useFilteredChats>["rows"]; selected: string | null; onOpen: (peer: string) => void; onInfo?: (peer: string) => void }) {
+  const snap = useSnap();
+  const hubs = snap.state?.hubs || [];
+  return (
+    <>
+      {rows.map((c) => {
+        const ct = snap.byAddr.get(c.peer);
+        const name = displayName(ct, c.peer);
+        return (
+          <button key={c.peer} className={"rrow" + (selected === c.peer ? " sel" : "") + (c.unread ? " unread" : "")} onClick={() => onOpen(c.peer)}
+            title={name} aria-label={name + (c.unread ? ", " + c.unread + " unread" : "")}
+            onContextMenu={(e) => chatMenu(e, c.peer, onOpen, onInfo)}>
+            <PeerAvatar address={c.peer} c={ct} hubs={hubs} size={40} />
+            {c.unread ? <span className="badge">{c.unread}</span> : null}
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
 export function EmptyChats({ onNew }: { onNew: () => void }) {
   const snap = useSnap();
   const platform = usePlatform();

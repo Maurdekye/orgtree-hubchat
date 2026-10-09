@@ -13,7 +13,7 @@ import { useActive, useForeground, useMessage, usePendingLink, useReadTracking }
 import { chatLinkTarget } from "../lib/chatlink";
 import { startUpdateChecks } from "../lib/updates";
 import { HubBanner, RecoveryBanner, UpdateBanner } from "./Banners";
-import { ChatRows, EmptyChats, useFilteredChats, type ChatFilter } from "./ChatList";
+import { ChatRows, EmptyChats, RailRows, useFilteredChats, type ChatFilter } from "./ChatList";
 import { ContactInfo } from "./ContactInfo";
 import { Conversation } from "./Conversation";
 import { Directory } from "./Directory";
@@ -65,6 +65,8 @@ function InfoPanel({ id, peer, onClose }: { id: string; peer: string; onClose: (
   );
 }
 
+const RAIL_KEY = "hubchat.chatlist.rail";
+
 export function Desktop() {
   const snap = useSnap();
   const me = snap.state!.me!;
@@ -72,6 +74,14 @@ export function Desktop() {
   const [chat, setChat] = useState<string | null>(null);
   const [filter, setFilter] = useState<ChatFilter>("all");
   const [q, setQ] = useState("");
+  // the chat list as a narrow rail of avatars (user 2026-10-09 08:39Z), kept across restarts
+  const [rail, setRailState] = useState(() => localStorage.getItem(RAIL_KEY) === "1");
+  const setRail = useCallback((on: boolean) => {
+    localStorage.setItem(RAIL_KEY, on ? "1" : "0");
+    // the rail has no search box or filters, so it must not hide chats behind them
+    if (on) { setQ(""); setFilter("all"); }
+    setRailState(on);
+  }, []);
   const [ov, setOv] = useState<Overlay>(null);
   const [info, setInfo] = useState<Info>(null);
   const fg = useForeground("desktop");
@@ -108,12 +118,14 @@ export function Desktop() {
   // open one in the list as it shows now (sorted, filtered); the new chat's
   // message box takes the focus once it has mounted
   const rowsRef = useRef<{ peer: string }[]>([]);
+  const railRef = useRef(rail);
+  railRef.current = rail;
   const focusBox = useRef(false);
   useEffect(() => {
     if (!chat || !focusBox.current) return;
     focusBox.current = false;
     document.querySelector<HTMLTextAreaElement>(".conv .composer textarea")?.focus();
-    document.querySelector(".clist .crow.sel")?.scrollIntoView({ block: "nearest" });
+    document.querySelector(".clist .sel")?.scrollIntoView({ block: "nearest" });
   }, [chat]);
 
   useEffect(() => {
@@ -130,7 +142,12 @@ export function Desktop() {
       }
       else if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "n") { e.preventDefault(); setOv({ k: "newchat", q: "" }); }
       else if (e.ctrlKey && e.key === ",") { e.preventDefault(); setOv({ k: "settings", tab: "profile" }); }
-      else if (e.ctrlKey && e.key.toLowerCase() === "k") { e.preventDefault(); document.getElementById("chat-q")?.focus(); }
+      else if (e.ctrlKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        // the search box lives in the full panel: bring it back first
+        if (railRef.current) { setRail(false); setTimeout(() => document.getElementById("chat-q")?.focus(), 0); }
+        else document.getElementById("chat-q")?.focus();
+      }
       else if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "i") {
         // Contact info, while a chat is open and nothing covers it
         if (chat && !ov && !document.querySelector(".scrim")) { e.preventDefault(); toggleContact(); }
@@ -142,7 +159,7 @@ export function Desktop() {
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [ov, join, info, chat, open, toggleContact]);
+  }, [ov, join, info, chat, open, toggleContact, setRail]);
 
   const { rows, counts, total } = useFilteredChats(filter, q, chat);
   rowsRef.current = rows;
@@ -157,6 +174,20 @@ export function Desktop() {
       <HubBanner />
       <RecoveryBanner onShow={() => settings("recovery")} />
       <div className="body">
+        {rail ? (
+          <aside className="side rail">
+            <button className="icon-btn" onClick={() => setRail(false)} title="Show the chat list" aria-label="Show the chat list"><Icon name="chevron_right" /></button>
+            <span className="rail-me" onClick={() => settings("profile")} title="Profile"><Avatar kind="me" name={me.name || me.id} size={32} /></span>
+            <TransfersChip onOpen={open} />
+            <button className="icon-btn" onClick={() => setOv({ k: "newchat", q: "" })} title="New chat (Ctrl+N)" aria-label="New chat"><Icon name="new_chat" /></button>
+            <button className="icon-btn" onClick={() => setOv({ k: "directory" })} title="Directory: everyone on your hubs" aria-label="Directory"><Icon name="contacts" /></button>
+            <button className="icon-btn" onClick={() => settings("profile")} title="Settings (Ctrl+,)" aria-label="Settings"><Icon name="settings" /></button>
+            <button className={"hubpill rail-hub " + hs.state} onClick={() => settings("hubs")} title={hs.text + " · Hub connections"} aria-label="Hub connections"><span className="dot" /></button>
+            <div className="clist scroll rail-list">
+              <RailRows rows={rows} selected={chat} onOpen={open} onInfo={contactInfo} />
+            </div>
+          </aside>
+        ) : (
         <aside className="side">
           <div className="side-head">
             <span onClick={() => settings("profile")} title="Profile" style={{ cursor: "pointer", marginRight: 8 }}><Avatar kind="me" name={me.name || me.id} size={32} /></span>
@@ -166,9 +197,12 @@ export function Desktop() {
             <button className="icon-btn" onClick={() => setOv({ k: "directory" })} title="Directory: everyone on your hubs" aria-label="Directory"><Icon name="contacts" /></button>
             <button className="icon-btn" onClick={() => settings("profile")} title="Settings (Ctrl+,)" aria-label="Settings"><Icon name="settings" /></button>
           </div>
-          <button className={"hubpill " + hs.state} onClick={() => settings("hubs")} title="Hub connections">
-            <span className="dot" /><span>{hs.text}</span><Icon name="chevron_right" />
-          </button>
+          <div className="side-sub">
+            <button className={"hubpill " + hs.state} onClick={() => settings("hubs")} title="Hub connections">
+              <span className="dot" /><span>{hs.text}</span><Icon name="chevron_right" />
+            </button>
+            <button className="icon-btn" onClick={() => setRail(true)} title="Shrink the chat list to icons" aria-label="Shrink the chat list"><Icon name="chevron_left" /></button>
+          </div>
           <label className="search input"><Icon name="search" /><input id="chat-q" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search chats" autoComplete="off" spellCheck={false} /></label>
           <div className="filters">{fchip("all", "All")}{fchip("agents", "Agents")}{fchip("people", "People")}</div>
           <div className="clist scroll">
@@ -183,6 +217,7 @@ export function Desktop() {
             <button className="icon-btn side-qr" onClick={() => setOv({ k: "link", tab: "offer" })} title="Link a device: show QR code" aria-label="Link a device"><Icon name="qr" /></button>
           </div>
         </aside>
+        )}
         {chat ? <Conversation key={chat} peer={chat} onInfo={onInfo} onOpenAddr={open} onContact={toggleContact} infoOn={!!info && (info.k === "contact" || info.peer === chat)} /> : (
           <section className="conv">
             <div className="conv-empty">
