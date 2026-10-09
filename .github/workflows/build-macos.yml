@@ -1,17 +1,16 @@
 # Hubchat for macOS: one universal (Apple Silicon + Intel) app, unsigned
 # (ad-hoc signature, no Apple identity, not notarized), as a dmg plus the
 # Tauri updater bundle (.app.tar.gz + .sig). Called by release.yml; a push to
-# ci-test/hubchat-macos runs it standalone with a throwaway updater key.
+# ci-test/hubchat-macos runs it standalone. Real keys never enter this job: it
+# always signs the updater bundle with a throwaway key, and release.yml's sign
+# job re-signs it with the real one.
 name: build-macos
 
 on:
   workflow_call:
     inputs:
       ref:     {type: string, required: true}   # tag or commit to build
-      signing: {type: string, default: test}    # test = throwaway key made in the job; release = real secrets
-    secrets:
-      TAURI_SIGNING_PRIVATE_KEY: {required: false}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: {required: false}
+      signing: {type: string, default: test}    # ignored: this job always signs with a throwaway key
   push:
     branches: ['ci-test/hubchat-macos']
 
@@ -76,11 +75,7 @@ jobs:
       - name: npm ci
         run: npm ci
 
-      - name: Updater signing key (${{ inputs.signing || 'test' }})
-        env:
-          SIGNING: ${{ inputs.signing || 'test' }}
-          REAL_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          REAL_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Throwaway updater signing key
         run: .ci-tools/.github/ci/macos/signing-key.sh
 
       - name: Build (universal app + dmg + updater bundle)
