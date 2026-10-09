@@ -34,6 +34,18 @@ struct Platform {
     signature: String,
 }
 
+/// Why a request for the feed or the APK failed, in plain words for the
+/// banner and Settings › About.
+#[cfg(target_os = "android")]
+fn plain(e: reqwest::Error) -> String {
+    match e.status() {
+        Some(s) => format!("the release page answered {}", s.as_u16()),
+        None if e.is_timeout() => "the connection timed out".into(),
+        None if e.is_decode() => "the update feed can't be read".into(),
+        None => "there's no connection to the release page".into(),
+    }
+}
+
 /// latest.json's key for this app.
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
 const PLATFORM: &str = "android-aarch64";
@@ -88,7 +100,7 @@ fn verify(pubkey: &str, signature: &str, data: &[u8], version: &str) -> R<()> {
         String::from_utf8(raw).map_err(|e| e.to_string())
     };
     let key = minisign_verify::PublicKey::decode(&text(pubkey)?).map_err(|e| e.to_string())?;
-    let sig = minisign_verify::Signature::decode(&text(signature)?).map_err(|_| "the update's signature can't be read".to_string())?;
+    let sig = text(signature).ok().and_then(|t| minisign_verify::Signature::decode(&t).ok()).ok_or("the update's signature can't be read")?;
     key.verify(data, &sig, true).map_err(|_| "the download isn't signed by Hubchat's update key".to_string())?;
     // only now is the trusted comment trustworthy: the verify above covers it
     if !signed_for(sig.trusted_comment(), version) {
@@ -109,9 +121,9 @@ pub async fn hc_app_update_check(app: AppHandle, feed: Option<String>) -> R<Opti
             _ => endpoint,
         };
         let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build().map_err(|e| e.to_string())?;
-        let feed: Feed = client.get(&url).send().await.map_err(|e| e.to_string())?
-            .error_for_status().map_err(|e| e.to_string())?
-            .json().await.map_err(|e| e.to_string())?;
+        let feed: Feed = client.get(&url).send().await.map_err(plain)?
+            .error_for_status().map_err(plain)?
+            .json().await.map_err(plain)?;
         pick(feed, &app.package_info().version)
     }
     #[cfg(not(target_os = "android"))]
@@ -138,12 +150,19 @@ pub async fn hc_app_update_install(app: AppHandle, url: String, signature: Strin
         let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let path = dir.join("update.apk");
-        let mut res = reqwest::get(&url).await.map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?;
+        // no limit on the whole download (a slow line takes its time), but a
+        // connection that stalls fails instead of hanging the banner
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(30))
+            .read_timeout(std::time::Duration::from_secs(60))
+            .build().map_err(|e| e.to_string())?;
+        let mut res = client.get(&url).send().await.map_err(plain)?.error_for_status().map_err(plain)?;
         let total = res.content_length().unwrap_or(0);
-        let mut file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+        let saved = |e: std::io::Error| format!("the update can't be saved on this phone ({e})");
+        let mut file = std::fs::File::create(&path).map_err(saved)?;
         let (mut done, mut told) = (0u64, 0u64);
-        while let Some(chunk) = res.chunk().await.map_err(|e| e.to_string())? {
-            file.write_all(&chunk).map_err(|e| e.to_string())?;
+        while let Some(chunk) = res.chunk().await.map_err(|e| format!("the download stopped: {}", plain(e)))? {
+            file.write_all(&chunk).map_err(saved)?;
             done += chunk.len() as u64;
             if done - told >= 512 * 1024 {
                 told = done;
@@ -151,7 +170,7 @@ pub async fn hc_app_update_install(app: AppHandle, url: String, signature: Strin
             }
         }
         drop(file);
-        let data = std::fs::read(&path).map_err(|e| e.to_string())?;
+        let data = std::fs::read(&path).map_err(saved)?;
         if let Err(e) = verify(&pubkey, &signature, &data, &version) {
             let _ = std::fs::remove_file(&path);
             return Err(e);
