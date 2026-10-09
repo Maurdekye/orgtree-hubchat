@@ -207,6 +207,8 @@ pub enum Probe {
         version: Option<String>,
         /// How many addresses it holds (to tell one hub under two names).
         orgs: Option<u64>,
+        /// Found by trying a bare host's known ports ("Found X on port N").
+        discovered: bool,
     },
     Unreachable {
         url: String,
@@ -224,7 +226,28 @@ pub enum Probe {
 /// Check an address before adding it (onboarding and Settings › Hubs).
 #[tauri::command]
 pub async fn hc_probe_hub(input: String) -> R<Probe> {
-    on_core(async move { Ok(probe(&input, None, Duration::from_secs(30)).await) }).await
+    let cands = match HubAddress::candidates(&input) {
+        Ok(c) => c,
+        Err(e) => return Ok(Probe::Invalid { error: s(e) }),
+    };
+    if cands.len() == 1 {
+        return on_core(async move { Ok(probe(&input, None, Duration::from_secs(30)).await) }).await;
+    }
+    // a bare host: the hub's known ports and https, all at once, the main
+    // port preferred (user 23:46Z: no port to type)
+    let urls: Vec<String> = cands.iter().map(|a| a.to_string()).collect();
+    on_core(async move {
+        let mut p = probe_first(urls, None, Duration::from_secs(10)).await;
+        match &mut p {
+            Probe::Connected { discovered, .. } => *discovered = true,
+            Probe::Unreachable { error, .. } | Probe::NotAHub { error, .. } => {
+                *error = format!("no mail hub answered on port 7370, 7378 or 7371, or over https; on 7370: {error}")
+            }
+            Probe::Invalid { .. } => {}
+        }
+        Ok(p)
+    })
+    .await
 }
 
 /// A link's hub under each address the link names, the likeliest first
@@ -299,6 +322,7 @@ async fn probe(input: &str, name: Option<&str>, limit: Duration) -> Probe {
             features: h.features,
             version: h.version,
             orgs: h.orgs,
+            discovered: false,
         },
         Ok(Err(hubchat_core::Error::NotAHub(e))) => Probe::NotAHub { url, error: e },
         Ok(Err(e)) => Probe::Unreachable { url, error: s(e) },
