@@ -77,6 +77,20 @@ class MainActivity : TauriActivity() {
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     takePeer(intent)
+    // Already in front (singleTask), the page gets no focus or visibility
+    // change, so a link or a tapped chat would wait until Hubchat is hidden
+    // and shown again: tell it now (hubchat-opus 18:52Z)
+    if (intent.data?.scheme == "hubchat" || intent.hasExtra("peer")) {
+      findWebView(window.decorView)?.evaluateJavascript("window.dispatchEvent(new Event('hc-pending'))", null)
+    }
+  }
+
+  private fun findWebView(v: View): android.webkit.WebView? {
+    if (v is android.webkit.WebView) return v
+    if (v is android.view.ViewGroup) {
+      for (i in 0 until v.childCount) findWebView(v.getChildAt(i))?.let { return it }
+    }
+    return null
   }
 
   private fun takePeer(intent: Intent?) {

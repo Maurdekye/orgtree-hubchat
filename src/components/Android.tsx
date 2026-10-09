@@ -185,7 +185,12 @@ export function Android() {
     take();
     window.addEventListener("focus", take);
     document.addEventListener("visibilitychange", take);
-    return () => { window.removeEventListener("focus", take); document.removeEventListener("visibilitychange", take); };
+    window.addEventListener("hc-pending", take); // a notification tapped with Hubchat in front
+    return () => {
+      window.removeEventListener("focus", take);
+      document.removeEventListener("visibilitychange", take);
+      window.removeEventListener("hc-pending", take);
+    };
   }, [go]);
 
   // a phone camera opened a hubchat:// link: a signed-in device's (role give)

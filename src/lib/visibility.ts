@@ -93,7 +93,14 @@ export function usePendingLink(f: (link: string) => void): void {
     take();
     window.addEventListener("focus", take);
     document.addEventListener("visibilitychange", take);
+    // Android, with Hubchat already in front: MainActivity says so
+    window.addEventListener("hc-pending", take);
     const un = api.onPendingLink(take);
-    return () => { window.removeEventListener("focus", take); document.removeEventListener("visibilitychange", take); void un.then((u) => u()); };
+    return () => {
+      window.removeEventListener("focus", take);
+      document.removeEventListener("visibilitychange", take);
+      window.removeEventListener("hc-pending", take);
+      void un.then((u) => u());
+    };
   }, []);
 }

@@ -25,6 +25,11 @@ import type { Api, SetupLink, SetupState, Attachment, ChatSummary, SendRoute, Co
 import { toast } from "./toast";
 
 const params = new URLSearchParams(location.search);
+const intent = { link: "", peer: "" };
+(window as unknown as { __hcIntent: (i: { link?: string; peer?: string }) => void }).__hcIntent = (i) => {
+  intent.link = i.link ?? ""; intent.peer = i.peer ?? "";
+  window.dispatchEvent(new Event("hc-pending"));
+};
 const GB = 1073741824;
 const iso = (t: number) => new Date(t).toISOString();
 const now = () => Date.now();
@@ -835,13 +840,17 @@ export const mockApi: Api = {
   setupStatus: async (org) => clone(setups.get(org) ?? null),
 
   onPendingLink: async () => () => {},
+  // window.__hcIntent({ link | peer }) acts out Android handing Hubchat a
+  // link or a tapped chat while it is in front (MainActivity.onNewIntent)
   takePendingLink: async () => {
+    if (intent.link) { const l = intent.link; intent.link = ""; return l; }
     const p = params.get("link");
     if (!p || linkTaken) return null;
     linkTaken = true;
     return p;
   },
   takePendingChat: async () => {
+    if (intent.peer) { const p = intent.peer; intent.peer = ""; return p; }
     const p = params.get("pending");
     if (!p || pendingTaken) return null;
     pendingTaken = true;
