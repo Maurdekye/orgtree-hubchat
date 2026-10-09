@@ -49,12 +49,15 @@ export function setAutoChecks(on: boolean): void {
   emit();
 }
 
+/** "it was cancelled" -> "It was cancelled.", for "The update didn't install. …" */
+const sentence = (s: string) => s && s[0].toUpperCase() + s.slice(1) + (/[.!?…]$/.test(s) ? "" : ".");
+
 async function androidInstall(u: AppUpdate): Promise<void> {
   setStep({ k: "downloading", pct: 0 });
   const off = await api.onAppUpdateProgress((done, total) => setStep({ k: "downloading", pct: total ? Math.min(100, Math.round((done * 100) / total)) : 0 }));
   let r: string;
   try { r = await api.appUpdateInstall(u.url, u.signature, u.version); }
-  catch (e) { setStep({ k: "failed", msg: errText(e) }); return; }
+  catch (e) { setStep({ k: "failed", msg: sentence(errText(e)) }); return; }
   finally { off(); }
   if (r === "permission") { setStep({ k: "permission" }); return; }
   setStep({ k: "installing" });
@@ -64,7 +67,7 @@ async function androidInstall(u: AppUpdate): Promise<void> {
     await new Promise((res) => setTimeout(res, 1000));
     const s = await api.appUpdateState().catch(() => "");
     if (s === "confirm" && step.k !== "confirm") setStep({ k: "confirm" });
-    else if (s.startsWith("failed")) { setStep({ k: "failed", msg: s.replace(/^failed:\s*/, "") }); return; }
+    else if (s.startsWith("failed")) { setStep({ k: "failed", msg: sentence(s.replace(/^failed:\s*/, "")) }); return; }
   }
 }
 
