@@ -343,9 +343,16 @@ pub fn is_loopback_hub(url: &str) -> bool {
 
 /// The addresses another device may reach a hub at. A hub this device
 /// reaches by a loopback address is offered under `hostname` and each of
-/// `ips` (same scheme and port), then under the loopback address itself
-/// (for a second app on this machine). Any other address is offered as is.
-pub fn hub_aliases(url: &str, hostname: Option<&str>, ips: &[std::net::IpAddr]) -> Vec<String> {
+/// `ips` (same scheme; the port of the hub's relay-only `door` when there
+/// is one, as other devices reach it there: gap 5 of the linking design),
+/// then under the loopback address itself (for a second app on this
+/// machine). Any other address is offered as is.
+pub fn hub_aliases(
+    url: &str,
+    hostname: Option<&str>,
+    ips: &[std::net::IpAddr],
+    door: Option<u16>,
+) -> Vec<String> {
     let norm = crate::HubAddress::parse(url)
         .map(|a| a.to_string())
         .unwrap_or_else(|_| url.to_string());
@@ -355,7 +362,10 @@ pub fn hub_aliases(url: &str, hostname: Option<&str>, ips: &[std::net::IpAddr]) 
     let Ok(u) = url::Url::parse(&norm) else {
         return vec![norm];
     };
-    let port = u.port().map(|p| format!(":{p}")).unwrap_or_default();
+    let port = door
+        .or(u.port())
+        .map(|p| format!(":{p}"))
+        .unwrap_or_default();
     let mut out: Vec<String> = Vec::new();
     let mut push = |host: String| {
         let a = format!("{}://{host}{port}", u.scheme());
@@ -638,7 +648,7 @@ mod tests {
             "100.101.102.103".parse().unwrap(),
         ];
         assert_eq!(
-            hub_aliases("http://localhost:7370", Some("HOME-PC"), &ips),
+            hub_aliases("http://localhost:7370", Some("HOME-PC"), &ips, None),
             vec![
                 "http://home-pc:7370",
                 "http://100.101.102.103:7370",
@@ -648,12 +658,26 @@ mod tests {
         );
         // Another hub is offered as it is; no hostname or IPs: just itself.
         assert_eq!(
-            hub_aliases("star-system:7370", Some("home-pc"), &ips),
+            hub_aliases("star-system:7370", Some("home-pc"), &ips, Some(7371)),
             vec!["http://star-system:7370"]
         );
         assert_eq!(
-            hub_aliases("127.0.0.1:7397", None, &[]),
+            hub_aliases("127.0.0.1:7397", None, &[], None),
             vec!["http://127.0.0.1:7397"]
+        );
+    }
+
+    #[test]
+    fn aliases_use_the_doors_port() {
+        let ips: Vec<std::net::IpAddr> = vec!["100.101.102.103".parse().unwrap()];
+        // other devices reach Orgtree's hub through its door; this PC keeps 7370
+        assert_eq!(
+            hub_aliases("http://localhost:7370", Some("home-pc"), &ips, Some(7371)),
+            vec![
+                "http://home-pc:7371",
+                "http://100.101.102.103:7371",
+                "http://localhost:7370",
+            ]
         );
     }
 

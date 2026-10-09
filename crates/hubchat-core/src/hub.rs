@@ -123,6 +123,18 @@ pub struct Health {
     /// The hub's clock in unix ms when it answered (v2.0.1, lazy_history).
     #[serde(default)]
     pub now: Option<i64>,
+    /// Mail hub v2.0.1 (feature "door"), on the main port only: where its
+    /// relay-only door listens. Absent when no door runs.
+    #[serde(default)]
+    pub door: Option<DoorAt>,
+}
+
+/// Where a hub's relay-only door listens: `bind` is an IP address, and
+/// 0.0.0.0 or :: mean every address of the hub's computer.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct DoorAt {
+    pub port: u16,
+    pub bind: String,
 }
 
 impl Health {

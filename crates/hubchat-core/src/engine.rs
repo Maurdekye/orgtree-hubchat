@@ -441,6 +441,95 @@ impl Engine {
         Ok(url)
     }
 
+    // ------------------------------------------------------- setup codes
+
+    /// Join a setup link's hub and message its org with the code: add the
+    /// hub, wait (up to `wait`) until we are registered there, learn who it
+    /// holds, then queue the first message and remember the code until the
+    /// org answers. Returns the org's address (the chat to open).
+    pub async fn setup_join(
+        self: &Arc<Self>,
+        link: &crate::setup::SetupLink,
+        name: &str,
+        wait: Duration,
+    ) -> Result<String> {
+        let addr = self.add_hub(&link.hub)?;
+        let url = addr.to_string();
+        let deadline = tokio::time::Instant::now() + wait;
+        let client = loop {
+            let found = self
+                .hubs
+                .lock()
+                .unwrap()
+                .get(&url)
+                .filter(|h| h.status.state == HubState::Connected)
+                .map(|h| h.client.clone());
+            if let Some(c) = found {
+                break c;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(Error::Invalid(format!("couldn't join {}'s hub", link.pc)));
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        };
+        // A v1 hub sends its roster with the next poll answer, up to a minute
+        // away: ask now, so the first message goes through this hub.
+        let roster = client.roster(&self.me).await?;
+        self.store.set_roster(&url, &roster)?;
+        self.host.event(Event::Directory);
+        if !roster.iter().any(|r| r.slug == link.org) {
+            return Err(Error::Invalid(format!("{} isn't on {}'s hub", link.orgname, link.pc)));
+        }
+        let state = crate::setup::SetupState {
+            outcome: None,
+            code: link.code.clone(),
+            orgname: link.orgname.clone(),
+            pc: link.pc.clone(),
+            sent_at: now(),
+            at: None,
+            reply_id: None,
+        };
+        self.store.set_meta(
+            &crate::setup::meta_key(&link.org),
+            &serde_json::to_string(&state).map_err(|e| Error::Invalid(e.to_string()))?,
+        )?;
+        self.send(NewOutgoing {
+            id: uuid::Uuid::new_v4().to_string(),
+            peer: link.org.clone(),
+            body: crate::setup::first_message(&link.orgname, name, &link.code),
+            kind: None,
+            reply_to: None,
+            attachments: Vec::new(),
+        })?;
+        Ok(link.org.clone())
+    }
+
+    /// Where a setup with `org` stands, if one was started.
+    pub fn setup_state(&self, org: &str) -> Option<crate::setup::SetupState> {
+        let raw = self.store.meta(&crate::setup::meta_key(org)).ok()??;
+        serde_json::from_str(&raw).ok()
+    }
+
+    /// An incoming message: if it is the org's answer to our pending setup
+    /// code, record the outcome (only from that org, naming our code).
+    fn note_setup_reply(&self, from: &str, id: &str, body: &str) {
+        let Some(mut st) = self.setup_state(from) else {
+            return;
+        };
+        if st.outcome.is_some() {
+            return;
+        }
+        let Some(outcome) = crate::setup::reply_outcome(body, &st.code) else {
+            return;
+        };
+        st.outcome = Some(outcome);
+        st.at = Some(now());
+        st.reply_id = Some(id.to_owned());
+        if let Ok(v) = serde_json::to_string(&st) {
+            let _ = self.store.set_meta(&crate::setup::meta_key(from), &v);
+        }
+    }
+
     /// Stop every hub connection and the sender (switching identity). The
     /// engine is not usable afterwards.
     pub fn shutdown(&self) {
@@ -679,6 +768,7 @@ impl Engine {
                 }
                 // Persist first, then ack: the hub keeps it until we have it.
                 if self.store.insert_incoming(url, m, &t)? {
+                    self.note_setup_reply(&m.from, &m.id, &m.body);
                     // markdown syntax is for the chat; a notification gets plain words
                     let preview = crate::text::plain_preview(&m.body, 140);
                     self.host.event(Event::Incoming {
@@ -863,6 +953,9 @@ impl Engine {
                             }
                         }
                         let incoming = m.env.from != me;
+                        if incoming && fresh {
+                            self.note_setup_reply(&m.env.from, &m.env.id, &m.env.body);
+                        }
                         if incoming && m.delivered_at.is_none() {
                             to_deliver.push((m.env.id.clone(), "delivered", t.clone()));
                         }

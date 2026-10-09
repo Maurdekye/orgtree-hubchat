@@ -4,12 +4,14 @@
 //! shells share one implementation. The UI never builds hub requests itself.
 
 pub mod engine;
+pub mod door;
 pub mod error;
 pub mod hub;
 pub mod hub_v2;
 pub mod identity;
 pub mod link;
 pub mod recovery;
+pub mod setup;
 pub mod store;
 pub mod text;
 
