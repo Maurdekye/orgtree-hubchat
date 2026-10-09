@@ -162,7 +162,7 @@ export function Desktop() {
             <div className="conv-empty">
               <Logo size={64} />
               <h2>{total ? "Pick a chat" : "Welcome to Hubchat"}</h2>
-              <p>{total ? "Or start a new one with an address." : "Start a chat by typing an address: an Orgtree org, a Claude Code session, or a person."}</p>
+              <p>{total ? "Or start a new one with an address." : "Start a chat by typing an address: an Orgtree org, an agent session (such as Claude Code or Codex), or a person."}</p>
               <button className="btn primary lg" onClick={() => setOv({ k: "newchat", q: "" })}><Icon name="new_chat" />New chat</button>
               <div className="help" style={{ marginTop: 18 }}>Your address: <span className="code-pill"><Addr a={me.address} net /></span> <button className="link" onClick={() => copyText("@net:" + me.address, "Address copied")}>Copy</button></div>
             </div>

@@ -1,6 +1,6 @@
 // In-memory stand-in for the Rust core, used when the UI runs in a plain
 // browser (`npm run dev`). Same shapes as src/api.ts; a believable world:
-// two hubs (one down and retrying), an Orgtree org, a Claude Code session,
+// two hubs (one down and retrying), an Orgtree org, an agent session,
 // people, markdown, a file, a failed message and climbing receipts.
 // URL parameters: ?platform=android  ?onboarding=1  ?update=1 (an update is
 // out)  ?scan=TEXT (what the fake camera reads)  ?pending=ADDRESS (a tapped

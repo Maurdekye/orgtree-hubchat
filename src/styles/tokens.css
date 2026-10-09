@@ -2,7 +2,7 @@
    Neutrals, status colours and the terracotta accent are Orgtree's own
    (apps/desktop/renderer/src/styles.css, dark "Charcoal" + Light) so the two
    apps read as family. Hubchat-only additions: bubble fills, the kind tints
-   (org = terracotta, Claude Code session = sky, person = neutral; the hub web
+   (org = terracotta, agent session = sky, person = neutral; the hub web
    UI's own colour axis) and a rounder shape scale for a chat app. */
 :root, .theme-dark {
   color-scheme: dark;

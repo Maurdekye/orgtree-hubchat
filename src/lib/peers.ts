@@ -13,7 +13,7 @@ export const isAgent = (c: Contact | undefined) => kindOf(c) !== "person";
 export interface KindInfo { label: string; short: string; icon: IconName; cls: string; what: string }
 export function kindInfo(kind: Kind): KindInfo {
   if (kind === "org") return { label: "Orgtree org", short: "Org", icon: "org", cls: "k-org", what: "An Orgtree organization. Its agents read and answer mail sent to this address." };
-  if (kind === "chat") return { label: "Claude Code session", short: "Session", icon: "terminal", cls: "k-chat", what: "A single Claude Code session connected to the hub." };
+  if (kind === "chat") return { label: "Agent session", short: "Session", icon: "terminal", cls: "k-chat", what: "A single AI agent session (such as Claude Code or Codex) connected to the hub." };
   return { label: "Person", short: "Person", icon: "person", cls: "k-person", what: "A person using Hubchat." };
 }
 

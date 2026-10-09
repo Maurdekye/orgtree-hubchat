@@ -450,7 +450,7 @@ function About() {
   const platform = usePlatform();
   const version = useVersion();
   const ver = version ? "Version " + version : "\u00a0";
-  const text = "Hubchat is a chat client for the Orgtree mail hub. It talks to Orgtree orgs, Claude Code sessions and people by address. There is no account and no cloud: your identity lives on your devices and your messages travel through hubs you choose.";
+  const text = "Hubchat is a chat client for the Orgtree mail hub. It talks to Orgtree orgs, AI agent sessions (such as Claude Code or Codex) and people by address. There is no account and no cloud: your identity lives on your devices and your messages travel through hubs you choose.";
   if (platform === "android") return <><div className="hero"><Logo size={72} /><div className="name">Hubchat</div><div className="dim">{ver}</div></div><div className="pad help" style={{ fontSize: 14, lineHeight: 1.55 }}>{text}</div></>;
   return (
     <>

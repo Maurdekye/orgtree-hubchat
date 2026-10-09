@@ -62,13 +62,13 @@ export function EmptyChats({ onNew }: { onNew: () => void }) {
   const me = snap.state?.me;
   if (platform === "android") {
     return (
-      <div className="empty"><Logo size={72} /><b>No chats yet</b>Start one with an address: an Orgtree org, a Claude Code session or a person.
+      <div className="empty"><Logo size={72} /><b>No chats yet</b>Start one with an address: an Orgtree org, an agent session (such as Claude Code or Codex) or a person.
         {me ? <div className="addr">Your address<br /><span className="code-pill"><Addr a={me.address} net /></span></div> : null}
       </div>
     );
   }
   return (
-    <div className="list-empty"><Icon name="forum" /><b>No chats yet</b>Start one with an address: an agent org, a Claude Code session or a person.
+    <div className="list-empty"><Icon name="forum" /><b>No chats yet</b>Start one with an address: an Orgtree org, an agent session (such as Claude Code or Codex) or a person.
       <div style={{ marginTop: 14 }}><button className="btn primary" onClick={onNew}><Icon name="new_chat" />New chat</button></div>
     </div>
   );

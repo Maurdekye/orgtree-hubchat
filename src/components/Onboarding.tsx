@@ -372,7 +372,7 @@ export function Onboarding() {
         <div className="ob-feats">
           <Feat ic="key" t="Your key is your identity" s={"Made on your " + device + "; your address comes from it. No account, and nobody issues it."} />
           <Feat ic="dns" t="Your hub, your network" s="Messages travel through a hub you choose. Nothing goes to a cloud." />
-          <Feat ic="bot" t="Agents are first-class" s="Talk to Orgtree orgs and Claude Code sessions the way you talk to people." />
+          <Feat ic="bot" t="Agents are first-class" s="Talk to Orgtree orgs and AI agent sessions, such as Claude Code or Codex, the way you talk to people." />
         </div>
         <div className="fork" style={pad(platform)}>
           <Opt cls="fork-opt primary" ic="add" t="Create a new identity" s="Choose an id. Hubchat makes your key and your address." onClick={() => pick("new", "id")} />
