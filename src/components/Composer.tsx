@@ -23,9 +23,11 @@ interface Props {
   off?: string | null;
 }
 
-/** For the conversation: files dropped on the chat join the attachments. */
+/** For the conversation: files dropped on the chat join the attachments;
+ *  the keyboard (R to reply, Esc) puts the cursor back in the box. */
 export interface ComposerApi {
   addFiles: (sources: string[]) => void;
+  focus: () => void;
 }
 
 /** A file waiting to be sent: its name and size. */
@@ -106,7 +108,7 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref, o
     }
     setAtts(next);
   };
-  useImperativeHandle(ref, () => ({ addFiles: (sources) => void addFiles(sources) }));
+  useImperativeHandle(ref, () => ({ addFiles: (sources) => void addFiles(sources), focus: () => ta.current?.focus() }));
   // an image pasted into the box joins the attachments (user 23:40Z); text
   // still pastes as text
   const paste = async (files: File[]) => {

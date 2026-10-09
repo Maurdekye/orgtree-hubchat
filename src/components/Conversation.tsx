@@ -41,13 +41,17 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   const { msgs, loaded, reload, more, loadingOlder, loadOlder } = useMessages(peer);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [sel, setSel] = useState<string | null>(null);
+  // desktop keyboard: the message Shift+Tab has highlighted (R replies to it)
+  const [hl, setHl] = useState<string | null>(null);
+  const hlRef = useRef(hl);
+  hlRef.current = hl;
   const [extra, setExtra] = useState<Record<string, Message | null>>({});
   const tl = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   const [far, setFar] = useState(false);
   const newMark = useRef<{ peer: string; id: string | null } | null>(null);
 
-  useEffect(() => { setReplyTo(null); setSel(null); pinned.current = true; }, [peer]);
+  useEffect(() => { setReplyTo(null); setSel(null); setHl(null); pinned.current = true; }, [peer]);
 
   // "N new messages": where the unread messages began when the chat opened
   // (taken from the chat list's count, which a quick mark-read can't race)
@@ -143,6 +147,61 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   const reply = useCallback((m: Message) => { setReplyTo(m); setSel(null); }, []);
   const info = useCallback((m: Message) => { setSel(null); onInfo(m); }, [onInfo]);
 
+  // ------------------------------------- desktop: Shift+Tab walks the bubbles
+  // (user 2026-10-09 08:38Z). From the message box the first Shift+Tab
+  // highlights the newest message and the focus moves to the timeline, so R
+  // and the other keys never type into the box; Shift+Tab goes older, Tab
+  // newer, Tab past the newest and Esc go back to the box, R replies. Only
+  // bubbles count (msgs): no day lines, "new messages" line or system notes.
+  const growFrom = useRef<string | null>(null);
+  const show = useCallback((id: string) => {
+    setHl(id);
+    document.getElementById("m-" + id)?.scrollIntoView({ block: "nearest" });
+  }, []);
+  const leaveHl = () => { growFrom.current = null; setHl(null); };
+  const backToBox = () => { leaveHl(); comp.current?.focus(); };
+  const keys = (e: React.KeyboardEvent) => {
+    if (platform !== "desktop") return;
+    if (e.nativeEvent.isComposing || e.ctrlKey || e.altKey || e.metaKey) return;
+    const t = e.target as HTMLElement, cur = hlRef.current;
+    if (!cur) {
+      // the default order would go to the attach button: never from here
+      if (e.key === "Tab" && e.shiftKey && t.matches(".composer textarea")) {
+        e.preventDefault();
+        const last = msgs[msgs.length - 1];
+        if (last) { show(last.id); tl.current?.focus({ preventScroll: true }); }
+      }
+      return;
+    }
+    if (!tl.current?.contains(t)) return;
+    const i = msgs.findIndex((m) => m.id === cur);
+    if (i < 0) { leaveHl(); return; }
+    if (e.key === "Tab") {
+      e.preventDefault(); growFrom.current = null;
+      if (e.shiftKey) {
+        if (i > 0) show(msgs[i - 1].id);
+        // at the oldest loaded one: fetch the next page now (scrolling to it
+        // may not move anything, so the scroll handler wouldn't), and step
+        // onto its newest message once it is in
+        else if (more) { growFrom.current = msgs[0].id; older(); }
+      } else if (i < msgs.length - 1) show(msgs[i + 1].id);
+      else backToBox();
+    } else if (e.key === "Escape") {
+      // only the highlight goes, not the info panel behind it
+      e.preventDefault(); e.stopPropagation(); backToBox();
+    } else if (e.key.toLowerCase() === "r" && e.key.length === 1) {
+      e.preventDefault();
+      reply(msgs[i]); backToBox();
+    }
+  };
+  useEffect(() => {
+    const from = growFrom.current;
+    if (!from || !hlRef.current || msgs[0]?.id === from) return;
+    growFrom.current = null;
+    const j = msgs.findIndex((m) => m.id === from);
+    if (j > 0) show(msgs[j - 1].id);
+  }, [msgs, show]);
+
   // the banner: none of this peer's hubs is connected
   const ph = peerHubs(c, hubs);
   const down = ph.length && !ph.some((h) => h.state === "connected") ? ph[0] : null;
@@ -174,7 +233,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
     }
     const first = !prev || prev.outgoing !== m.outgoing || t - msgTime(prev) > GROUP_GAP || (!m.outgoing && !!m.kind && CHIP_KINDS.has(m.kind));
     rows.push(
-      <MessageView key={m.id} m={m} first={first} peerName={name} peerKind={kind} quoted={quoted(m.reply_to)} hover={platform === "desktop"} selected={sel === m.id}
+      <MessageView key={m.id} m={m} first={first} peerName={name} peerKind={kind} quoted={quoted(m.reply_to)} hover={platform === "desktop"} selected={sel === m.id} highlighted={hl === m.id}
         onReply={reply} onInfo={info} onDelete={del} onJump={jump} onOpenAddr={onOpenAddr} />,
     );
     prev = m;
@@ -276,7 +335,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   }
 
   return (
-    <section className="conv" ref={conv}>
+    <section className="conv" ref={conv} onKeyDown={keys}>
       <div className="conv-head">
         <span className="conv-av" onClick={onContact}><PeerAvatar address={peer} c={c} hubs={hubs} size={40} /></span>
         <div className="who" onClick={onContact} title="Contact info">
@@ -292,7 +351,9 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
         <button className={"icon-btn" + (infoOn ? " on" : "")} onClick={onContact} title="Contact info (Ctrl+I)" aria-label="Contact info" aria-pressed={!!infoOn}><Icon name="info" /></button>
       </div>
       <div className="tl-wrap">
-        <div className="timeline scroll" ref={tl} onScroll={onScroll}><div className="tl-inner">{rows}</div></div>
+        <div className="timeline scroll" ref={tl} onScroll={onScroll} tabIndex={platform === "desktop" ? -1 : undefined}
+          onMouseDown={() => { if (hlRef.current) leaveHl(); }}
+          onBlur={(e) => { if (hlRef.current && document.hasFocus() && !e.currentTarget.contains(e.relatedTarget as Node | null)) leaveHl(); }}><div className="tl-inner">{rows}</div></div>
         {jumpBtn}
         {dragging ? <DropZone lim={limitFor(c, hubs)} /> : null}
       </div>

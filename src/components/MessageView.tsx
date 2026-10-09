@@ -92,9 +92,11 @@ interface Props extends MsgHandlers {
   quoted: Message | null | undefined;
   hover: boolean;
   selected?: boolean;
+  /** Desktop: the keyboard's highlight (Shift+Tab walks it, R replies). */
+  highlighted?: boolean;
 }
 
-export const MessageView = memo(function MessageView({ m, first, peerName, peerKind, quoted, hover, selected, onReply, onInfo, onDelete, onJump, onOpenAddr }: Props) {
+export const MessageView = memo(function MessageView({ m, first, peerName, peerKind, quoted, hover, selected, highlighted, onReply, onInfo, onDelete, onJump, onOpenAddr }: Props) {
   const platform = usePlatform();
   const [open, setOpen] = useState(false);
   const long = !!m.body && isLong(m.body);
@@ -172,7 +174,7 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
     openMenu(e.clientX, e.clientY, items);
   };
   return (
-    <div className={"msg " + (m.outgoing ? "out" : "in") + (first ? " first" : "") + (selected ? " sel" : "")} id={"m-" + m.id} data-id={m.id}>
+    <div className={"msg " + (m.outgoing ? "out" : "in") + (first ? " first" : "") + (selected ? " sel" : "") + (highlighted ? " hl" : "")} id={"m-" + m.id} data-id={m.id}>
       {platform === "android" ? <span className="swipe-ic"><Icon name="reply" /></span> : null}
       <div className="row">
         <div className={"bubble" + (m.attachments.length && !m.body ? " only-att" : "") + (m.reply_to ? " has-quote" : "")} onClick={delegate} onContextMenu={menu}>
