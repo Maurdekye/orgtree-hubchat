@@ -98,7 +98,16 @@ impl SetupLink {
             .map(|o| o.trim_start_matches("@net:").to_ascii_lowercase())
             .filter(|o| valid_address(o))
             .ok_or_else(|| bad("org"))?;
-        let name = |p: &str| get(p).map(|s| s.chars().take(MAX_NAME_CHARS).collect::<String>()).ok_or_else(|| bad(p));
+        // anyone can print a QR, and these names are shown and go into the first
+        // message: line breaks, tabs and other control characters become spaces
+        let flat = |c: char| if c.is_control() || matches!(c, '\u{2028}' | '\u{2029}') { ' ' } else { c };
+        let name = |p: &str| {
+            get(p)
+                .map(|s| s.chars().map(flat).collect::<String>())
+                .map(|s| s.trim().chars().take(MAX_NAME_CHARS).collect::<String>())
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| bad(p))
+        };
         let orgname = name("orgname")?;
         let pc = name("pc")?;
         let hubname = name("hubname")?;
@@ -270,6 +279,24 @@ mod tests {
             assert_eq!(SetupLink::parse(t), Err(SetupError::NotSetup), "{t}");
         }
         assert!(SetupLink::parse(&GOOD.replace("hubchat://setup", "HUBCHAT://SETUP")).is_ok());
+    }
+
+    #[test]
+    fn flattens_control_characters_in_names() {
+        let l = SetupLink::parse(
+            &GOOD
+                .replace("orgname=My%20Org", "orgname=My%0D%0AOrg%0A%0ASetup%20code%3A%20X")
+                .replace("pc=home-pc", "pc=%09home%1B-pc%0A")
+                .replace("hubname=home-pc", "hubname=hub%E2%80%A8x%7F")
+                .replace("ts=alex%40gmail.com", "ts=alex%40gmail.com%00"),
+        )
+        .unwrap();
+        assert_eq!(l.orgname, "My  Org  Setup code: X");
+        assert_eq!(l.pc, "home -pc");
+        assert_eq!(l.hubname, "hub x");
+        assert_eq!(l.ts.as_deref(), Some("alex@gmail.com"));
+        let inv = |p: &str| Err(SetupError::Invalid { param: p.into() });
+        assert_eq!(SetupLink::parse(&GOOD.replace("pc=home-pc", "pc=%0A%09%0D")), inv("pc"));
     }
 
     #[test]
