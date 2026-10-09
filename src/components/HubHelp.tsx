@@ -3,6 +3,11 @@
 // v2.0) and how to reach it from outside the local network: Tailscale,
 // recommended, or the hub's relay-only door. Brief here and worded after the
 // hub's README (Connect Hubchat), which has the full steps.
+// Every device, the hub's own computer too, connects through the relay-only
+// door, never the main port opened to the network (user 2026-10-09 05:46Z):
+// the main port's page shows every message on the hub. On the hub's computer
+// that is localhost:7371, so a phone linked from it is handed the computer's
+// names at 7371 (hub_aliases keeps the port), which the phone can reach.
 //   HubHelp: the inline toggle (HubAdder, under the address field)
 //   HubHelpLink: a link that opens HubHelpDialog (banners, strips, Directory,
 //     Settings) through openHubHelp
@@ -35,29 +40,24 @@ export function HubHelpBody() {
       <h5>With Orgtree (it has one built in)</h5>
       <ol>
         <li>In Orgtree, open <b>App settings › Mail hub</b>.</li>
-        <li>Set <b>Hosting › Listen on</b> to <b>This computer and the local network</b>, then click <b>Save hosting settings</b>.</li>
+        <li>Under <b>Public access</b>, turn on <b>Also serve a relay-only door on port 7371</b>, then click <b>Save hosting settings</b>. Leave <b>Hosting › Listen on</b> at <b>This computer only</b>.</li>
         <li>{android
-          ? <>In Hubchat, add the computer's address and port 7370, for example <M>home-pc:7370</M>.</>
-          : <>In Hubchat, add <M>localhost:7370</M> on that computer; on other devices, the computer's address and port 7370, for example <M>home-pc:7370</M>.</>}</li>
+          ? <>In Hubchat, add the computer's address and port 7371, for example <M>home-pc:7371</M>.</>
+          : <>In Hubchat, add the computer's address and port 7371, for example <M>home-pc:7371</M>; on that computer itself, <M>localhost:7371</M>.</>}</li>
       </ol>
+      <div className="hubhelp-warn"><Icon name="privacy" /><div><b>Why not "This computer and the local network"?</b> That opens the hub's main port, whose page shows every message on the hub, so anyone on your Wi-Fi could read them all. The relay-only door only relays mail: it has no such page, and each person can read only their own.</div></div>
       <h5>On its own (mail hub v2.0)</h5>
-      <p>Get it from <Ext href={HUB_REPO}>github.com/Maurdekye/orgtree-mailhub</Ext>. In its folder, copy <M>.env.example</M> to <M>.env</M>, set <M>HUB_DB_PASSWORD</M>, then run <M>docker compose up -d --build</M>. It listens on port 7370.</p>
+      <p>Get it from <Ext href={HUB_REPO}>github.com/Maurdekye/orgtree-mailhub</Ext>. In its folder, copy <M>.env.example</M> to <M>.env</M> and set <M>HUB_DB_PASSWORD</M>. For the same reason, also set <M>HUB_PUBLIC=1</M> (the relay-only door) and <M>HUB_BIND=127.0.0.1</M> (the main port stays on that computer). Then run <M>docker compose up -d --build</M>, and in Hubchat add the computer's address and port 7378, for example <M>home-pc:7378</M>.</p>
       <h5>From outside your network: use Tailscale</h5>
       <p>Tailscale is the safer, simpler choice: nothing is opened to the internet, only devices in your tailnet can reach the hub, and Tailscale encrypts the traffic (the hub has no encryption of its own).</p>
       <ol>
         <li>Install <Ext href={TAILSCALE}>Tailscale</Ext> on the hub's computer and on each phone or PC that runs Hubchat.</li>
-        <li>Keep the hub listening on the network (in Orgtree: <b>This computer and the local network</b>).</li>
-        <li>In Hubchat, add the hub by the computer's Tailscale name, for example <M>home-pc:7370</M> (or its <M>100.x.y.z</M> address).</li>
+        <li>In Hubchat, add the hub by the computer's Tailscale name and the door's port, for example <M>home-pc:7371</M> (or its <M>100.x.y.z</M> address).</li>
       </ol>
       <p>If a device can't connect, check that the hub computer's firewall lets the port in (on Windows, allow the hub if Windows asks).</p>
       <h5>The open internet: only the relay-only door</h5>
-      <p>Without Tailscale, open the hub's relay-only door to the internet, never the main port 7370. The door serves only what Hubchat needs and has no mail page, but anyone who reaches it can still register an address and send mail.</p>
-      <ul>
-        <li>Orgtree: turn on <b>Public access › Also serve a relay-only door on port 7371</b>, and save.</li>
-        <li>Docker: set <M>HUB_PUBLIC=1</M> in <M>.env</M>; the door is on port 7378.</li>
-      </ul>
+      <p>Without Tailscale, open only the relay-only door to the internet, never the main port 7370. Anyone who reaches the door can register an address and send mail, but can read only their own.</p>
       <p>Put a tunnel or reverse proxy that gives you an <M>https://</M> address in front of it, and add that address in Hubchat. A plain port forward sends every message and secret unencrypted.</p>
-      <div className="hubhelp-warn"><Icon name="privacy" /><div><b>Anyone who reaches the main port can read all of the hub's mail</b> on its page. If anyone else is on your network or tailnet, keep the main port on the hub's computer (Orgtree: <b>Listen on › This computer only</b>; Docker: <M>HUB_BIND=127.0.0.1</M>) and connect Hubchat to the relay-only door instead: port 7371, or 7378 with Docker.</div></div>
       <p className="hubhelp-more"><Ext href={HUB_DOCS}>Full instructions in the hub's README</Ext></p>
     </div>
   );

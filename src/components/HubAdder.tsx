@@ -88,14 +88,14 @@ export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel, initi
         <div style={{ display: "flex", gap: 8 }}>
           <label className="input" style={{ flex: 1 }}>
             <Icon name="dns" />
-            <input id="hub-in" value={value} autoFocus={autoFocus} placeholder="hub.office.lan or 10.0.0.5:7370" autoComplete="off" spellCheck={false} autoCapitalize="off" inputMode="url"
+            <input id="hub-in" value={value} autoFocus={autoFocus} placeholder="hub.office.lan or 10.0.0.5:7371" autoComplete="off" spellCheck={false} autoCapitalize="off" inputMode="url"
               onChange={(e) => { setValue(e.target.value); if (ph.k !== "checking" && ph.k !== "adding") setPh({ k: "idle" }); }}
               onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void check(); } }} />
           </label>
           {platform === "desktop" ? checkBtn : null}
           {platform === "desktop" && onCancel ? <button className="btn ghost" onClick={onCancel}>Cancel</button> : null}
         </div>
-        <div className="help">No <span className="mono">http://</span>? Hubchat adds it. No port? It uses 7370.</div>
+        <div className="help">No <span className="mono">http://</span>? Hubchat adds it. No port? Hubchat tries the hub's usual ports.</div>
       </div>
       {card}
       {platform === "android" ? <div className="pad" style={{ marginBottom: 8 }}>{checkBtn}</div> : null}
