@@ -11,8 +11,11 @@ PROFILE="${1:-debug}"
 [ -n "${HUBCHAT_ENV:-}" ] && source "$HUBCHAT_ENV"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
 FLAG=""; [ "$PROFILE" = debug ] && FLAG="--debug"
-npx tauri android build $FLAG --target aarch64 --apk >/dev/null 2>&1 || true   # fails at the symlink step on purpose
 SO="$(cygpath -u "${CARGO_TARGET_DIR:-src-tauri/target}")/aarch64-linux-android/$PROFILE/libhubchat_lib.so"
+# an earlier build's library must never end up in this APK when this compile fails
+rm -f "$SO"
+# HUBCHAT_BUILD_LOG: optionally, a file for tauri's output (the compile errors)
+npx tauri android build $FLAG --target aarch64 --apk >"${HUBCHAT_BUILD_LOG:-/dev/null}" 2>&1 || true   # fails at the symlink step on purpose
 [ -f "$SO" ] || { echo "Rust build failed; run: npx tauri android build $FLAG --target aarch64 --apk"; exit 1; }
 mkdir -p src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a
 cp -f "$SO" src-tauri/gen/android/app/src/main/jniLibs/arm64-v8a/
