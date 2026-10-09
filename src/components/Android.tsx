@@ -39,12 +39,12 @@ function Chats({ go }: { go: (s: Scr) => void }) {
   const f = (k: ChatFilter, label: string) => <button className={"fchip" + (filter === k ? " on" : "")} onClick={() => setFilter(k)}>{label}</button>;
   return (
     <>
-      <div className="appbar">
+      <div className="appbar" role="banner">
         {searching ? <>
           <button className="icon-btn" onClick={() => { setSearching(false); setQ(""); }} aria-label="Close search"><Icon name="back" /></button>
           <label className="to-field" style={{ flex: 1, margin: "0 8px 0 0", height: 44 }}><input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search chats" autoComplete="off" /></label>
         </> : <>
-          <div className="title">Hubchat<AppVersion /></div>
+          <div className="title" role="heading" aria-level={1}>Hubchat<AppVersion /></div>
           <button className="icon-btn" onClick={() => setSearching(true)} aria-label="Search"><Icon name="search" /></button>
           <button className="icon-btn" onClick={() => go({ s: "directory" })} aria-label="Directory"><Icon name="contacts" /></button>
           <button className="icon-btn" onClick={() => go({ s: "settings" })} aria-label="Settings"><Icon name="settings" /></button>
@@ -54,7 +54,7 @@ function Chats({ go }: { go: (s: Scr) => void }) {
       <RecoveryBanner onShow={() => go({ s: "set", tab: "recovery" })} />
       <TransfersStrip onOpen={(p) => go({ s: "conv", p })} />
       <div className="fchips">{f("all", "All")}{f("agents", "Agents")}{f("people", "People")}</div>
-      <div className="scr-body">
+      <div className="scr-body" role="main">
         {!total ? <EmptyChats onNew={() => go({ s: "newchat" })} />
           : rows.length ? <><ChatRows rows={rows} selected={null} onOpen={(p) => go({ s: "conv", p })} /><div style={{ height: 90 }} /></>
           : <div className="empty"><b>No chats match</b>To reach someone new, use New chat and type their address.</div>}
