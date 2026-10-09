@@ -357,10 +357,6 @@
 .dir-note { margin: auto 6px 4px; font-size: 12px; color: var(--dim); line-height: 1.45; }
 .dir-tools { padding: 2px 28px 8px; display: flex; flex-direction: column; gap: 10px; }
 .dir-tools .filters { padding: 0; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.dir-me { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; background: var(--bg); border: 1px dashed var(--line); margin-bottom: 6px; --ring: var(--bg); }
-.dir-me .t { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.dir-me .t b { color: var(--ink-strong); font-size: 13.5px; }
-.dir-me .t span { font-size: 12px; color: var(--dim); }
 .dir-row .t3 { font-size: 12.5px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px; }
 .dir-row .r .btn { height: 26px; padding: 0 10px; font-size: 12px; pointer-events: none; }
 .dir-chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 10px 10px; }
@@ -447,7 +443,6 @@
 .fchip.hubf { font-family: var(--mono); font-size: 12px; }
 .dir-row .via { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; width: 150px; flex: none; }
 .chip.hubchip.stale { opacity: .55; border-style: dashed; }
-.dir-me .hubchips { display: flex; gap: 4px; margin-left: auto; }
 /* the right-click menu (CtxMenu.tsx): the design's popover; the item the
    arrow keys reached, and disabled items staying quiet */
 .pop.ctx { min-width: 190px; z-index: 95; } /* above toasts (90), below the title bar (100) */

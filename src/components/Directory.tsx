@@ -9,7 +9,7 @@ import { displayName, kindOf, presence, type Kind } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { HubHelpLink } from "./HubHelp";
 import { chatMenu } from "./ChatList";
-import { Addr, Avatar, KindGlyph, Modal, ModalHead, PeerAvatar, pressKeys, usePlatform } from "./ui";
+import { Addr, KindGlyph, Modal, ModalHead, PeerAvatar, pressKeys, usePlatform } from "./ui";
 
 type KindF = "all" | Kind;
 
@@ -89,14 +89,6 @@ export function Directory({ onOpen, onClose, onBack, onInfo }: { onOpen: (addres
           <Icon name="cloud_off" /><div><b>Can't reach {h.name}.</b> Its part of the list may be out of date; status is unknown for anyone only on {h.name}. <HubHelpLink /></div>
         </div>
       ))}
-      {me && hubs.length ? (
-        <div className="dir-me">
-          <Avatar kind="me" name={me.name || me.id} size={platform === "android" ? 40 : 36} />
-          <div className="t"><b>You</b><span className="mono"><Addr a={me.address} /></span></div>
-          {platform === "desktop" ? <span className="hubchips">{hubs.map((h) => <span key={h.url} className="chip hubchip">{h.name}</span>)}</span> : null}
-          <span className="dim" style={{ fontSize: 12.5 }}>Everyone on your hubs sees you here</span>
-        </div>
-      ) : null}
       {sec("Online now", online)}{sec("Seen in the last 7 days", recent)}{sec("Not seen in over 7 days", quiet)}
       {hubs.length && !shown.length ? (
         <div className={platform === "android" ? "empty" : "list-empty"}>{qq || kf !== "all" || hub !== "all" ? <><b>No one matches</b>Try another filter, or type a full address in New chat.</> : <><b>No one else is on your hubs yet</b>Share your address so people and agents can reach you.</>}</div>
