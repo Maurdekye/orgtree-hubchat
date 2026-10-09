@@ -12,6 +12,7 @@ import { errText } from "../lib/native";
 import { hubVersion } from "../lib/peers";
 import { refreshState } from "../lib/store";
 import { HubHelp } from "./HubHelp";
+import { foundWhere } from "./HubReview";
 import { NoteCard, usePlatform } from "./ui";
 
 type Phase = { k: "idle" } | { k: "checking"; input: string } | { k: "result"; p: Probe } | { k: "adding" } | { k: "error"; msg: string };
@@ -33,8 +34,9 @@ export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel, initi
     setPh({ k: "checking", input });
     try { setPh({ k: "result", p: await api.probeHub(input) }); } catch (e) { setPh({ k: "error", msg: errText(e) }); }
   };
-  const add = async (name: string) => {
-    const input = value.trim();
+  /** `found`: the address the check reached (a bare host's port, user 23:46Z). */
+  const add = async (name: string, found?: string) => {
+    const input = found || value.trim();
     setPh({ k: "adding" });
     try {
       const url = await api.addHub(input);
@@ -55,10 +57,10 @@ export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel, initi
     else if (p.result === "connected") {
       card = (
         <div className="probe-card ok"><Icon name="check_circle" />
-          <div><b>Connected to {p.name}</b><span className="mono">{p.url}</span> · hub version {hubVersion(p)} · files up to {bytes(p.max_attachment_bytes)} per message
+          <div><b>{p.discovered ? <>Found {p.name} {foundWhere(p.url)}</> : <>Connected to {p.name}</>}</b><span className="mono">{p.url}</span> · hub version {hubVersion(p)} · files up to {bytes(p.max_attachment_bytes)} per message
             <div className="acts">{onPick
               ? <button className="btn primary" onClick={() => onPick(p.url, p.name)}><Icon name="check" />Use {p.name}</button>
-              : <button className="btn primary" onClick={() => add(p.name)}><Icon name="add" />Add {p.name}</button>}</div>
+              : <button className="btn primary" onClick={() => add(p.name, p.url)}><Icon name="add" />Add {p.name}</button>}</div>
           </div>
         </div>
       );

@@ -13,7 +13,8 @@ import { NoteCard, usePlatform } from "./ui";
 type Check =
   | { k: "empty" }
   | { k: "checking" }
-  | { k: "ok"; name: string }
+  /** `found`: a bare host answered on a port it didn't name (user 23:46Z). */
+  | { k: "ok"; name: string; found?: string }
   | { k: "bad"; error: string }
   /** Not an address at all: it can't be saved. */
   | { k: "invalid"; error: string };
@@ -39,6 +40,13 @@ const DEBOUNCE = 600;
  *  as it does to anything typed), no trailing slash; https:// stays. */
 const short = (a: string) => a.trim().replace(/^http:\/\//i, "").replace(/\/+$/, "");
 const same = (a: string, b: string) => short(a).toLowerCase() === short(b).toLowerCase();
+/** "on port 7378", or "over https" for a tunnel, for "Found X …". */
+export function foundWhere(url: string): string {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" ? "over https" : "on port " + (u.port || "80");
+  } catch { return "at " + url; }
+}
 
 /** An address that names the device it is used on (localhost, 127.x, ::1, 0.0.0.0). */
 function loopback(a: string): boolean {
@@ -53,7 +61,7 @@ function loopback(a: string): boolean {
 const wanted = (value: string, c: Check) => c.k === "ok" || (c.k === "bad" && !loopback(value));
 
 function fromProbe(p: Probe): Check {
-  if (p.result === "connected") return { k: "ok", name: p.name };
+  if (p.result === "connected") return { k: "ok", name: p.name, found: p.discovered ? p.url : undefined };
   if (p.result === "invalid") return { k: "invalid", error: p.error };
   return { k: "bad", error: p.result === "not_a_hub" ? "not a hub: " + p.error : p.error };
 }
@@ -105,7 +113,8 @@ export function useHubReview(hubs: HubRow[]) {
   const ticked = rows.filter((r) => r.on);
   const urls: string[] = [];
   for (const r of ticked) {
-    const v = r.value.trim();
+    // a bare host that answered on another port is saved with it
+    const v = (r.check.k === "ok" && r.check.found ? short(r.check.found) : "") || r.value.trim();
     if (v && !urls.some((u) => same(u, v))) urls.push(v);
   }
   return {
@@ -153,7 +162,7 @@ function HubLine({ r, rev, disabled }: { r: Row; rev: HubReviewState; disabled?:
   const tries = c.k === "bad" || c.k === "invalid" ? r.candidates.filter((x) => x.trim() && !same(x, r.value)) : [];
   let status: ReactNode;
   if (c.k === "checking") status = <span className="hr-s busy"><span className="spin" />Checking…</span>;
-  else if (c.k === "ok") status = <span className="hr-s ok"><Icon name="check_circle" /><b>{c.name}</b></span>;
+  else if (c.k === "ok") status = <span className="hr-s ok"><Icon name="check_circle" />{c.found ? <span>Found <b>{c.name}</b> {foundWhere(c.found)}</span> : <b>{c.name}</b>}</span>;
   else if (c.k === "empty") status = <span className="hr-s">Type the address this {platform === "android" ? "phone" : "PC"} should use</span>;
   else {
     status = (
