@@ -1,8 +1,17 @@
-// Mini-markdown for message bodies (ported from the prototype's HC.md).
-// Everything from the message is HTML-escaped before any markup is added, so
-// the result is safe for dangerouslySetInnerHTML. Supported: paragraphs,
-// headings (rendered bold), lists, quotes, tables, fenced code with Copy,
-// inline code, bold, italic, links and @net: addresses.
+// GitHub-flavored markdown for message bodies (user 2026-10-09 08:44Z).
+// Message text comes from other people and agents, so it is untrusted, and
+// it gets two walls before it reaches dangerouslySetInnerHTML:
+//   1. marked parses it, and our renderer turns raw HTML into plain escaped
+//      text, drops every link that is not http(s), and never loads a remote
+//      picture (a link to it instead);
+//   2. DOMPurify then keeps only the tags and attributes listed below, so a
+//      slip in (1) still cannot ship a script, a style, an iframe or an
+//      event handler.
+// Links carry their target in data-href, never href: MessageView's click
+// handler sends it to the system browser through openLink, which is http(s)
+// only, and the WebView itself never navigates.
+import { Marked, type MarkedToken, type Token, type Tokens } from "marked";
+import DOMPurify from "dompurify";
 
 const ESC: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 export const esc = (s: unknown) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ESC[c]);
@@ -10,21 +19,15 @@ export const esc = (s: unknown) => String(s == null ? "" : s).replace(/[&<>"']/g
 const COPY_SVG =
   '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>';
 
-function inline(src: string): string {
-  const codes: string[] = [];
-  let s = String(src).replace(/`([^`]+)`/g, (_, c: string) => { codes.push(c); return "\u0000" + (codes.length - 1) + "\u0000"; });
-  s = esc(s);
-  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  s = s.replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, "$1<em>$2</em>");
-  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a class="md-a" data-href="$2" title="$2">$1</a>');
-  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<]+[^\s<.,;:!?)])/g, '$1<a class="md-a" data-href="$2" title="$2">$2</a>');
-  s = s.replace(/@net:([a-z0-9][a-z0-9._-]*[a-z0-9])/g, '<a class="addr" data-slug="$1">@net:$1</a>');
-  s = s.replace(/\u0000(\d+)\u0000/g, (_, i: string) => "<code>" + esc(codes[+i]) + "</code>");
-  return s;
+/** The one kind of link a message may carry: http(s), checked twice. */
+function safeUrl(href: string | null | undefined): string | null {
+  const h = String(href || "").trim();
+  if (!/^https?:\/\//i.test(h)) return null;
+  try { const p = new URL(h).protocol; return p === "http:" || p === "https:" ? h : null; } catch { return null; }
 }
 
 function codeBlock(text: string, lang: string): string {
-  const lines = text.split("\n").map((l) => {
+  const lines = text.replace(/\n$/, "").split("\n").map((l) => {
     const e = esc(l);
     if (lang === "diff" && /^\+/.test(l)) return '<span class="d-add">' + e + "</span>";
     if (lang === "diff" && /^-/.test(l)) return '<span class="d-del">' + e + "</span>";
@@ -35,40 +38,112 @@ function codeBlock(text: string, lang: string): string {
     "<pre><code>" + lines + "</code></pre></div>";
 }
 
-function table(rows: string[]): string {
-  const cells = (r: string) => r.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
-  const head = cells(rows[0]);
-  const body = rows.slice(1).filter((r) => !/^\s*\|?\s*:?-{2,}/.test(r)).map(cells);
-  return '<div class="md-table"><table><thead><tr>' + head.map((c) => "<th>" + inline(c) + "</th>").join("") + "</tr></thead><tbody>" +
-    body.map((r) => "<tr>" + r.map((c) => "<td>" + inline(c) + "</td>").join("") + "</tr>").join("") + "</tbody></table></div>";
-}
+const link = (href: string, inner: string) => {
+  const u = safeUrl(href);
+  return u ? '<a class="md-a" data-href="' + esc(u) + '" title="' + esc(u) + '">' + inner + "</a>" : inner;
+};
 
-const BLOCK_START = /^(```|\s*\||\s*[-*] |\s*\d+\. |> ?|#{1,3} )/;
+const marked = new Marked({
+  gfm: true,
+  // a chat line break is a line break, as it always was here
+  breaks: true,
+  tokenizer: {
+    // Plain text must stay plain: a message that merely starts with spaces is
+    // not a code block, and a line over "---" is not a heading.
+    code: () => undefined,
+    lheading: () => undefined,
+  },
+  extensions: [{
+    name: "addr",
+    level: "inline",
+    start: (s: string) => { const i = s.indexOf("@net:"); return i < 0 ? undefined : i; },
+    tokenizer(src: string) {
+      const m = /^@net:([a-z0-9][a-z0-9._-]*[a-z0-9])/.exec(src);
+      return m ? { type: "addr", raw: m[0], slug: m[1] } : undefined;
+    },
+    renderer: (t: Tokens.Generic) => '<a class="addr" data-slug="' + esc(t.slug) + '">@net:' + esc(t.slug) + "</a>",
+  }],
+  renderer: {
+    html: ({ text, block }) => {
+      const e = esc(text).replace(/\n/g, "<br>");
+      return block ? "<p>" + e.replace(/(<br>)+$/, "") + "</p>" : e;
+    },
+    code: ({ text, lang }) => codeBlock(text, (lang || "").trim().split(/\s+/)[0] || ""),
+    heading({ tokens, depth }) {
+      return "<h" + depth + ' class="md-h md-h' + Math.min(depth, 3) + '">' + this.parser.parseInline(tokens) + "</h" + depth + ">";
+    },
+    link({ href, tokens }) { return link(href, this.parser.parseInline(tokens)); },
+    // never fetch a picture a stranger points at: show its description as a link
+    image: ({ href, text }) => link(href, esc(text || href)),
+    checkbox: ({ checked }) => '<span class="md-task' + (checked ? " on" : "") + '" aria-hidden="true"></span> ',
+    tablecell(t) {
+      const tag = t.header ? "th" : "td";
+      return "<" + tag + (t.align ? ' class="al-' + t.align + '"' : "") + ">" + this.parser.parseInline(t.tokens) + "</" + tag + ">";
+    },
+    table(t) {
+      const row = (cells: Tokens.TableCell[]) => "<tr>" + cells.map((c) => this.tablecell(c)).join("") + "</tr>";
+      return '<div class="md-table"><table><thead>' + row(t.header) + "</thead><tbody>" + t.rows.map(row).join("") + "</tbody></table></div>";
+    },
+  },
+});
 
-/** Markdown to (escaped) HTML. */
+const PURIFY = {
+  ALLOWED_TAGS: [
+    "p", "br", "hr", "strong", "em", "del", "code", "pre", "a", "span", "div", "button",
+    "ul", "ol", "li", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6",
+    "table", "thead", "tbody", "tr", "th", "td", "svg", "path",
+  ],
+  ALLOWED_ATTR: ["class", "title", "data-href", "data-slug", "data-act", "start", "viewBox", "d", "aria-hidden"],
+  ALLOW_DATA_ATTR: false,
+  ALLOW_ARIA_ATTR: false,
+  ALLOW_UNKNOWN_PROTOCOLS: false,
+};
+// the only attributes that can lead anywhere: data-href must be http(s)
+DOMPurify.addHook("afterSanitizeAttributes", (n) => {
+  if (n.hasAttribute("data-href") && !safeUrl(n.getAttribute("data-href"))) { n.removeAttribute("data-href"); n.removeAttribute("class"); }
+  if (n.hasAttribute("data-act") && n.getAttribute("data-act") !== "copy-code") n.removeAttribute("data-act");
+});
+
+/** The second wall, on its own: only the allow-listed tags and attributes survive. */
+export const clean = (html: string): string => DOMPurify.sanitize(html, PURIFY) as unknown as string;
+
+/** Markdown to HTML that is safe for dangerouslySetInnerHTML. */
 export function md(src: string): string {
-  const lines = String(src || "").replace(/\r/g, "").split("\n");
-  const out: string[] = []; let i = 0;
-  while (i < lines.length) {
-    const L = lines[i];
-    if (/^```/.test(L)) {
-      const lang = L.slice(3).trim(); const buf: string[] = []; i++;
-      while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]);
-      i++; out.push(codeBlock(buf.join("\n"), lang)); continue;
-    }
-    if (/^\s*\|/.test(L)) { const rows: string[] = []; while (i < lines.length && /^\s*\|/.test(lines[i])) rows.push(lines[i++]); out.push(table(rows)); continue; }
-    if (/^\s*[-*] /.test(L)) { const it: string[] = []; while (i < lines.length && /^\s*[-*] /.test(lines[i])) it.push(lines[i++].replace(/^\s*[-*] /, "")); out.push("<ul>" + it.map((t) => "<li>" + inline(t) + "</li>").join("") + "</ul>"); continue; }
-    if (/^\s*\d+\. /.test(L)) { const it: string[] = []; while (i < lines.length && /^\s*\d+\. /.test(lines[i])) it.push(lines[i++].replace(/^\s*\d+\. /, "")); out.push("<ol>" + it.map((t) => "<li>" + inline(t) + "</li>").join("") + "</ol>"); continue; }
-    if (/^> ?/.test(L)) { const it: string[] = []; while (i < lines.length && /^> ?/.test(lines[i])) it.push(lines[i++].replace(/^> ?/, "")); out.push("<blockquote>" + it.map(inline).join("<br>") + "</blockquote>"); continue; }
-    if (/^#{1,3} /.test(L)) { out.push('<p class="md-h">' + inline(L.replace(/^#{1,3} /, "")) + "</p>"); i++; continue; }
-    if (!L.trim()) { i++; continue; }
-    const buf: string[] = [];
-    while (i < lines.length && lines[i].trim() && !(buf.length && BLOCK_START.test(lines[i]))) buf.push(lines[i++]);
-    out.push("<p>" + buf.map(inline).join("<br>") + "</p>");
-  }
-  return out.join("");
+  return clean((marked.parse(String(src || "").replace(/\r\n?/g, "\n"), { async: false }) as string).trim());
 }
 
-/** Plain one-line text for previews. */
-export const plain = (src: string) =>
-  String(src || "").replace(/```[\s\S]*?```/g, "[code]").replace(/[*_`>#|]/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/\s+/g, " ").trim();
+// --- plain one-line text, for the chat list and quotes ----------------------
+
+function flat(ts: Token[] | undefined): string {
+  let out = "";
+  for (const tok of ts || []) {
+    const t = tok as MarkedToken;
+    switch (t.type) {
+      case "code": out += " [code] "; break;
+      case "html": out += t.raw; break;
+      case "image": out += t.text; break;
+      case "hr": case "br": case "space": out += " "; break;
+      case "def": case "checkbox": break;
+      case "table": out += " " + [t.header, ...t.rows].map((r) => r.map((c) => flat(c.tokens)).join(" ")).join(" ") + " "; break;
+      case "list": out += " " + t.items.map((i) => flat(i.tokens)).join(" ") + " "; break;
+      case "paragraph": case "heading": case "blockquote": out += " " + flat(t.tokens) + " "; break;
+      default: {
+        const g = t as Tokens.Generic;
+        out += g.tokens ? flat(g.tokens) : String(g.text ?? g.raw ?? "");
+      }
+    }
+  }
+  return out;
+}
+
+const plainCache = new Map<string, string>();
+/** Plain one-line text for previews: the words, without the markdown. */
+export function plain(src: string): string {
+  const s = String(src || "");
+  const hit = plainCache.get(s);
+  if (hit !== undefined) return hit;
+  const out = flat(marked.lexer(s.replace(/\r\n?/g, "\n"))).replace(/\s+/g, " ").trim();
+  if (plainCache.size > 400) plainCache.clear();
+  plainCache.set(s, out);
+  return out;
+}
