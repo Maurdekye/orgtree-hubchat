@@ -88,10 +88,11 @@ async fn every_device_gets_everything() {
         e.add_hub(&hub).unwrap();
     }
     for e in [&a, &b, &m] {
-        until("connected", 15, || {
+        // a message during the first sync is history, not news
+        until("first sync done", 30, || {
             e.hub_statuses()
                 .iter()
-                .any(|s| s.state == HubState::Connected)
+                .any(|s| s.state == HubState::Connected && s.answered_ms.is_some())
         })
         .await;
         let s = e.hub_statuses();
@@ -429,10 +430,11 @@ async fn another_device_in_use_keeps_this_one_quiet() {
         e.add_hub(&hub).unwrap();
     }
     for e in [&pc, &phone, &b] {
-        until("connected", 15, || {
+        // a message during the first sync is history, not news
+        until("first sync done", 30, || {
             e.hub_statuses()
                 .iter()
-                .any(|s| s.state == HubState::Connected)
+                .any(|s| s.state == HubState::Connected && s.answered_ms.is_some())
         })
         .await;
     }
