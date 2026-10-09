@@ -52,9 +52,11 @@ jobs:
           sparse-checkout: .github/ci
           persist-credentials: false
       - id: check
+        # Only a pushed tag is a release. A manual run started from a tag ref is a
+        # test too: it builds `inputs.ref`, which need not be the tag's commit.
         env:
-          MODE: ${{ github.ref_type == 'tag' && 'release' || 'test' }}
-          TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          MODE: ${{ github.event_name == 'push' && github.ref_type == 'tag' && 'release' || 'test' }}
+          TAG: ${{ github.event_name == 'push' && github.ref_type == 'tag' && github.ref_name || '' }}
         run: node .ci-tools/.github/ci/release/check-version.mjs
       - name: Cargo.lock is complete for every platform
         # The builds run cargo without --locked, so an incomplete lockfile would be
@@ -201,7 +203,9 @@ jobs:
   # The only job with write access. It uploads exactly what `stage` assembled, as a
   # draft; publishing is a person's decision (docs/ci-release.md).
   draft:
-    if: needs.resolve.outputs.mode == 'release'
+    # !cancelled(): a release run skips sign-test, and a skipped job also skips every
+    # later job whose `if` has no status check of its own, even after stage succeeded.
+    if: ${{ !cancelled() && needs.resolve.outputs.mode == 'release' && needs.stage.result == 'success' }}
     needs: [resolve, stage]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
