@@ -252,3 +252,86 @@ async fn a_chat_keeps_its_hub_when_two_hubs_reach_the_peer() {
     maya.shutdown();
     drop((hub_a, hub_b));
 }
+
+/// The hub picker: a chat pinned to a hub goes through it, waits (never
+/// switching on its own) while that hub can't reach the peer, and goes on
+/// through Automatic's choice once unpinned.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_pinned_hub_carries_the_chat_and_waits_when_it_cannot() {
+    let (Some(hub_a), Some(hub_b)) = (common::start_hub().await, common::start_hub().await) else {
+        eprintln!("SKIPPED: no mailhub source");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let (alex, _ah) = engine("alex", dir.path());
+    let (maya, _mh) = engine("maya", dir.path());
+    let connected = |e: &Engine, n: usize| {
+        e.hub_statuses()
+            .iter()
+            .filter(|s| s.state == HubState::Connected)
+            .count()
+            == n
+    };
+    let mut urls = Vec::new();
+    for e in [&maya, &alex] {
+        e.start().unwrap();
+        urls.clear();
+        for h in [&hub_a, &hub_b] {
+            urls.push(e.add_hub(&format!("127.0.0.1:{}", h.port)).unwrap());
+        }
+    }
+    until("all connected", 15, || connected(&maya, 2) && connected(&alex, 2)).await;
+    // the hubs hand out their roster with a poll answer: wake alex's polls
+    let peer = maya.me().address();
+    for a in &urls {
+        hubchat_core::HubClient::new(a.clone())
+            .send(maya.me(), &hubchat_core::hub::Outgoing::new(&alex.me().address(), "wake"))
+            .await
+            .unwrap();
+    }
+    until("both hubs reach maya", 15, || {
+        alex.store().hubs_reaching(&peer).unwrap().len() == 2
+    })
+    .await;
+    let (a, b) = (urls[0].to_string(), urls[1].to_string());
+    let (first, other) = if a < b { (a, b) } else { (b, a) };
+    let sent_via = |id: &str| alex.store().message(id).unwrap().unwrap().hub;
+
+    // Automatic: both online, no history: the first by address.
+    let r = alex.send_route(&peer).unwrap();
+    assert_eq!((r.pinned.clone(), r.automatic.clone()), (None, Some(first.clone())));
+    assert_eq!(r.next, r.automatic);
+    assert_eq!(r.hubs.len(), 2);
+    alex.send(msg("p1", &peer, "auto")).unwrap();
+    until("p1 sent", 15, || sent_via("p1").is_some()).await;
+    assert_eq!(sent_via("p1"), Some(first.clone()));
+
+    // Pinned to the other hub: it goes there, though Automatic says otherwise.
+    alex.set_send_hub(&peer, Some(&other)).unwrap();
+    let r = alex.send_route(&peer).unwrap();
+    assert_eq!((r.pinned.clone(), r.next.clone()), (Some(other.clone()), Some(other.clone())));
+    assert_eq!(r.automatic, Some(first.clone()));
+    alex.send(msg("p2", &peer, "pinned")).unwrap();
+    until("p2 sent", 15, || sent_via("p2").is_some()).await;
+    assert_eq!(sent_via("p2"), Some(other.clone()));
+
+    // The pinned hub goes down: the message waits instead of switching.
+    let (down, up) = if other == urls[0].to_string() { (hub_a, hub_b) } else { (hub_b, hub_a) };
+    drop(down);
+    until("pinned hub down", 30, || connected(&alex, 1)).await;
+    let r = alex.send_route(&peer).unwrap();
+    assert_eq!((r.pinned.clone(), r.next.clone()), (Some(other.clone()), None));
+    assert_eq!(r.automatic, Some(first.clone()));
+    alex.send(msg("p3", &peer, "waits")).unwrap();
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let p3 = alex.store().message("p3").unwrap().unwrap();
+    assert_eq!((p3.state.as_str(), p3.hub), ("queued", None));
+
+    // Back to Automatic: it goes through the hub that can.
+    alex.set_send_hub(&peer, None).unwrap();
+    until("p3 sent", 15, || sent_via("p3").is_some()).await;
+    assert_eq!(sent_via("p3"), Some(first.clone()));
+    alex.shutdown();
+    maya.shutdown();
+    drop(up);
+}

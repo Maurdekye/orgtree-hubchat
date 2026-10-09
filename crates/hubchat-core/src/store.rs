@@ -77,6 +77,12 @@ CREATE TABLE IF NOT EXISTS drafts (
   peer TEXT PRIMARY KEY,
   body TEXT NOT NULL
 );
+-- the hub a chat is pinned to (the hub picker); no row = Automatic.
+-- Per device, never synced (hubchat-opus 2026-10-09 09:36Z).
+CREATE TABLE IF NOT EXISTS chat_hub (
+  peer TEXT PRIMARY KEY,
+  hub  TEXT NOT NULL REFERENCES hubs(url) ON DELETE CASCADE
+);
 "#;
 
 pub struct Store {
@@ -320,6 +326,29 @@ impl Store {
                 |r| r.get(0),
             )
             .optional()
+        })
+    }
+
+    /// The hub this chat is pinned to (None: Automatic).
+    pub fn send_hub(&self, peer: &str) -> Result<Option<String>> {
+        self.with(|c| {
+            c.query_row("SELECT hub FROM chat_hub WHERE peer=?", [peer], |r| r.get(0))
+                .optional()
+        })
+    }
+
+    /// Pin a chat to a hub, or back to Automatic with None. Removing the hub
+    /// drops the pin (the chat goes back to Automatic).
+    pub fn set_send_hub(&self, peer: &str, hub: Option<&str>) -> Result<()> {
+        self.with(|c| {
+            match hub {
+                Some(h) => c.execute(
+                    "INSERT INTO chat_hub(peer, hub) VALUES(?,?) ON CONFLICT(peer) DO UPDATE SET hub=excluded.hub",
+                    [peer, h],
+                ),
+                None => c.execute("DELETE FROM chat_hub WHERE peer=?", [peer]),
+            }
+            .map(|_| ())
         })
     }
 
@@ -952,5 +981,25 @@ mod tests {
             s.directory().unwrap()[0].hubs,
             vec!["http://a:7370".to_string()]
         );
+    }
+
+    #[test]
+    fn a_pinned_hub_is_kept_per_chat_and_goes_with_its_hub() {
+        let s = Store::open_in_memory().unwrap();
+        for h in ["http://a:7370", "http://b:7370"] {
+            s.add_hub(h, "t0").unwrap();
+        }
+        assert_eq!(s.send_hub("maya.111111").unwrap(), None);
+        s.set_send_hub("maya.111111", Some("http://a:7370")).unwrap();
+        s.set_send_hub("maya.111111", Some("http://b:7370")).unwrap();
+        s.set_send_hub("pat.222222", Some("http://a:7370")).unwrap();
+        assert_eq!(s.send_hub("maya.111111").unwrap().as_deref(), Some("http://b:7370"));
+        // a hub we don't have can't be pinned
+        assert!(s.set_send_hub("maya.111111", Some("http://zz:7370")).is_err());
+        // removing the hub: back to Automatic
+        s.remove_hub("http://b:7370").unwrap();
+        assert_eq!(s.send_hub("maya.111111").unwrap(), None);
+        s.set_send_hub("pat.222222", None).unwrap();
+        assert_eq!(s.send_hub("pat.222222").unwrap(), None);
     }
 }

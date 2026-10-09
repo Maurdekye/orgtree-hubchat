@@ -826,6 +826,56 @@ impl Engine {
         Ok(())
     }
 
+    /// Where a chat's messages go (the hub picker): the pinned hub if any,
+    /// the Automatic choice, and the hubs that list the peer.
+    pub fn send_route(&self, peer: &str) -> Result<SendRoute> {
+        let r = self.route(peer, &self.connected_hubs())?;
+        let mut hubs: Vec<RouteHub> = r
+            .reaching
+            .into_iter()
+            .map(|(url, online)| RouteHub { url, online })
+            .collect();
+        hubs.sort_by(|a, b| a.url.cmp(&b.url));
+        Ok(SendRoute {
+            pinned: r.pinned,
+            automatic: r.automatic.map(|(u, _, _)| u),
+            next: r.next.map(|(u, _, _)| u),
+            hubs,
+        })
+    }
+
+    /// Pin a chat to one of our hubs, or back to Automatic with None.
+    pub fn set_send_hub(&self, peer: &str, hub: Option<&str>) -> Result<()> {
+        self.store.set_send_hub(peer, hub)?;
+        self.host.event(Event::Chat { peer: peer.into() });
+        self.queue_changed.notify_one();
+        Ok(())
+    }
+
+    /// A pinned hub is used only while it is connected and lists the peer;
+    /// otherwise the chat's messages wait for it rather than going another
+    /// way (user 2026-10-09 08:41Z: "say so plainly instead of silently
+    /// switching").
+    fn route(&self, peer: &str, connected: &[(String, HubClient, u64)]) -> Result<Route> {
+        let reaching = self.store.hubs_reaching(peer)?;
+        let last = self.store.last_send_hub(peer)?;
+        let pinned = self.store.send_hub(peer)?;
+        let automatic = pick_hub(connected, &reaching, last.as_deref());
+        let next = match &pinned {
+            Some(p) if reaching.iter().any(|(u, _)| u == p) => {
+                connected.iter().find(|(u, _, _)| u == p).cloned()
+            }
+            Some(_) => None,
+            None => automatic.clone(),
+        };
+        Ok(Route {
+            pinned,
+            automatic,
+            next,
+            reaching,
+        })
+    }
+
     /// Put a failed message back in the queue (Retry). Uploads restart from zero.
     pub fn retry(&self, id: &str) -> Result<()> {
         if let Some(m) = self.store.message(id)? {
@@ -878,9 +928,7 @@ impl Engine {
         if connected.is_empty() {
             return Ok(false);
         }
-        let reaching = self.store.hubs_reaching(&m.peer)?;
-        let last = self.store.last_send_hub(&m.peer)?;
-        let Some((url, client, max)) = pick_hub(&connected, &reaching, last.as_deref()) else {
+        let Some((url, client, max)) = self.route(&m.peer, &connected)?.next else {
             return Ok(false);
         }; // its hubs are down: wait
         let total: u64 = m.body.len() as u64 + m.attachments.iter().map(|a| a.bytes).sum::<u64>();
@@ -1351,6 +1399,33 @@ impl Engine {
             }
         }
     }
+}
+
+/// A chat's route as the hub picker shows it.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct SendRoute {
+    /// The hub the user pinned this chat to; None = Automatic.
+    pub pinned: Option<String>,
+    /// The hub Automatic would use now (None: none can, it waits).
+    pub automatic: Option<String>,
+    /// The hub the next message goes through (None: it waits).
+    pub next: Option<String>,
+    /// Our hubs whose directory lists the peer, by address.
+    pub hubs: Vec<RouteHub>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct RouteHub {
+    pub url: String,
+    /// The peer is online there.
+    pub online: bool,
+}
+
+struct Route {
+    pinned: Option<String>,
+    automatic: Option<(String, HubClient, u64)>,
+    next: Option<(String, HubClient, u64)>,
+    reaching: Vec<(String, bool)>,
 }
 
 /// Which connected hub a message to a peer goes through (B1: a stable
