@@ -11,15 +11,49 @@ This is the easy way: about three clicks on your PC and four taps on your phone.
 1. **Install Tailscale on this PC** and sign in. Use an account you can also use on your phone (Google, Microsoft, GitHub or Apple).
 2. **Turn on phone access.** Only devices on your Tailscale network can connect. Windows asks for permission once.
 
+<!-- screenshots -->
+<p>
+  <img src="screenshots/setup-orgtree-card.jpg" alt="Orgtree's Chat from your phone card, with Connect your phone" width="544">
+</p>
+<p>
+  <img src="screenshots/setup-orgtree-panel.jpg" alt="Orgtree's Connect your phone panel: this PC on the Tailscale network, then Turn on phone access" width="640">
+</p>
+<!-- /screenshots -->
+
 **On your phone:**
 
 1. Install **Tailscale** from Google Play and sign in with the **same account** as your PC.
 2. Install **Hubchat**: scan the download code in Orgtree's panel with your camera.
 3. In Orgtree, click **I have Hubchat on my phone › Next**. In Hubchat, tap **Scan setup code** and scan the code. It works once, for 10 minutes. If it runs out, click **New code** on your PC.
 
+<!-- screenshots -->
+<p>
+  <img src="screenshots/setup-orgtree-download-code.jpg" alt="Orgtree's panel with both PC steps done and the Hubchat download code" width="420">
+  <img src="screenshots/setup-orgtree-setup-code.jpg" alt="Orgtree's panel showing the setup code for Scan setup code" width="420">
+</p>
+<p>
+  <img src="screenshots/setup-phone-welcome.jpg" alt="Hubchat's welcome screen on a phone, with Scan setup code first" width="240">
+</p>
+<!-- /screenshots -->
+
 Hubchat checks that Tailscale is installed and that it can reach your PC. If something is missing it says what to do; fix it and tap **Try again**. Then it asks for your name (or, if you already use Hubchat, offers to add your PC), joins your PC's hub and sends your organization a message with the code.
 
+<!-- screenshots -->
+<p>
+  <img src="screenshots/setup-phone-tailscale.jpg" alt="Hubchat's check: Install Tailscale on this phone" width="240">
+  <img src="screenshots/setup-phone-name.jpg" alt="Hubchat asks for your name before chatting with Test Org" width="240">
+  <img src="screenshots/setup-phone-add.jpg" alt="Hubchat, already in use: Add Home-PC and chat with Test Org?" width="240">
+</p>
+<!-- /screenshots -->
+
 When your organization answers, the chat says **Linked — {your organization} knows this address is you.** From then on, your agents know that messages from this phone come from you.
+
+<!-- screenshots -->
+<p>
+  <img src="screenshots/setup-phone-linked.jpg" alt="Hubchat's chat with Test Org, headed Linked" width="240">
+  <img src="screenshots/setup-orgtree-linked.jpg" alt="Orgtree's panel: Linked, with Undo and Done" width="560">
+</p>
+<!-- /screenshots -->
 
 If the chat says the code didn't work, it expired or was already used. Show a new code on your PC and tap **Scan again**.
 
@@ -63,6 +97,16 @@ Each person has one identity: your address, made from your key. To use it on ano
 2. On the new device, choose **I already use Hubchat › Scan the QR code from your other device**. On a PC, choose **Link through a hub**.
 3. On a device that already has your identity, open **Settings › Devices › Link a device** and show the code. On a PC, you can also click the QR button at the bottom of the chat list.
 4. Approve the new device when asked, then confirm its hubs on the new device.
+
+<!-- screenshots -->
+<p>
+  <img src="screenshots/setup-desktop-welcome.jpg" alt="Hubchat's welcome screen on a PC: Create a new identity or I already use Hubchat" width="420">
+  <img src="screenshots/setup-desktop-bring.jpg" alt="Bring your identity to this PC, with Link through a hub recommended" width="420">
+</p>
+<p>
+  <img src="screenshots/setup-desktop-link.jpg" alt="Settings › Devices › Link a device on a PC that has your identity, showing a code" width="640">
+</p>
+<!-- /screenshots -->
 
 Don't scan Orgtree's setup code with a second phone: it would make a second identity, and your organization would know only one of them.
 

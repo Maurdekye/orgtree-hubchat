@@ -15,8 +15,10 @@ import { Modal, ModalHead, PlatformCtx, usePlatform, type Platform } from "./ui"
 import "../styles/setup.css";
 
 const TITLE = "Setting up Hubchat";
-// the document's own title is the dialog's; the body starts after it
-const html = md(guideSrc.replace(/^# .*\n+/, ""));
+// the document's own title is the dialog's; the body starts after it. Its
+// screenshots are for GitHub: the app doesn't carry the pictures, and this
+// renderer shows HTML as text, so each marked block is left out
+const html = md(guideSrc.replace(/^# .*\n+/, "").replace(/<!-- screenshots -->[\s\S]*?<!-- \/screenshots -->\n*/g, ""));
 
 /** The guide itself. */
 export function GuideBody() {
