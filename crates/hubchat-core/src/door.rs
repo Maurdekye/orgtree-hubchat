@@ -120,6 +120,11 @@ async fn same_hub(me: &Health, a: HubAddress, limit: Duration) -> bool {
     }
 }
 
+/// How long the other addresses get once one answered as the hub: a port a
+/// firewall drops silently would otherwise hold the QR for the whole `limit`
+/// (user 2026-10-09 15:40Z).
+const GRACE: Duration = Duration::from_millis(750);
+
 /// Which of `at` answer /healthz as the hub `me` (same name and address
 /// count), all at once; in the order given.
 async fn answering(me: &Health, at: Vec<(IpAddr, u16)>, limit: Duration) -> Vec<(IpAddr, u16)> {
@@ -132,9 +137,19 @@ async fn answering(me: &Health, at: Vec<(IpAddr, u16)>, limit: Duration) -> Vec<
         tries.spawn(async move { same_hub(&me, a, limit).await.then_some(i) });
     }
     let mut ok: Vec<usize> = Vec::new();
-    while let Some(r) = tries.join_next().await {
+    let mut until: Option<tokio::time::Instant> = None;
+    loop {
+        let next = match until {
+            Some(t) => match tokio::time::timeout_at(t, tries.join_next()).await {
+                Ok(r) => r,
+                Err(_) => break, // the rest were too slow; dropping the set stops them
+            },
+            None => tries.join_next().await,
+        };
+        let Some(r) = next else { break };
         if let Ok(Some(i)) = r {
             ok.push(i);
+            until.get_or_insert_with(|| tokio::time::Instant::now() + GRACE);
         }
     }
     ok.sort_unstable();
@@ -256,6 +271,34 @@ mod tests {
         assert!(same_hub(&me, at(same), T).await);
         assert!(!same_hub(&me, at(stranger), T).await);
         assert!(!same_hub(&me, at(1), T).await);
+    }
+
+    /// Accepts connections and never answers, like a port a firewall drops.
+    async fn silent() -> u16 {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = l.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((s, _)) = l.accept().await {
+                held.push(s);
+            }
+        });
+        port
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_silent_address_doesnt_hold_up_the_rest() {
+        let me: Health = serde_json::from_str(&health("home-pc", &[], None)).unwrap();
+        let (quiet, door) = (silent().await, fake(health("home-pc", &[], None)).await);
+        let t0 = std::time::Instant::now();
+        let on = answering(&me, vec![(LO, quiet), (LO, door)], Duration::from_secs(10)).await;
+        let took = t0.elapsed();
+        assert_eq!(on, vec![(LO, door)]);
+        assert!(took < Duration::from_millis(1500), "took {took:?}");
+        // nothing answers: each try still has its whole limit
+        let t0 = std::time::Instant::now();
+        assert!(answering(&me, vec![(LO, quiet)], Duration::from_millis(400)).await.is_empty());
+        assert!(t0.elapsed() >= Duration::from_millis(400));
     }
 
     #[test]
