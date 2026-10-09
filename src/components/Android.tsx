@@ -7,6 +7,7 @@ import { Icon } from "../lib/icons";
 import { displayName, kindOf } from "../lib/peers";
 import { getSnap, useSendRoute, useSnap } from "../lib/store";
 import { chatLinkTarget } from "../lib/chatlink";
+import { installKeyboardImages } from "../lib/keyboardImages";
 import { useActive, useForeground, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { HubBanner, RecoveryBanner, UpdateBanner } from "./Banners";
 import { startUpdateChecks } from "../lib/updates";
@@ -125,6 +126,8 @@ export function Android() {
   useActive(fg);
   useReadTracking(top.s === "conv" ? top.p : null, fg);
   useEffect(() => { startUpdateChecks("android"); }, []);
+  // pictures from the keyboard go into the message box
+  useEffect(() => { installKeyboardImages(); }, []);
 
   const stackRef = useRef(stack);
   stackRef.current = stack;
