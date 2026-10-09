@@ -29,7 +29,7 @@ export const NOT_SETUP = "That isn't a setup code. On your PC, open Orgtree › 
 
 /** What the browser mock's camera reads by default: Orgtree's setup QR. */
 export const MOCK_SETUP_QR = "hubchat://setup?v=1&hub=" + encodeURIComponent("http://100.101.102.103:7371") +
-  "&org=my-org.alex.3f9c2a&orgname=" + encodeURIComponent("My Org") + "&pc=home-pc&ts=" + encodeURIComponent("alex@gmail.com") +
+  "&org=my-org.alex.3f9c2a&orgname=" + encodeURIComponent("My Org") + "&pc=home-pc&ts=" + encodeURIComponent("alex@example.com") +
   "&code=K7QD-4MXP&net=tailscale&hubname=home-pc";
 
 /** Scan Orgtree's setup QR and start the flow. */

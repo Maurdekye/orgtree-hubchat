@@ -208,7 +208,7 @@ mod tests {
     use super::*;
 
     const GOOD: &str = "hubchat://setup?v=1&hub=http%3A%2F%2F100.101.102.103%3A7371&org=my-org.alex.3f9c2a\
-        &orgname=My%20Org&pc=home-pc&ts=alex%40gmail.com&code=K7QD-4MXP&net=tailscale&hubname=home-pc";
+        &orgname=My%20Org&pc=home-pc&ts=alex%40example.com&code=K7QD-4MXP&net=tailscale&hubname=home-pc";
 
     #[test]
     fn parses_a_tailscale_link() {
@@ -217,7 +217,7 @@ mod tests {
         assert_eq!(l.org, "my-org.alex.3f9c2a");
         assert_eq!(l.orgname, "My Org");
         assert_eq!(l.pc, "home-pc");
-        assert_eq!(l.ts.as_deref(), Some("alex@gmail.com"));
+        assert_eq!(l.ts.as_deref(), Some("alex@example.com"));
         assert_eq!(l.code, "K7QD-4MXP");
         assert_eq!(l.net, Net::Tailscale);
         assert_eq!(l.hubname, "home-pc");
@@ -288,13 +288,13 @@ mod tests {
                 .replace("orgname=My%20Org", "orgname=My%0D%0AOrg%0A%0ASetup%20code%3A%20X")
                 .replace("pc=home-pc", "pc=%09home%1B-pc%0A")
                 .replace("hubname=home-pc", "hubname=hub%E2%80%A8x%7F")
-                .replace("ts=alex%40gmail.com", "ts=alex%40gmail.com%00"),
+                .replace("ts=alex%40example.com", "ts=alex%40example.com%00"),
         )
         .unwrap();
         assert_eq!(l.orgname, "My  Org  Setup code: X");
         assert_eq!(l.pc, "home -pc");
         assert_eq!(l.hubname, "hub x");
-        assert_eq!(l.ts.as_deref(), Some("alex@gmail.com"));
+        assert_eq!(l.ts.as_deref(), Some("alex@example.com"));
         let inv = |p: &str| Err(SetupError::Invalid { param: p.into() });
         assert_eq!(SetupLink::parse(&GOOD.replace("pc=home-pc", "pc=%0A%09%0D")), inv("pc"));
     }

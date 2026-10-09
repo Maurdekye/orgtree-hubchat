@@ -98,7 +98,7 @@ async fn until(what: &str, secs: u64, mut f: impl FnMut() -> bool) {
 fn link(hub: &str, org: &str, code: &str) -> SetupLink {
     SetupLink::parse(&format!(
         "hubchat://setup?v=1&hub=http%3A%2F%2F{}&org={org}&orgname=My%20Org\
-         &pc=home-pc&ts=alex%40gmail.com&code={code}&net=tailscale&hubname=testhub",
+         &pc=home-pc&ts=alex%40example.com&code={code}&net=tailscale&hubname=testhub",
         hub.replace(':', "%3A")
     ))
     .unwrap()
