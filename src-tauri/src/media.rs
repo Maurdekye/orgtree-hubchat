@@ -167,9 +167,7 @@ pub fn forget(message_ids: &[String]) {
 /// `x-name` header) saved as a file the composer can attach. Returns the path.
 #[tauri::command]
 pub fn hc_save_pasted(request: tauri::ipc::Request<'_>) -> R<String> {
-    let tauri::ipc::InvokeBody::Raw(data) = request.body() else {
-        return Err("expected the image's bytes".into());
-    };
+    let data = pasted_bytes(request.body()).ok_or("expected the image's bytes")?;
     if data.is_empty() {
         return Err("the pasted image is empty".into());
     }
@@ -191,6 +189,21 @@ pub fn hc_save_pasted(request: tauri::ipc::Request<'_>) -> R<String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// A pasted image's bytes as they arrive: raw on desktop, but on Android,
+/// whose WebView can't read request bodies, Tauri sends them as a JSON array
+/// of numbers.
+fn pasted_bytes(body: &tauri::ipc::InvokeBody) -> Option<std::borrow::Cow<'_, [u8]>> {
+    match body {
+        tauri::ipc::InvokeBody::Raw(data) => Some(data.as_slice().into()),
+        tauri::ipc::InvokeBody::Json(serde_json::Value::Array(items)) => items
+            .iter()
+            .map(|v| v.as_u64().and_then(|n| u8::try_from(n).ok()))
+            .collect::<Option<Vec<u8>>>()
+            .map(Into::into),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,6 +213,17 @@ mod tests {
         assert!(is_image("Screenshot 2026-10-09.PNG"));
         assert!(is_image("a.jpeg") && is_image("b.jpg") && is_image("c.gif") && is_image("d.webp"));
         assert!(!is_image("notes.txt") && !is_image("png") && !is_image("archive.png.zip"));
+    }
+
+    #[test]
+    fn pasted_bytes_come_raw_or_as_a_json_array() {
+        use tauri::ipc::InvokeBody;
+        let raw = InvokeBody::Raw(vec![137, 80, 78, 71]);
+        assert_eq!(pasted_bytes(&raw).as_deref(), Some(&[137u8, 80, 78, 71][..]));
+        let json = InvokeBody::Json(serde_json::json!([137, 80, 78, 71]));
+        assert_eq!(pasted_bytes(&json).as_deref(), Some(&[137u8, 80, 78, 71][..]));
+        assert_eq!(pasted_bytes(&InvokeBody::Json(serde_json::json!([1, 256]))), None);
+        assert_eq!(pasted_bytes(&InvokeBody::Json(serde_json::json!({"a": 1}))), None);
     }
 
     #[test]

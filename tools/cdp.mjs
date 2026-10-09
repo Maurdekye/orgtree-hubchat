@@ -67,8 +67,9 @@ async function connect(port, proc, prof, { width, height, dpr }) {
       await go('about:blank'); await go(url); await sleep(wait);
     },
     file: (p, hash = '') => pathToFileURL(p).href + (hash ? '#' + hash : ''),
-    async eval(expr) {
-      const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
+    /** `gesture`: run as if the user had just acted (clipboard writes need it). */
+    async eval(expr, { gesture = false } = {}) {
+      const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true, userGesture: gesture });
       if (r.exceptionDetails) throw new Error('eval failed: ' + (r.exceptionDetails.exception?.description || r.exceptionDetails.text) + '\n' + expr.slice(0, 200));
       return r.result.value;
     },
