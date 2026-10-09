@@ -1,6 +1,10 @@
 # Hubchat Windows release build: the NSIS setup .exe plus its Tauri updater .sig.
-# Mirrors the local build (`npx tauri build --bundles nsis` with the updater key in
-# TAURI_SIGNING_PRIVATE_KEY) on a pinned windows-2025 runner. See docs/ci-release.md.
+# Mirrors the local build (`npx tauri build --bundles nsis`) on a pinned windows-2025 runner.
+# See docs/ci-release.md.
+#
+# The updater files are ALWAYS signed with a throwaway key made in this job: the real key
+# never enters a job that runs npm install scripts or dependencies' build.rs. For a real
+# release, release.yml's `sign` job re-signs the setup .exe with the real key afterwards.
 #
 # Called by release.yml (workflow_call) or run on its own by pushing to ci-test/hubchat-windows.
 # A push run builds the pushed commit, unless .github/ci/windows/test-ref.txt names another
@@ -14,15 +18,6 @@ on:
         description: tag or commit to build
         type: string
         required: true
-      signing:
-        description: "test = throwaway updater key made in the job; release = the real key from secrets"
-        type: string
-        default: test
-    secrets:
-      TAURI_SIGNING_PRIVATE_KEY:
-        required: false
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
-        required: false
   push:
     branches: ['ci-test/hubchat-windows']
 
@@ -43,7 +38,6 @@ jobs:
       run:
         shell: pwsh
     env:
-      SIGNING: ${{ inputs.signing || 'test' }}
       CARGO_TARGET_DIR: ${{ github.workspace }}\target
     steps:
       - name: Check out the CI helpers
@@ -63,8 +57,7 @@ jobs:
           $override = 'ci/.github/ci/windows/test-ref.txt'
           if (-not $ref -and (Test-Path $override)) { $ref = (Get-Content -Raw $override).Trim() }
           if (-not $ref) { $ref = '${{ github.sha }}' }
-          if ($env:SIGNING -notin @('test', 'release')) { throw "signing must be test or release, got '$env:SIGNING'" }
-          "Building ref $ref with signing=$env:SIGNING"
+          "Building ref $ref"
           "ref=$ref" >> $env:GITHUB_OUTPUT
 
       - name: Check out the app
@@ -125,8 +118,7 @@ jobs:
           "node $(node -v), npm $(npm -v)"
           npm ci
 
-      - name: Make a throwaway updater key (signing=test)
-        if: env.SIGNING == 'test'
+      - name: Make a throwaway updater key
         working-directory: app
         run: |
           $key = Join-Path $env:RUNNER_TEMP 'test-updater.key'
@@ -138,20 +130,12 @@ jobs:
           "Test public key (signatures verify against this, not the shipped pubkey):"
           Get-Content -Raw "$key.pub"
 
-      - name: Check the release key is present (signing=release)
-        if: env.SIGNING == 'release'
-        env:
-          HAVE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
-        run: |
-          if ($env:HAVE_KEY -ne 'true') { throw 'signing=release but secret TAURI_SIGNING_PRIVATE_KEY is empty: refusing to build' }
-
       - name: Build the NSIS installer
         working-directory: app
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ env.SIGNING == 'release' && secrets.TAURI_SIGNING_PRIVATE_KEY || env.TEST_SIGNING_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.SIGNING == 'release' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.TEST_SIGNING_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
         run: |
-          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw 'no updater signing key: refusing to build' }
           npx tauri build --bundles nsis
           if ($LASTEXITCODE) { throw "tauri build failed ($LASTEXITCODE)" }
 
