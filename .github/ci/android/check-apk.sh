@@ -8,11 +8,16 @@ bt="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail 
 echo "== build-tools: $bt"
 echo "== size: $(stat -c %s "$apk") bytes  sha256: $(sha256sum "$apk" | cut -d' ' -f1)"
 echo "== badging"
-"$bt/aapt2" dump badging "$apk" | grep -E "^(package|sdkVersion|targetSdkVersion|native-code|application-label):"
+# Read once: `aapt2 | grep -q` can die of SIGPIPE under pipefail.
+badging="$("$bt/aapt2" dump badging "$apk")"
+grep -E "^(package|sdkVersion|targetSdkVersion|native-code|application-label):" <<< "$badging"
 if [ -n "$want" ]; then
-  "$bt/aapt2" dump badging "$apk" | grep -q "versionName='$want'" \
+  grep -q "versionName='$want'" <<< "$badging" \
     || { echo "::error::versionName is not $want"; exit 1; }
 fi
+# The release app id: a test build's ".test" suffix (HUBCHAT_TEST_BUILD) must never ship.
+grep -qE "^package: name='dev\.orgtree\.hubchat'( |$)" <<< "$badging" \
+  || { echo "::error::the package name is not dev.orgtree.hubchat"; exit 1; }
 echo "== zipalign -c -P 16 -v 4"
 "$bt/zipalign" -c -P 16 -v 4 "$apk" | tail -1
 if [ "${UNSIGNED:-0}" = 1 ]; then
