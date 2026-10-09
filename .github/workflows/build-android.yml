@@ -1,0 +1,208 @@
+# Hubchat Android release build: arm64 APK on Ubuntu, mirroring the local
+# toolchain (scripts/android-build.sh on the user's PC). Called by release.yml;
+# a push to ci-test/hubchat-android runs it standalone.
+# Real keys never enter this workflow: Gradle builds the APK UNSIGNED, and
+# release.yml's `sign` job (Environment `release`) signs that with apksigner.
+# Here it is signed with a throwaway key only, for checks and the launch smoke.
+# Artifacts:
+#   hubchat-android-unsigned  Hubchat_<version>_arm64-unsigned.apk (for release.yml's sign job)
+#   hubchat-android           Hubchat_<version>_arm64.apk + byte-identical Hubchat-android.apk,
+#                             signed with the THROWAWAY key (test builds only)
+name: build-android
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+      signing:        # only `test` here; real signing happens in release.yml
+        type: string
+        default: test
+  push:
+    branches: ['ci-test/hubchat-android']
+
+permissions:
+  contents: read
+
+env:
+  # Pins = the local build on the user's PC (measured 2026-10-09).
+  RUST_TOOLCHAIN: nightly-2025-12-12
+  NODE_VERSION: 24.12.0
+  JAVA_VERSION: '21'
+  NDK_VERSION: 27.3.13750724
+  SDK_PLATFORM: platforms;android-37.0
+  BUILD_TOOLS: build-tools;36.0.0
+  APKSIGNER_BUILD_TOOLS: 35.0.0   # apksigner version used locally and by release.yml
+  # On a push run there are no inputs: test keys.
+  SIGNING: ${{ inputs.signing || 'test' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      # Helper scripts come from this workflow's own commit, which may be newer
+      # than the ref being built (v0.1.1 predates this workflow).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Resolve the ref to build
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+        run: |
+          cp -r .github/ci/android "$RUNNER_TEMP/ci-tools"
+          echo "CI_TOOLS=$RUNNER_TEMP/ci-tools" >> "$GITHUB_ENV"
+          ref="$INPUT_REF"
+          # A ci-test push may name another ref (e.g. v0.1.1) in ci-test-ref.
+          [ -z "$ref" ] && [ -f .github/ci/android/ci-test-ref ] && ref="$(tr -d '[:space:]' < .github/ci/android/ci-test-ref)"
+          [ -z "$ref" ] && ref="$GITHUB_SHA"
+          echo "BUILD_REF=$ref" >> "$GITHUB_ENV"
+          echo "Building ref: $ref"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BUILD_REF }}
+          persist-credentials: false
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Rust toolchain (preinstalled rustup)
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --target aarch64-linux-android
+          echo "RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN" >> "$GITHUB_ENV"
+
+      - name: Android SDK parts (preinstalled sdkmanager)
+        run: |
+          sdkm="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$sdkm" --licenses >/dev/null || true
+          "$sdkm" --list 2>/dev/null | grep -E "platforms;android-3[67]|build-tools;3[56]" || true
+          "$sdkm" --install "ndk;$NDK_VERSION" "$SDK_PLATFORM" "$BUILD_TOOLS" "build-tools;$APKSIGNER_BUILD_TOOLS" "platform-tools" >/dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: Toolchain versions
+        run: |
+          rustc -Vv; cargo -V; node -v; npm -v; java -version 2>&1; ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools"
+          cat "$NDK_HOME/source.properties"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: android-cargo-${{ env.RUST_TOOLCHAIN }}-ndk${{ env.NDK_VERSION }}-${{ hashFiles('Cargo.lock', '.cargo/config.toml') }}
+          restore-keys: android-cargo-${{ env.RUST_TOOLCHAIN }}-ndk${{ env.NDK_VERSION }}-
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: android-gradle-${{ hashFiles('src-tauri/gen/android/**/*.gradle*', 'src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties', 'src-tauri/gen/android/buildSrc/**') }}
+          restore-keys: android-gradle-
+
+      - name: npm ci
+        run: npm ci
+
+      - name: Signing mode
+        run: |
+          [ "$SIGNING" = test ] || { echo "::error::signing='$SIGNING': this workflow only signs with throwaway keys (test); release signing is release.yml's sign job"; exit 1; }
+
+      - name: Version
+        id: version
+        run: |
+          v="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Building Hubchat $v from $BUILD_REF ($(git rev-parse HEAD))"
+
+      - name: Build unsigned (tauri android build --target aarch64 --apk --split-per-abi)
+        run: |
+          unset HUBCHAT_TEST_BUILD          # a .test app-id suffix must never reach a release
+          unset HUBCHAT_ANDROID_KEYSTORE    # no signing config: Gradle emits an unsigned APK
+          # --split-per-abi selects the arm64 flavor (assembleArm64Release), as the local build does;
+          # without it tauri builds the universal flavor.
+          npx tauri android build --ci --target aarch64 --apk --split-per-abi
+          ls -la src-tauri/gen/android/app/build/outputs/apk/arm64/release/
+
+      - name: Collect the unsigned APK
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          grep -q "versionName=$v" src-tauri/gen/android/app/tauri.properties             || { echo "::error::tauri.properties does not carry versionName $v"; cat src-tauri/gen/android/app/tauri.properties; exit 1; }
+          src=src-tauri/gen/android/app/build/outputs/apk/arm64/release/app-arm64-release-unsigned.apk
+          [ -f "$src" ] || { echo "::error::no unsigned APK at $src"; exit 1; }
+          mkdir -p dist-unsigned dist-android
+          cp "$src" "dist-unsigned/Hubchat_${v}_arm64-unsigned.apk"
+
+      - name: Static checks of the unsigned APK (zipalign 16 KB, ELF alignment)
+        run: UNSIGNED=1 bash "$CI_TOOLS"/check-apk.sh "dist-unsigned/Hubchat_${{ steps.version.outputs.version }}_arm64-unsigned.apk" "${{ steps.version.outputs.version }}"
+
+      - name: Sign with a throwaway key (apksigner v2 only, as release.yml signs)
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          bash "$CI_TOOLS"/sign-test.sh "dist-unsigned/Hubchat_${v}_arm64-unsigned.apk" "dist-android/Hubchat_${v}_arm64.apk"
+          cp "dist-android/Hubchat_${v}_arm64.apk" dist-android/Hubchat-android.apk
+          cmp "dist-android/Hubchat_${v}_arm64.apk" dist-android/Hubchat-android.apk
+          sha256sum dist-unsigned/*.apk dist-android/*.apk
+
+      - name: Static checks of the signed APK (badging, zipalign 16 KB, v2-only signature, ELF alignment)
+        run: bash "$CI_TOOLS"/check-apk.sh "dist-android/Hubchat_${{ steps.version.outputs.version }}_arm64.apk" "${{ steps.version.outputs.version }}"
+
+      - name: Compare with the published release (informational)
+        if: startsWith(env.BUILD_REF, 'v')
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          mkdir -p "$RUNNER_TEMP/published"
+          gh release download "$BUILD_REF" -R "$GITHUB_REPOSITORY" -p "Hubchat_${v}_arm64.apk" -D "$RUNNER_TEMP/published" --clobber
+          bash "$CI_TOOLS"/compare.sh "dist-android/Hubchat_${v}_arm64.apk" "$RUNNER_TEMP/published/Hubchat_${v}_arm64.apk"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hubchat-android-unsigned
+          path: dist-unsigned/Hubchat_${{ steps.version.outputs.version }}_arm64-unsigned.apk
+          if-no-files-found: error
+          compression-level: 0
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hubchat-android
+          path: |
+            dist-android/Hubchat_${{ steps.version.outputs.version }}_arm64.apk
+            dist-android/Hubchat-android.apk
+          if-no-files-found: error
+          compression-level: 0
+
+  smoke:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: .github/ci/android
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: hubchat-android
+          path: apk
+
+      - name: Launch smoke (x86_64 emulator with arm64 translation)
+        run: bash .github/ci/android/smoke.sh "apk/Hubchat_${{ needs.build.outputs.version }}_arm64.apk"
