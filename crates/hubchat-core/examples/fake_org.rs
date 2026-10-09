@@ -60,7 +60,7 @@ fn names_code(body: &str, code: &str) -> bool {
 /// Messages to the org since the last call (sync on v2 hubs, poll on v1).
 async fn next_messages(c: &HubClient, me: &Identity, sync: bool, cursor: &mut Option<String>) -> Vec<Envelope> {
     if sync {
-        let Ok(r) = c.sync(me, "fake-org", "Fake org", cursor.as_deref(), 5).await else {
+        let Ok(r) = c.sync(me, "fake-org", "Fake org", cursor.as_deref(), false, 5).await else {
             tokio::time::sleep(Duration::from_secs(1)).await;
             return Vec::new();
         };
