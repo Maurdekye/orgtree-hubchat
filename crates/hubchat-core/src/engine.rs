@@ -370,10 +370,9 @@ impl Engine {
     /// a connected hub whose roster lists `to`, without storing it.
     pub async fn send_unlisted(&self, to: &str, body: &str) -> Result<String> {
         let reaching = self.store.hubs_reaching(to)?;
-        let (url, client, _) = self
-            .connected_hubs()
-            .into_iter()
-            .find(|(u, _, _)| reaching.contains(u))
+        let connected = self.connected_hubs();
+        let (url, client, _) = pick_hub(&connected, &reaching, None)
+            .filter(|_| !reaching.is_empty())
             .ok_or_else(|| {
                 Error::Invalid("none of your connected hubs can reach that device".into())
             })?;
@@ -879,22 +878,9 @@ impl Engine {
         if connected.is_empty() {
             return Ok(false);
         }
-        // Route: a connected hub whose roster lists the peer; else, if no
-        // roster lists it anywhere, the first connected hub (which answers
-        // 422 for an unknown address).
         let reaching = self.store.hubs_reaching(&m.peer)?;
-        let route = connected
-            .iter()
-            .find(|(u, _, _)| reaching.contains(u))
-            .or_else(|| {
-                if reaching.is_empty() {
-                    connected.first()
-                } else {
-                    None
-                }
-            })
-            .cloned();
-        let Some((url, client, max)) = route else {
+        let last = self.store.last_send_hub(&m.peer)?;
+        let Some((url, client, max)) = pick_hub(&connected, &reaching, last.as_deref()) else {
             return Ok(false);
         }; // its hubs are down: wait
         let total: u64 = m.body.len() as u64 + m.attachments.iter().map(|a| a.bytes).sum::<u64>();
@@ -1367,6 +1353,27 @@ impl Engine {
     }
 }
 
+/// Which connected hub a message to a peer goes through: a connected hub
+/// whose roster lists the peer; else, if no roster lists it anywhere, the
+/// first connected hub (which answers 422 for an unknown address).
+fn pick_hub(
+    connected: &[(String, HubClient, u64)],
+    reaching: &[(String, bool)],
+    _last: Option<&str>,
+) -> Option<(String, HubClient, u64)> {
+    connected
+        .iter()
+        .find(|(u, _, _)| reaching.iter().any(|(r, _)| r == u))
+        .or_else(|| {
+            if reaching.is_empty() {
+                connected.first()
+            } else {
+                None
+            }
+        })
+        .cloned()
+}
+
 /// `name`, or `name (2)`, `name (3)`... so a download never overwrites.
 /// The name is reduced to its last path component first.
 fn unique_path(dir: &std::path::Path, name: &str) -> PathBuf {
@@ -1392,6 +1399,49 @@ fn unique_path(dir: &std::path::Path, name: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn hubs(urls: &[&str]) -> Vec<(String, HubClient, u64)> {
+        urls.iter()
+            .map(|u| {
+                let a = HubAddress::parse(u).unwrap();
+                (a.to_string(), HubClient::new(a), 0)
+            })
+            .collect()
+    }
+
+    fn pick(connected: &[&str], reaching: &[(&str, bool)], last: Option<&str>) -> Option<String> {
+        let connected = hubs(connected);
+        let url = |u: &str| HubAddress::parse(u).unwrap().to_string();
+        let reaching: Vec<(String, bool)> =
+            reaching.iter().map(|(u, on)| (url(u), *on)).collect();
+        let last = last.map(url);
+        pick_hub(&connected, &reaching, last.as_deref()).map(|(u, _, _)| u)
+    }
+
+    /// B1: the hub a message goes through doesn't depend on the order the
+    /// engine happens to hold its hubs in (a HashMap's).
+    #[test]
+    fn sending_picks_a_stable_hub() {
+        let (a, b, c) = ("127.0.0.1:7001", "127.0.0.1:7002", "127.0.0.1:7003");
+        let url = |u: &str| Some(HubAddress::parse(u).unwrap().to_string());
+        for order in [[a, b, c], [c, b, a], [b, a, c], [b, c, a]] {
+            // online beats offline, whatever the order
+            assert_eq!(pick(&order, &[(b, true), (a, false)], None), url(b));
+            // among online hubs, the one this chat last went through
+            assert_eq!(pick(&order, &[(a, true), (b, true)], Some(b)), url(b));
+            // ...but not when it is offline there and another is online
+            assert_eq!(pick(&order, &[(a, true), (b, false)], Some(b)), url(a));
+            // all offline: still the one last used
+            assert_eq!(pick(&order, &[(a, false), (c, false)], Some(c)), url(c));
+            // nothing to go on: the first by address
+            assert_eq!(pick(&order, &[(b, true), (c, true)], None), url(b));
+            // listed nowhere: the first connected hub by address (it answers 422)
+            assert_eq!(pick(&order, &[], None), url(a));
+        }
+        // a hub that isn't connected is never picked
+        assert_eq!(pick(&[a], &[(b, true), (a, false)], Some(b)), url(a));
+        assert_eq!(pick(&[c], &[(b, true), (a, false)], None), None);
+    }
 
     #[test]
     fn unique_path_never_escapes_or_overwrites() {

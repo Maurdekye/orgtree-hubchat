@@ -180,3 +180,75 @@ async fn two_engines_chat_through_a_hub() {
     assert!(alex.store().directory().unwrap().is_empty());
     drop(hub);
 }
+
+/// B1: a chat whose peer two hubs reach keeps going through the hub it last
+/// went through, instead of whichever hub the engine happens to list first.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_chat_keeps_its_hub_when_two_hubs_reach_the_peer() {
+    let (Some(hub_a), Some(hub_b)) = (common::start_hub().await, common::start_hub().await) else {
+        eprintln!("SKIPPED: no mailhub source");
+        return;
+    };
+    let (url_a, url_b) = (
+        format!("127.0.0.1:{}", hub_a.port),
+        format!("127.0.0.1:{}", hub_b.port),
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let (alex, _ah) = engine("alex", dir.path());
+    let (maya, _mh) = engine("maya", dir.path());
+    let connected = |e: &Engine, n: usize| {
+        e.hub_statuses()
+            .iter()
+            .filter(|s| s.state == HubState::Connected)
+            .count()
+            == n
+    };
+    maya.start().unwrap();
+    maya.add_hub(&url_a).unwrap();
+    maya.add_hub(&url_b).unwrap();
+    until("maya on both hubs", 15, || connected(&maya, 2)).await;
+
+    // The chat starts on hub B, alex's only hub so far.
+    alex.start().unwrap();
+    let b = alex.add_hub(&url_b).unwrap().to_string();
+    until("alex on B", 15, || connected(&alex, 1)).await;
+    alex.send(msg("k1", &maya.me().address(), "first")).unwrap();
+    until("k1 sent", 15, || {
+        alex.store().message("k1").unwrap().unwrap().hub.is_some()
+    })
+    .await;
+    assert_eq!(alex.store().message("k1").unwrap().unwrap().hub, Some(b.clone()));
+
+    // Hub A joins, and its roster (which the hub hands out with a poll
+    // answer) lists maya too: wake alex's poll there with a message.
+    let a = alex.add_hub(&url_a).unwrap();
+    until("alex on both hubs", 15, || connected(&alex, 2)).await;
+    hubchat_core::HubClient::new(a.clone())
+        .send(
+            maya.me(),
+            &hubchat_core::hub::Outgoing::new(&alex.me().address(), "wake"),
+        )
+        .await
+        .unwrap();
+    until("both hubs reach maya", 15, || {
+        alex.store().hubs_reaching(&maya.me().address()).unwrap().len() == 2
+    })
+    .await;
+
+    for i in 2..=6 {
+        let id = format!("k{i}");
+        alex.send(msg(&id, &maya.me().address(), "more")).unwrap();
+        until("sent", 15, || {
+            alex.store().message(&id).unwrap().unwrap().hub.is_some()
+        })
+        .await;
+        assert_eq!(
+            alex.store().message(&id).unwrap().unwrap().hub,
+            Some(b.clone()),
+            "{id} left the chat's hub"
+        );
+    }
+    alex.shutdown();
+    maya.shutdown();
+    drop((hub_a, hub_b));
+}

@@ -298,13 +298,28 @@ impl Store {
         })
     }
 
-    /// Hubs whose roster lists `address`.
-    pub fn hubs_reaching(&self, address: &str) -> Result<Vec<String>> {
+    /// Hubs whose roster lists `address`, with whether it is online there:
+    /// online ones first, then by URL.
+    pub fn hubs_reaching(&self, address: &str) -> Result<Vec<(String, bool)>> {
         self.with(|c| {
-            let mut st =
-                c.prepare("SELECT hub FROM roster WHERE address=? ORDER BY online DESC, hub")?;
-            let rows = st.query_map([address], |r| r.get(0))?;
+            let mut st = c.prepare(
+                "SELECT hub, online FROM roster WHERE address=? ORDER BY online DESC, hub",
+            )?;
+            let rows = st.query_map([address], |r| Ok((r.get(0)?, r.get(1)?)))?;
             rows.collect()
+        })
+    }
+
+    /// The hub our newest sent message in this chat went through.
+    pub fn last_send_hub(&self, peer: &str) -> Result<Option<String>> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT hub FROM messages WHERE peer=? AND outgoing=1 AND hub IS NOT NULL
+                 ORDER BY created_at DESC, id DESC LIMIT 1",
+                [peer],
+                |r| r.get(0),
+            )
+            .optional()
         })
     }
 
