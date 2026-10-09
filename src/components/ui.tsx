@@ -6,6 +6,7 @@ import { Icon, type IconName } from "../lib/icons";
 import { initials } from "../lib/format";
 import { displayName, kindInfo, kindOf, presence, splitAddr, tickInfo, type Kind, type PresState } from "../lib/peers";
 import { useToasts } from "../lib/toast";
+import { appVersion } from "../lib/native";
 
 export type Platform = "desktop" | "android";
 export const PlatformCtx = createContext<Platform>("desktop");
@@ -133,6 +134,18 @@ export function Toasts() {
 
 export function NoteCard({ icon, warn, children, style }: { icon: IconName; warn?: boolean; children: ReactNode; style?: CSSProperties }) {
   return <div className={"note-card" + (warn ? " warn" : "")} style={style}><Icon name={icon} /><div>{children}</div></div>;
+}
+
+let version: string | null = null;
+
+/** The app's version (tauri.conf.json), quietly beside the chat list's
+ *  title (user 2026-10-09 07:42Z: visible on the main screen). */
+export function AppVersion() {
+  const [v, setV] = useState(version);
+  useEffect(() => {
+    if (!version) appVersion().then((x) => { version = x; setV(x); }, () => {});
+  }, []);
+  return v ? <span className="ver" title={"Hubchat " + v}>v{v}</span> : null;
 }
 
 /** Re-render every `ms` while `on` (countdowns, "last seen"). */

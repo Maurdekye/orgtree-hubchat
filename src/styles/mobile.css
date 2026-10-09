@@ -369,3 +369,5 @@
 .dir-row .via { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
 .chip.hubchip.stale { opacity: .55; border-style: dashed; }
 .fchips.dir-f .fchip { flex: none; white-space: nowrap; }
+/* the app's version beside the chat list's title (user 2026-10-09 07:42Z) */
+.appbar .title .ver { margin-left: 8px; font: 400 12.5px/1 var(--font); color: var(--faint); letter-spacing: 0; }

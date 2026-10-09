@@ -25,7 +25,7 @@ import { toast } from "../lib/toast";
 import { SettingsList, SettingsSection, TABS, type SetTab } from "./Settings";
 import { TransfersStrip } from "./Transfers";
 import { ImageViewer } from "./AttImage";
-import { Toasts } from "./ui";
+import { AppVersion, Toasts } from "./ui";
 
 type Scr =
   | { s: "chats" } | { s: "conv"; p: string } | { s: "msginfo"; id: string; p: string } | { s: "info"; p: string }
@@ -44,7 +44,7 @@ function Chats({ go }: { go: (s: Scr) => void }) {
           <button className="icon-btn" onClick={() => { setSearching(false); setQ(""); }} aria-label="Close search"><Icon name="back" /></button>
           <label className="to-field" style={{ flex: 1, margin: "0 8px 0 0", height: 44 }}><input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search chats" autoComplete="off" /></label>
         </> : <>
-          <div className="title">Hubchat</div>
+          <div className="title">Hubchat<AppVersion /></div>
           <button className="icon-btn" onClick={() => setSearching(true)} aria-label="Search"><Icon name="search" /></button>
           <button className="icon-btn" onClick={() => go({ s: "directory" })} aria-label="Directory"><Icon name="contacts" /></button>
           <button className="icon-btn" onClick={() => go({ s: "settings" })} aria-label="Settings"><Icon name="settings" /></button>

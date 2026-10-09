@@ -444,3 +444,5 @@
 .dir-row .via { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; width: 150px; flex: none; }
 .chip.hubchip.stale { opacity: .55; border-style: dashed; }
 .dir-me .hubchips { display: flex; gap: 4px; margin-left: auto; }
+/* the app's version beside the chat list's title (user 2026-10-09 07:42Z) */
+.side-title .ver { margin-left: 7px; font: 400 11.5px/1 var(--font); color: var(--faint); letter-spacing: 0; }
