@@ -285,8 +285,13 @@ pub async fn hc_probe_link_hubs(hubs: Vec<String>, name: Option<String>) -> R<Pr
     on_core(async move { Ok(probe_first(hubs, name, Duration::from_secs(5)).await) }).await
 }
 
+/// How long a likelier address may still answer once a less likely one has.
+const GRACE: Duration = Duration::from_millis(750);
+
 /// `hubs` tried at once, `limit` each: the likeliest that answers (as
-/// `name`, when given), else the first's failure.
+/// `name`, when given), else the first's failure. Once one answers, the
+/// likelier ones still pending get `GRACE` and no more, so an address that a
+/// firewall silently drops cannot hold the result for the whole `limit`.
 pub(crate) async fn probe_first(hubs: Vec<String>, name: Option<String>, limit: Duration) -> Probe {
     {
         let mut set = tokio::task::JoinSet::new();
@@ -296,7 +301,16 @@ pub(crate) async fn probe_first(hubs: Vec<String>, name: Option<String>, limit: 
         }
         let mut done: Vec<Option<Probe>> = hubs.iter().map(|_| None).collect();
         let connected = |p: &Option<Probe>| matches!(p, Some(Probe::Connected { .. }));
-        while let Some(r) = set.join_next().await {
+        let mut deadline = None;
+        loop {
+            let next = match deadline {
+                Some(d) => match tokio::time::timeout_at(d, set.join_next()).await {
+                    Ok(r) => r,
+                    Err(_) => break,
+                },
+                None => set.join_next().await,
+            };
+            let Some(r) = next else { break };
             let Ok((i, p)) = r else { continue };
             done[i] = Some(p);
             // the first that answered, once every likelier one has failed
@@ -305,7 +319,11 @@ pub(crate) async fn probe_first(hubs: Vec<String>, name: Option<String>, limit: 
                 set.abort_all();
                 return done[w].take().expect("answered");
             }
+            if deadline.is_none() && done.iter().any(connected) {
+                deadline = Some(tokio::time::Instant::now() + GRACE);
+            }
         }
+        set.abort_all();
         if let Some(w) = done.iter().position(connected) {
             return done[w].take().expect("answered");
         }
@@ -688,4 +706,139 @@ pub fn hc_save_recovery<RT: tauri::Runtime>(
     };
     c.store.set_meta("recovery.saved", "yes").map_err(s)?;
     Ok(place)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    /// A fake hub on loopback: answers /healthz as hub `name`.
+    async fn hub(name: &'static str) -> String {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut c, _)) = l.accept().await else { return };
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    let _ = c.read(&mut buf).await;
+                    let body = format!(r#"{{"ok":true,"name":"{name}"}}"#);
+                    let reply = format!(
+                        "HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Length: {}
+Connection: close
+
+{body}",
+                        body.len()
+                    );
+                    let _ = c.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+        url
+    }
+
+    /// Accepts and never answers, like a port a firewall silently drops.
+    async fn silent() -> String {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((c, _)) = l.accept().await {
+                held.push(c);
+            }
+        });
+        url
+    }
+
+    /// Answers at once, but not as a hub: a failure that arrives immediately.
+    async fn not_a_hub() -> String {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut c, _)) = l.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    let _ = c.read(&mut buf).await;
+                    let _ = c
+                        .write_all(b"HTTP/1.1 404 Not Found
+Content-Length: 0
+Connection: close
+
+")
+                        .await;
+                });
+            }
+        });
+        url
+    }
+
+    /// Nothing listens here: refused (slowly on Windows, which retries).
+    async fn closed() -> String {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        drop(l);
+        url
+    }
+
+    fn url_of(p: &Probe) -> &str {
+        match p {
+            Probe::Connected { url, .. } | Probe::Unreachable { url, .. } | Probe::NotAHub { url, .. } => url,
+            Probe::Invalid { .. } => "",
+        }
+    }
+
+    #[tokio::test]
+    async fn a_silent_likelier_address_does_not_hold_the_result() {
+        let (quiet, real) = (silent().await, hub("Home").await);
+        let t = Instant::now();
+        let p = probe_first(vec![quiet, real.clone()], None, Duration::from_secs(10)).await;
+        let took = t.elapsed();
+        println!("silent first, real second: {took:?}");
+        assert!(matches!(p, Probe::Connected { .. }));
+        assert_eq!(url_of(&p), real);
+        assert!(took >= GRACE && took < Duration::from_millis(1500), "took {took:?}");
+    }
+
+    #[tokio::test]
+    async fn both_answering_the_likelier_one_wins() {
+        let (a, b) = (hub("Home").await, hub("Home").await);
+        let p = probe_first(vec![a.clone(), b], None, Duration::from_secs(10)).await;
+        assert_eq!(url_of(&p), a);
+    }
+
+    #[tokio::test]
+    async fn a_likelier_failure_is_not_waited_for() {
+        let (dead, real) = (not_a_hub().await, hub("Home").await);
+        let t = Instant::now();
+        let p = probe_first(vec![dead, real.clone()], None, Duration::from_secs(10)).await;
+        assert_eq!(url_of(&p), real);
+        assert!(t.elapsed() < GRACE, "took {:?}", t.elapsed());
+    }
+
+    #[tokio::test]
+    async fn all_failing_gives_the_first_failure() {
+        let (a, b) = (closed().await, closed().await);
+        let p = probe_first(vec![a.clone(), b], None, Duration::from_secs(10)).await;
+        assert!(matches!(p, Probe::Unreachable { .. }));
+        assert_eq!(url_of(&p), a);
+    }
+
+    #[tokio::test]
+    async fn another_hubs_name_is_still_not_a_hub_match() {
+        let other = hub("Elsewhere").await;
+        let p = probe_first(vec![other], Some("Home".into()), Duration::from_secs(10)).await;
+        assert!(matches!(p, Probe::NotAHub { .. }));
+    }
+
+    #[tokio::test]
+    async fn the_named_hub_is_taken_past_a_different_one() {
+        let (other, home) = (hub("Elsewhere").await, hub("Home").await);
+        let p = probe_first(vec![other, home.clone()], Some("Home".into()), Duration::from_secs(10)).await;
+        assert_eq!(url_of(&p), home);
+    }
 }
