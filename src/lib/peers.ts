@@ -124,7 +124,9 @@ export function attView(a: Attachment, m: Message, prog?: { done: number; total:
   const pct = prog && prog.total ? Math.floor((100 * prog.done) / prog.total) : 0;
   const size = bytes(a.bytes);
   if (a.state === "expired") return { st: "expired", ic: "cloud_off", sub: "No longer on the hub · " + size };
-  if (m.outgoing) {
+  // sent from this device (its file is here); a message we sent from another
+  // device of this identity has none, and downloads like a received one
+  if (m.outgoing && a.source) {
     switch (a.state) {
       case "uploading": return { st: "busy", ic: "upload", bar: pct, cancel: true, sub: prog ? "Uploading · " + bytes(prog.done) + " of " + bytes(prog.total || a.bytes) : "Uploading · " + size };
       case "pending": return { st: "busy", ic: "upload", bar: 0, cancel: true, sub: "Waiting to upload · " + size };

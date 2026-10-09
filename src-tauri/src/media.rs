@@ -105,17 +105,18 @@ pub async fn hc_attachment_preview(message_id: String, local_id: String) -> R<ta
     if let Ok(b) = std::fs::read(&copy) {
         return Ok(tauri::ipc::Response::new(b));
     }
+    // sent from this device: the original, while it's still there
     if m.outgoing {
-        let src = a.source.clone().or(a.local_path.clone()).ok_or("the file isn't on this device")?;
-        let b = read_source(c, &src)?;
-        // kept, so the preview outlives the original (moved, deleted, or an
-        // Android picker's permission that ends with the app)
-        if let Some(dir) = copy.parent() {
-            if std::fs::create_dir_all(dir).is_ok() {
-                let _ = std::fs::write(&copy, &b);
+        if let Some(b) = a.source.as_ref().and_then(|src| read_source(c, src).ok()) {
+            // kept, so the preview outlives the original (moved, deleted, or
+            // an Android picker's permission that ends with the app)
+            if let Some(dir) = copy.parent() {
+                if std::fs::create_dir_all(dir).is_ok() {
+                    let _ = std::fs::write(&copy, &b);
+                }
             }
+            return Ok(tauri::ipc::Response::new(b));
         }
-        return Ok(tauri::ipc::Response::new(b));
     }
     // downloaded already: read it from where downloads went, unless the
     // user has moved or deleted it since
@@ -124,6 +125,9 @@ pub async fn hc_attachment_preview(message_id: String, local_id: String) -> R<ta
             return Ok(tauri::ipc::Response::new(b));
         }
     }
+    // otherwise from the hub, as for a received picture: this covers our own
+    // messages sent from another device of this identity (user 2026-10-09
+    // 11:34Z), and a sent original that has since gone
     let e = c.engine()?;
     let dest = copy.clone();
     on_core(async move { e.fetch_preview(&message_id, &local_id, &dest).await.map_err(s) }).await?;
