@@ -504,6 +504,19 @@ pub fn hc_take_pending_chat() -> R<Option<String>> {
     Ok(core::get()?.platform().take_pending_chat())
 }
 
+/// The hub picker: the chat's pinned hub, Automatic's choice, the next hub
+/// and the hubs that list the peer.
+#[tauri::command]
+pub fn hc_send_route(peer: String) -> R<hubchat_core::engine::SendRoute> {
+    engine()?.send_route(&peer).map_err(s)
+}
+
+/// Pin a chat to one of our hubs; null = Automatic.
+#[tauri::command]
+pub fn hc_set_send_hub(peer: String, hub: Option<String>) -> R<()> {
+    engine()?.set_send_hub(&peer, hub.as_deref()).map_err(s)
+}
+
 #[tauri::command]
 pub async fn hc_mark_read(peer: String) -> R<()> {
     let e = engine()?;

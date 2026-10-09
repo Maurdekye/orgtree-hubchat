@@ -338,6 +338,8 @@ pub fn run() {
             commands::hc_cancel_transfer,
             commands::hc_download,
             commands::hc_mark_read,
+            commands::hc_send_route,
+            commands::hc_set_send_hub,
             commands::hc_delete_message,
             commands::hc_delete_chat,
             commands::hc_devices,
