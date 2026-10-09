@@ -87,6 +87,19 @@ async function connect(port, proc, prof, { width, height, dpr }) {
       }
       await sleep(wait);
     },
+    /** Moves the pointer to (x, y) (hover states, before measuring a press). */
+    async moveTo(x, y, wait = 150) {
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+      await sleep(wait);
+    },
+    /** A trusted press and release at (x, y): `button` 'left', or 'right' for
+     *  the context menu. */
+    async press(x, y, button = 'left', wait = 250) {
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+      await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button, clickCount: 1 });
+      await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button, clickCount: 1 });
+      await sleep(wait);
+    },
     async type(sel, text, wait = 150) {
       const ok = await api.eval(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return false; e.focus(); return true; })()`);
       if (!ok) throw new Error('no element for type: ' + sel);
