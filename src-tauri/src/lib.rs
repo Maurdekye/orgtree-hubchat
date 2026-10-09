@@ -42,6 +42,62 @@ mod desktop {
         fn download_dir(&self) -> PathBuf {
             self.downloads.clone()
         }
+        fn take_pending_link(&self) -> Option<String> {
+            PENDING.lock().unwrap().take()
+        }
+    }
+
+    /// A hubchat:// link Windows started us with, or handed the running
+    /// Hubchat through a second launch, until the UI takes it.
+    static PENDING: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+    /// Keep the hubchat:// link among a launch's arguments, if there is one.
+    /// True when there was.
+    pub fn take_link_arg<I: IntoIterator<Item = String>>(args: I) -> bool {
+        let link = args
+            .into_iter()
+            .find(|a| a.len() < 4096 && a.to_ascii_lowercase().starts_with("hubchat://"));
+        let found = link.is_some();
+        if let Some(l) = link {
+            *PENDING.lock().unwrap() = Some(l);
+        }
+        found
+    }
+
+    /// Windows: hubchat:// links (a profile QR's chat link, a device link)
+    /// open this Hubchat (user 23:53Z). Per user, rewritten only when it
+    /// points elsewhere; a test build leaves the real install's alone.
+    #[cfg(windows)]
+    pub fn register_scheme(app: &AppHandle) {
+        use winreg::enums::HKEY_CURRENT_USER;
+        use winreg::RegKey;
+        if app.config().identifier.ends_with(".test") {
+            return;
+        }
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        let exe = exe.to_string_lossy().into_owned();
+        let cmd = format!("\"{exe}\" \"%1\"");
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+        let Ok((key, _)) = hkcu.create_subkey(r"Software\Classes\hubchat") else {
+            return;
+        };
+        let now: Option<String> = key
+            .open_subkey(r"shell\open\command")
+            .and_then(|k| k.get_value(""))
+            .ok();
+        if now.as_deref() == Some(cmd.as_str()) {
+            return;
+        }
+        let _ = key.set_value("", &"URL:Hubchat link");
+        let _ = key.set_value("URL Protocol", &"");
+        if let Ok((icon, _)) = key.create_subkey("DefaultIcon") {
+            let _ = icon.set_value("", &format!("\"{exe}\",0"));
+        }
+        if let Ok((c, _)) = key.create_subkey(r"shell\open\command") {
+            let _ = c.set_value("", &cmd);
+        }
     }
 
     pub fn show(app: &AppHandle) {
@@ -94,7 +150,12 @@ pub fn run() {
     let builder = builder
         // A second launch (Start menu, autostart) shows the running window
         // instead of starting another Hubchat. Registered first, per the plugin.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // a hubchat:// link opened while we run: the UI takes it
+            if desktop::take_link_arg(args) {
+                use tauri::Emitter;
+                let _ = app.emit("hc-link-pending", ());
+            }
             desktop::show(app)
         }))
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -186,6 +247,9 @@ pub fn run() {
                 };
                 core::init(dir, std::sync::Arc::new(platform))?;
                 desktop::tray(app.handle())?;
+                desktop::take_link_arg(std::env::args());
+                #[cfg(windows)]
+                desktop::register_scheme(app.handle());
                 if std::env::args().any(|a| a == "--hidden") {
                     if let Some(w) = app.get_webview_window("main") {
                         let _ = w.hide();

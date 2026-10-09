@@ -35,6 +35,8 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="hubchat" android:host="link" />
+                <!-- a profile QR: hubchat://chat?to=<address> (user 23:53Z) -->
+                <data android:scheme="hubchat" android:host="chat" />
             </intent-filter>
         </activity>
 
