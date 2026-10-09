@@ -267,6 +267,10 @@ class ConnectionService : Service() {
     /** The installer's last word (InstallReceiver): "", "confirm", "done" or "failed: …". */
     @Volatile var lastInstall: String = ""
 
+    /** Android's confirmation for an update, kept while Hubchat is in the
+     *  background (InstallReceiver); MainActivity opens it on return. */
+    @Volatile var pendingConfirm: Intent? = null
+
     @JvmStatic
     fun installState(): String = lastInstall
 
@@ -298,6 +302,7 @@ class ConnectionService : Service() {
             }
           }
           lastInstall = ""
+          pendingConfirm = null
           val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
           val status = PendingIntent.getBroadcast(ctx, id, Intent(ctx, InstallReceiver::class.java), flags)
           session.commit(status.intentSender)

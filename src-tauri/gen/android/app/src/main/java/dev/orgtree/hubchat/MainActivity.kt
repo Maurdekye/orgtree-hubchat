@@ -14,6 +14,11 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : TauriActivity() {
+  companion object {
+    /** Is Hubchat's window in front? Android lets an app open a window only then. */
+    @Volatile var inFront = false
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     // Test builds (package *.test) can be driven over adb + DevTools, even
@@ -50,6 +55,22 @@ class MainActivity : TauriActivity() {
         b.build()
       }
     }
+  }
+
+  override fun onResume() {
+    super.onResume()
+    inFront = true
+    // an update that finished downloading while Hubchat was in the
+    // background: Android's confirmation opens now (InstallReceiver)
+    ConnectionService.pendingConfirm?.let {
+      ConnectionService.pendingConfirm = null
+      startActivity(it)
+    }
+  }
+
+  override fun onPause() {
+    inFront = false
+    super.onPause()
   }
 
   // A tapped message notification names its chat; the UI picks it up.
