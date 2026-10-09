@@ -421,6 +421,7 @@ export const mockApi: Api = {
   setReadReceipts: async (on) => { st.read_receipts = on; },
   setNotifications: async (n) => { st.notifications = { ...n }; },
   setStayConnected: async (on) => { await sleep(300); st.stay_connected = on; },
+  setActive: async () => {},
   setDeviceName: async (name) => {
     await sleep(200);
     if (name.trim().length > 64) throw "a device name has at most 64 characters";

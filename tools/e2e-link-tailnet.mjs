@@ -57,14 +57,13 @@ try {
 
   // The phone opens the link as a camera app would.
   spawnSync(ADB, ['shell', 'am', 'start', '-a', 'android.intent.action.VIEW', '-d', `'${offer.qr}'`, PKG], { stdio: 'ignore' });
-  const named = await waitFor(phone, `/Name this phone/.test(document.body.innerText) && /through/.test(document.body.innerText)`, 30000);
+  // No name to type (user 00:16Z): once the hub answers, the phone waits for
+  // approval under its own name.
+  const phoneName = (await inv(phone, 'hc_state')).device_name;
+  const waiting = await waitFor(phone, `/is waiting there/.test(document.body.innerText)`, 30000);
   const t1 = await text(phone);
-  const reached = (/through\s+\S+\s+(http:\/\/\S+)/.exec(t1) || [])[1] || '';
-  check('the phone reached the hub by a tailnet address', named && /home-pc|100\.101\.102\.103/.test(reached), reached || t1.replace(/\s+/g, ' ').slice(0, 300));
-  await shot(phone, 'tailnet-phone-name.png');
-  await phone.eval(`(() => { const i = document.querySelector('input'); if (i && !i.value) { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, 'Test phone'); i.dispatchEvent(new Event('input', { bubbles: true })); } })()`);
-  await sleep(300);
-  check('Continue', await click(phone, /^Continue$/));
+  check('the phone asks no name and waits under its own', waiting && !/Name this phone/.test(t1) && !!phoneName && t1.includes(phoneName), phoneName + ' / ' + t1.replace(/\s+/g, ' ').slice(0, 300));
+  await shot(phone, 'tailnet-phone-wait.png');
 
   // The desktop sees the phone waiting and approves.
   let look = null;
@@ -73,7 +72,7 @@ try {
     if (look.device_name) break;
     await sleep(3000);
   }
-  check('desktop sees the phone by name', !!look?.device_name, JSON.stringify(look));
+  check('desktop sees the phone by its own name', !!look?.device_name && look.device_name === phoneName, JSON.stringify(look));
   await inv(pc, 'hc_link_approve', { code: offer.code });
 
   // The phone reviews the hubs before anything is saved (user 20:38Z).

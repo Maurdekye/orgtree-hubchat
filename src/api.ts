@@ -241,6 +241,8 @@ export const tauriApi = {
   setReadReceipts: (on: boolean) => invoke<void>("hc_set_read_receipts", { on }),
   setNotifications: (n: NotifySettings) => invoke<void>("hc_set_notifications", { enabled: n.enabled, preview: n.preview, sound: n.sound }),
   setStayConnected: (on: boolean) => invoke<void>("hc_set_stay_connected", { on }),
+  /** This device is in use (user 23:50Z): our other devices don't notify meanwhile. */
+  setActive: (on: boolean) => invoke<void>("hc_set_active", { on }),
   /** Settings › Devices: rename this device (empty: its own name again); the name it now has. */
   setDeviceName: (name: string) => invoke<string>("hc_set_device_name", { name }),
 

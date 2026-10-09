@@ -19,6 +19,30 @@ export function useForeground(platform: "desktop" | "android"): boolean {
   return fg;
 }
 
+/** How long without a touch, a key or the mouse before a device on screen
+ *  stops counting as in use. */
+const IDLE_MS = 150_000;
+
+/** In use (user 23:50Z): on screen (focused, on desktop) and touched in the
+ *  last few minutes. While it is, our other devices don't notify; the core
+ *  tells the hubs that can carry it. */
+export function useActive(foreground: boolean): void {
+  const last = useRef(Date.now());
+  const fg = useRef(foreground);
+  fg.current = foreground;
+  const [active, setActive] = useState(false);
+  useEffect(() => {
+    const touch = () => { last.current = Date.now(); setActive((a) => a || fg.current); };
+    const evs = ["pointerdown", "keydown", "wheel", "touchstart", "mousemove"] as const;
+    evs.forEach((e) => window.addEventListener(e, touch, { passive: true, capture: true }));
+    const t = setInterval(() => setActive(fg.current && Date.now() - last.current < IDLE_MS), 15000);
+    return () => { evs.forEach((e) => window.removeEventListener(e, touch, { capture: true })); clearInterval(t); };
+  }, []);
+  // coming to the front counts as use; leaving it ends it at once
+  useEffect(() => { if (foreground) last.current = Date.now(); setActive(foreground); }, [foreground]);
+  useEffect(() => { void api.setActive(active).catch(() => {}); }, [active]);
+}
+
 /** Report foreground + visible chat; mark it read on open and as messages arrive. */
 export function useReadTracking(peer: string | null, foreground: boolean): void {
   const snap = useSnap();

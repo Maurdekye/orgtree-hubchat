@@ -7,7 +7,7 @@ import { Icon } from "../lib/icons";
 import { displayName, kindOf } from "../lib/peers";
 import { getSnap, useSnap } from "../lib/store";
 import { chatLinkTarget } from "../lib/chatlink";
-import { useForeground, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
+import { useActive, useForeground, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { HubBanner, RecoveryBanner } from "./Banners";
 import { ChatRows, EmptyChats, useFilteredChats, type ChatFilter } from "./ChatList";
 import { ContactInfo } from "./ContactInfo";
@@ -114,6 +114,7 @@ export function Android() {
   const depth = useRef(1);
   const top = stack[stack.length - 1];
   const fg = useForeground("android");
+  useActive(fg);
   useReadTracking(top.s === "conv" ? top.p : null, fg);
 
   const stackRef = useRef(stack);

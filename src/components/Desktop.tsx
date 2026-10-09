@@ -9,7 +9,7 @@ import { routeLink, startJoin, useJoin } from "../lib/join";
 import { toast } from "../lib/toast";
 import { hubSummary } from "../lib/peers";
 import { useSnap } from "../lib/store";
-import { useForeground, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
+import { useActive, useForeground, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { chatLinkTarget } from "../lib/chatlink";
 import { startUpdateChecks } from "../lib/updates";
 import { HubBanner, RecoveryBanner, UpdateBanner } from "./Banners";
@@ -75,6 +75,7 @@ export function Desktop() {
   const [ov, setOv] = useState<Overlay>(null);
   const [info, setInfo] = useState<Info>(null);
   const fg = useForeground("desktop");
+  useActive(fg);
   useReadTracking(ov ? null : chat, fg);
   useEffect(() => { startUpdateChecks(); }, []);
 
