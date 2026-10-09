@@ -284,3 +284,64 @@ async fn delete_chat_reaches_every_hub_even_one_that_was_down() {
         e.shutdown();
     }
 }
+
+/// B3: hub A no longer knows this device's sync position (a 422 for the
+/// cursor) and starts over: a message hub B also holds never leaves the
+/// device meanwhile, and both hubs are known to hold it again afterwards.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_hub_starting_over_keeps_what_the_other_hub_holds() {
+    let Some((hub_a, hub_b)) = two_hubs() else {
+        eprintln!("SKIPPED: set HUBCHAT_V2_HUB (and HUBCHAT_V2_HUB2) to scratch mail hubs v2.0");
+        return;
+    };
+    if hub_a == hub_b {
+        eprintln!("SKIPPED: needs HUBCHAT_V2_HUB2, a second hub");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let alex = Identity::generate("alex").unwrap();
+    let maya = Identity::generate("maya").unwrap();
+    let id = uid("r1-");
+    on_both_hubs(&maya, &alex, &hub_a, &hub_b, &id).await;
+    let a = device(&alex, "alex-pc", dir.path());
+    a.start().unwrap();
+    a.add_hub(&hub_a).unwrap();
+    until("A has it from hub A", 20, || a.store().message(&id).unwrap().is_some()).await;
+    a.add_hub(&hub_b).unwrap();
+    until("A synced hub B", 20, || caught_up(&a, 2)).await;
+    assert_eq!(a.store().message_hubs(&id).unwrap(), {
+        let mut v = vec![url(&hub_a), url(&hub_b)];
+        v.sort();
+        v
+    });
+
+    // hub A's answer to a cursor it doesn't know: 422, start over
+    a.store()
+        .set_meta(&format!("sync.cursor.{}", url(&hub_a)), "not-a-cursor")
+        .unwrap();
+    let t0 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    a.kick();
+    let started_over = || {
+        a.hub_statuses()
+            .iter()
+            .find(|s| s.url == url(&hub_a))
+            .is_some_and(|s| s.answered_ms.is_some_and(|t| t > t0))
+            && a.store().meta(&format!("sync.cursor.{}", url(&hub_a))).unwrap().as_deref()
+                != Some("not-a-cursor")
+    };
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !started_over() {
+        assert!(
+            a.store().message(&id).unwrap().is_some(),
+            "the message left the device while hub A started over"
+        );
+        assert!(Instant::now() < deadline, "timed out waiting for hub A to start over");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(a.store().message(&id).unwrap().is_some());
+    until("both hubs hold it again", 10, || a.store().message_hubs(&id).unwrap().len() == 2).await;
+    a.shutdown();
+}

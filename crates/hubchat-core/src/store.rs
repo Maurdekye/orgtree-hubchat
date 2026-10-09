@@ -743,14 +743,25 @@ impl Store {
     }
 
     /// A v2 hub says its sync cursor is not ours any more: forget what came
-    /// from it so the device rebuilds its copy.
+    /// from it so the device rebuilds its copy. A message another hub still
+    /// holds stays (B3); queued outgoing messages always stay.
     pub fn forget_hub_messages(&self, hub: &str) -> Result<()> {
         self.with(|c| {
-            c.execute(
-                "DELETE FROM messages WHERE hub=? AND state<>'queued'",
+            let tx = c.transaction()?;
+            tx.execute(
+                "DELETE FROM messages WHERE state<>'queued'
+                   AND id IN (SELECT id FROM message_hubs WHERE hub=?1)
+                   AND NOT EXISTS (SELECT 1 FROM message_hubs o WHERE o.id=messages.id AND o.hub<>?1)",
                 [hub],
-            )
-            .map(|_| ())
+            )?;
+            tx.execute("DELETE FROM message_hubs WHERE hub=?", [hub])?;
+            // what stays is now about a hub that still has it
+            tx.execute(
+                "UPDATE messages SET hub=(SELECT o.hub FROM message_hubs o WHERE o.id=messages.id ORDER BY o.hub LIMIT 1)
+                 WHERE hub=?1 AND EXISTS (SELECT 1 FROM message_hubs o WHERE o.id=messages.id)",
+                [hub],
+            )?;
+            tx.commit()
         })
     }
 
