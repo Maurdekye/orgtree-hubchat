@@ -33,7 +33,12 @@ import java.util.concurrent.TimeUnit
  */
 class ConnectionService : Service() {
   companion object {
-    const val CHANNEL_CONNECTION = "connection"
+    // The background notification shows no badge, so the app icon counts
+    // messages only (user 2026-10-09 23:08Z). Android keeps a channel's
+    // settings once it exists, so the badge-free channel has a new id and
+    // the old one is deleted.
+    const val CHANNEL_CONNECTION = "background"
+    private const val CHANNEL_CONNECTION_OLD = "connection"
     const val CHANNEL_MESSAGES = "messages"
     private const val ONGOING_ID = 1
     private const val PREFS = "hubchat"
@@ -395,9 +400,13 @@ class ConnectionService : Service() {
       nm.createNotificationChannel(NotificationChannel(
         CHANNEL_CONNECTION, "Background connection", NotificationManager.IMPORTANCE_MIN).apply {
         description = "Keeps Hubchat connected to your hubs so messages arrive right away"
+        setShowBadge(false)
       })
       nm.createNotificationChannel(NotificationChannel(
         CHANNEL_MESSAGES, "Messages", NotificationManager.IMPORTANCE_HIGH))
+      // Android refuses while a foreground service still posts there, which
+      // only the old version did; the next start tries again.
+      try { nm.deleteNotificationChannel(CHANNEL_CONNECTION_OLD) } catch (e: SecurityException) {}
     }
   }
 
