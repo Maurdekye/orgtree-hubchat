@@ -19,9 +19,11 @@ export interface Snap {
   onboarding: boolean;
   /** Drafts typed this session (chat-list "Draft:" previews). */
   drafts: Record<string, string>;
+  /** The chat list has loaded once for this identity (`chats` is real). */
+  chatsReady: boolean;
 }
 
-let snap: Snap = { ready: false, error: null, state: null, chats: [], directory: [], byAddr: new Map(), onboarding: false, drafts: {} };
+let snap: Snap = { ready: false, error: null, state: null, chats: [], directory: [], byAddr: new Map(), onboarding: false, drafts: {}, chatsReady: false };
 const subs = new Set<() => void>();
 function set(p: Partial<Snap>) { snap = { ...snap, ...p }; subs.forEach((f) => f()); }
 const subscribe = (f: () => void) => { subs.add(f); return () => { subs.delete(f); }; };
@@ -35,7 +37,7 @@ export async function refreshState(): Promise<void> {
 }
 export async function refreshChats(): Promise<void> {
   if (!snap.state?.me) return;
-  try { set({ chats: await api.chats() }); } catch (e) { console.warn("hc_chats", e); }
+  try { set({ chats: await api.chats(), chatsReady: true }); } catch (e) { console.warn("hc_chats", e); }
 }
 export async function refreshDirectory(): Promise<void> {
   if (!snap.state?.me) return;
@@ -243,7 +245,7 @@ export function setOnboarding(on: boolean) { set({ onboarding: on }); }
 export async function reloadAfterSwitch(): Promise<void> {
   transfers.clear(); tsubs.forEach((f) => f());
   active.clear(); activeChanged();
-  set({ chats: [], directory: [], byAddr: new Map(), drafts: {}, onboarding: false });
+  set({ chats: [], directory: [], byAddr: new Map(), drafts: {}, onboarding: false, chatsReady: false });
   await refreshAll();
 }
 export function noteDraft(peer: string, body: string) {

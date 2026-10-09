@@ -201,6 +201,12 @@ if (!onboarding) {
   oldUnread.set(PAT, [...office, ...lab].filter((m, i, a) => !m.outgoing && !m.seen && a.findIndex((x) => x.id === m.id) === i).length);
   add(PAT, false, at(0, "08:10"), "Morning! Did the new phone pick everything up?", { seen: false, read_at: null });
   add(PAT, true, at(0, "08:12"), "Only today's messages so far. The rest loads as I scroll back.");
+  // ?gone=<address>: that chat was deleted before this start (reopening the
+  // app must not bring it back)
+  for (const g of params.getAll("gone")) {
+    for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].peer === g) msgs.splice(i, 1);
+    hubOld.delete(g);
+  }
 }
 
 /** The time a chat may show back to (none: everything): what every

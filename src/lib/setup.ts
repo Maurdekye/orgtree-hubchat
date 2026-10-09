@@ -8,6 +8,7 @@ import { api } from "../api";
 import { errText, openLink, scanQr } from "./native";
 import { checkForUpdate, type Available } from "./updates";
 import { toast } from "./toast";
+import { startTake } from "./visibility";
 
 export interface SetupReq { input: string; n: number }
 
@@ -51,8 +52,9 @@ export function useSetupChat(open: (peer: string) => void): void {
   const ref = useRef(open);
   ref.current = open;
   useEffect(() => {
-    const take = () => { const p = chatToOpen; chatToOpen = null; if (p) ref.current(p); };
-    take();
+    const take = () => { const p = chatToOpen; chatToOpen = null; if (p) ref.current(p); return !!p; };
+    // a setup's chat waiting at start wins over the last open chat
+    startTake(Promise.resolve(take()));
     chatSubs.add(take);
     return () => { chatSubs.delete(take); };
   }, []);

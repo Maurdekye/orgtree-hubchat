@@ -9,7 +9,7 @@ import { routeLink, startJoin, useJoin } from "../lib/join";
 import { toast } from "../lib/toast";
 import { hubSummary } from "../lib/peers";
 import { useSnap } from "../lib/store";
-import { useActive, useForeground, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
+import { useActive, useForeground, useLastChat, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { isSetupLink, startSetup, useSetupChat } from "../lib/setup";
 import { chatLinkTarget } from "../lib/chatlink";
 import { startUpdateChecks } from "../lib/updates";
@@ -117,6 +117,7 @@ export function Desktop() {
   // joining another identity's link: it replaces whatever overlay started it
   const join = useJoin();
   useEffect(() => { if (join) setOv(null); }, [join]);
+  useLastChat(chat, !!ov || !!join, open);
 
   // Alt+Up / Alt+Down (user 2026-10-09 08:35Z): the chat above or below the
   // open one in the list as it shows now (sorted, filtered); the new chat's

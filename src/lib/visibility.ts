@@ -79,6 +79,47 @@ export function useMessage(id: string | null, peer: string | null): Message | nu
 
 export const myAddress = () => getSnap().state?.me?.address || "";
 
+// What the app was opened with (a link, a tapped notification) is taken at
+// start; the last open chat waits for those takes, and a take that found
+// something (it resolves true) wins over it.
+const startTakes: Promise<boolean>[] = [];
+export function startTake(p: Promise<boolean> | undefined): void { if (p) startTakes.push(p); }
+
+const lastKey = (me: string) => "hubchat.lastchat." + me;
+
+/** Reopening Hubchat brings back the chat that was open (user 2026-10-09
+ *  19:00Z). `current` is the open chat (null on the list); it is kept per
+ *  identity. Once the chat list has loaded, and after the start's link and
+ *  notification takes, the kept chat is opened again, unless something else
+ *  was opened first (`busy`, or a chat already open) or the chat is no
+ *  longer in the list (deleted, or its contact gone). */
+export function useLastChat(current: string | null, busy: boolean, open: (peer: string) => void): void {
+  const snap = useSnap();
+  const me = snap.state?.me?.address || "";
+  // until the restore has had its turn, the open chat isn't written down
+  const [done, setDone] = useState(false);
+  const live = useRef({ current, busy, open });
+  live.current = { current, busy, open };
+  useEffect(() => {
+    if (done || !snap.chatsReady || !me) return;
+    let alive = true;
+    // a tick first, so the start's takes have been made
+    void new Promise((r) => setTimeout(r, 0)).then(() => Promise.all(startTakes)).then((took) => {
+      if (!alive) return;
+      const l = live.current;
+      const p = localStorage.getItem(lastKey(me));
+      // the state a take just set may not have rendered yet: `took` says so
+      if (!took.includes(true) && p && l.current === null && !l.busy && getSnap().chats.some((c) => c.peer === p)) l.open(p);
+      setDone(true);
+    });
+    return () => { alive = false; };
+  }, [done, snap.chatsReady, me]);
+  useEffect(() => {
+    if (!done || !me) return;
+    if (current) localStorage.setItem(lastKey(me), current); else localStorage.removeItem(lastKey(me));
+  }, [done, current, me]);
+}
+
 /** Android: a hubchat:// link the system opened the app with (a phone camera
  *  scanning another device's link QR). Taken at start and whenever the app
  *  comes back to the foreground; `f` gets each link once. */
@@ -88,9 +129,9 @@ export function usePendingLink(f: (link: string) => void): void {
   useEffect(() => {
     const take = () => {
       if (document.visibilityState !== "visible") return;
-      api.takePendingLink().then((l) => { if (l) ref.current(l); }, () => {});
+      return api.takePendingLink().then((l) => { if (l) ref.current(l); return !!l; }, () => false);
     };
-    take();
+    startTake(take());
     window.addEventListener("focus", take);
     document.addEventListener("visibilitychange", take);
     // Android, with Hubchat already in front: MainActivity says so

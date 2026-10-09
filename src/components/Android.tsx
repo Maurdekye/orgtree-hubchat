@@ -8,7 +8,7 @@ import { displayName, kindOf } from "../lib/peers";
 import { getSnap, useSendRoute, useSnap } from "../lib/store";
 import { chatLinkTarget } from "../lib/chatlink";
 import { installKeyboardImages } from "../lib/keyboardImages";
-import { useActive, useForeground, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
+import { startTake, useActive, useForeground, useLastChat, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { HubBanner, RecoveryBanner, UpdateBanner } from "./Banners";
 import { startUpdateChecks } from "../lib/updates";
 import { isSetupLink, startSetup, useSetupChat } from "../lib/setup";
@@ -175,14 +175,14 @@ export function Android() {
   useEffect(() => {
     const take = () => {
       if (document.visibilityState !== "visible") return;
-      api.takePendingChat().then((p) => {
-        if (!p) return;
+      return api.takePendingChat().then((p) => {
+        if (!p) return false;
         const t = stackRef.current[stackRef.current.length - 1];
-        if (t.s === "conv" && t.p === p) return;
-        go({ s: "conv", p });
-      }, () => {});
+        if (t.s !== "conv" || t.p !== p) go({ s: "conv", p });
+        return true;
+      }, () => false);
     };
-    take();
+    startTake(take());
     window.addEventListener("focus", take);
     document.addEventListener("visibilitychange", take);
     window.addEventListener("hc-pending", take); // a notification tapped with Hubchat in front
@@ -211,6 +211,10 @@ export function Android() {
     routeLink(input, "approve").then((r) => (r.k === "join" ? startJoin(r.p.code, r.p.hub, r.p.hubs, r.p.hub_name) : go({ s: "link", tab: "approve", input: r.input })), (e) => toast(errText(e)));
   });
   const join = useJoin();
+  // the chat the stack is in (also under its info screens); the list alone is none
+  const inChat = [...stack].reverse().find((s): s is { s: "conv"; p: string } => s.s === "conv")?.p ?? null;
+  // restored over the list only; the back button then leads to the list
+  useLastChat(inChat, stack.length > 1 || !!join, (p) => go({ s: "conv", p }));
 
   const onInfo = useCallback((m: Message) => go({ s: "msginfo", id: m.id, p: m.peer }), [go]);
   const openChat = useCallback((a: string) => go({ s: "conv", p: a }), [go]);
