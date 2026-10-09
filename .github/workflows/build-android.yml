@@ -7,7 +7,8 @@
 # Artifacts:
 #   hubchat-android-unsigned  Hubchat_<version>_arm64-unsigned.apk (for release.yml's sign job)
 #   hubchat-android           Hubchat_<version>_arm64.apk + byte-identical Hubchat-android.apk,
-#                             signed with the THROWAWAY key (test builds only)
+#                             signed with the THROWAWAY key (test builds only), its updater
+#                             .sig and updater-android-aarch64.json (throwaway updater key)
 name: build-android
 
 on:
@@ -161,6 +162,21 @@ jobs:
       - name: Static checks of the signed APK (badging, zipalign 16 KB, v2-only signature, ELF alignment)
         run: bash "$CI_TOOLS"/check-apk.sh "dist-android/Hubchat_${{ steps.version.outputs.version }}_arm64.apk" "${{ steps.version.outputs.version }}"
 
+      # The updater feed's android-aarch64 entry: the versioned APK and the .sig of
+      # its apksigned bytes, bound to the version. A throwaway updater key here;
+      # release.yml's sign job re-signs after apksigner, so the .sig covers the APK as shipped.
+      - name: Updater signature and feed fragment (throwaway key)
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          apk="Hubchat_${v}_arm64.apk"
+          npx tauri signer generate --ci -p "" -w "$RUNNER_TEMP/test-updater.key" >/dev/null
+          npx tauri signer sign -f "$RUNNER_TEMP/test-updater.key" -p "" --app-version "$v" "dist-android/$apk" >/dev/null
+          rm -f "$RUNNER_TEMP/test-updater.key" "$RUNNER_TEMP/test-updater.key.pub"
+          base64 -d "dist-android/$apk.sig" | grep -qF "version:$v" || { echo "::error::$apk.sig does not bind version $v"; exit 1; }
+          jq -n --arg asset "$apk" --rawfile sig "dist-android/$apk.sig" \
+            '{"android-aarch64": {asset: $asset, signature: $sig}}' > dist-android/updater-android-aarch64.json
+          cat dist-android/updater-android-aarch64.json
+
       - name: Compare with the published release (informational)
         if: startsWith(env.BUILD_REF, 'v')
         continue-on-error: true
@@ -184,7 +200,9 @@ jobs:
           name: hubchat-android
           path: |
             dist-android/Hubchat_${{ steps.version.outputs.version }}_arm64.apk
+            dist-android/Hubchat_${{ steps.version.outputs.version }}_arm64.apk.sig
             dist-android/Hubchat-android.apk
+            dist-android/updater-android-aarch64.json
           if-no-files-found: error
           compression-level: 0
 
