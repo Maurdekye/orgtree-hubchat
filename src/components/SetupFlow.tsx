@@ -10,6 +10,7 @@ import { Icon } from "../lib/icons";
 import { errText } from "../lib/native";
 import { endSetup, openAfterSetup, scanSetup, updateHubchat, openOther, wantLinkInstead, type SetupReq } from "../lib/setup";
 import { getSnap, refreshAll, refreshState, setOnboarding } from "../lib/store";
+import { useUpdate } from "../lib/updates";
 import { Addr, Avatar, Modal, ModalHead, usePlatform } from "./ui";
 import { idFromName } from "./Onboarding";
 import "../styles/setup.css";
@@ -23,6 +24,7 @@ const TAILSCALE = "com.tailscale.ipn";
 export function SetupFlow({ req }: { req: SetupReq }) {
   const platform = usePlatform();
   const android = platform === "android";
+  const update = useUpdate();
   const [link, setLink] = useState<SetupLink | null>(null);
   const [st, setSt] = useState<St>({ k: "check" });
   const [attempt, setAttempt] = useState(0);
@@ -155,7 +157,7 @@ export function SetupFlow({ req }: { req: SetupReq }) {
       const bad = (head: ReactNode, rest: ReactNode, buttons: ReactNode) => (
         <div className="probe-card bad" data-fail={st.f} title={st.why}><Icon name="error" /><div><b>{head}</b>{rest}{buttons ? acts(buttons) : null}</div></div>
       );
-      if (st.f === "update") card = bad("This code needs a newer Hubchat.", null, sm("Update", () => void updateHubchat(platform).catch(() => {}), true));
+      if (st.f === "update") card = bad("This code needs a newer Hubchat.", null, sm("Update", () => void updateHubchat(platform, update).catch(() => {}), true));
       else if (st.f === "damaged") card = bad("This setup code is damaged.", " Show a new one on your PC and scan again.", android ? sm("Scan again", () => { endSetup(); void scanSetup(); }, true) : null);
       else if (st.f === "no-ts") card = (
         <div className="probe-card bad" data-fail={st.f} title={st.why}><Icon name="error" /><div><b className="inl">Install Tailscale on this phone</b> and sign in as <b className="inl">{ts}</b>, the same account as your PC. Then come back here.

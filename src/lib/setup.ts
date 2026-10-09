@@ -4,9 +4,9 @@
 // welcome screen, New chat, Settings › Hubs or a deep link can start it and
 // App shows it (Android: a screen; desktop: a modal).
 import { useEffect, useRef, useSyncExternalStore } from "react";
-import { api, isTauri } from "../api";
+import { api } from "../api";
 import { errText, openLink, scanQr } from "./native";
-import { checkForUpdate } from "./updates";
+import { checkForUpdate, type Available } from "./updates";
 import { toast } from "./toast";
 
 export interface SetupReq { input: string; n: number }
@@ -58,16 +58,20 @@ export function useSetupChat(open: (peer: string) => void): void {
   }, []);
 }
 
-/** Android's fixed-name APK: what Update opens until the in-app updater lands. */
+/** Android's fixed-name APK: Update's fallback when no update is found. */
 const APK = "https://github.com/Maurdekye/orgtree-hubchat/releases/latest/download/Hubchat-android.apk";
 
-/** "This code needs a newer Hubchat" › Update (hubchat-opus 11:38Z): the
- *  updates module where it can install; on Android, until its updater
- *  lands, the newest APK in the browser. */
-export async function updateHubchat(platform: "desktop" | "android"): Promise<void> {
-  if (platform === "android" || !isTauri) { await openLink(APK); return; }
-  const a = await checkForUpdate();
-  if (a) await a.install();
+/** "This code needs a newer Hubchat" › Update (hubchat-opus 11:38Z, 15:32Z):
+ *  the updates module installs the update it knows of, checking first if it
+ *  knows none (on Android the in-app update, with its steps in the update
+ *  banner, so this screen closes). Only when the check finds nothing or fails does Android open the
+ *  newest APK in the browser. */
+export async function updateHubchat(platform: "desktop" | "android", known: Available | null): Promise<void> {
+  const a = known ?? await checkForUpdate().catch(() => null);
+  // the update banner shows the steps, so this screen steps aside; the app
+  // restarts once installed, and the code is scanned again then
+  if (a) { endSetup(); await a.install(); return; }
+  if (platform === "android") await openLink(APK);
   else toast("No newer Hubchat is out yet.");
 }
 
