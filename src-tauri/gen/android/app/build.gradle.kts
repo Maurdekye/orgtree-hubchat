@@ -116,3 +116,27 @@ dependencies {
 }
 
 apply(from = file("tauri.build.gradle.kts"))
+
+// Pictures from the keyboard (KeyboardImages.kt; user 2026-10-09): wry
+// generates RustWebView, the app's WebView, on every build, so its input
+// connection is routed to KeyboardImages here, after the Rust build and just
+// before Kotlin compiles. The same in a local build and in CI.
+val patchRustWebView by tasks.registering {
+    val webView = file("src/main/java/dev/orgtree/hubchat/generated/RustWebView.kt")
+    doLast {
+        if (!webView.exists()) return@doLast
+        val text = webView.readText()
+        if (text.contains("KeyboardImages")) return@doLast
+        val end = text.lastIndexOf('}')
+        check(end > 0 && text.contains("class RustWebView(") && !text.contains("onCreateInputConnection")) {
+            "RustWebView.kt has changed shape; route its input connection to KeyboardImages by hand"
+        }
+        webView.writeText(text.substring(0, end) +
+            "\n    // Hubchat: pictures from the keyboard (app/build.gradle.kts, patchRustWebView)\n" +
+            "    override fun onCreateInputConnection(outAttrs: android.view.inputmethod.EditorInfo): android.view.inputmethod.InputConnection? =\n" +
+            "        dev.orgtree.hubchat.KeyboardImages.wrap(this, outAttrs, super.onCreateInputConnection(outAttrs))\n" +
+            text.substring(end))
+    }
+}
+patchRustWebView.configure { mustRunAfter(tasks.matching { it.name.startsWith("rustBuild") }) }
+tasks.matching { it.name.startsWith("compile") && it.name.endsWith("Kotlin") }.configureEach { dependsOn(patchRustWebView) }
