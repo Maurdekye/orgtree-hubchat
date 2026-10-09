@@ -274,6 +274,8 @@ export const tauriApi = {
   /** An image attachment's bytes for its preview (fetched from the hub once
    *  if this device hasn't got it; never into Downloads). */
   attachmentPreview: (messageId: string, localId: string) => invoke<ArrayBuffer>("hc_attachment_preview", { messageId, localId }),
+  /** An image the composer holds, for its thumbnail. */
+  filePreview: (source: string, name: string) => invoke<ArrayBuffer>("hc_file_preview", { source, name }),
   /** A pasted image saved as a file the composer can attach; its path. */
   savePasted: (name: string, data: Uint8Array) => invoke<string>("hc_save_pasted", data, { headers: { "x-name": name } }),
   devices: () => invoke<Devices>("hc_devices"),

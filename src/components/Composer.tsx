@@ -5,7 +5,7 @@ import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type
 import { api, newId, type Contact, type HubStatus, type Message, type NewAttachment } from "../api";
 import { Icon } from "../lib/icons";
 import { bytes, isLong, MAX_FILES, num, utf8Len } from "../lib/format";
-import { isImage, pastedImages, pastedName } from "../lib/images";
+import { isImage, pastedImages, pastedName, thumbable, useFilePreview } from "../lib/images";
 import { errText, pickFiles } from "../lib/native";
 import { displayName, limitFor, preview } from "../lib/peers";
 import { noteDraft, refreshChats } from "../lib/store";
@@ -26,6 +26,29 @@ interface Props {
 /** For the conversation: files dropped on the chat join the attachments. */
 export interface ComposerApi {
   addFiles: (sources: string[]) => void;
+}
+
+/** A file waiting to be sent: its name and size. */
+function AttChip({ a, onRemove }: { a: NewAttachment; onRemove: () => void }) {
+  return (
+    <span className="attchip">
+      <Icon name={isImage(a.name) ? "image" : "file"} /><span className="ell">{a.name}</span> <span className="s">{bytes(a.bytes)}</span>
+      <button className="icon-btn" title="Remove" aria-label={"Remove " + a.name} onClick={onRemove}><Icon name="close" /></button>
+    </span>
+  );
+}
+
+/** An image waiting to be sent, as a thumbnail (user 2026-10-09 07:06Z);
+ *  the file chip if it can't be read. */
+function AttThumb({ a, onRemove }: { a: NewAttachment; onRemove: () => void }) {
+  const url = useFilePreview(a.source, a.name);
+  if (url === "failed") return <AttChip a={a} onRemove={onRemove} />;
+  return (
+    <span className="attthumb" title={a.name + " · " + bytes(a.bytes)}>
+      {url ? <img src={url} alt={a.name} draggable={false} /> : <span className="ph"><Icon name="image" /></span>}
+      <button className="icon-btn" title="Remove" aria-label={"Remove " + a.name} onClick={onRemove}><Icon name="close" /></button>
+    </span>
+  );
 }
 
 export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref, off }: Props) {
@@ -130,12 +153,10 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref, o
       ) : null}
       {atts.length ? (
         <div className="attrow">
-          {atts.map((a) => (
-            <span className="attchip" key={a.source}>
-              <Icon name={isImage(a.name) ? "image" : "file"} /><span className="ell">{a.name}</span> <span className="s">{bytes(a.bytes)}</span>
-              <button className="icon-btn" title="Remove" aria-label={"Remove " + a.name} onClick={() => setAtts(atts.filter((x) => x !== a))}><Icon name="close" /></button>
-            </span>
-          ))}
+          {atts.map((a) => {
+            const remove = () => setAtts(atts.filter((x) => x !== a));
+            return thumbable(a.name, a.bytes) ? <AttThumb key={a.source} a={a} onRemove={remove} /> : <AttChip key={a.source} a={a} onRemove={remove} />;
+          })}
         </div>
       ) : null}
       {err ? <div className="comp-err"><Icon name="error" />{err}</div> : null}

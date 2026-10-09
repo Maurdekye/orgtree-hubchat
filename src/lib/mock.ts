@@ -536,6 +536,12 @@ export const mockApi: Api = {
     const own = a.source ? pasted.get(a.source) : undefined;
     return own ? (own.slice().buffer as ArrayBuffer) : picture(a.name, m.outgoing);
   },
+  filePreview: async (source, name) => {
+    await sleep(80);
+    if (/broken/i.test(name)) throw "unreadable";
+    const own = pasted.get(source);
+    return own ? (own.slice().buffer as ArrayBuffer) : picture(name, true);
+  },
   savePasted: async (name, data) => {
     // a fresh file each time, as the shell does
     const dir = "C:\\Users\\alex\\AppData\\Roaming\\Hubchat\\pasted\\";

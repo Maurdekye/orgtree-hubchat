@@ -47,6 +47,29 @@ export function usePreview(m: Message, a: Attachment): { url: string | null; fai
   return r.key === key ? r : { url: r.url, failed: false };
 }
 
+/** Shown as a thumbnail in the composer (user 2026-10-09 07:06Z). */
+export const thumbable = (name: string, size: number) => isImage(name) && size <= PREVIEW_MAX;
+
+/** A composer image's thumbnail: its object URL, null while it loads,
+ *  "failed" when there is none (the composer shows the file chip). The URL
+ *  goes when the attachment does. */
+export function useFilePreview(source: string, name: string): string | null | "failed" {
+  const [r, setR] = useState<{ key: string; url: string | null | "failed" }>({ key: "", url: null });
+  const key = source + "\n" + name;
+  useEffect(() => {
+    let live = true;
+    let made: string | null = null;
+    api.filePreview(source, name).then((buf) => {
+      made = URL.createObjectURL(new Blob([buf], { type: MIME[ext(name)] }));
+      if (live) setR({ key, url: made });
+      else URL.revokeObjectURL(made);
+    }, () => { if (live) setR({ key, url: "failed" }); });
+    return () => { live = false; if (made) URL.revokeObjectURL(made); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return r.key === key ? r.url : null;
+}
+
 // ------------------------------------------------------------ the viewer
 
 let shown: { m: Message; a: Attachment } | null = null;
