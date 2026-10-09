@@ -1,0 +1,1 @@
+Android now updates itself, you can choose which hub a chat goes through, several hubs work together better, and accessibility improvements.
