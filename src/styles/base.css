@@ -151,7 +151,7 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .bubble table { border-collapse: collapse; font-size: 13px; }
 .bubble th, .bubble td { border: 1px solid var(--line); padding: 4px 10px; text-align: left; }
 .bubble th { background: rgba(127, 127, 127, .1); font-weight: 600; }
-.bubble .meta { float: right; display: inline-flex; align-items: center; gap: 3px; margin: 7px -3px -5px 12px; font-size: 11px; line-height: 1; color: var(--dim); position: relative; top: 1px; white-space: nowrap; user-select: none; }
+.bubble .meta { float: right; display: inline-flex; align-items: center; gap: 3px; margin: 7px -3px 0 12px; font-size: 11px; line-height: 1; color: var(--dim); position: relative; top: 1px; white-space: nowrap; user-select: none; }
 .msg.out .bubble .meta { color: var(--out-dim); }
 .bubble .meta-line { display: flex; justify-content: flex-end; margin-top: 4px; }
 .bubble .meta-line .meta { float: none; margin: 0 -3px -1px 0; }
