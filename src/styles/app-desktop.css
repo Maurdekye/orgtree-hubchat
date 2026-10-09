@@ -23,8 +23,7 @@
 .lc-code input { font: 600 19px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
 .banner.upd { background: var(--accent-soft); }
 .banner.upd > .ic { color: var(--accent-text); }
-.about-upd { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
-.about-upd .help { flex: 1; }
+.about-upd { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin: 18px 0 16px; }
 .ob-card .kfile { margin-top: 2px; }
 .ob .lc-steps { margin-top: -4px; }
 .lc-acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }

@@ -448,11 +448,13 @@ function UpdateCheck() {
   const busy = st.k === "installing" || step.k === "downloading" || step.k === "installing" || step.k === "confirm";
   return (
     <>
+      {/* the button first and the status under it, so the button never moves
+          as the status changes (user 2026-10-09 22:58Z) */}
       <div className={platform === "android" ? "about-upd pad" : "about-upd"}>
-        <span className={"help" + (st.k === "error" || step.k === "failed" ? " bad" : "")}>{text}</span>
         {avail
-          ? <button className="btn primary" onClick={install} disabled={busy}><Icon name="restart" />{platform === "android" ? "Update" : "Restart to update"}</button>
-          : <button className="btn" onClick={check} disabled={st.k === "checking"}><Icon name="refresh" />Check for updates</button>}
+          ? <button className={platform === "android" ? "btn primary block" : "btn primary"} onClick={install} disabled={busy}><Icon name="restart" />{platform === "android" ? "Update" : "Restart to update"}</button>
+          : <button className={platform === "android" ? "btn block" : "btn"} onClick={check} disabled={st.k === "checking"}><Icon name="refresh" />Check for updates</button>}
+        <span className={"help" + (st.k === "error" || step.k === "failed" ? " bad" : "")}>{text}</span>
       </div>
       <Card>
         <Row icon="sync" t1="Check for updates automatically" t2="When Hubchat starts and every 6 hours. Updates never install on their own." right={<Switch on={auto} onChange={setAutoChecks} label="Check for updates automatically" />} />

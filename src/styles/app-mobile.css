@@ -26,6 +26,7 @@
 .xrow .link { font-size: 13.5px; }
 
 /* link a device, devices, updates */
+.about-upd { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
 .obpair .paircode.long { font-size: 21px; letter-spacing: .06em; white-space: nowrap; }
 .ob .waiting .cd { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--faint); }
 .lc-code input { font: 600 20px var(--mono); letter-spacing: .08em; text-transform: uppercase; text-align: center; }
