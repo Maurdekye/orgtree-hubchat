@@ -64,6 +64,7 @@ pub trait Platform: Send + Sync + 'static {
 
 /// Windows: the computer's name as its owner wrote it (Settings › System ›
 /// About; the host name keeps its case, COMPUTERNAME is upper case).
+/// Linux: the host name.
 fn computer_name() -> String {
     #[cfg(windows)]
     {
@@ -76,10 +77,20 @@ fn computer_name() -> String {
             return h.trim().to_owned();
         }
     }
+    #[cfg(target_os = "linux")]
+    if let Ok(h) = std::fs::read_to_string("/etc/hostname") {
+        if !h.trim().is_empty() {
+            return h.trim().to_owned();
+        }
+    }
+    #[cfg(target_os = "linux")]
+    const FALLBACK: &str = "Linux PC";
+    #[cfg(not(target_os = "linux"))]
+    const FALLBACK: &str = "Windows PC";
     std::env::var("COMPUTERNAME")
         .ok()
         .filter(|n| !n.trim().is_empty())
-        .unwrap_or_else(|| "Windows PC".into())
+        .unwrap_or_else(|| FALLBACK.into())
 }
 
 pub struct Core {
