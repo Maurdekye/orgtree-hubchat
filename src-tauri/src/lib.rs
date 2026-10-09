@@ -333,6 +333,7 @@ pub fn run() {
             commands::hc_resolve,
             commands::hc_chats,
             commands::hc_chat,
+            commands::hc_load_older,
             commands::hc_message,
             commands::hc_send,
             commands::hc_retry,

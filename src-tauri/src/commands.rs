@@ -457,15 +457,25 @@ pub fn hc_chat(
         _ => None,
     };
     let (before, from) = (pair(&before_at, &before_id), pair(&from_at, &from_id));
-    core::get()?
-        .store
-        .chat(
-            &peer,
-            before.as_ref().map(|(a, b)| (a.as_str(), b.as_str())),
-            from.as_ref().map(|(a, b)| (a.as_str(), b.as_str())),
-            limit.unwrap_or(50).min(5000),
-        )
-        .map_err(s)
+    let (before, from) = (
+        before.as_ref().map(|(a, b)| (a.as_str(), b.as_str())),
+        from.as_ref().map(|(a, b)| (a.as_str(), b.as_str())),
+    );
+    let limit = limit.unwrap_or(50).min(5000);
+    // the engine leaves out what older pages still have to fill in
+    match core::get()?.engine() {
+        Ok(e) => e.chat(&peer, before, from, limit),
+        Err(_) => core::get()?.store.chat(&peer, before, from, limit),
+    }
+    .map_err(s)
+}
+
+/// Scrolling back past what this device holds: one older page of the chat
+/// from every hub this device started from now on (lazy history).
+#[tauri::command]
+pub async fn hc_load_older(peer: String) -> R<hubchat_core::engine::OlderPage> {
+    let e = engine()?;
+    on_core(async move { e.load_older(&peer).await.map_err(s) }).await
 }
 
 #[tauri::command]
