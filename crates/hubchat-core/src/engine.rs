@@ -619,7 +619,8 @@ impl Engine {
                 }
                 // Persist first, then ack: the hub keeps it until we have it.
                 if self.store.insert_incoming(url, m, &t)? {
-                    let preview: String = m.body.chars().take(140).collect();
+                    // markdown syntax is for the chat; a notification gets plain words
+                    let preview = crate::text::plain_preview(&m.body, 140);
                     self.host.event(Event::Incoming {
                         peer: m.from.clone(),
                         id: m.id.clone(),
@@ -771,7 +772,8 @@ impl Engine {
                             to_deliver.push((m.env.id.clone(), "delivered", t.clone()));
                         }
                         if fresh && !catching_up {
-                            let preview: String = m.env.body.chars().take(140).collect();
+                            // markdown syntax is for the chat; a notification gets plain words
+                            let preview = crate::text::plain_preview(&m.env.body, 140);
                             self.host.event(Event::Incoming {
                                 peer: m.env.from.clone(),
                                 id: m.env.id.clone(),

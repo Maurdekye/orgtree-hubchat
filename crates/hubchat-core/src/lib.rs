@@ -11,6 +11,7 @@ pub mod identity;
 pub mod link;
 pub mod recovery;
 pub mod store;
+pub mod text;
 
 pub use error::{Error, Result};
 pub use hub::{HubAddress, HubClient};
