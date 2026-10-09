@@ -88,6 +88,15 @@ class ConnectionService : Service() {
       WorkManager.getInstance(ctx).enqueueUniquePeriodicWork(WORK, ExistingPeriodicWorkPolicy.KEEP, req)
     }
 
+    /** Message notifications form a group of their own, with its summary
+     *  (user 2026-10-09 06:19Z): Android 16 otherwise folds a message into
+     *  one group with the "connected" notification, and the first tap on it
+     *  only unfolds that group. With one chat waiting, Android shows its
+     *  notification alone, so one tap opens it. */
+    private const val GROUP_MESSAGES = "dev.orgtree.hubchat.MESSAGES"
+    private const val MESSAGE_ID = 2
+    private const val SUMMARY_TAG = "messages-summary"
+
     /** Called from Rust (any thread) when a message arrives. */
     @JvmStatic
     fun notifyMessage(title: String, body: String, peer: String) {
@@ -106,18 +115,47 @@ class ConnectionService : Service() {
         .setStyle(NotificationCompat.BigTextStyle().bigText(body))
         .setCategory(NotificationCompat.CATEGORY_MESSAGE)
         .setPriority(NotificationCompat.PRIORITY_HIGH)
+        .setGroup(GROUP_MESSAGES)
+        .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
         .setAutoCancel(true)
         .setContentIntent(open)
         .build()
-      ctx.getSystemService(NotificationManager::class.java).notify(peer, 2, n)
+      val nm = ctx.getSystemService(NotificationManager::class.java)
+      nm.notify(peer, MESSAGE_ID, n)
+      summary(ctx, nm)
+    }
+
+    /** The message group's summary, shown by Android when two or more chats
+     *  are waiting; silent (the chats' own notifications alert). Tapping it
+     *  opens Hubchat. */
+    private fun summary(ctx: Context, nm: NotificationManager) {
+      val open = PendingIntent.getActivity(
+        ctx, 0, Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+      val s = NotificationCompat.Builder(ctx, CHANNEL_MESSAGES)
+        .setSmallIcon(R.drawable.ic_stat_hubchat)
+        .setContentTitle("New messages")
+        .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+        .setGroup(GROUP_MESSAGES)
+        .setGroupSummary(true)
+        .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
+        .setSilent(true)
+        .setAutoCancel(true)
+        .setContentIntent(open)
+        .build()
+      nm.notify(SUMMARY_TAG, MESSAGE_ID, s)
     }
 
     /** Called from Rust when a chat has nothing unread any more (read here
-     *  or on another device): its message notification goes. */
+     *  or on another device): its message notification goes, and the
+     *  group's summary with the last of them. */
     @JvmStatic
     fun clearMessage(peer: String) {
       val ctx = appContext ?: return
-      ctx.getSystemService(NotificationManager::class.java).cancel(peer, 2)
+      val nm = ctx.getSystemService(NotificationManager::class.java)
+      nm.cancel(peer, MESSAGE_ID)
+      val left = nm.activeNotifications.any { it.id == MESSAGE_ID && it.tag != null && it.tag != SUMMARY_TAG && it.tag != peer }
+      if (!left) nm.cancel(SUMMARY_TAG, MESSAGE_ID)
     }
 
     /** Called from Rust: open a content:// URI read-only; returns a detached fd or -1. */
