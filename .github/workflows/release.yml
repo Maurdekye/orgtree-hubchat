@@ -87,8 +87,8 @@ jobs:
     with:
       ref: ${{ needs.resolve.outputs.sha }}
 
-  # The only job that ever sees a real key. It runs for pushed tags alone, waits for
-  # the `release` environment's approval, and executes no project code: it installs
+  # The only job that ever sees a real key. It runs for pushed tags alone (the `release`
+  # environment admits only v* tags) and executes no project code: it installs
   # the pinned Tauri CLI with --ignore-scripts and runs apksigner from the Android SDK.
   sign:
     if: needs.resolve.outputs.mode == 'release'
