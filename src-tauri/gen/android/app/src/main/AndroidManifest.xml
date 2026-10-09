@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- in-app updates from Hubchat's GitHub releases (user 2026-10-09 08:29Z) -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
@@ -55,6 +57,11 @@
             <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
           </intent-filter>
         </receiver>
+
+        <!-- Android's answer to an in-app update: confirm, done or failed -->
+        <receiver
+          android:name=".InstallReceiver"
+          android:exported="false" />
 
         <provider
           android:name="androidx.core.content.FileProvider"

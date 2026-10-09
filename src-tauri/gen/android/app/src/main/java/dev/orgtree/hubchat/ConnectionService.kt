@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.content.pm.ServiceInfo
 import android.net.Uri
 import android.provider.OpenableColumns
@@ -240,6 +241,70 @@ class ConnectionService : Service() {
         } ?: ""
       } catch (e: Exception) {
         ""
+      }
+    }
+
+    // ------------------------------------------------- in-app updates
+    // (user 2026-10-09 08:29Z). Rust downloads the APK and checks its
+    // signature; these hand it to Android's installer.
+
+    /** Called from Rust: may Hubchat install its own updates ("1" or "0")? */
+    @JvmStatic
+    fun canInstallUpdates(): String {
+      val ctx = appContext ?: return "0"
+      return if (Build.VERSION.SDK_INT < 26 || ctx.packageManager.canRequestPackageInstalls()) "1" else "0"
+    }
+
+    /** Called from Rust: Settings › Install unknown apps, for Hubchat. */
+    @JvmStatic
+    fun openInstallSettings() {
+      val ctx = appContext ?: return
+      if (Build.VERSION.SDK_INT < 26) return
+      val i = Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + ctx.packageName))
+      ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }
+
+    /** The installer's last word (InstallReceiver): "", "confirm", "done" or "failed: …". */
+    @Volatile var lastInstall: String = ""
+
+    @JvmStatic
+    fun installState(): String = lastInstall
+
+    /** Called from Rust: test builds (package *.test) may read a local update feed. */
+    @JvmStatic
+    fun isTestBuild(): String = if (appContext?.packageName?.endsWith(".test") == true) "1" else "0"
+
+    /**
+     * Called from Rust with a downloaded, verified APK: install it over this
+     * app with a PackageInstaller session. On Android 12+ it asks for no tap
+     * when Android allows that (after the first in-app update); otherwise
+     * InstallReceiver opens Android's confirmation. Returns "" or why it
+     * couldn't start.
+     */
+    @JvmStatic
+    fun installUpdate(path: String): String {
+      val ctx = appContext ?: return "Hubchat isn't ready yet"
+      return try {
+        val installer = ctx.packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        params.setAppPackageName(ctx.packageName)
+        if (Build.VERSION.SDK_INT >= 31) params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+        val id = installer.createSession(params)
+        installer.openSession(id).use { session ->
+          java.io.File(path).inputStream().use { input ->
+            session.openWrite("hubchat.apk", 0, -1).use { out ->
+              input.copyTo(out, 256 * 1024)
+              session.fsync(out)
+            }
+          }
+          lastInstall = ""
+          val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
+          val status = PendingIntent.getBroadcast(ctx, id, Intent(ctx, InstallReceiver::class.java), flags)
+          session.commit(status.intentSender)
+        }
+        ""
+      } catch (e: Exception) {
+        e.message ?: e.toString()
       }
     }
 
