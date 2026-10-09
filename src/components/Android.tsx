@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message } from "../api";
 import { Icon } from "../lib/icons";
 import { displayName, kindOf } from "../lib/peers";
-import { getSnap, useSnap } from "../lib/store";
+import { getSnap, useSendRoute, useSnap } from "../lib/store";
 import { chatLinkTarget } from "../lib/chatlink";
 import { useActive, useForeground, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { HubBanner, RecoveryBanner } from "./Banners";
@@ -13,6 +13,7 @@ import { ChatRows, EmptyChats, useFilteredChats, type ChatFilter } from "./ChatL
 import { ContactInfo } from "./ContactInfo";
 import { Conversation } from "./Conversation";
 import { Directory } from "./Directory";
+import { hasChoice, HubSheet, routeLabel } from "./HubPicker";
 import { MessageInfoBody } from "./MessageInfo";
 import { MessageView } from "./MessageView";
 import { NewChatInput, NewChatResults, useResolve } from "./NewChat";
@@ -96,12 +97,17 @@ function MsgInfoScreen({ id, peer, back }: { id: string; peer: string; back: () 
 
 /** The conversation's ⋮ menu: a bottom sheet (the prototype's conv-menu). */
 function ConvMenu({ peer, onContact, onClose }: { peer: string; onContact: () => void; onClose: () => void }) {
+  const snap = useSnap();
+  const route = useSendRoute(peer);
+  const [hubSheet, setHubSheet] = useState(false);
+  if (hubSheet && route) return <HubSheet peer={peer} route={route} who={displayName(snap.byAddr.get(peer), peer)} onClose={onClose} />;
   return (
     <>
       <div className="sheet-scrim" onClick={onClose} />
       <div className="sheet" role="menu" aria-label="Chat menu">
         <div className="grip" />
         <button className="mi" role="menuitem" onClick={onContact}><Icon name="info" />Contact info</button>
+        {hasChoice(route) ? <button className="mi" role="menuitem" onClick={() => setHubSheet(true)}><Icon name="dns" />Send through…<span className="s">{routeLabel(route, snap.state?.hubs || []).replace(/^via /, "")}</span></button> : null}
         <button className="mi" role="menuitem" onClick={() => { onClose(); void copyText("@net:" + peer, "Address copied"); }}><Icon name="copy" />Copy address</button>
       </div>
     </>

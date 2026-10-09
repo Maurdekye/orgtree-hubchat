@@ -7,11 +7,12 @@ import { Icon } from "../lib/icons";
 import { useFileDrop } from "../lib/drop";
 import { bytes, dayLabel, dayStart, MAX_FILES } from "../lib/format";
 import { copyText, errText } from "../lib/native";
-import { displayName, hubStatusText, kindInfo, kindOf, limitFor, msgTime, peerHubs, presence, preview, viaHub } from "../lib/peers";
-import { refreshChats, useMessages, useSnap } from "../lib/store";
+import { displayName, hubByUrl, hubName, hubStatusText, kindInfo, kindOf, limitFor, msgTime, peerHubs, presence, preview, viaHub } from "../lib/peers";
+import { refreshChats, useMessages, useSendRoute, useSnap } from "../lib/store";
 import { toast } from "../lib/toast";
 import { Composer, type ComposerApi } from "./Composer";
 import { HubHelpLink } from "./HubHelp";
+import { HubChip, routeLabel, routeVia } from "./HubPicker";
 import { MessageView } from "./MessageView";
 import { Addr, KindChip, KindGlyph, NoteCard, PeerAvatar, PresText, pressKeys, useNow, usePlatform } from "./ui";
 
@@ -236,7 +237,11 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   const ph = peerHubs(c, hubs);
   const down = ph.length && !ph.some((h) => h.state === "connected") ? ph[0] : null;
   const now = useNow(!!down);
-  const via = viaHub(c, hubs) || ph[0];
+  // the hub the core really sends through (the hub picker), not a guess
+  const route = useSendRoute(peer);
+  const routed = routeVia(route);
+  const via = (routed && hubByUrl(hubs, routed)) || viaHub(c, hubs) || ph[0];
+  const viaLabel = routed ? routeLabel(route, hubs) : via ? "via " + via.name : "";
 
   // ------------------------------------------------------------ timeline
   const rows: React.ReactNode[] = [];
@@ -272,7 +277,11 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   if (p.state === "offline" && msgs.some((m) => m.outgoing && m.state === "sent")) {
     rows.push(<div className="sysnote" key="pend"><Icon name="schedule" />{name} is offline ({p.short}). Your message waits on hub {via?.name} and is delivered when they reconnect.</div>);
   }
-  if (msgs.some((m) => m.outgoing && (m.state === "queued" || m.state === "sending")) && !viaHub(c, hubs)) {
+  const waiting = msgs.some((m) => m.outgoing && (m.state === "queued" || m.state === "sending"));
+  if (route?.pinned && !route.next) {
+    // a pinned hub that can't reach them: say so, never switch on our own
+    rows.push(<div className="sysnote" key="pinwait"><Icon name="schedule" />Messages to {name} wait for hub {hubName(hubs, route.pinned)}, which can't reach them right now. <button className="link" onClick={() => api.setSendHub(peer, null).catch((e) => toast(errText(e)))}>Use Automatic</button></div>);
+  } else if (waiting && !viaHub(c, hubs)) {
     rows.push(<div className="sysnote" key="wait"><Icon name="schedule" />Waiting for a connection. Queued messages go out on their own.</div>);
   }
 
@@ -345,7 +354,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
               <PeerAvatar address={peer} c={c} hubs={hubs} size={40} />
               <div className="t">
                 <span className="n"><span className="ell">{name}</span> <KindGlyph kind={kind} /></span>
-                <span className="s">{p.state === "disconnected" ? <Icon name="cloud_off" /> : null}{p.state === "online" ? "online" : p.short}{via && hubs.length > 1 ? " · via " + via.name : ""}</span>
+                <span className="s">{p.state === "disconnected" ? <Icon name="cloud_off" /> : null}{p.state === "online" ? "online" : p.short}{viaLabel && hubs.length > 1 ? " · " + viaLabel : ""}</span>
               </div>
             </div>
             <button className="icon-btn" onClick={onMenu} aria-label="More"><Icon name="more_vert" /></button>
@@ -374,7 +383,8 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
             <PresText c={c} hubs={hubs} />
             <span className="sep" />
             <span className="mono ell"><Addr a={peer} net /></span>
-            {via ? <><span className="sep" /><span className="chip hubchip" title={"Messages go through hub " + via.name}>via {via.name}</span></> : null}
+            {routed ? <><span className="sep" /><HubChip peer={peer} route={route} who={name} /></>
+              : via ? <><span className="sep" /><span className="chip hubchip" title={"Messages go through hub " + via.name}>via {via.name}</span></> : null}
           </div>
         </div>
         <button className="icon-btn" onClick={copyAddr} title="Copy address" aria-label="Copy address"><Icon name="copy" /></button>

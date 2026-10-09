@@ -3,7 +3,7 @@
 // once and re-reads only what an `hc` event says changed; transfer progress
 // is kept apart so a progress tick re-renders only the file card it concerns.
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { api, type ChatSummary, type Contact, type HcEvent, type Message, type State } from "../api";
+import { api, type ChatSummary, type Contact, type HcEvent, type Message, type SendRoute, type State } from "../api";
 import { errText } from "./native";
 
 export interface Snap {
@@ -72,6 +72,21 @@ export function onChatChange(peer: string, f: () => void): () => void {
   return () => { s!.delete(f); };
 }
 function chatChanged(peer: string) { chatSubs.get(peer)?.forEach((f) => f()); }
+
+/** Where a chat's messages go (the hub picker), re-read when the chat, the
+ *  hubs or the directory change. */
+export function useSendRoute(peer: string): SendRoute | null {
+  const snap = useSnap();
+  const [r, setR] = useState<{ peer: string; route: SendRoute } | null>(null);
+  const [tick, setTick] = useState(0);
+  useEffect(() => onChatChange(peer, () => setTick((t) => t + 1)), [peer]);
+  useEffect(() => {
+    let live = true;
+    api.sendRoute(peer).then((route) => { if (live) setR({ peer, route }); }, (e) => console.warn("hc_send_route", e));
+    return () => { live = false; };
+  }, [peer, tick, snap.state, snap.directory]);
+  return r?.peer === peer ? r.route : null;
+}
 
 /** History comes a page at a time (lazy history, user 23:46Z). */
 export const PAGE = 50;

@@ -5,14 +5,16 @@
 // URL parameters: ?platform=android  ?onboarding=1  ?update=1 (an update is
 // out)  ?scan=TEXT (what the fake camera reads)  ?pending=ADDRESS (a tapped
 // notification)  ?link=TEXT (the hubchat:// link Android opened the app with)
-// ?approve=S (the other device approves a link after S seconds).
+// ?approve=S (the other device approves a link after S seconds)  ?lab=up (the
+// lab hub starts connected: the hubchat-ui session is then on two hubs, for
+// the hub picker).
 // Linking: a waiting device shows up on the third lookup; a device joining a
 // code is approved after 45 s and reviews LINK_HUBS (a signed-in device
 // joining one: after 2 s the link turns out to be another identity,
 // maya.e71f2b, or with a code starting "SAME" this device's own); nothing is
 // adopted before linkConfirm. A key file opens with any passphrase but
 // "wrong". Hubs on 127.0.0.1 / localhost can't be reached from the "phone".
-import type { Api, Attachment, ChatSummary, Contact, HcEvent, HubRow, HubStatus, LinkEvent, LinkLookup, LinkRole, Message, NewOutgoing, ParsedLink, Probe, Resolved, State } from "../api";
+import type { Api, Attachment, ChatSummary, SendRoute, Contact, HcEvent, HubRow, HubStatus, LinkEvent, LinkLookup, LinkRole, Message, NewOutgoing, ParsedLink, Probe, Resolved, State } from "../api";
 import { toast } from "./toast";
 
 const params = new URLSearchParams(location.search);
@@ -44,7 +46,9 @@ const st: State = {
   platform: params.get("platform") === "android" ? "android" : "desktop",
   hubs: onboarding ? [] : [
     { url: OFFICE, name: "office", state: "connected", error: null, retry_at_ms: null, max_attachment_bytes: GB, features: ["v2"], version: "1.4.0" },
-    { url: LAB, name: "lab", state: "disconnected", error: "connection refused (os error 10061)", retry_at_ms: now() + 14000, max_attachment_bytes: 25 * 1048576, features: [] },
+    params.get("lab") === "up"
+      ? { url: LAB, name: "lab", state: "connected", error: null, retry_at_ms: null, max_attachment_bytes: 25 * 1048576, features: [] }
+      : { url: LAB, name: "lab", state: "disconnected", error: "connection refused (os error 10061)", retry_at_ms: now() + 14000, max_attachment_bytes: 25 * 1048576, features: [] },
   ],
 };
 
@@ -311,6 +315,23 @@ function switchTo(address: string, hubs: string[]): string {
 const find = (id: string) => msgs.find((m) => m.id === id);
 const contactOf = (a: string) => dir.find((c) => c.address === a);
 
+// the hub picker, as the core routes (engine.rs pick_hub / route): a pinned
+// hub only while it is connected and lists the peer; Automatic = a hub where
+// they are online, then the one the chat last went through, then by address
+const pins: Record<string, string> = {};
+function route(peer: string): SendRoute {
+  const c = contactOf(peer);
+  const listed = (c?.hubs || []).filter((u) => st.hubs.some((h) => h.url === u)).sort();
+  const up = (u: string) => st.hubs.some((h) => h.url === u && h.state === "connected");
+  const usable = listed.filter(up);
+  const last = [...msgs].reverse().find((m) => m.peer === peer && m.outgoing && m.hub)?.hub;
+  // (a mock contact is online on all its hubs or none: online decides nothing)
+  const automatic = (last && usable.includes(last) ? last : usable[0]) ?? null;
+  const pinned = pins[peer] && st.hubs.some((h) => h.url === pins[peer]) ? pins[peer] : null;
+  const next = pinned ? (usable.includes(pinned) ? pinned : null) : automatic;
+  return { pinned, automatic, next, hubs: listed.map((url) => ({ url, online: !!c?.online })) };
+}
+
 async function upload(m: Message): Promise<boolean> {
   for (const a of m.attachments) {
     if (a.state === "uploaded") continue;
@@ -332,7 +353,8 @@ async function pipeline(m: Message) {
   m.state = "queued"; m.error = null; chatEv(m.peer);
   await sleep(300);
   const c = contactOf(m.peer);
-  const hub = st.hubs.find((h) => h.state === "connected" && c?.hubs.includes(h.url));
+  const via = route(m.peer).next;
+  const hub = st.hubs.find((h) => h.url === via);
   if (!c) {
     await sleep(600);
     m.state = "failed"; m.error = "no hub knows " + m.peer + " (address not found)"; chatEv(m.peer); return;
@@ -512,6 +534,13 @@ export const mockApi: Api = {
     }
     a.state = "done"; a.local_path = "C:\\Users\\alex\\Downloads\\" + a.name; chatEv(m.peer);
     return a.local_path;
+  },
+  sendRoute: async (peer) => route(peer),
+  setSendHub: async (peer, hub) => {
+    if (hub) pins[peer] = hub; else delete pins[peer];
+    chatEv(peer);
+    // what waited for a hub goes now, if it can (the core's sender wakes)
+    for (const m of msgs) if (m.peer === peer && m.outgoing && m.state === "queued") void pipeline(m);
   },
   markRead: async (peer) => {
     let n = 0;

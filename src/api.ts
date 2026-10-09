@@ -109,6 +109,18 @@ export interface Contact {
   hubs: string[];
 }
 
+/** Where a chat's messages go (the hub picker, hc_send_route). */
+export interface SendRoute {
+  /** The hub this chat is pinned to; null = Automatic. */
+  pinned: string | null;
+  /** The hub Automatic would use now (null: none can, it waits). */
+  automatic: string | null;
+  /** The hub the next message goes through (null: it waits). */
+  next: string | null;
+  /** My hubs whose directory lists the peer, by address. */
+  hubs: { url: string; online: boolean }[];
+}
+
 export type Probe =
   /** `discovered`: a bare host, found on one of the hub's known ports (or https). */
   | { result: "connected"; url: string; name: string; max_attachment_bytes: number; features: string[]; version?: string | null; discovered?: boolean }
@@ -266,6 +278,9 @@ export const tauriApi = {
   cancelTransfer: (localId: string) => invoke<void>("hc_cancel_transfer", { localId }),
   download: (messageId: string, localId: string) => invoke<string>("hc_download", { messageId, localId }),
   markRead: (peer: string) => invoke<void>("hc_mark_read", { peer }),
+  sendRoute: (peer: string) => invoke<SendRoute>("hc_send_route", { peer }),
+  /** Pin a chat to a hub; null = Automatic. */
+  setSendHub: (peer: string, hub: string | null) => invoke<void>("hc_set_send_hub", { peer, hub }),
   deleteMessage: (id: string) => invoke<void>("hc_delete_message", { id }),
   deleteChat: (peer: string) => invoke<void>("hc_delete_chat", { peer }),
   draft: (peer: string) => invoke<string | null>("hc_draft", { peer }),

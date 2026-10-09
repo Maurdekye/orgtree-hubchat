@@ -268,3 +268,21 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 /* read by screen readers only (a message's sender, the live announcements) */
 .sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 .crow-prev .you { flex: none; }
+/* the hub picker (HubPicker.tsx): Automatic and each hub, the chosen one checked */
+.hubopt { align-items: flex-start !important; }
+.hubopt .ck { width: 18px; height: 18px; flex: none; color: var(--accent-text); }
+.hubopt .ck .ic { color: var(--accent-text) !important; }
+.hubopt .t { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.hubopt .t b { font-weight: 600; color: var(--ink-strong); }
+.hubopt .t small { font-size: 12px; color: var(--dim); }
+/* the state dot sits in a box as wide as the row icons, so names line up */
+.hubopt .hic { width: 18px; height: 18px; flex: none; display: flex; align-items: center; justify-content: center; }
+.sheet .hubopt .hic { width: 24px; height: 24px; }
+.hdot { width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; }
+.hdot.online { background: var(--ok); }
+.hdot.offline { border: 2px solid var(--faint); }
+.hdot.down { background: var(--bad); }
+.chip.hubchip.pick { cursor: pointer; background: transparent; padding-right: 4px; }
+.chip.hubchip.pick:hover, .chip.hubchip.pick.on { color: var(--ink-strong); border-color: var(--faint); }
+.chip.hubchip.pinned { color: var(--accent-text); border-color: var(--accent-soft); background: var(--accent-soft); }
+.sysnote .link { font-size: inherit; }
