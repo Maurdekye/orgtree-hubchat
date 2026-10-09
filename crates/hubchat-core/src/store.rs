@@ -77,29 +77,51 @@ CREATE TABLE IF NOT EXISTS drafts (
   peer TEXT PRIMARY KEY,
   body TEXT NOT NULL
 );
--- every hub known to hold a copy of a message (B2, B3): a message sent
--- again through another hub, or synced from two, is on more than one
+"#;
+
+/// Schema changes after the first release, in order: `PRAGMA user_version`
+/// says how many a store has had. Each runs once, in one transaction.
+const MIGRATIONS: &[&str] = &[
+    // 1 (B1-B3, the hub picker): every hub holding a message; deletes owed
+    // by hubs that were down, one row per message (a chat's too: a hub
+    // deletes a conversation as it stands when the request arrives, so a
+    // late "delete chat" would take newer messages); the hub each
+    // attachment id belongs to; a chat's pinned hub; indexes for the
+    // per-send route lookup and relabelling
+    r#"
 CREATE TABLE IF NOT EXISTS message_hubs (
   id  TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   hub TEXT NOT NULL,
   PRIMARY KEY (id, hub)
 );
 CREATE INDEX IF NOT EXISTS message_hubs_by_hub ON message_hubs(hub);
--- deletes a hub still owes us because it was down (B2): kind 'message'
--- (target = a message id) or 'chat' (target = the peer's address)
-CREATE TABLE IF NOT EXISTS pending_deletes (
-  hub    TEXT NOT NULL REFERENCES hubs(url) ON DELETE CASCADE,
-  kind   TEXT NOT NULL,
-  target TEXT NOT NULL,
-  PRIMARY KEY (hub, kind, target)
+INSERT OR IGNORE INTO message_hubs(id, hub) SELECT id, hub FROM messages WHERE hub IS NOT NULL;
+DELETE FROM meta WHERE key='schema.message_hubs';
+DROP TABLE IF EXISTS pending_deletes;
+CREATE TABLE pending_deletes (
+  hub         TEXT NOT NULL REFERENCES hubs(url) ON DELETE CASCADE,
+  id          TEXT NOT NULL,              -- a message id
+  queued_at   TEXT NOT NULL,              -- when the user deleted it
+  attempts    INTEGER NOT NULL DEFAULT 0,
+  next_try_at INTEGER NOT NULL DEFAULT 0, -- unix ms
+  PRIMARY KEY (hub, id)
 );
--- the hub a chat is pinned to (the hub picker); no row = Automatic.
--- Per device, never synced (hubchat-opus 2026-10-09 09:36Z).
+CREATE INDEX pending_deletes_due ON pending_deletes(hub, next_try_at);
+CREATE INDEX pending_deletes_by_id ON pending_deletes(id);
+-- per device, never synced (hubchat-opus 2026-10-09 09:36Z)
 CREATE TABLE IF NOT EXISTS chat_hub (
   peer TEXT PRIMARY KEY,
   hub  TEXT NOT NULL REFERENCES hubs(url) ON DELETE CASCADE
 );
-"#;
+ALTER TABLE attachments ADD COLUMN hub TEXT;
+UPDATE attachments SET hub=(SELECT m.hub FROM messages m WHERE m.id=attachments.message_id)
+  WHERE hub_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS attachments_by_message ON attachments(message_id);
+CREATE INDEX IF NOT EXISTS messages_by_hub ON messages(hub);
+CREATE INDEX IF NOT EXISTS messages_sent_by_peer ON messages(peer, created_at, id)
+  WHERE outgoing=1 AND hub IS NOT NULL;
+"#,
+];
 
 pub struct Store {
     con: Mutex<Connection>,
@@ -117,6 +139,8 @@ pub struct Hub {
 pub struct Attachment {
     pub local_id: String,
     pub hub_id: Option<String>,
+    /// The hub `hub_id` belongs to (each hub has its own ids).
+    pub hub: Option<String>,
     pub name: String,
     pub bytes: u64,
     pub source: Option<String>,
@@ -180,20 +204,11 @@ impl Store {
         Self::init(Connection::open_in_memory().map_err(db)?)
     }
 
-    fn init(con: Connection) -> Result<Self> {
+    fn init(mut con: Connection) -> Result<Self> {
         con.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(db)?;
         con.execute_batch(SCHEMA).map_err(db)?;
-        // once, for a store from before message_hubs: its one hub label
-        con.execute_batch(
-            "BEGIN;
-             INSERT OR IGNORE INTO message_hubs(id, hub)
-               SELECT id, hub FROM messages
-               WHERE hub IS NOT NULL AND NOT EXISTS (SELECT 1 FROM meta WHERE key='schema.message_hubs');
-             INSERT OR IGNORE INTO meta(key, value) VALUES('schema.message_hubs', '1');
-             COMMIT;",
-        )
-        .map_err(db)?;
+        migrate(&mut con).map_err(db)?;
         Ok(Self {
             con: Mutex::new(con),
         })
@@ -248,6 +263,7 @@ impl Store {
         self.with(|c| {
             let tx = c.transaction()?;
             tx.execute("DELETE FROM message_hubs WHERE hub=?", [url])?;
+            relabel(&tx, url)?;
             tx.execute("DELETE FROM hubs WHERE url=?", [url])?;
             tx.commit()
         })
@@ -421,7 +437,7 @@ impl Store {
             )?;
             if n > 0 {
                 for (i, a) in env.attachments.iter().enumerate() {
-                    insert_remote_attachment(&tx, &env.id, i, a)?;
+                    insert_remote_attachment(&tx, hub, &env.id, i, a)?;
                 }
             }
             held_by(&tx, &env.id, hub)?;
@@ -440,7 +456,9 @@ impl Store {
         })
     }
 
-    pub fn mark_sent(&self, id: &str, hub: &str, received_at: &str) -> Result<()> {
+    /// A send went through. False: the message was deleted meanwhile, so
+    /// the hub's new copy is to be deleted too.
+    pub fn mark_sent(&self, id: &str, hub: &str, received_at: &str) -> Result<bool> {
         self.with(|c| {
             let tx = c.transaction()?;
             let n = tx.execute(
@@ -451,7 +469,8 @@ impl Store {
             if n > 0 {
                 held_by(&tx, id, hub)?;
             }
-            tx.commit()
+            tx.commit()?;
+            Ok(n > 0)
         })
     }
 
@@ -630,6 +649,15 @@ impl Store {
         };
         self.with(|c| {
             let tx = c.transaction()?;
+            // deleted here, its delete still owed to some hub: not back
+            let deleting: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM pending_deletes WHERE id=?)",
+                [&env.id],
+                |r| r.get(0),
+            )?;
+            if deleting {
+                return Ok(false);
+            }
             let existing: Option<String> =
                 tx.query_row("SELECT state FROM messages WHERE id=?", [&env.id], |r| r.get(0)).optional()?;
             let fresh = existing.is_none();
@@ -659,14 +687,13 @@ impl Store {
                         ],
                     )?;
                     for (i, a) in env.attachments.iter().enumerate() {
-                        insert_remote_attachment(&tx, &env.id, i, a)?;
+                        insert_remote_attachment(&tx, hub, &env.id, i, a)?;
                     }
                 }
                 Some(state) => {
                     let state = if rank(hub_state) > rank(&state) { hub_state.to_owned() } else { state };
-                    // the label stays the hub it first came through (its
-                    // attachments' ids are that hub's); message_hubs keeps
-                    // every hub that holds it
+                    // the label stays the hub it first came through;
+                    // message_hubs keeps every hub that holds it
                     tx.execute(
                         "UPDATE messages SET hub=COALESCE(hub, ?), received_at=COALESCE(received_at, ?),
                            fetched_at=COALESCE(?, fetched_at), delivered_at=COALESCE(?, delivered_at),
@@ -688,6 +715,16 @@ impl Store {
                 }
             }
             held_by(&tx, &env.id, hub)?;
+            // attachment ids are per hub: ids of a hub that no longer holds
+            // the message (it started over, or was removed) become this one's
+            for (i, a) in env.attachments.iter().enumerate() {
+                tx.execute(
+                    "UPDATE attachments SET hub_id=?, hub=? WHERE message_id=? AND position=?
+                       AND state NOT IN ('pending','uploading')
+                       AND (hub IS NULL OR hub NOT IN (SELECT o.hub FROM message_hubs o WHERE o.id=?))",
+                    params![a.id, hub, env.id, i as i64, env.id],
+                )?;
+            }
             tx.commit()?;
             Ok(fresh && !outgoing && m.read_at.is_none())
         })
@@ -702,33 +739,85 @@ impl Store {
         })
     }
 
-    /// A delete a hub that is down gets when it is back.
-    pub fn queue_delete(&self, hub: &str, kind: &str, target: &str) -> Result<()> {
+    /// "Delete for me", here: the message goes, and each of `hubs` owes
+    /// its delete until it is sent (B2). Returns the message's attachments'
+    /// local ids (a transfer still running for them is to stop).
+    pub fn forget_message(&self, id: &str, hubs: &[String], now: &str) -> Result<Vec<String>> {
         self.with(|c| {
-            c.execute(
-                "INSERT OR IGNORE INTO pending_deletes(hub, kind, target) VALUES(?,?,?)",
-                [hub, kind, target],
-            )
-            .map(|_| ())
+            let tx = c.transaction()?;
+            let lids = attachment_ids(&tx, "a.message_id=?", id)?;
+            owe(&tx, hubs, "SELECT ?2 AS id", id, now)?;
+            tx.execute("DELETE FROM messages WHERE id=?", [id])?;
+            tx.commit()?;
+            Ok(lids)
         })
     }
 
-    /// Deletes this hub still owes us: (kind, target), a bounded batch.
-    pub fn pending_deletes(&self, hub: &str) -> Result<Vec<(String, String)>> {
+    /// "Delete chat", here: its messages go, and each of `hubs` owes each
+    /// message's delete (never the chat's: a hub deletes a conversation as
+    /// it stands when the request arrives, newer messages too). Returns the
+    /// chat's message ids and its attachments' local ids.
+    pub fn forget_chat(&self, peer: &str, hubs: &[String], now: &str) -> Result<(Vec<String>, Vec<String>)> {
+        self.with(|c| {
+            let tx = c.transaction()?;
+            let lids = attachment_ids(&tx, "m.peer=?", peer)?;
+            let ids: Vec<String> = {
+                let mut st = tx.prepare("SELECT id FROM messages WHERE peer=?")?;
+                let rows = st.query_map([peer], |r| r.get(0))?;
+                rows.collect::<rusqlite::Result<_>>()?
+            };
+            owe(&tx, hubs, "SELECT id FROM messages WHERE peer=?2", peer, now)?;
+            tx.execute("DELETE FROM messages WHERE peer=?", [peer])?;
+            tx.commit()?;
+            Ok((ids, lids))
+        })
+    }
+
+    /// Deletes `hub` owes: these message ids.
+    pub fn queue_deletes(&self, hub: &str, ids: &[String], now: &str) -> Result<()> {
+        self.with(|c| {
+            let tx = c.transaction()?;
+            for id in ids {
+                owe(&tx, &[hub.to_owned()], "SELECT ?2 AS id", id, now)?;
+            }
+            tx.commit()
+        })
+    }
+
+    /// Deletes this hub owes that are due by `now_ms`: a bounded batch, the
+    /// longest waiting first.
+    pub fn due_deletes(&self, hub: &str, now_ms: u64) -> Result<Vec<String>> {
         self.with(|c| {
             let mut st = c.prepare(
-                "SELECT kind, target FROM pending_deletes WHERE hub=? ORDER BY kind, target LIMIT 200",
+                "SELECT id FROM pending_deletes WHERE hub=? AND next_try_at<=?
+                 ORDER BY next_try_at, queued_at LIMIT 100",
             )?;
-            let rows = st.query_map([hub], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            let rows = st.query_map(params![hub, now_ms.min(i64::MAX as u64) as i64], |r| r.get(0))?;
             rows.collect()
         })
     }
 
-    pub fn delete_done(&self, hub: &str, kind: &str, target: &str) -> Result<()> {
+    /// Deletes this hub still owes, due or not (a bounded batch).
+    pub fn pending_deletes(&self, hub: &str) -> Result<Vec<String>> {
+        self.due_deletes(hub, u64::MAX)
+    }
+
+    pub fn delete_done(&self, hub: &str, id: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute("DELETE FROM pending_deletes WHERE hub=? AND id=?", [hub, id])
+                .map(|_| ())
+        })
+    }
+
+    /// A delete the hub could not take now: try again later, waiting longer
+    /// each time (30 s, doubling, at most an hour).
+    pub fn delete_later(&self, hub: &str, id: &str, now_ms: u64) -> Result<()> {
         self.with(|c| {
             c.execute(
-                "DELETE FROM pending_deletes WHERE hub=? AND kind=? AND target=?",
-                [hub, kind, target],
+                "UPDATE pending_deletes SET attempts=attempts+1,
+                   next_try_at=?3 + MIN(30000 * (1 << MIN(attempts, 7)), 3600000)
+                 WHERE hub=?1 AND id=?2",
+                params![hub, id, now_ms as i64],
             )
             .map(|_| ())
         })
@@ -755,12 +844,7 @@ impl Store {
                 [hub],
             )?;
             tx.execute("DELETE FROM message_hubs WHERE hub=?", [hub])?;
-            // what stays is now about a hub that still has it
-            tx.execute(
-                "UPDATE messages SET hub=(SELECT o.hub FROM message_hubs o WHERE o.id=messages.id ORDER BY o.hub LIMIT 1)
-                 WHERE hub=?1 AND EXISTS (SELECT 1 FROM message_hubs o WHERE o.id=messages.id)",
-                [hub],
-            )?;
+            relabel(&tx, hub)?;
             tx.commit()
         })
     }
@@ -830,6 +914,17 @@ impl Store {
         })
     }
 
+    /// An upload's id on `hub` (a finished file, or a resumable session).
+    pub fn set_upload(&self, local_id: &str, state: &str, hub_id: &str, hub: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "UPDATE attachments SET state=?, hub_id=?, hub=?, error=NULL WHERE local_id=?",
+                params![state, hub_id, hub, local_id],
+            )
+            .map(|_| ())
+        })
+    }
+
     // ------------------------------------------------------------ drafts
 
     pub fn set_draft(&self, peer: &str, body: &str) -> Result<()> {
@@ -884,7 +979,7 @@ impl Store {
                 })?
                 .collect::<rusqlite::Result<_>>()?;
             let mut st = c.prepare(
-                "SELECT local_id, hub_id, name, bytes, source, local_path, state, error FROM attachments
+                "SELECT local_id, hub_id, hub, name, bytes, source, local_path, state, error FROM attachments
                  WHERE message_id=? ORDER BY position",
             )?;
             for m in &mut msgs {
@@ -893,12 +988,13 @@ impl Store {
                         Ok(Attachment {
                             local_id: r.get(0)?,
                             hub_id: r.get(1)?,
-                            name: r.get(2)?,
-                            bytes: r.get::<_, i64>(3)? as u64,
-                            source: r.get(4)?,
-                            local_path: r.get(5)?,
-                            state: r.get(6)?,
-                            error: r.get(7)?,
+                            hub: r.get(2)?,
+                            name: r.get(3)?,
+                            bytes: r.get::<_, i64>(4)? as u64,
+                            source: r.get(5)?,
+                            local_path: r.get(6)?,
+                            state: r.get(7)?,
+                            error: r.get(8)?,
                         })
                     })?
                     .collect::<rusqlite::Result<_>>()?;
@@ -906,6 +1002,41 @@ impl Store {
             Ok(msgs)
         })
     }
+}
+
+/// Each of `hubs` still in the store owes the delete of the ids `ids_sql`
+/// selects (?2 = `arg`). A hub removed meanwhile owes nothing.
+fn owe(tx: &rusqlite::Transaction, hubs: &[String], ids_sql: &str, arg: &str, now: &str) -> rusqlite::Result<()> {
+    let sql = format!(
+        "INSERT OR IGNORE INTO pending_deletes(hub, id, queued_at)
+         SELECT h.url, d.id, ?3 FROM hubs h, ({ids_sql}) d WHERE h.url=?1"
+    );
+    let mut st = tx.prepare(&sql)?;
+    for h in hubs {
+        st.execute(params![h, arg, now])?;
+    }
+    Ok(())
+}
+
+/// Local ids of the attachments of the messages `cond` selects (?1 = `arg`).
+fn attachment_ids(tx: &rusqlite::Transaction, cond: &str, arg: &str) -> rusqlite::Result<Vec<String>> {
+    let mut st = tx.prepare(&format!(
+        "SELECT a.local_id FROM attachments a JOIN messages m ON m.id=a.message_id WHERE {cond}"
+    ))?;
+    let rows = st.query_map([arg], |r| r.get(0))?;
+    rows.collect()
+}
+
+/// Bring a store up to the newest schema (MIGRATIONS).
+fn migrate(con: &mut Connection) -> rusqlite::Result<()> {
+    let have: usize = con.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    for (i, sql) in MIGRATIONS.iter().enumerate().skip(have) {
+        let tx = con.transaction()?;
+        tx.execute_batch(sql)?;
+        tx.pragma_update(None, "user_version", i + 1)?;
+        tx.commit()?;
+    }
+    Ok(())
 }
 
 /// How far along the receipt ladder a state is; states only move forward.
@@ -920,6 +1051,16 @@ fn rank(state: &str) -> u8 {
     }
 }
 
+/// Messages labelled with `hub`, which no longer holds them, now name a hub
+/// that does (read receipts go there). Their attachments keep their own hub.
+fn relabel(tx: &rusqlite::Transaction, hub: &str) -> rusqlite::Result<usize> {
+    tx.execute(
+        "UPDATE messages SET hub=(SELECT o.hub FROM message_hubs o WHERE o.id=messages.id ORDER BY o.hub LIMIT 1)
+         WHERE hub=?1 AND EXISTS (SELECT 1 FROM message_hubs o WHERE o.id=messages.id)",
+        [hub],
+    )
+}
+
 /// Record that `hub` holds a copy of message `id`.
 fn held_by(tx: &rusqlite::Transaction, id: &str, hub: &str) -> rusqlite::Result<usize> {
     tx.execute(
@@ -930,13 +1071,14 @@ fn held_by(tx: &rusqlite::Transaction, id: &str, hub: &str) -> rusqlite::Result<
 
 fn insert_remote_attachment(
     tx: &rusqlite::Transaction,
+    hub: &str,
     msg: &str,
     i: usize,
     a: &AttachmentMeta,
 ) -> rusqlite::Result<usize> {
     tx.execute(
-        "INSERT INTO attachments(local_id, message_id, position, hub_id, name, bytes, state) VALUES(?,?,?,?,?,?,'remote')",
-        params![uuid::Uuid::new_v4().simple().to_string(), msg, i as i64, a.id, a.name, a.bytes as i64],
+        "INSERT INTO attachments(local_id, message_id, position, hub_id, hub, name, bytes, state) VALUES(?,?,?,?,?,?,?,'remote')",
+        params![uuid::Uuid::new_v4().simple().to_string(), msg, i as i64, a.id, hub, a.name, a.bytes as i64],
     )
 }
 
@@ -1107,22 +1249,202 @@ mod tests {
         s.insert_incoming(b, &env("m2", "maya.111111"), "t1").unwrap();
         assert_eq!(s.message_hubs("m1").unwrap(), [a, b]);
         assert_eq!(s.message_hubs("m2").unwrap(), [b]);
-        // the label stays the hub it came through first (its attachment ids)
+        // the label stays the hub it came through first
         assert_eq!(s.message("m1").unwrap().unwrap().hub.as_deref(), Some(a));
-        s.queue_delete(b, "message", "m1").unwrap();
-        s.queue_delete(b, "message", "m1").unwrap();
-        s.queue_delete(b, "chat", "maya.111111").unwrap();
-        assert_eq!(s.pending_deletes(b).unwrap().len(), 2);
-        assert!(s.pending_deletes(a).unwrap().is_empty());
-        s.delete_done(b, "message", "m1").unwrap();
-        assert_eq!(s.pending_deletes(b).unwrap(), [("chat".to_string(), "maya.111111".to_string())]);
-        s.delete_message("m1").unwrap();
+        // the delete is owed by the hubs named, a hub we don't have owes nothing
+        let gone = "http://gone:7370".to_string();
+        let lids = s.forget_message("m1", &[b.to_string(), gone.clone()], "t2").unwrap();
+        assert_eq!(lids.len(), 1, "its attachment's transfer is to stop");
+        assert!(s.message("m1").unwrap().is_none());
         assert!(s.message_hubs("m1").unwrap().is_empty());
-        // a removed hub owes nothing and holds nothing
+        assert_eq!(s.pending_deletes(b).unwrap(), ["m1"]);
+        assert!(s.pending_deletes(a).unwrap().is_empty());
+        assert!(s.pending_deletes(&gone).unwrap().is_empty());
+        s.forget_message("m1", &[b.to_string()], "t3").unwrap();
+        assert_eq!(s.pending_deletes(b).unwrap(), ["m1"]);
+        // a sync can't bring back a message whose delete is still owed
+        assert!(!s.upsert_synced(a, "me.000000", &synced("m1")).unwrap());
+        assert!(s.message("m1").unwrap().is_none());
+        s.delete_done(b, "m1").unwrap();
+        assert!(s.pending_deletes(b).unwrap().is_empty());
+        // a removed hub owes nothing and holds nothing; the label moves on
+        s.upsert_synced(a, "me.000000", &synced("m2")).unwrap();
+        s.queue_deletes(b, &["x".into()], "t4").unwrap();
         s.remove_hub(b).unwrap();
         assert!(s.pending_deletes(b).unwrap().is_empty());
-        assert!(s.message_hubs("m2").unwrap().is_empty());
-        assert!(s.message("m2").unwrap().is_some());
+        assert_eq!(s.message_hubs("m2").unwrap(), [a]);
+        assert_eq!(s.message("m2").unwrap().unwrap().hub.as_deref(), Some(a));
+        // a hub removed while a delete is being queued: nothing to owe, no error
+        s.queue_deletes(b, &["y".into()], "t5").unwrap();
+    }
+
+    /// Review finding 1: a chat deleted while a hub is down is owed message
+    /// by message: a message that comes later is not in it.
+    #[test]
+    fn a_chat_delete_is_owed_message_by_message() {
+        let s = Store::open_in_memory().unwrap();
+        let b = "http://b:7370";
+        s.add_hub(b, "t0").unwrap();
+        s.insert_incoming(b, &env("c1", "maya.111111"), "t1").unwrap();
+        s.insert_incoming(b, &env("c2", "maya.111111"), "t1").unwrap();
+        s.insert_incoming(b, &env("p1", "pat.222222"), "t1").unwrap();
+        let (mut ids, lids) = s.forget_chat("maya.111111", &[b.to_string()], "t2").unwrap();
+        ids.sort();
+        assert_eq!(ids, ["c1", "c2"]);
+        assert_eq!(lids.len(), 2);
+        let mut owed = s.pending_deletes(b).unwrap();
+        owed.sort();
+        assert_eq!(owed, ["c1", "c2"]);
+        assert!(s.chat("maya.111111", None, None, 10).unwrap().is_empty());
+        assert!(s.message("p1").unwrap().is_some());
+        // maya writes again: the new message stays, and isn't owed
+        s.insert_incoming(b, &env("c3", "maya.111111"), "t3").unwrap();
+        assert_eq!(s.pending_deletes(b).unwrap().len(), 2);
+        assert!(s.message("c3").unwrap().is_some());
+    }
+
+    /// Review finding 4: a delete the hub can't take now waits longer each
+    /// time, and doesn't hold up the others.
+    #[test]
+    fn a_failing_delete_backs_off_without_blocking_the_rest() {
+        let s = Store::open_in_memory().unwrap();
+        let b = "http://b:7370";
+        s.add_hub(b, "t0").unwrap();
+        s.queue_deletes(b, &["d1".into(), "d2".into()], "t1").unwrap();
+        assert_eq!(s.due_deletes(b, 1000).unwrap().len(), 2);
+        s.delete_later(b, "d1", 1000).unwrap();
+        assert_eq!(s.due_deletes(b, 1000).unwrap(), ["d2"]);
+        assert_eq!(s.due_deletes(b, 31_000).unwrap(), ["d2", "d1"]);
+        s.delete_later(b, "d1", 31_000).unwrap(); // second miss: 60 s
+        assert_eq!(s.due_deletes(b, 90_999).unwrap(), ["d2"]);
+        assert_eq!(s.due_deletes(b, 91_000).unwrap(), ["d2", "d1"]);
+        for _ in 0..20 {
+            s.delete_later(b, "d1", 0).unwrap();
+        }
+        assert!(s.due_deletes(b, 3_599_999).unwrap() == ["d2"], "an hour at most");
+        assert_eq!(s.due_deletes(b, 3_600_000).unwrap(), ["d2", "d1"]);
+        assert_eq!(s.pending_deletes(b).unwrap().len(), 2);
+    }
+
+    /// Review finding 3: a message deleted while it was being sent.
+    #[test]
+    fn a_send_landing_after_a_delete_says_so() {
+        let s = Store::open_in_memory().unwrap();
+        let b = "http://b:7370";
+        s.add_hub(b, "t0").unwrap();
+        let out = NewOutgoing {
+            id: "o1".into(),
+            peer: "maya.111111".into(),
+            body: "hi".into(),
+            kind: None,
+            reply_to: None,
+            attachments: vec![],
+        };
+        s.queue_outgoing(&out, "t1").unwrap();
+        assert!(s.mark_sent("o1", b, "t2").unwrap());
+        s.forget_message("o1", &[], "t3").unwrap();
+        assert!(!s.mark_sent("o1", b, "t4").unwrap());
+        assert!(s.message("o1").unwrap().is_none());
+    }
+
+    /// Review finding 5: attachment ids belong to the hub they came from;
+    /// another holder's ids replace them once that hub no longer holds it.
+    #[test]
+    fn attachment_ids_follow_a_hub_that_holds_the_message() {
+        let s = Store::open_in_memory().unwrap();
+        let (a, b) = ("http://a:7370", "http://b:7370");
+        for h in [a, b] {
+            s.add_hub(h, "t0").unwrap();
+        }
+        let me = "me.000000";
+        let on = |id: &str| {
+            let mut m = synced("m1");
+            m.env.attachments[0].id = id.into();
+            m
+        };
+        s.upsert_synced(a, me, &on("fa")).unwrap();
+        s.upsert_synced(b, me, &on("fb")).unwrap();
+        let att = |s: &Store| {
+            let a = s.message("m1").unwrap().unwrap().attachments.remove(0);
+            (a.hub_id.unwrap(), a.hub.unwrap())
+        };
+        assert_eq!(att(&s), ("fa".to_string(), a.to_string()), "A still holds it");
+        // A starts over: the message stays (B), labelled B, ids still A's
+        // until a hub that holds it says otherwise
+        s.forget_hub_messages(a).unwrap();
+        assert_eq!(s.message("m1").unwrap().unwrap().hub.as_deref(), Some(b));
+        s.upsert_synced(b, me, &on("fb")).unwrap();
+        assert_eq!(att(&s), ("fb".to_string(), b.to_string()));
+        // A has it again: B's ids stay (B holds it)
+        s.upsert_synced(a, me, &on("fa")).unwrap();
+        assert_eq!(att(&s), ("fb".to_string(), b.to_string()));
+        // an upload records its hub
+        let lid = s.message("m1").unwrap().unwrap().attachments[0].local_id.clone();
+        s.set_upload(&lid, "uploaded", "up1", a).unwrap();
+        assert_eq!(att(&s), ("up1".to_string(), a.to_string()));
+    }
+
+    /// Queued outgoing messages never leave when a hub starts over.
+    #[test]
+    fn queued_messages_survive_a_hub_starting_over() {
+        let s = Store::open_in_memory().unwrap();
+        let a = "http://a:7370";
+        s.add_hub(a, "t0").unwrap();
+        let out = NewOutgoing {
+            id: "q1".into(),
+            peer: "maya.111111".into(),
+            body: "waiting".into(),
+            kind: None,
+            reply_to: None,
+            attachments: vec![],
+        };
+        s.queue_outgoing(&out, "t1").unwrap();
+        s.upsert_synced(a, "me.000000", &synced("s1")).unwrap();
+        s.forget_hub_messages(a).unwrap();
+        assert!(s.message("q1").unwrap().is_some());
+        assert!(s.message("s1").unwrap().is_none());
+    }
+
+    /// A store from before the multi-hub fixes (main's schema, with data)
+    /// is brought up once: holders and attachment hubs from the old label.
+    #[test]
+    fn an_existing_store_is_migrated_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hubchat.db");
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(SCHEMA).unwrap();
+            c.execute_batch(
+                "INSERT INTO hubs(url, added_at) VALUES('http://a:7370', 't0');
+                 INSERT INTO messages(id, peer, outgoing, hub, body, created_at, state)
+                   VALUES('old1', 'maya.111111', 0, 'http://a:7370', 'hi', 't1', 'received');
+                 INSERT INTO messages(id, peer, outgoing, body, created_at, state)
+                   VALUES('old2', 'maya.111111', 1, 'queued', 't2', 'queued');
+                 INSERT INTO attachments(local_id, message_id, position, hub_id, name, bytes, state)
+                   VALUES('l1', 'old1', 0, 'f1', 'f.txt', 3, 'remote');",
+            )
+            .unwrap();
+        }
+        let version = |s: &Store| -> usize {
+            s.with(|c| c.query_row("PRAGMA user_version", [], |r| r.get(0))).unwrap()
+        };
+        let s = Store::open(&path).unwrap();
+        assert_eq!(version(&s), MIGRATIONS.len());
+        assert_eq!(s.message_hubs("old1").unwrap(), ["http://a:7370"]);
+        assert!(s.message_hubs("old2").unwrap().is_empty());
+        let att = s.message("old1").unwrap().unwrap().attachments.remove(0);
+        assert_eq!(att.hub.as_deref(), Some("http://a:7370"));
+        s.queue_deletes("http://a:7370", &["x".into()], "t3").unwrap();
+        drop(s);
+        // opened again: nothing runs twice, nothing is lost
+        let s = Store::open(&path).unwrap();
+        assert_eq!(version(&s), MIGRATIONS.len());
+        assert_eq!(s.pending_deletes("http://a:7370").unwrap(), ["x"]);
+        // a wipe (another identity) doesn't run the migration again
+        s.wipe().unwrap();
+        drop(s);
+        let s = Store::open(&path).unwrap();
+        assert_eq!(version(&s), MIGRATIONS.len());
     }
 
     /// B3: a hub that starts its sync over drops only what no other hub

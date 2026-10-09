@@ -40,10 +40,6 @@ pub const RESUMABLE_MIN: u64 = 8 * 1024 * 1024;
 /// Long bodies (v2, G6) are fetched whole up to this size.
 pub const LONG_BODY_FETCH_MAX: u64 = 64 * 1024 * 1024;
 
-/// What a hub that was down still owes us (store pending_deletes kind).
-const DELETE_MESSAGE: &str = "message";
-const DELETE_CHAT: &str = "chat";
-
 /// Back-off between reconnects (design F7: 8, 16, 32 s, then 32 s).
 const BACKOFF: [u64; 3] = [8, 16, 32];
 
@@ -315,6 +311,12 @@ impl Engine {
         if let Some(rt) = rt {
             rt.stop.cancel();
             rt.retry_now.notify_one();
+            // deletes it still owes go now or never (best effort)
+            if rt.status.state == HubState::Connected {
+                let _ = self
+                    .send_queued_deletes(&rt.client, url, &rt.status.features, u64::MAX)
+                    .await;
+            }
             if unregister {
                 let _ = rt.client.unregister(&self.me).await;
             }
@@ -322,6 +324,8 @@ impl Engine {
         self.store.remove_hub(url)?;
         self.host.event(Event::Hub { url: url.into() });
         self.host.event(Event::Directory);
+        // a chat pinned to it is on Automatic now: its waiting messages can go
+        self.queue_changed.notify_one();
         Ok(())
     }
 
@@ -576,12 +580,15 @@ impl Engine {
             s.version = health.version.clone();
         });
         self.queue_changed.notify_one();
-        self.send_queued_deletes(client, url, &health.features).await?;
         if health.supports("sync") {
-            return self.sync_session(client, url, stop, &profile).await;
+            return self
+                .sync_session(client, url, stop, &profile, &health.features)
+                .await;
         }
         let mut registered_again = false;
         while !stop.is_cancelled() {
+            self.send_queued_deletes(client, url, &health.features, unix_ms())
+                .await?;
             self.mark(url, |s| s.waiting_since_ms = Some(unix_ms()));
             let p = match client.poll(&self.me, crate::hub::POLL_WAIT_SECS).await {
                 Ok(p) => p,
@@ -671,6 +678,7 @@ impl Engine {
         url: &str,
         stop: &CancelFlag,
         profile: &Profile,
+        features: &[String],
     ) -> Result<()> {
         let key = format!("sync.cursor.{url}");
         let me = self.me.address();
@@ -681,6 +689,8 @@ impl Engine {
         let mut catching_up = cursor.is_none();
         let mut registered_again = false;
         while !stop.is_cancelled() {
+            self.send_queued_deletes(client, url, features, unix_ms())
+                .await?;
             let first_page = cursor.is_none();
             self.mark(url, |s| s.waiting_since_ms = Some(unix_ms()));
             let r = match client
@@ -948,7 +958,8 @@ impl Engine {
         self.store.set_state(id, "sending", None)?;
         let mut hub_ids = Vec::new();
         for a in &m.attachments {
-            if a.state == "uploaded" {
+            // ids are per hub: after a route change the file goes up again
+            if a.state == "uploaded" && a.hub.as_deref() == Some(url.as_str()) {
                 if let Some(h) = &a.hub_id {
                     hub_ids.push(h.clone());
                     continue;
@@ -995,7 +1006,7 @@ impl Engine {
                     .get(&url)
                     .is_some_and(|h| h.status.features.iter().any(|f| f == "uploads"));
             let r = if resumable {
-                self.upload_resumable(&client, a, file, progress, cancel.clone())
+                self.upload_resumable(&client, &url, a, file, progress, cancel.clone())
                     .await
             } else {
                 client
@@ -1005,13 +1016,8 @@ impl Engine {
             self.transfers.lock().unwrap().remove(&a.local_id);
             match r {
                 Ok(meta) => {
-                    self.store.set_attachment(
-                        &a.local_id,
-                        "uploaded",
-                        Some(&meta.id),
-                        None,
-                        None,
-                    )?;
+                    self.store
+                        .set_upload(&a.local_id, "uploaded", &meta.id, &url)?;
                     hub_ids.push(meta.id);
                 }
                 Err(e)
@@ -1099,7 +1105,11 @@ impl Engine {
         };
         match client.send(&self.me, &out).await {
             Ok(r) => {
-                self.store.mark_sent(id, &url, &r.received_at)?;
+                if !self.store.mark_sent(id, &url, &r.received_at)? {
+                    // deleted while it was on its way: the hub's copy goes too
+                    self.store.queue_deletes(&url, &[m.id.clone()], &now())?;
+                    self.send_deletes_now(&[url.clone()]).await;
+                }
                 self.host.event(Event::Chat { peer: m.peer });
                 Ok(true)
             }
@@ -1138,18 +1148,23 @@ impl Engine {
     async fn upload_resumable(
         &self,
         client: &HubClient,
+        url: &str,
         a: &crate::store::Attachment,
         file: tokio::fs::File,
         progress: crate::hub::Progress,
         cancel: CancelFlag,
     ) -> Result<crate::hub::AttachmentMeta> {
-        let existing = a.hub_id.clone().filter(|_| a.state != "uploaded");
+        // a session on this hub only (the route may have changed)
+        let existing = a
+            .hub_id
+            .clone()
+            .filter(|_| a.state != "uploaded" && a.hub.as_deref() == Some(url));
         let upload_id = match existing {
             Some(id) if client.upload_state(&self.me, &id).await.is_ok() => id,
             _ => {
                 let st = client.open_upload(&self.me, &a.name, a.bytes).await?;
                 self.store
-                    .set_attachment(&a.local_id, "uploading", Some(&st.id), None, None)?;
+                    .set_upload(&a.local_id, "uploading", &st.id, url)?;
                 st.id
             }
         };
@@ -1171,80 +1186,122 @@ impl Engine {
     // --------------------------------------------------------- deleting
 
     /// "Delete for me": our copy goes from this device and, on v2 hubs, from
-    /// every hub that holds it (so from all our devices); the other side
-    /// keeps theirs. A hub that is down gets the delete when it is back (B2).
+    /// every hub (so from all our devices); the other side keeps theirs.
+    /// Every hub gets it, not just those known to hold a copy: that list
+    /// misses copies (a send whose answer was lost, data from before it was
+    /// kept), and an id a hub doesn't have costs nothing. A hub that is down
+    /// gets it when it is back (B2). A send still under way stops, or its
+    /// copy is deleted when it lands.
     pub async fn delete_message(&self, id: &str) -> Result<()> {
         let m = self.store.message(id)?;
-        for hub in self.store.message_hubs(id)? {
-            self.delete_on(&hub, DELETE_MESSAGE, id).await?;
-        }
-        self.store.delete_message(id)?;
+        let hubs: Vec<String> = self.hubs.lock().unwrap().keys().cloned().collect();
+        let lids = self.store.forget_message(id, &hubs, &now())?;
+        self.cancel_transfers(&lids);
         if let Some(m) = m {
             self.host.event(Event::Chat { peer: m.peer });
         }
+        self.send_deletes_now(&hubs).await;
         Ok(())
     }
 
-    /// "Delete chat": on every hub, a hub that is down when it is back (B2).
+    /// "Delete chat": on every hub. A connected hub deletes the conversation
+    /// at once; one that is down (or fails) gets each message's delete when
+    /// it is back, never the conversation's, which would take messages that
+    /// came after the user deleted it (B2).
     pub async fn delete_chat(&self, peer: &str) -> Result<()> {
-        let hubs: Vec<String> = self.hubs.lock().unwrap().keys().cloned().collect();
-        for hub in hubs {
-            self.delete_on(&hub, DELETE_CHAT, peer).await?;
-        }
-        self.store.delete_chat(peer)?;
+        let hubs: Vec<(String, HubClient, bool, bool)> = self
+            .hubs
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(u, h)| {
+                let connected = h.status.state == HubState::Connected;
+                let capable = h.status.features.iter().any(|f| f == "delete");
+                (u.clone(), h.client.clone(), connected, capable)
+            })
+            .collect();
+        let later: Vec<String> = hubs
+            .iter()
+            .filter(|(_, _, connected, _)| !connected)
+            .map(|(u, ..)| u.clone())
+            .collect();
+        let t = now();
+        let (ids, lids) = self.store.forget_chat(peer, &later, &t)?;
+        self.cancel_transfers(&lids);
         self.host.event(Event::Chat { peer: peer.into() });
+        for (url, client, connected, capable) in hubs {
+            if connected && capable && client.delete_conversation(&self.me, peer).await.is_err() {
+                self.store.queue_deletes(&url, &ids, &t)?;
+            }
+        }
         Ok(())
     }
 
-    /// Delete on one hub now if it is connected, else (or if that fails)
-    /// keep it for when the hub is back. A connected hub without "delete"
-    /// (v1) keeps no history: nothing to do there.
-    async fn delete_on(&self, url: &str, kind: &str, target: &str) -> Result<()> {
-        let now = self.hubs.lock().unwrap().get(url).map(|h| {
-            let connected = h.status.state == HubState::Connected;
-            let capable = h.status.features.iter().any(|f| f == "delete");
-            (h.client.clone(), connected, capable)
-        });
-        let Some((client, connected, capable)) = now else {
-            return Ok(()); // removed: nothing of ours is kept there for us
-        };
-        if connected && !capable {
-            return Ok(());
-        }
-        if connected && self.hub_delete(&client, kind, target).await.is_ok() {
-            return Ok(());
-        }
-        self.store.queue_delete(url, kind, target)
-    }
-
-    async fn hub_delete(&self, client: &HubClient, kind: &str, target: &str) -> Result<u64> {
-        if kind == DELETE_CHAT {
-            client.delete_conversation(&self.me, target).await
-        } else {
-            client.delete_message(&self.me, target).await
+    fn cancel_transfers(&self, local_ids: &[String]) {
+        let transfers = self.transfers.lock().unwrap();
+        for lid in local_ids {
+            if let Some(c) = transfers.get(lid) {
+                c.cancel();
+            }
         }
     }
 
-    /// A hub is back: send the deletes it missed, before its news (so it
-    /// can't hand back what we deleted). Network trouble leaves the rest for
-    /// next time; a hub that refuses one drops it.
-    async fn send_queued_deletes(&self, client: &HubClient, url: &str, features: &[String]) -> Result<()> {
+    /// Send the deletes these hubs owe, those that are connected (best
+    /// effort: what fails stays queued for the hub's own session).
+    async fn send_deletes_now(&self, urls: &[String]) {
+        for url in urls {
+            let rt = self.hubs.lock().unwrap().get(url).and_then(|h| {
+                (h.status.state == HubState::Connected)
+                    .then(|| (h.client.clone(), h.status.features.clone()))
+            });
+            if let Some((client, features)) = rt {
+                let _ = self
+                    .send_queued_deletes(&client, url, &features, unix_ms())
+                    .await;
+            }
+        }
+    }
+
+    /// Send the deletes this hub owes that are due by `due_ms`. Runs before
+    /// every poll or sync, so a hub never hands back what we deleted; a hub
+    /// without "delete" (v1) keeps no history, so it owes nothing. Network
+    /// trouble or a 401 ends the session (it backs off and registers again);
+    /// a hub that is busy or failing keeps that one for later and goes on
+    /// with the rest; a hub that refuses one drops it.
+    async fn send_queued_deletes(
+        &self,
+        client: &HubClient,
+        url: &str,
+        features: &[String],
+        due_ms: u64,
+    ) -> Result<()> {
         let capable = features.iter().any(|f| f == "delete");
+        let mut tried = std::collections::HashSet::new();
         loop {
-            let batch = self.store.pending_deletes(url)?;
+            let batch: Vec<String> = self
+                .store
+                .due_deletes(url, due_ms)?
+                .into_iter()
+                .filter(|id| !tried.contains(id))
+                .collect();
             if batch.is_empty() {
                 return Ok(());
             }
-            for (kind, target) in batch {
-                if capable {
-                    if let Err(e) = self.hub_delete(client, &kind, &target).await {
-                        // 401: it forgot us; registering again comes next
-                        if !matches!(e.status(), Some(s) if (400..500).contains(&s) && s != 401) {
-                            return Ok(());
-                        }
+            for id in batch {
+                let r = if capable {
+                    client.delete_message(&self.me, &id).await.map(|_| ())
+                } else {
+                    Ok(())
+                };
+                match r.as_ref().map_err(drain_outcome) {
+                    Ok(()) | Err(Drain::Drop) => self.store.delete_done(url, &id)?,
+                    Err(Drain::Later) => self.store.delete_later(url, &id, unix_ms())?,
+                    Err(Drain::Stop) => {
+                        self.store.delete_later(url, &id, unix_ms())?;
+                        return r;
                     }
                 }
-                self.store.delete_done(url, &kind, &target)?;
+                tried.insert(id);
             }
         }
     }
@@ -1325,9 +1382,10 @@ impl Engine {
             .hub_id
             .clone()
             .ok_or_else(|| Error::Invalid("not on a hub".into()))?;
-        let hub = m
+        let hub = a
             .hub
             .clone()
+            .or_else(|| m.hub.clone())
             .ok_or_else(|| Error::Invalid("unknown hub".into()))?;
         let client = self
             .hubs
@@ -1405,7 +1463,7 @@ impl Engine {
             .iter()
             .find(|a| a.local_id == local_id)
             .ok_or_else(|| Error::Invalid("no such attachment".into()))?;
-        let (Some(hub_id), Some(hub)) = (a.hub_id.clone(), m.hub.clone()) else {
+        let (Some(hub_id), Some(hub)) = (a.hub_id.clone(), a.hub.clone().or_else(|| m.hub.clone())) else {
             return Err(Error::Invalid("not on a hub".into()));
         };
         let client = self
@@ -1441,6 +1499,30 @@ impl Engine {
                 Err(e)
             }
         }
+    }
+}
+
+/// What a failed delete of a queued item means for it.
+#[derive(Debug, PartialEq)]
+enum Drain {
+    /// Keep it, try again later, go on with the rest (busy, failing).
+    Later,
+    /// Keep it and end the session (network trouble, or the hub forgot us).
+    Stop,
+    /// The hub refuses it for good: drop it.
+    Drop,
+}
+
+fn drain_outcome(e: &Error) -> Drain {
+    match e.status() {
+        Some(401) => Drain::Stop,
+        Some(408) | Some(429) => Drain::Later,
+        Some(s) if s >= 500 => Drain::Later,
+        Some(_) => Drain::Drop,
+        None => match e {
+            Error::Unreachable(_) | Error::NotAHub(_) | Error::Io(_) => Drain::Stop,
+            _ => Drain::Later,
+        },
     }
 }
 
@@ -1543,6 +1625,20 @@ mod tests {
             reaching.iter().map(|(u, on)| (url(u), *on)).collect();
         let last = last.map(url);
         pick_hub(&connected, &reaching, last.as_deref()).map(|(u, _, _)| u)
+    }
+
+    /// Review finding 4: what a queued delete's failure means.
+    #[test]
+    fn a_failed_delete_is_kept_dropped_or_ends_the_session() {
+        let hub = |status| Error::Hub { status, detail: String::new() };
+        for s in [408, 429, 500, 502, 503] {
+            assert_eq!(drain_outcome(&hub(s)), Drain::Later, "{s}");
+        }
+        for s in [400, 403, 404, 410, 422] {
+            assert_eq!(drain_outcome(&hub(s)), Drain::Drop, "{s}");
+        }
+        assert_eq!(drain_outcome(&hub(401)), Drain::Stop);
+        assert_eq!(drain_outcome(&Error::Unreachable("down".into())), Drain::Stop);
     }
 
     /// B1: the hub a message goes through doesn't depend on the order the
