@@ -68,3 +68,38 @@ pub fn forget_identity(dir: &Path) -> Result<(), String> {
         Err(e) => Err(e.to_string()),
     }
 }
+
+/// Linux keyring round trip, run by CI (build-linux.yml) in three setups:
+/// no D-Bus session, a session without a keyring daemon, and a session
+/// with an unlocked GNOME Keyring. HUBCHAT_KEYRING_EXPECT says which
+/// outcome is right: `fail` (saving fails plainly and nothing is kept in
+/// memory) or `ok` (save, load and forget all work).
+#[cfg(all(test, target_os = "linux"))]
+mod linux_keyring {
+    use super::*;
+
+    #[test]
+    #[ignore = "needs a chosen D-Bus/keyring setup; run by CI"]
+    fn round_trip() {
+        let expect = std::env::var("HUBCHAT_KEYRING_EXPECT").expect("HUBCHAT_KEYRING_EXPECT");
+        let dir = std::env::temp_dir().join(format!("hubchat-keyring-{}", std::process::id()));
+        let me = Identity::generate("ci").unwrap();
+        let saved = save_identity(&dir, &me);
+        eprintln!("save_identity: {saved:?}");
+        match expect.as_str() {
+            "fail" => {
+                assert!(saved.is_err(), "saving must fail without a keyring");
+                assert!(load_identity(&dir).is_none(), "nothing may be kept in memory");
+            }
+            "ok" => {
+                saved.unwrap();
+                let back = load_identity(&dir).expect("load after save");
+                assert_eq!(back.id(), me.id());
+                assert_eq!(back.secret(), me.secret());
+                forget_identity(&dir).unwrap();
+                assert!(load_identity(&dir).is_none(), "gone after forget");
+            }
+            other => panic!("HUBCHAT_KEYRING_EXPECT={other}"),
+        }
+    }
+}

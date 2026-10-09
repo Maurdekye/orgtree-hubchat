@@ -1,0 +1,99 @@
+# Hubchat for macOS: one universal (Apple Silicon + Intel) app, unsigned
+# (ad-hoc signature, no Apple identity, not notarized), as a dmg plus the
+# Tauri updater bundle (.app.tar.gz + .sig). Called by release.yml; a push to
+# ci-test/hubchat-macos runs it standalone. Real keys never enter this job: it
+# always signs the updater bundle with a throwaway key, and release.yml's sign
+# job re-signs it with the real one.
+name: build-macos
+
+on:
+  workflow_call:
+    inputs:
+      ref:     {type: string, required: true}   # tag or commit to build
+      signing: {type: string, default: test}    # ignored: this job always signs with a throwaway key
+  push:
+    branches: ['ci-test/hubchat-macos']
+
+permissions: {contents: read}
+
+env:
+  RUST_TOOLCHAIN: nightly-2025-12-12   # rustc 1.94.0-nightly f52090008, as the Windows release builds
+  RUSTC_COMMIT: f52090008
+  NODE_VERSION: 24.12.0
+  NPM_VERSION: 11.6.2
+  TARGETS: aarch64-apple-darwin,x86_64-apple-darwin
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      # The helper scripts come from this workflow's own commit, so any ref
+      # (also one older than these scripts) can be built.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .ci-tools
+          sparse-checkout: .github/ci
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: npm ${{ env.NPM_VERSION }}
+        run: |
+          npm install -g "npm@$NPM_VERSION"
+          node --version; npm --version
+          test "$(npm --version)" = "$NPM_VERSION"
+
+      - name: Rust ${{ env.RUST_TOOLCHAIN }} (preinstalled rustup)
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update --target "$TARGETS"
+          echo "RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN" >> "$GITHUB_ENV"
+          RUSTUP_TOOLCHAIN="$RUST_TOOLCHAIN" rustc -Vv
+          RUSTUP_TOOLCHAIN="$RUST_TOOLCHAIN" rustc -Vv | grep -q "commit-hash: $RUSTC_COMMIT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+            !target/universal-apple-darwin/release/bundle
+          key: hubchat-macos-cargo-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: hubchat-macos-cargo-${{ env.RUST_TOOLCHAIN }}-
+
+      - name: npm ci
+        run: npm ci
+
+      - name: Throwaway updater signing key
+        run: .ci-tools/.github/ci/macos/signing-key.sh
+
+      - name: Build (universal app + dmg + updater bundle)
+        env:
+          # "-" = ad-hoc signature over the whole bundle (no Apple identity);
+          # without it a downloaded copy on Apple Silicon reports "damaged".
+          APPLE_SIGNING_IDENTITY: '-'
+        run: npx tauri build --target universal-apple-darwin --bundles app,dmg --ci
+
+      - name: Stage release assets
+        run: .ci-tools/.github/ci/macos/stage.sh target/universal-apple-darwin/release/bundle "$RUNNER_TEMP/out"
+
+      - name: Launch smoke
+        run: .ci-tools/.github/ci/macos/smoke.sh "$RUNNER_TEMP/out"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hubchat-macos
+          path: ${{ runner.temp }}/out/*
+          if-no-files-found: error
+          retention-days: 14

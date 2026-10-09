@@ -37,12 +37,17 @@ jni = "0.21"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
-keyring = { version = "3", features = ["windows-native"] }
+keyring = { version = "3", features = ["windows-native", "apple-native"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
 # the right-click menu's Paste reads the clipboard natively (text, and pictures as PNG)
 arboard = "3"
 png = "0.17"
+
+# Linux: the identity key goes to the desktop keyring (Secret Service:
+# GNOME Keyring / KWallet); without a backend keyring keeps it only in memory.
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56"

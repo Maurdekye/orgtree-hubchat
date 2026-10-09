@@ -1,0 +1,211 @@
+# Hubchat for Linux (x86_64): AppImage (+ updater signature) and .deb.
+# Called by release.yml; a push to ci-test/hubchat-linux runs it alone.
+name: build-linux
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+      # kept for the shared contract; ignored: build jobs only ever use a
+      # throwaway key, and release.yml's sign job re-signs real releases
+      signing:
+        type: string
+        default: test
+  push:
+    branches: ['ci-test/hubchat-linux']
+
+permissions:
+  contents: read
+
+env:
+  # the toolchain of the Windows release builds
+  RUST_TOOLCHAIN: nightly-2025-12-12
+  NODE_VERSION: 24.12.0
+  NPM_VERSION: 11.6.2
+
+jobs:
+  build:
+    # 22.04 (glibc 2.35): what is built here also runs on 24.04 and newer
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - name: apt build and smoke dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config file curl wget patchelf \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libxdo-dev libdbus-1-dev libgtk-3-dev \
+            xvfb dbus-x11 libfuse2
+
+      - name: Rust ${{ env.RUST_TOOLCHAIN }}
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+          rustc -Vv
+          cargo -V
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: npm ${{ env.NPM_VERSION }}
+        run: |
+          npm install -g "npm@$NPM_VERSION"
+          node -v
+          npm -v
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: hubchat-linux-cargo-ubuntu-22.04-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            hubchat-linux-cargo-ubuntu-22.04-${{ env.RUST_TOOLCHAIN }}-
+
+      - name: npm ci
+        run: npm ci
+
+      # createUpdaterArtifacts needs a key at build time. Real keys never
+      # enter this job (npm scripts and build.rs run here): it signs with a
+      # throwaway key, and release.yml's sign job re-signs real releases.
+      - name: Throwaway updater signing key
+        run: |
+          pw="$(openssl rand -hex 24)"
+          echo "::add-mask::$pw"
+          npx tauri signer generate --ci -p "$pw" -w "$RUNNER_TEMP/test-updater.key"
+          {
+            echo "TAURI_SIGNING_PRIVATE_KEY<<__KEY__"
+            cat "$RUNNER_TEMP/test-updater.key"
+            echo
+            echo "__KEY__"
+          } >> "$GITHUB_ENV"
+          echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$pw" >> "$GITHUB_ENV"
+
+      - name: tauri build (appimage, deb)
+        run: npx tauri build --bundles appimage,deb
+
+      - name: Collect release assets
+        id: assets
+        run: |
+          v="$(jq -r .version src-tauri/tauri.conf.json)"
+          b=target/release/bundle
+          out="$RUNNER_TEMP/hubchat-linux"
+          mkdir -p "$out"
+          ls -la "$b/appimage" "$b/deb"
+          app="Hubchat_${v}_amd64.AppImage"
+          deb="Hubchat_${v}_amd64.deb"
+          # .deb installs update from their own entry (the updater looks for
+          # linux-x86_64-deb first, then linux-x86_64 = the AppImage)
+          cp "$b/appimage/$app" "$b/appimage/$app.sig" "$b/deb/$deb" "$b/deb/$deb.sig" "$out/"
+          jq -n --arg asset "$app" --rawfile sig "$out/$app.sig" \
+            '{"linux-x86_64": {asset: $asset, signature: $sig}}' > "$out/updater-linux-x86_64.json"
+          jq -n --arg asset "$deb" --rawfile sig "$out/$deb.sig" \
+            '{"linux-x86_64-deb": {asset: $asset, signature: $sig}}' > "$out/updater-linux-x86_64-deb.json"
+          cat "$out"/updater-*.json
+          chmod +x "$out/$app"
+          ( cd "$out" && sha256sum * )
+          echo "dir=$out" >> "$GITHUB_OUTPUT"
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+          echo "deb=$deb" >> "$GITHUB_OUTPUT"
+
+      - name: .deb contents and declared dependencies
+        run: |
+          deb="${{ steps.assets.outputs.dir }}/${{ steps.assets.outputs.deb }}"
+          dpkg-deb -I "$deb"
+          dpkg-deb -c "$deb"
+          echo "Depends: $(dpkg-deb -f "$deb" Depends)"
+
+      - name: Launch smoke (AppImage)
+        run: |
+          .github/ci/linux/smoke.sh appimage "${{ steps.assets.outputs.dir }}/${{ steps.assets.outputs.app }}"
+
+      - name: Launch smoke (.deb installed)
+        run: |
+          sudo apt-get install -y "${{ steps.assets.outputs.dir }}/${{ steps.assets.outputs.deb }}"
+          bin="$(dpkg -L hubchat | grep -m1 '^/usr/bin/')"
+          echo "installed binary: $bin"
+          if ldd "$bin" | grep -i 'not found'; then
+            echo "::error::missing shared libraries"
+            exit 1
+          fi
+          .github/ci/linux/smoke.sh deb "$bin"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hubchat-linux
+          path: ${{ steps.assets.outputs.dir }}/*
+          if-no-files-found: error
+          retention-days: 14
+
+  # The identity key lives in the desktop keyring (Secret Service). Without
+  # one, saving must fail plainly, never fall back to an in-memory store.
+  keyring:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - name: apt dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libxdo-dev libdbus-1-dev libgtk-3-dev \
+            dbus-x11 gnome-keyring
+
+      - name: Rust ${{ env.RUST_TOOLCHAIN }}
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: hubchat-linux-test-ubuntu-22.04-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            hubchat-linux-test-ubuntu-22.04-${{ env.RUST_TOOLCHAIN }}-
+
+      - name: Build the test
+        run: |
+          # the app embeds the web UI at compile time; a stub is enough here
+          mkdir -p dist && echo '<!doctype html><title>stub</title>' > dist/index.html
+          cargo test -p hubchat --lib --no-run
+
+      - name: No D-Bus session -> saving fails plainly
+        run: |
+          env -u DBUS_SESSION_BUS_ADDRESS HUBCHAT_KEYRING_EXPECT=fail \
+            cargo test -p hubchat --lib linux_keyring -- --ignored --nocapture
+
+      - name: D-Bus session, no keyring daemon -> saving fails plainly
+        run: |
+          HUBCHAT_KEYRING_EXPECT=fail dbus-run-session -- \
+            cargo test -p hubchat --lib linux_keyring -- --ignored --nocapture
+
+      - name: Unlocked GNOME Keyring -> save, load, forget
+        run: |
+          export XDG_DATA_HOME="$RUNNER_TEMP/xdg-data"
+          mkdir -p "$XDG_DATA_HOME"
+          HUBCHAT_KEYRING_EXPECT=ok dbus-run-session -- bash -c '
+            eval "$(printf ci | gnome-keyring-daemon --unlock --components=secrets)"
+            cargo test -p hubchat --lib linux_keyring -- --ignored --nocapture'
