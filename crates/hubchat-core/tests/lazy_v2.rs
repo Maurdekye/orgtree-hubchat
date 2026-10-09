@@ -110,6 +110,15 @@ async fn send_many(c: &HubClient, from: &Identity, to: &Identity, prefix: &str, 
     ids
 }
 
+/// What the chat shows (the engine's view, below the history floor left out).
+fn shown(d: &Engine, peer: &str) -> Vec<String> {
+    d.chat(peer, None, None, 100_000)
+        .unwrap()
+        .into_iter()
+        .map(|m| m.id)
+        .collect()
+}
+
 fn chat_ids(d: &Engine, peer: &str) -> Vec<String> {
     d.store()
         .chat(peer, None, None, 100_000)
@@ -151,10 +160,18 @@ async fn a_new_device_starts_from_now_and_pages_back_to_the_start() {
     let d = new_device(&alex, &[&hub], dir.path()).await;
     let st = &d.hub_statuses()[0];
     assert!(st.clock_offset_ms.is_some(), "no clock offset from the hub's now");
-    assert!(
-        chat_ids(&d, &pat.address()).is_empty(),
+    // the chat list comes from the hub's: the newest message and the count
+    let chats = d.store().chats().unwrap();
+    assert_eq!(chats.len(), 1);
+    assert_eq!(chats[0].peer, pat.address());
+    assert_eq!(chats[0].last.id, *old.last().unwrap(), "the newest message");
+    assert_eq!(chats[0].unread, 120);
+    assert_eq!(
+        chat_ids(&d, &pat.address()),
+        vec![old.last().unwrap().clone()],
         "old mail came with the first sync"
     );
+    assert!(shown(&d, &pat.address()).is_empty(), "the chat shows nothing older yet");
 
     // a receipt for an old message (another device read it): no pop-in
     let t = hubchat_core::engine::now();
@@ -167,11 +184,11 @@ async fn a_new_device_starts_from_now_and_pages_back_to_the_start() {
         d.store().message(&live.id).unwrap().is_some()
     })
     .await;
-    assert_eq!(
-        chat_ids(&d, &pat.address()),
-        vec![live.id.clone()],
+    assert!(
+        d.store().message(&old[0]).unwrap().is_none(),
         "an old message showed up before it was paged in"
     );
+    assert_eq!(shown(&d, &pat.address()), vec![live.id.clone()]);
 
     let pages = page_to_start(&d, &pat.address()).await;
     let have = chat_ids(&d, &pat.address());
@@ -181,8 +198,11 @@ async fn a_new_device_starts_from_now_and_pages_back_to_the_start() {
     want.insert(live.id.clone());
     assert_eq!(distinct, want, "gaps after paging back");
     assert_eq!(pages, 3, "135 messages in pages of 50");
+    assert_eq!(shown(&d, &pat.address()).len(), 136, "all of it shows");
     // the one read elsewhere came with its receipt
     assert!(d.store().message(&old[0]).unwrap().unwrap().seen);
+    d.mark_read(&pat.address()).await.unwrap();
+    assert_eq!(d.store().unread(&pat.address()).unwrap(), 0);
     // at the start: nothing more to ask
     let r = d.load_older(&pat.address()).await.unwrap();
     assert_eq!((r.added, r.more.len()), (0, 0));
@@ -210,8 +230,27 @@ async fn paging_two_hubs_stores_a_shared_message_once() {
     want.extend(send_many(&cb, &pat, &alex, &uid("b-"), 40).await);
 
     let d = new_device(&alex, &[&hub_a, &hub_b], dir.path()).await;
-    assert!(chat_ids(&d, &pat.address()).is_empty());
-    page_to_start(&d, &pat.address()).await;
+    let peer = pat.address();
+    // each hub's chat list counts its own (the 10 both hold, twice)
+    let unread = d.store().unread(&peer).unwrap();
+    assert_eq!(unread, if hub_a == hub_b { 110 } else { 120 });
+    assert!(shown(&d, &peer).is_empty());
+    // no pop-ins: each page only adds older messages than those on screen
+    let mut on_screen: Vec<String> = Vec::new();
+    let mut pages = 0;
+    loop {
+        let r = d.load_older(&peer).await.unwrap();
+        let now = shown(&d, &peer);
+        let kept = &now[now.len() - on_screen.len()..];
+        assert_eq!(kept, on_screen.as_slice(), "page {pages}: a message appeared between messages on screen");
+        on_screen = now;
+        pages += 1;
+        if r.more.is_empty() {
+            break;
+        }
+        assert!(pages < 20);
+    }
+    assert_eq!(d.store().unread(&peer).unwrap(), 110, "every unread one loaded, each once");
     let have = chat_ids(&d, &pat.address());
     let distinct: BTreeSet<_> = have.iter().cloned().collect();
     assert_eq!(have.len(), distinct.len(), "duplicates");
@@ -289,4 +328,169 @@ async fn measure_first_sync_full_against_from_now() {
         );
         d.shutdown();
     }
+}
+
+/// A TCP forwarder to a hub that the test takes down and brings back on the
+/// same port (as in multihub_v2.rs).
+struct Forwarder {
+    port: u16,
+    target: String,
+    tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+}
+
+impl Forwarder {
+    fn start(target: &str) -> Self {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let f = Forwarder {
+            port,
+            target: target.trim_start_matches("http://").to_owned(),
+            tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+        };
+        f.up();
+        f
+    }
+
+    fn addr(&self) -> String {
+        format!("127.0.0.1:{}", self.port)
+    }
+
+    fn up(&self) {
+        let sock = tokio::net::TcpSocket::new_v4().unwrap();
+        sock.set_reuseaddr(true).unwrap();
+        sock.bind(([127, 0, 0, 1], self.port).into()).unwrap();
+        let listener = sock.listen(64).unwrap();
+        let (target, tasks) = (self.target.clone(), self.tasks.clone());
+        let accept = tokio::spawn(async move {
+            while let Ok((mut inbound, _)) = listener.accept().await {
+                let target = target.clone();
+                let pipe = tokio::spawn(async move {
+                    if let Ok(mut out) = tokio::net::TcpStream::connect(&target).await {
+                        let _ = tokio::io::copy_bidirectional(&mut inbound, &mut out).await;
+                    }
+                });
+                tasks.lock().unwrap().push(pipe);
+            }
+        });
+        self.tasks.lock().unwrap().push(accept);
+    }
+
+    /// Close the port and cut every open connection.
+    fn down(&self) {
+        for t in self.tasks.lock().unwrap().drain(..) {
+            t.abort();
+        }
+    }
+}
+
+impl Drop for Forwarder {
+    fn drop(&mut self) {
+        self.down();
+    }
+}
+
+/// A hub that is down: scrolling back names it and doesn't wait for it
+/// (the other hub's messages all show); once it is back its messages fill
+/// in, and none of those already on screen go away.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_hub_that_is_down_is_named_and_fills_in_when_back() {
+    let Some((hub_a, hub_b)) = lazy_hubs().filter(|(a, b)| a != b) else {
+        eprintln!("SKIPPED: set HUBCHAT_LAZY_HUB and HUBCHAT_LAZY_HUB2 to two scratch mail hubs v2.0.1");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let alex = Identity::generate("alex").unwrap();
+    let pat = Identity::generate("pat").unwrap();
+    let ca = on_hub(&hub_a, &alex, &pat).await;
+    let cb = on_hub(&hub_b, &alex, &pat).await;
+    let on_a = send_many(&ca, &pat, &alex, &uid("a-"), 30).await;
+    let on_b = send_many(&cb, &pat, &alex, &uid("b-"), 20).await;
+    let fwd = Forwarder::start(&hub_b);
+    let d = new_device(&alex, &[&hub_a, &fwd.addr()], dir.path()).await;
+    let peer = pat.address();
+    fwd.down();
+    until("hub B seen down", 60, || {
+        d.hub_statuses().iter().any(|s| {
+            s.url == url(&fwd.addr()) && s.state == hubchat_core::engine::HubState::Disconnected
+        })
+    })
+    .await;
+    let r = d.load_older(&peer).await.unwrap();
+    assert_eq!(r.unreachable, vec![url(&fwd.addr())]);
+    let r = d.load_older(&peer).await.unwrap();
+    assert!(r.more.is_empty(), "{r:?}");
+    let before_back = shown(&d, &peer);
+    let a_set: BTreeSet<_> = on_a.iter().cloned().collect();
+    // hub B's newest message came with its chat list
+    let want: BTreeSet<_> = a_set.iter().cloned().chain([on_b.last().unwrap().clone()]).collect();
+    assert_eq!(before_back.iter().cloned().collect::<BTreeSet<_>>(), want, "hub A's all show");
+    fwd.up();
+    d.retry_now();
+    until("hub B back", 60, || {
+        d.hub_statuses().iter().all(|s| s.state == hubchat_core::engine::HubState::Connected)
+    })
+    .await;
+    page_to_start(&d, &peer).await;
+    let after = shown(&d, &peer);
+    let all: BTreeSet<_> = on_a.iter().chain(on_b.iter()).cloned().collect();
+    assert_eq!(after.iter().cloned().collect::<BTreeSet<_>>(), all, "hub B's filled in");
+    assert!(before_back.iter().all(|id| after.contains(id)), "a message on screen went away");
+    d.shutdown();
+}
+
+/// B2 follow-up: "Delete chat" while a hub with lazy history is down. When
+/// it is back, the messages it received before the delete go too, those
+/// this device never loaded included; one that came after stays.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn delete_chat_on_a_hub_that_was_down_takes_what_this_device_never_loaded() {
+    let Some((hub, _)) = lazy_hubs() else {
+        eprintln!("SKIPPED: set HUBCHAT_LAZY_HUB to a scratch mail hub v2.0.1");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let alex = Identity::generate("alex").unwrap();
+    let pat = Identity::generate("pat").unwrap();
+    let c = on_hub(&hub, &alex, &pat).await;
+    let old = send_many(&c, &pat, &alex, &uid("old-"), 60).await;
+    let fwd = Forwarder::start(&hub);
+    let d = new_device(&alex, &[&fwd.addr()], dir.path()).await;
+    let peer = pat.address();
+    // this device holds only the chat list's newest message
+    assert_eq!(chat_ids(&d, &peer).len(), 1);
+    fwd.down();
+    until("the hub seen down", 60, || {
+        d.hub_statuses()[0].state == hubchat_core::engine::HubState::Disconnected
+    })
+    .await;
+    d.delete_chat(&peer).await.unwrap();
+    assert!(chat_ids(&d, &peer).is_empty());
+    // (the delete's time is our clock made the hub's: allow for the error)
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    // mail that arrives after the delete stays
+    let mut later = Outgoing::new(&alex.address(), "after the delete");
+    later.id = uid("later-");
+    c.send(&pat, &later).await.unwrap();
+    fwd.up();
+    d.retry_now();
+    let hub_url = url(&fwd.addr());
+    until("the owed chat delete sent", 60, || {
+        d.store().chat_deletes(&hub_url).unwrap().is_empty()
+            && d.hub_statuses()[0].state == hubchat_core::engine::HubState::Connected
+    })
+    .await;
+    let mut left = Vec::new();
+    let mut before = hubchat_core::hub_v2::Before::Time(4_102_444_800_000);
+    loop {
+        let p = c.history(&alex, &peer, &before, 200).await.unwrap();
+        left.extend(p.messages.into_iter().map(|m| m.env.id));
+        match p.before {
+            Some(b) => before = hubchat_core::hub_v2::Before::Cursor(b),
+            None => break,
+        }
+    }
+    assert_eq!(left, vec![later.id.clone()], "{} of {} old ones left", left.len() - 1, old.len());
+    d.shutdown();
 }

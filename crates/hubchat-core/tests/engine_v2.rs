@@ -97,7 +97,7 @@ async fn every_device_gets_everything() {
         .await;
         let s = e.hub_statuses();
         assert!(s[0].features.iter().any(|f| f == "sync"), "hub is v2");
-        assert_eq!(s[0].version.as_deref(), Some("2.0.0"));
+        assert!(s[0].version.as_deref().is_some_and(|v| v.starts_with("2.")), "hub is v2.x");
     }
 
     // A message to alex reaches BOTH of alex's devices.
