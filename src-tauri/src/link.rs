@@ -391,7 +391,7 @@ fn local_addresses() -> (Option<String>, Vec<std::net::IpAddr>) {
     };
     let mut ips = Vec::new();
     // Tailscale's resolver address is routed through the tailnet when it is up.
-    if let Some(ip) = toward("100.100.100.100:53").filter(is_tailnet) {
+    if let Some(ip) = toward("100.100.100.100:53").filter(door::is_tailnet) {
         ips.push(ip);
     }
     if let Some(ip) = toward("1.1.1.1:53") {
@@ -407,37 +407,19 @@ fn local_addresses() -> (Option<String>, Vec<std::net::IpAddr>) {
 /// first (the phone reaches the PC through Tailscale; hubchat-opus 11:50Z).
 /// True with them when the hub says no door runs (phone access is off).
 async fn aliases_for(hub: &str, host: Option<&str>, ips: &[std::net::IpAddr]) -> (Vec<String>, bool) {
-    let door = {
-        let (h, i) = (hub.to_string(), ips.to_vec());
-        match core::get() {
-            Ok(c) => c
-                .rt
-                .spawn(async move { door::find_door(&h, &i, &door::DOOR_PORTS, Duration::from_secs(2)).await })
-                .await
-                .unwrap_or(Door::Unknown),
-            Err(_) => Door::Unknown,
-        }
+    let (h, name, i) = (hub.to_string(), host.map(str::to_string), ips.to_vec());
+    let run = async move {
+        let t = Duration::from_secs(2);
+        let d = door::find_door(&h, &i, &door::DOOR_PORTS, t).await;
+        (door::qr_hubs(&h, name.as_deref(), &i, &d, t).await, d == Door::Off)
     };
-    let port = match &door {
-        Door::Found { port, .. } => Some(*port),
-        _ => None,
-    };
-    let mut out = link::hub_aliases(hub, host, ips, port);
-    if let Door::Found { port, on } = &door {
-        if let Some(ts) = on.iter().find(|ip| is_tailnet(ip)) {
-            let first = format!("http://{}", std::net::SocketAddr::new(*ts, *port));
-            if let Some(i) = out.iter().position(|a| *a == first) {
-                let a = out.remove(i);
-                out.insert(0, a);
-            }
-        }
+    match core::get() {
+        Ok(c) => match c.rt.spawn(run).await {
+            Ok(r) => r,
+            Err(_) => (link::hub_aliases(hub, host, ips, None), false),
+        },
+        Err(_) => (link::hub_aliases(hub, host, ips, None), false),
     }
-    (out, door == Door::Off)
-}
-
-/// 100.64.0.0/10, where Tailscale gives out addresses.
-fn is_tailnet(ip: &std::net::IpAddr) -> bool {
-    matches!(ip, std::net::IpAddr::V4(v4) if v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
 }
 
 #[derive(Serialize)]

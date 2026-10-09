@@ -77,6 +77,49 @@ pub async fn find_door(hub: &str, ips: &[IpAddr], ports: &[u16], limit: Duration
     }
 }
 
+/// The addresses a device-link QR names for `hub` (this device's
+/// addresses: `hostname`, `ips`). With a door found, only addresses that
+/// answered /healthz as the same hub: the ones the door answered on
+/// (Tailscale's first, as phone access binds the door there), `hostname` on
+/// the door's port if it answers there too, then `hub` itself for a second
+/// app on this device. Otherwise the hub's aliases as they are.
+pub async fn qr_hubs(hub: &str, hostname: Option<&str>, ips: &[IpAddr], door: &Door, limit: Duration) -> Vec<String> {
+    let Door::Found { port, on } = door else {
+        return crate::link::hub_aliases(hub, hostname, ips, None);
+    };
+    let Ok(addr) = HubAddress::parse(hub) else {
+        return vec![hub.to_string()];
+    };
+    let mut on: Vec<IpAddr> = on.iter().copied().filter(|ip| !ip.is_loopback()).collect();
+    on.sort_by_key(|ip| !is_tailnet(ip)); // stable: otherwise as found
+    let mut out = crate::link::hub_aliases(hub, None, &on, Some(*port));
+    let host = hostname.map(|h| h.trim().to_ascii_lowercase()).filter(|h| !h.is_empty());
+    if let Some(h) = host.and_then(|h| HubAddress::parse(&format!("http://{h}:{port}")).ok()) {
+        if !crate::link::is_loopback_hub(h.as_str()) {
+            let me = tokio::time::timeout(limit, HubClient::new(addr).healthz()).await;
+            if let Ok(Ok(me)) = me {
+                if same_hub(&me, h.clone(), limit).await && !out.contains(&h.to_string()) {
+                    out.insert(out.len().saturating_sub(1), h.to_string());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 100.64.0.0/10, where Tailscale gives out addresses.
+pub fn is_tailnet(ip: &IpAddr) -> bool {
+    matches!(ip, IpAddr::V4(v4) if v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
+}
+
+/// Whether `a` answers /healthz as the hub `me` (same name and address count).
+async fn same_hub(me: &Health, a: HubAddress, limit: Duration) -> bool {
+    match tokio::time::timeout(limit, HubClient::new(a).healthz()).await {
+        Ok(Ok(h)) => h.name == me.name && h.orgs == me.orgs,
+        _ => false,
+    }
+}
+
 /// Which of `at` answer /healthz as the hub `me` (same name and address
 /// count), all at once; in the order given.
 async fn answering(me: &Health, at: Vec<(IpAddr, u16)>, limit: Duration) -> Vec<(IpAddr, u16)> {
@@ -85,17 +128,13 @@ async fn answering(me: &Health, at: Vec<(IpAddr, u16)>, limit: Duration) -> Vec<
         let Ok(a) = HubAddress::parse(&SocketAddr::new(ip, port).to_string()) else {
             continue;
         };
-        tries.spawn(async move {
-            let h = tokio::time::timeout(limit, HubClient::new(a).healthz()).await.ok()?.ok()?;
-            Some((i, h))
-        });
+        let me = me.clone();
+        tries.spawn(async move { same_hub(&me, a, limit).await.then_some(i) });
     }
     let mut ok: Vec<usize> = Vec::new();
     while let Some(r) = tries.join_next().await {
-        if let Ok(Some((i, h))) = r {
-            if h.name == me.name && h.orgs == me.orgs {
-                ok.push(i);
-            }
+        if let Ok(Some(i)) = r {
+            ok.push(i);
         }
     }
     ok.sort_unstable();
@@ -177,6 +216,53 @@ mod tests {
         let d = find_door(&format!("localhost:{hub}"), &[], &[stranger, door], T).await;
         assert_eq!(d, Door::Found { port: door, on: vec![LO] });
         assert_eq!(find_door(&format!("localhost:{hub}"), &[], &[stranger], T).await, Door::Unknown);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_qr_names_only_addresses_that_answered() {
+        // the door answers on loopback only; 192.0.2.7 (a documentation
+        // address) is one of this PC's addresses that doesn't answer
+        let door = fake(health("home-pc", &[], None)).await;
+        let hub = fake(health("home-pc", &[], None)).await;
+        let hub = format!("http://localhost:{hub}");
+        let lan: IpAddr = "192.0.2.7".parse().unwrap();
+        let short = Duration::from_millis(500);
+        let d = find_door(&hub, &[lan], &[door], short).await;
+        assert_eq!(d, Door::Found { port: door, on: vec![LO] });
+        // so the QR names no other address: just the hub, for this PC
+        assert_eq!(qr_hubs(&hub, Some("home-pc.invalid"), &[lan], &d, short).await, vec![hub.clone()]);
+        // answered on the LAN and Tailscale: Tailscale first, and the other
+        // addresses of the PC and a hostname that doesn't answer are left out
+        let ts: IpAddr = "100.64.1.2".parse().unwrap();
+        let d = Door::Found { port: 7371, on: vec![LO, lan, ts] };
+        let other: IpAddr = "192.0.2.8".parse().unwrap();
+        assert_eq!(
+            qr_hubs(&hub, Some("home-pc.invalid"), &[lan, other, ts], &d, short).await,
+            vec!["http://100.64.1.2:7371".to_string(), "http://192.0.2.7:7371".into(), hub.clone()]
+        );
+        // without a door the hub's aliases are as before
+        assert_eq!(
+            qr_hubs(&hub, Some("home-pc"), &[lan], &Door::Unknown, short).await,
+            crate::link::hub_aliases(&hub, Some("home-pc"), &[lan], None)
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_hostname_counts_only_as_the_same_hub() {
+        let me: Health = serde_json::from_str(&health("home-pc", &[], None)).unwrap();
+        let same = fake(health("home-pc", &[], None)).await;
+        let stranger = fake(health("other-hub", &[], None)).await;
+        let at = |p: u16| HubAddress::parse(&format!("http://localhost:{p}")).unwrap();
+        assert!(same_hub(&me, at(same), T).await);
+        assert!(!same_hub(&me, at(stranger), T).await);
+        assert!(!same_hub(&me, at(1), T).await);
+    }
+
+    #[test]
+    fn tailnet_addresses() {
+        for (ip, ts) in [("100.64.0.1", true), ("100.127.255.254", true), ("100.128.0.1", false), ("192.168.1.2", false)] {
+            assert_eq!(is_tailnet(&ip.parse().unwrap()), ts, "{ip}");
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
