@@ -51,6 +51,10 @@ pub trait Platform: Send + Sync + 'static {
     fn set_stay_connected(&self, _on: bool) -> Result<(), String> {
         Err("only Android has this setting".into())
     }
+    /// Take back a chat's message notification: everything in it was read
+    /// (here, or on another device; user 23:50Z). Where shown notifications
+    /// can't be withdrawn, nothing.
+    fn clear_notification(&self, _peer: &str) {}
     /// The device's own name (user 00:16Z: linking asks for none): the
     /// computer's name here, the phone's on Android.
     fn device_name(&self) -> String {
@@ -112,10 +116,11 @@ pub struct NotifySettings {
 
 impl Host for ShellHost {
     fn event(&self, ev: Event) {
-        if let Event::Incoming { peer, preview, .. } = &ev {
+        if let Event::Incoming { peer, preview, quiet, .. } = &ev {
             let showing = self.foreground.load(Ordering::Relaxed)
                 && self.open_chat.lock().unwrap().as_deref() == Some(peer.as_str());
-            if !showing && self.notify_on.load(Ordering::Relaxed) {
+            // `quiet`: another of our devices was in use when it came
+            if !showing && !quiet && self.notify_on.load(Ordering::Relaxed) {
                 let title = self
                     .store
                     .display_name(peer)
@@ -129,6 +134,12 @@ impl Host for ShellHost {
                 };
                 self.platform
                     .notify(&title, &body, peer, self.notify_sound.load(Ordering::Relaxed));
+            }
+        }
+        // read on any device: its notification goes (user 23:50Z)
+        if let Event::Chat { peer } = &ev {
+            if self.store.unread(peer).is_ok_and(|n| n == 0) {
+                self.platform.clear_notification(peer);
             }
         }
         if let Some(app) = self.app.get() {

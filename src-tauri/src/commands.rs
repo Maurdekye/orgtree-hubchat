@@ -185,6 +185,18 @@ pub fn hc_set_stay_connected(on: bool) -> R<()> {
     Ok(())
 }
 
+/// Whether this device is in use (focused or on screen, touched in the last
+/// few minutes): while it is, our other devices don't notify (user 23:50Z).
+#[tauri::command]
+pub fn hc_set_active(on: bool) -> R<()> {
+    let c = core::get()?;
+    if let Ok(e) = c.engine() {
+        let _g = c.rt.enter();
+        e.set_active(on);
+    }
+    Ok(())
+}
+
 /// Settings › Devices: rename this device; returns the name it now has.
 #[tauri::command]
 pub fn hc_set_device_name(name: String) -> R<String> {

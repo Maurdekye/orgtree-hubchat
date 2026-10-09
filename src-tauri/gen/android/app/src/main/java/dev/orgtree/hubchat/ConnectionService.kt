@@ -112,6 +112,14 @@ class ConnectionService : Service() {
       ctx.getSystemService(NotificationManager::class.java).notify(peer, 2, n)
     }
 
+    /** Called from Rust when a chat has nothing unread any more (read here
+     *  or on another device): its message notification goes. */
+    @JvmStatic
+    fun clearMessage(peer: String) {
+      val ctx = appContext ?: return
+      ctx.getSystemService(NotificationManager::class.java).cancel(peer, 2)
+    }
+
     /** Called from Rust: open a content:// URI read-only; returns a detached fd or -1. */
     @JvmStatic
     fun openFd(uri: String): Int {

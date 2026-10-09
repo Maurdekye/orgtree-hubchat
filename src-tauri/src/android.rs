@@ -148,6 +148,11 @@ impl crate::core::Platform for AndroidPlatform {
             .map(|_| ())
             .ok_or_else(|| "Android refused the change".to_string())
     }
+    fn clear_notification(&self, peer: &str) {
+        if let Some(j) = JNI.get() {
+            let _ = call(&j.service, "clearMessage", &[peer], false);
+        }
+    }
     fn device_name(&self) -> String {
         JNI.get()
             .and_then(|j| call(&j.service, "deviceName", &[], true))
