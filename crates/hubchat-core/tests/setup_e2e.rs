@@ -94,10 +94,12 @@ async fn until(what: &str, secs: u64, mut f: impl FnMut() -> bool) {
     }
 }
 
-fn link(port: u16, org: &str, code: &str) -> SetupLink {
+/// `hub`: host:port.
+fn link(hub: &str, org: &str, code: &str) -> SetupLink {
     SetupLink::parse(&format!(
-        "hubchat://setup?v=1&hub=http%3A%2F%2F127.0.0.1%3A{port}&org={org}&orgname=My%20Org\
-         &pc=home-pc&ts=alex%40gmail.com&code={code}&net=tailscale&hubname=testhub"
+        "hubchat://setup?v=1&hub=http%3A%2F%2F{}&org={org}&orgname=My%20Org\
+         &pc=home-pc&ts=alex%40gmail.com&code={code}&net=tailscale&hubname=testhub",
+        hub.replace(':', "%3A")
     ))
     .unwrap()
 }
@@ -108,7 +110,23 @@ async fn setup_code_links_only_on_the_orgs_answer() {
         eprintln!("SKIPPED: no mailhub source");
         return;
     };
-    let addr = HubAddress::parse(&format!("127.0.0.1:{}", hub.port)).unwrap();
+    run(&format!("127.0.0.1:{}", hub.port)).await;
+}
+
+/// The same on a mail hub v2.0, where the phone gets its mail through sync.
+/// Set HUBCHAT_V2_HUB to a scratch v2 hub (e.g. 127.0.0.1:7397); skipped
+/// when unset.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn setup_code_links_on_a_v2_hub() {
+    let Ok(hub) = std::env::var("HUBCHAT_V2_HUB") else {
+        eprintln!("SKIPPED: set HUBCHAT_V2_HUB to a scratch mail hub v2.0");
+        return;
+    };
+    run(hub.trim_start_matches("http://")).await;
+}
+
+async fn run(hub: &str) {
+    let addr = HubAddress::parse(hub).unwrap();
     let (org_c, org) = member(&addr, "my-org", "org", "My Org").await;
     let (imp_c, imp) = member(&addr, "impostor", "org", "Not My Org").await;
     let dir = tempfile::tempdir().unwrap();
@@ -116,7 +134,7 @@ async fn setup_code_links_only_on_the_orgs_answer() {
     // linked
     let alex = phone("alex", dir.path());
     alex.start().unwrap();
-    let l = link(hub.port, &org.address(), "k7qd-4mxp");
+    let l = link(hub, &org.address(), "k7qd-4mxp");
     let peer = alex.setup_join(&l, "Alex", Duration::from_secs(20)).await.unwrap();
     assert_eq!(peer, org.address());
     let st = alex.setup_state(&peer).unwrap();
@@ -156,7 +174,7 @@ async fn setup_code_links_only_on_the_orgs_answer() {
     let pat = phone("pat", dir.path());
     pat.start().unwrap();
     let peer = pat
-        .setup_join(&link(hub.port, &org.address(), "ZZZZ-9999"), "Pat", Duration::from_secs(20))
+        .setup_join(&link(hub, &org.address(), "ZZZZ-9999"), "Pat", Duration::from_secs(20))
         .await
         .unwrap();
     let (from, code) = read_code(&org_c, &org).await;
@@ -174,7 +192,7 @@ async fn setup_code_links_only_on_the_orgs_answer() {
     let sam = phone("sam", dir.path());
     sam.start().unwrap();
     let err = sam
-        .setup_join(&link(hub.port, "nobody.alex.000000", "CCCC-DDDD"), "Sam", Duration::from_secs(20))
+        .setup_join(&link(hub, "nobody.alex.000000", "CCCC-DDDD"), "Sam", Duration::from_secs(20))
         .await
         .unwrap_err();
     assert!(err.to_string().contains("isn't on home-pc's hub"), "{err}");
@@ -182,7 +200,7 @@ async fn setup_code_links_only_on_the_orgs_answer() {
     // an unreachable hub: couldn't join, after the wait
     let t0 = Instant::now();
     let err = sam
-        .setup_join(&link(1, &org.address(), "CCCC-DDDD"), "Sam", Duration::from_secs(2))
+        .setup_join(&link("127.0.0.1:1", &org.address(), "CCCC-DDDD"), "Sam", Duration::from_secs(2))
         .await
         .unwrap_err();
     assert!(err.to_string().contains("couldn't join home-pc's hub"), "{err}");
