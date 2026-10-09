@@ -1,0 +1,1 @@
+On Android the always-on notification no longer puts a "1" on Hubchat's icon, Check for updates stays in one place, the Directory starts with everyone on your hubs, and on Windows an update no longer reopens an old link.
