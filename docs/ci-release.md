@@ -46,9 +46,9 @@ automatically.
    ```
 4. The **release** workflow starts. It refuses at once if the tag differs from any
    version above, if either notes file is missing, or if `Cargo.lock` is incomplete.
-5. When the four builds finish, the `sign` job waits for approval of the `release`
-   environment (see [Secrets](#secrets-and-the-release-environment)). Approve it on
-   the run's page with **Review deployments**.
+5. When the four builds finish, the `sign` job signs everything with the real keys
+   from the `release` environment (see [Secrets](#secrets-and-the-release-environment)).
+   It doesn't wait for an approval: pushing the tag is the decision to release.
 6. A draft release `v<v>` appears with every asset. The run's summary lists each
    file's size and SHA-256.
 
@@ -128,11 +128,13 @@ secrets. Only the `sign` job uses that environment.
 | `ANDROID_KEY_ALIAS` | the key's alias in the keystore |
 | `ANDROID_KEY_PASSWORD` | the key's password |
 
-Recommended protection for the environment (Settings › Environments › release):
-- **Required reviewers**: the maintainer. Each release then waits for one click
-  before any key is used.
+How the environment is protected (Settings › Environments › release; set up
+2026-10-09):
 - **Deployment branches and tags**: selected tags only, `v*`. A workflow on any
   other branch or tag can't read the keys, test branches included.
+- **No required reviewers** (the maintainer's choice): a pushed `v*` tag signs at
+  once. Only people who can push tags can start a signed build, and its output is
+  still only a draft. To require a click before every signing, add a reviewer there.
 
 If a secret is missing, `sign` stops with an error naming it; nothing is drafted.
 The keys never leave the `release` environment: the build jobs, test runs and pull
