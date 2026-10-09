@@ -433,6 +433,14 @@ async fn a_hub_that_is_down_is_named_and_fills_in_when_back() {
         d.hub_statuses().iter().all(|s| s.state == hubchat_core::engine::HubState::Connected)
     })
     .await;
+    // back but not paged yet: what was on screen still is
+    let reconnected = shown(&d, &peer);
+    assert!(
+        before_back.iter().all(|id| reconnected.contains(id)),
+        "messages went off screen when hub B reconnected: {} of {} left",
+        reconnected.len(),
+        before_back.len()
+    );
     page_to_start(&d, &peer).await;
     let after = shown(&d, &peer);
     let all: BTreeSet<_> = on_a.iter().chain(on_b.iter()).cloned().collect();

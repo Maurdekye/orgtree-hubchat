@@ -43,6 +43,9 @@ pub const LONG_BODY_FETCH_MAX: u64 = 64 * 1024 * 1024;
 /// Back-off between reconnects (design F7: 8, 16, 32 s, then 32 s).
 const BACKOFF: [u64; 3] = [8, 16, 32];
 
+/// How long scrolling back waits for a hub that is still connecting.
+const CONNECTING_GRACE: Duration = Duration::from_secs(4);
+
 /// Messages per history page when scrolling back.
 const HISTORY_PAGE: u32 = 50;
 
@@ -1005,16 +1008,21 @@ impl Engine {
     /// rises again: what was on screen stays.
     pub fn history_floor(&self, peer: &str) -> Result<Option<String>> {
         let key = format!("history.floor.{peer}");
-        let now = self.floor_now(peer)?;
-        let shown: Option<i64> = self.store.meta(&key)?.and_then(|v| v.parse().ok());
-        let floor = match (now, shown) {
+        // "all": the chat once showed everything, so it always will (a hub
+        // that was down doesn't bring a floor back when it reconnects)
+        let shown = self.store.meta(&key)?;
+        if shown.as_deref() == Some("all") {
+            return Ok(None);
+        }
+        let shown: Option<i64> = shown.and_then(|v| v.parse().ok());
+        let floor = match (self.floor_now(peer)?, shown) {
             (Some(n), Some(s)) => Some(n.min(s)),
             (n, _) => n,
         };
         if floor != shown {
             match floor {
                 Some(f) => self.store.set_meta(&key, &f.to_string())?,
-                None => self.store.delete_meta(&key)?,
+                None => self.store.set_meta(&key, "all")?,
             }
         }
         Ok(floor.and_then(|ms| {
@@ -1067,16 +1075,16 @@ impl Engine {
     /// whichever hubs hold it). A hub that isn't connected is named in
     /// `unreachable` and pages in when it is back.
     pub async fn load_older(&self, peer: &str) -> Result<OlderPage> {
-        let hubs: Vec<(String, HubClient, bool)> = self
+        let hubs: Vec<(String, HubClient)> = self
             .hubs
             .lock()
             .unwrap()
             .iter()
-            .map(|(u, h)| (u.clone(), h.client.clone(), h.status.state == HubState::Connected))
+            .map(|(u, h)| (u.clone(), h.client.clone()))
             .collect();
         let me = self.me.address();
         let mut out = OlderPage::default();
-        for (url, client, connected) in hubs {
+        for (url, client) in hubs {
             let Some(start) = self
                 .store
                 .meta(&start_key(&url))?
@@ -1088,7 +1096,7 @@ impl Engine {
             if mark.done {
                 continue;
             }
-            if !connected {
+            if !self.connected_soon(&url).await {
                 out.unreachable.push(url);
                 continue;
             }
@@ -1161,6 +1169,22 @@ impl Engine {
             self.host.event(Event::Chat { peer: peer.into() });
         }
         Ok(out)
+    }
+
+    /// The hub is connected, or becomes so within a few seconds (right
+    /// after start it is still connecting: not "down" for that moment).
+    async fn connected_soon(&self, url: &str) -> bool {
+        let t0 = std::time::Instant::now();
+        loop {
+            let state = self.hubs.lock().unwrap().get(url).map(|h| h.status.state.clone());
+            match state {
+                Some(HubState::Connected) => return true,
+                Some(HubState::Connecting) if t0.elapsed() < CONNECTING_GRACE => {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                _ => return false,
+            }
+        }
     }
 
     // ---------------------------------------------------------- sending

@@ -127,7 +127,8 @@ export function useMessages(peer: string | null, page = PAGE) {
    *  holds, it asks the hubs for their next older page (lazy history). */
   const loadOlder = useCallback(async (from?: Message): Promise<Message[]> => {
     const d = cur.current;
-    if (!peer || d.peer !== peer || (!from && !d.more) || busy.current) return [];
+    // a hub that couldn't be reached may be back: worth asking again
+    if (!peer || d.peer !== peer || (!from && !d.more && !d.unreachable.length) || busy.current) return [];
     busy.current = true;
     setLoadingOlder(true);
     try {

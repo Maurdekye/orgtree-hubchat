@@ -1211,9 +1211,9 @@ fn relabel(tx: &rusqlite::Transaction, hub: &str) -> rusqlite::Result<usize> {
     )
 }
 
-/// Record that `hub` holds a copy of message `id`.
 /// A reply never sorts above the message it answers (hubs' clocks differ):
-/// it goes 1 ms after its parent, and replies to it after it.
+/// it goes 1 ms after its parent, and the replies below it (to a bounded
+/// depth) after it in turn.
 fn after_its_parent(tx: &rusqlite::Transaction, id: &str) -> rusqlite::Result<()> {
     let Some((mut at, reply_to)) = tx
         .query_row(
@@ -1234,14 +1234,32 @@ fn after_its_parent(tx: &rusqlite::Transaction, id: &str) -> rusqlite::Result<()
             at = next;
         }
     }
-    if let Some(next) = shift_ms(&at, 1) {
-        tx.execute(
-            "UPDATE messages SET created_at=? WHERE reply_to=? AND created_at<=?",
-            [&next, id, &at],
-        )?;
+    // a reply to a reply stored before them both moves down the chain too
+    let mut level = vec![(id.to_owned(), at)];
+    for _ in 0..REPLY_CHAIN_DEPTH {
+        let mut next_level = Vec::new();
+        for (parent, at) in &level {
+            let Some(next) = shift_ms(at, 1) else { continue };
+            let moved: Vec<String> = {
+                let mut st = tx.prepare("SELECT id FROM messages WHERE reply_to=? AND created_at<=? LIMIT 100")?;
+                let rows = st.query_map([parent, at], |r| r.get(0))?;
+                rows.collect::<rusqlite::Result<_>>()?
+            };
+            for child in moved {
+                tx.execute("UPDATE messages SET created_at=? WHERE id=?", [&next, &child])?;
+                next_level.push((child, next.clone()));
+            }
+        }
+        if next_level.is_empty() {
+            break;
+        }
+        level = next_level;
     }
     Ok(())
 }
+
+/// How far down a reply chain `after_its_parent` moves replies.
+const REPLY_CHAIN_DEPTH: usize = 8;
 
 /// An RFC 3339 time `ms` milliseconds later (earlier when negative), in
 /// the form the store keeps (`now()`'s).
@@ -1252,6 +1270,7 @@ pub(crate) fn shift_ms(t: &str, ms: i64) -> Option<String> {
     Some(humantime::format_rfc3339_millis(st).to_string())
 }
 
+/// Record that `hub` holds a copy of message `id`.
 fn held_by(tx: &rusqlite::Transaction, id: &str, hub: &str) -> rusqlite::Result<usize> {
     tx.execute(
         "INSERT OR IGNORE INTO message_hubs(id, hub) VALUES(?,?)",
@@ -1737,6 +1756,15 @@ mod tests {
         s.upsert_synced_at(a, me, &synced_at("p2", "2026-10-08T08:00:00.000Z", None), 0)
             .unwrap();
         assert_eq!(created(&s, "r2"), "2026-10-08T08:00:00.001Z");
+        // a reply to a reply, both stored before the first message: the chain follows
+        s.upsert_synced_at(a, me, &synced_at("g3", "2026-10-08T06:00:00.000Z", Some("c3")), 0)
+            .unwrap();
+        s.upsert_synced_at(a, me, &synced_at("c3", "2026-10-08T06:00:00.000Z", Some("p3")), 0)
+            .unwrap();
+        s.upsert_synced_at(a, me, &synced_at("p3", "2026-10-08T06:30:00.000Z", None), 0)
+            .unwrap();
+        assert_eq!(created(&s, "c3"), "2026-10-08T06:30:00.001Z");
+        assert_eq!(created(&s, "g3"), "2026-10-08T06:30:00.002Z");
         // equal times: by id
         s.upsert_synced_at(a, me, &synced_at("t-b", "2026-10-08T07:00:00.000Z", None), 0)
             .unwrap();
@@ -1748,7 +1776,7 @@ mod tests {
             .into_iter()
             .map(|m| m.id)
             .collect();
-        assert_eq!(ids, ["t-a", "t-b", "p2", "r2", "m1", "r1"]);
+        assert_eq!(ids, ["p3", "c3", "g3", "t-a", "t-b", "p2", "r2", "m1", "r1"]);
     }
 
     /// A hub's chat list counts unread messages not loaded here: they count

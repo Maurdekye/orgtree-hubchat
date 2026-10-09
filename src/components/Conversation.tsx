@@ -108,7 +108,13 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   }, [msgs]);
   // a hub whose older messages couldn't be loaded is back: go on from it
   const backOnline = unreachable.some((u) => hubByUrl(hubs, u)?.state === "connected");
-  useEffect(() => { if (backOnline) retryOlder(); }, [backOnline]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!backOnline) return;
+    retryOlder();
+    // at the top of a full view no scroll would ask: load now
+    const el = tl.current;
+    if (el && el.scrollTop < 400) older();
+  }, [backOnline]); // eslint-disable-line react-hooks/exhaustive-deps
   // a short page that doesn't fill the view: the next one, so it can scroll
   useEffect(() => {
     const el = tl.current;

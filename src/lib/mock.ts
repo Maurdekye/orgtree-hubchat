@@ -9,7 +9,8 @@
 // lab hub starts connected: the hubchat-ui session is then on two hubs, for
 // the hub picker). Pat Peer's chat is lazy history: this device holds only
 // its newest messages; older ones load from office as you scroll back, and
-// the lab hub's (down unless ?lab=up) fill in when it is back.
+// the lab hub's (down unless ?lab=up) fill in when it is back (?labback=S:
+// it comes back after S seconds).
 // Linking: a waiting device shows up on the third lookup; a device joining a
 // code is approved after 45 s and reviews LINK_HUBS (a signed-in device
 // joining one: after 2 s the link turns out to be another identity,
@@ -203,8 +204,10 @@ function floorOf(peer: string): string | null {
     const t = list[list.length - 1].created_at;
     if (!f || t > f) f = t;
   }
+  // "" once everything showed: it stays so (a hub back doesn't hide any)
   const shown = shownFloor.get(peer);
-  if (f === null) shownFloor.delete(peer);
+  if (shown === "") return null;
+  if (f === null) shownFloor.set(peer, "");
   else if (!shown || f < shown) shownFloor.set(peer, f);
   else f = shown;
   return f;
@@ -245,6 +248,10 @@ const emit = (e: HcEvent) => listeners.forEach((f) => f(e));
 const chatEv = (peer: string) => emit({ type: "chat", peer });
 const hubEv = (url: string) => emit({ type: "hub", url });
 
+// ?labback=S: the lab hub comes back after S seconds (lazy history: its
+// older messages then fill in)
+const labBack = Number(params.get("labback")) || 0;
+const labUpAt = labBack ? now() + labBack * 1000 : Infinity;
 // the lab hub keeps failing; its countdown runs and it retries on schedule
 setInterval(() => {
   for (const h of st.hubs) {
@@ -254,7 +261,7 @@ setInterval(() => {
 function reconnect(h: HubStatus) {
   h.state = "connecting"; h.retry_at_ms = null; hubEv(h.url);
   setTimeout(() => {
-    if (/10\.0\.0\.7|unreach|10\.0\.9\./.test(h.url)) { h.state = "disconnected"; h.error = "connection refused (os error 10061)"; h.retry_at_ms = now() + 16000; }
+    if (/10\.0\.0\.7|unreach|10\.0\.9\./.test(h.url) && !(h.url === LAB && now() >= labUpAt)) { h.state = "disconnected"; h.error = "connection refused (os error 10061)"; h.retry_at_ms = now() + 16000; }
     else { h.state = "connected"; h.error = null; }
     hubEv(h.url);
   }, 1100);
