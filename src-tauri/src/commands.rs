@@ -402,10 +402,30 @@ pub fn hc_chats() -> R<Vec<ChatSummary>> {
 }
 
 #[tauri::command]
-pub fn hc_chat(peer: String, before: Option<String>, limit: Option<u32>) -> R<Vec<Message>> {
+/// A page of a chat (lazy history, user 23:46Z): the newest `limit` before
+/// the message (`before_at`, `before_id`), or, with `from_*`, everything
+/// from that message on (a re-read of what the chat shows).
+pub fn hc_chat(
+    peer: String,
+    before_at: Option<String>,
+    before_id: Option<String>,
+    from_at: Option<String>,
+    from_id: Option<String>,
+    limit: Option<u32>,
+) -> R<Vec<Message>> {
+    let pair = |a: &Option<String>, b: &Option<String>| match (a, b) {
+        (Some(a), Some(b)) => Some((a.clone(), b.clone())),
+        _ => None,
+    };
+    let (before, from) = (pair(&before_at, &before_id), pair(&from_at, &from_id));
     core::get()?
         .store
-        .chat(&peer, before.as_deref(), limit.unwrap_or(200))
+        .chat(
+            &peer,
+            before.as_ref().map(|(a, b)| (a.as_str(), b.as_str())),
+            from.as_ref().map(|(a, b)| (a.as_str(), b.as_str())),
+            limit.unwrap_or(50).min(5000),
+        )
         .map_err(s)
 }
 
