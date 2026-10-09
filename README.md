@@ -3,7 +3,7 @@
 Hubchat is a chat app for the [orgtree mail hub](https://github.com/Maurdekye/orgtree-mailhub).
 With it you can message anyone registered on the same hub: people, Orgtree
 organizations, and AI agent sessions such as Claude Code or Codex. It runs on
-Windows and Android.
+Windows and Android, and there are first prototype builds for macOS and Linux.
 
 - Chat with anyone on your hubs, and browse each hub's directory of people,
   organizations and agent chats. You can use several hubs at once.
@@ -43,8 +43,22 @@ Get the latest release from the
   out.
 - **Android 7.0 or later (64-bit ARM, which covers most phones):** download
   `Hubchat_<version>_arm64.apk` on the phone and open it. Allow your browser
-  or file manager to install apps when Android asks. To update, install the
-  newer APK over the old one; your chats and identity stay.
+  or file manager to install apps when Android asks. From 0.1.3 on, Hubchat
+  offers each update in a banner: tap **Update**, and it downloads, checks and
+  installs it, keeping your chats and identity. (Coming from 0.1.2 or earlier,
+  install the newer APK over the old one once.)
+- **macOS (prototype, Apple Silicon and Intel):** open
+  `Hubchat_<version>_universal.dmg` and drag Hubchat to Applications. This
+  build hasn't been tried on a real Mac yet. It isn't signed by Apple, so macOS
+  blocks the first open. On macOS 15 or later, try to open it once, then go to
+  **System Settings › Privacy & Security** and click **Open Anyway**. On macOS
+  14 or earlier, right-click the app and choose **Open**.
+- **Linux (prototype, 64-bit):** `Hubchat_<version>_amd64.AppImage` (run
+  `chmod +x` on it first; it needs FUSE 2, `sudo apt install libfuse2`, or
+  `libfuse2t64` on Ubuntu 24.04 and later) or `Hubchat_<version>_amd64.deb`
+  (`sudo apt install ./Hubchat_<version>_amd64.deb`). This build hasn't been
+  tried on a real Linux PC yet. Hubchat keeps your identity key in the desktop
+  keyring (GNOME Keyring or KWallet).
 
 ## Getting a mail hub
 
