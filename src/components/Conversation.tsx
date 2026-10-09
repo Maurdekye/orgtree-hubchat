@@ -38,7 +38,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   const c = snap.byAddr.get(peer);
   const name = displayName(c, peer);
   const kind = kindOf(c);
-  const { msgs, loaded, reload } = useMessages(peer);
+  const { msgs, loaded, reload, more, loadingOlder, loadOlder } = useMessages(peer);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [sel, setSel] = useState<string | null>(null);
   const [extra, setExtra] = useState<Record<string, Message | null>>({});
@@ -85,20 +85,58 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
     ro.observe(el); if (el.firstElementChild) ro.observe(el.firstElementChild);
     return () => ro.disconnect();
   }, [peer]);
+  // older history a page at a time, as the top comes near (user 23:46Z),
+  // keeping what is on screen where it was
+  const anchor = useRef<{ h: number; t: number } | null>(null);
+  const olderBusy = useRef(false);
+  const older = useCallback(() => {
+    const el = tl.current; if (!el || olderBusy.current) return;
+    olderBusy.current = true;
+    anchor.current = { h: el.scrollHeight, t: el.scrollTop };
+    void loadOlder().then((p) => { if (!p.length) anchor.current = null; }).finally(() => { olderBusy.current = false; });
+  }, [loadOlder]);
+  useLayoutEffect(() => {
+    const el = tl.current, a = anchor.current;
+    if (!el || !a) return;
+    anchor.current = null;
+    el.scrollTop = el.scrollHeight - a.h + a.t;
+  }, [msgs]);
+  // a short page that doesn't fill the view: the next one, so it can scroll
+  useEffect(() => {
+    const el = tl.current;
+    if (el && loaded && more && !loadingOlder && el.scrollHeight <= el.clientHeight + 40) older();
+  }, [loaded, more, loadingOlder, msgs, older]);
   const onScroll = () => {
     const el = tl.current; if (!el) return;
     const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
     pinned.current = gap < 80; setFar(gap > 300);
+    if (el.scrollTop < 400 && more && !loadingOlder) older();
   };
   const toBottom = () => { const el = tl.current; if (el) { el.scrollTop = el.scrollHeight; pinned.current = true; setFar(false); } };
 
-  const jump = useCallback((id: string) => {
-    const el = document.getElementById("m-" + id);
-    if (!el) { toast("That message is further back than this chat shows"); return; }
-    el.scrollIntoView({ block: "center", behavior: "smooth" });
+  const flash = (el: HTMLElement, smooth = true) => {
+    el.scrollIntoView({ block: "center", behavior: smooth ? "smooth" : "auto" });
     el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
     setTimeout(() => el.classList.remove("flash"), 1500);
-  }, []);
+  };
+  // a reply's original further back: older pages until it shows
+  const jumpTo = useRef<string | null>(null);
+  const jump = useCallback(async (id: string) => {
+    const el = document.getElementById("m-" + id);
+    if (el) { flash(el); return; }
+    jumpTo.current = id;
+    let before: Message | undefined;
+    for (let i = 0; i < 400; i++) {
+      const p = await loadOlder(before);
+      if (!p.length || p.some((m) => m.id === id)) { if (!p.some((m) => m.id === id)) { jumpTo.current = null; toast("That message isn't in this chat on this device"); } break; }
+      before = p[0];
+    }
+  }, [loadOlder]);
+  useLayoutEffect(() => {
+    const id = jumpTo.current; if (!id) return;
+    const el = document.getElementById("m-" + id);
+    if (el) { jumpTo.current = null; pinned.current = false; flash(el, false); }
+  }, [msgs]);
   const del = useCallback((m: Message) => {
     api.deleteMessage(m.id).then(() => { reload(); void refreshChats(); setSel(null); }, (e) => toast(errText(e)));
   }, [reload]);
@@ -113,6 +151,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
 
   // ------------------------------------------------------------ timeline
   const rows: React.ReactNode[] = [];
+  if (loadingOlder) rows.push(<div className="tl-older" key="older" aria-label="Loading earlier messages"><span className="spin" /></div>);
   if (loaded && !msgs.length) {
     const k = kindInfo(kind);
     rows.push(

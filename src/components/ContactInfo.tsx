@@ -26,7 +26,7 @@ export function ContactInfo({ peer, onClose }: { peer: string; onClose: () => vo
   const ph = peerHubs(c, hubs);
   const via = viaHub(c, hubs);
   const now = useNow(ph.some((h) => h.state === "disconnected"));
-  const { msgs, loaded } = useMessages(peer);
+  const { msgs, loaded } = useMessages(peer, 5000); // every file in the chat, not just the newest page
   const files = msgs.flatMap((m) => m.attachments.map((a) => ({ a, m })));
   const tag = splitAddr(peer)[1];
   const blurb = (c?.blurb || "").trim();

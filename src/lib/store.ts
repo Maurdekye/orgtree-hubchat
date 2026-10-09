@@ -2,7 +2,7 @@
 // (state, chat list, directory) plus in-memory transfer progress. It loads
 // once and re-reads only what an `hc` event says changed; transfer progress
 // is kept apart so a progress tick re-renders only the file card it concerns.
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { api, type ChatSummary, type Contact, type HcEvent, type Message, type State } from "../api";
 import { errText } from "./native";
 
@@ -73,19 +73,72 @@ export function onChatChange(peer: string, f: () => void): () => void {
 }
 function chatChanged(peer: string) { chatSubs.get(peer)?.forEach((f) => f()); }
 
-/** A chat's messages, re-read whenever the core says that chat changed. */
-export function useMessages(peer: string | null): { msgs: Message[]; loaded: boolean; reload: () => void } {
-  const [data, setData] = useState<{ peer: string | null; msgs: Message[]; loaded: boolean }>({ peer: null, msgs: [], loaded: false });
+/** History comes a page at a time (lazy history, user 23:46Z). */
+export const PAGE = 50;
+/** `a` comes before `b` in a chat (by time, then id, as the core pages). */
+const earlier = (a: Message, b: Message) => a.created_at < b.created_at || (a.created_at === b.created_at && a.id < b.id);
+
+interface Paged { peer: string | null; msgs: Message[]; loaded: boolean; more: boolean }
+
+/** A chat's messages: the newest `page` first, older pages on request
+ *  (`loadOlder`), and on every change the core reports a re-read of the
+ *  range already shown plus anything new. */
+export function useMessages(peer: string | null, page = PAGE) {
+  const [data, setData] = useState<Paged>({ peer: null, msgs: [], loaded: false, more: false });
   const [tick, setTick] = useState(0);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const cur = useRef(data);
+  cur.current = data;
+  const busy = useRef(false);
   useEffect(() => {
     if (!peer) return;
     let live = true;
-    api.chat(peer).then((msgs) => { if (live) setData({ peer, msgs, loaded: true }); }, (e) => console.warn("hc_chat", e));
+    const d = cur.current;
+    const oldest = d.peer === peer && d.msgs.length ? d.msgs[0] : null;
+    (oldest ? api.chat(peer, { from: oldest, limit: 5000 }) : api.chat(peer, { limit: page })).then((msgs) => {
+      if (!live) return;
+      setData((prev) => {
+        if (!oldest || prev.peer !== peer) return { peer, msgs, loaded: true, more: msgs.length >= page };
+        // an older page that arrived meanwhile stays
+        return { peer, msgs: [...prev.msgs.filter((m) => earlier(m, oldest)), ...msgs], loaded: true, more: prev.more };
+      });
+    }, (e) => console.warn("hc_chat", e));
     return () => { live = false; };
-  }, [peer, tick]);
+  }, [peer, tick, page]);
   useEffect(() => (peer ? onChatChange(peer, () => setTick((t) => t + 1)) : undefined), [peer]);
+  /** The next older page (before `from`, else before the oldest shown);
+   *  resolves to its messages (none: the start). */
+  const loadOlder = useCallback(async (from?: Message): Promise<Message[]> => {
+    const d = cur.current;
+    if (!peer || d.peer !== peer || (!from && (!d.more || !d.msgs.length)) || busy.current) return [];
+    busy.current = true;
+    setLoadingOlder(true);
+    try {
+      const older = await api.chat(peer, { before: from ?? d.msgs[0], limit: page });
+      setData((prev) => (prev.peer !== peer ? prev : {
+        ...prev,
+        msgs: [...older.filter((m) => !prev.msgs.some((x) => x.id === m.id)), ...prev.msgs],
+        more: older.length >= page,
+      }));
+      return older;
+    } catch (e) {
+      console.warn("hc_chat", e);
+      return [];
+    } finally {
+      busy.current = false;
+      setLoadingOlder(false);
+    }
+  }, [peer, page]);
   const same = data.peer === peer;
-  return { msgs: same ? data.msgs : [], loaded: same && data.loaded, reload: () => setTick((t) => t + 1) };
+  return {
+    msgs: same ? data.msgs : [],
+    loaded: same && data.loaded,
+    reload: () => setTick((t) => t + 1),
+    /** Older messages exist beyond what is shown. */
+    more: same && data.more,
+    loadingOlder,
+    loadOlder,
+  };
 }
 
 // -------------------------------------------------------------- transfers

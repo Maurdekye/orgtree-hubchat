@@ -150,6 +150,17 @@ if (!onboarding) {
   add(KIM, true, at(0, "07:44"), "", { attachments: [att("desk-photo.jpg", 2 * 1048576, "uploaded", { source: "C:\\Users\\alex\\Pictures\\desk-photo.jpg" })] });
   add(KIM, false, at(0, "07:50"), "And the full-resolution scan, if you need it.", { attachments: [att("poster-scan.png", 46 * 1048576, "remote")] });
   add(KIM, false, at(2, "18:02"), "Old one", { attachments: [att("whiteboard.jpg", 900 * 1024, "expired")] });
+
+  // a long chat, for lazy history (user 23:46Z): 150 lab logs, the newest
+  // message replying to the very first
+  const JONAS = "jonas.0b44d1";
+  const t0 = Date.now() - 6 * 864e5;
+  let firstLog: Message | null = null;
+  for (let i = 1; i <= 150; i++) {
+    const m = add(JONAS, i % 3 === 0, t0 + i * 45 * 60000, "Lab log " + i + (i % 10 === 0 ? ": rack temperature normal, every hub green." : "."));
+    if (i === 1) firstLog = m;
+  }
+  add(JONAS, false, Date.now() - 3 * 60000, "About that first log entry: can you check it again?", { reply_to: firstLog!.id });
 }
 
 /** A made-up picture for an image attachment (the mock has no files). */
@@ -414,6 +425,8 @@ export const mockApi: Api = {
     const url = normHub(input);
     if (!url) return { result: "invalid", error: "not a hub address: " + JSON.stringify(input.trim()) };
     await sleep(900);
+    // a bare host found on another of the hub's ports (user 23:46Z)
+    if (/^star-hub\/?$/i.test(input.trim())) return { result: "connected", url: "http://star-hub:7378", name: "star-hub", max_attachment_bytes: GB, features: ["v2"], version: "2.0.0", discovered: true };
     if (/unreach|10\.0\.9\.|10\.0\.0\.7|127\.0\.0\.1|localhost/.test(url)) return { result: "unreachable", url, error: "connection refused (os error 10061)" };
     if (/example|google|github/.test(url)) return { result: "not_a_hub", url, error: "GET /healthz answered 404 Not Found" };
     return { result: "connected", url, name: hubLabel(url), max_attachment_bytes: GB, features: ["v2"], version: "1.4.0" };
@@ -451,7 +464,16 @@ export const mockApi: Api = {
     return { exact: clone(exact), matches: clone(matches), is_me: raw === st.me?.address, valid, address: raw };
   },
   chats: async () => chatsList(),
-  chat: async (peer) => clone(msgs.filter((m) => m.peer === peer).sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))),
+  chat: async (peer, o = {}) => {
+    // as the core pages: by time then id, newest `limit` before `before`, none older than `from`
+    const key = (m: Message) => [m.created_at, m.id] as const;
+    const lt = (a: Message, b: Message) => { const [x, y] = [key(a), key(b)]; return x[0] < y[0] || (x[0] === y[0] && x[1] < y[1]); };
+    let all = msgs.filter((m) => m.peer === peer).sort((a, b) => (lt(a, b) ? -1 : lt(b, a) ? 1 : 0));
+    if (o.before) all = all.filter((m) => lt(m, o.before!));
+    if (o.from) all = all.filter((m) => !lt(m, o.from!));
+    await sleep(o.before ? 350 : 0);
+    return clone(all.slice(-(o.limit ?? 50)));
+  },
   message: async (id) => { const m = find(id); return m ? clone(m) : null; },
   send: async (n: NewOutgoing) => {
     const m = add(n.peer, true, now(), n.body, {

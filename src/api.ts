@@ -108,7 +108,8 @@ export interface Contact {
 }
 
 export type Probe =
-  | { result: "connected"; url: string; name: string; max_attachment_bytes: number; features: string[]; version?: string | null }
+  /** `discovered`: a bare host, found on one of the hub's known ports (or https). */
+  | { result: "connected"; url: string; name: string; max_attachment_bytes: number; features: string[]; version?: string | null; discovered?: boolean }
   | { result: "unreachable"; url: string; error: string }
   | { result: "not_a_hub"; url: string; error: string }
   | { result: "invalid"; error: string };
@@ -249,7 +250,10 @@ export const tauriApi = {
   directory: () => invoke<Contact[]>("hc_directory"),
   resolve: (input: string) => invoke<Resolved>("hc_resolve", { input }),
   chats: () => invoke<ChatSummary[]>("hc_chats"),
-  chat: (peer: string, before?: string, limit?: number) => invoke<Message[]>("hc_chat", { peer, before, limit }),
+  /** A page of a chat, oldest first (lazy history): the newest `limit` before
+   *  message `before`, or everything from message `from` on. */
+  chat: (peer: string, o: { before?: Message | null; from?: Message | null; limit?: number } = {}) =>
+    invoke<Message[]>("hc_chat", { peer, beforeAt: o.before?.created_at ?? null, beforeId: o.before?.id ?? null, fromAt: o.from?.created_at ?? null, fromId: o.from?.id ?? null, limit: o.limit ?? null }),
   message: (id: string) => invoke<Message | null>("hc_message", { id }),
   send: (msg: NewOutgoing) => invoke<void>("hc_send", { msg }),
   retry: (id: string) => invoke<void>("hc_retry", { id }),
