@@ -184,17 +184,38 @@ mod desktop {
     /// Hubchat through a second launch, until the UI takes it.
     static PENDING: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
+    /// The hubchat:// link among a launch's arguments, if there is one.
+    fn link_arg<I: IntoIterator<Item = String>>(args: I) -> Option<String> {
+        args.into_iter()
+            .find(|a| a.len() < 4096 && a.to_ascii_lowercase().starts_with("hubchat://"))
+    }
+
     /// Keep the hubchat:// link among a launch's arguments, if there is one.
     /// True when there was.
     pub fn take_link_arg<I: IntoIterator<Item = String>>(args: I) -> bool {
-        let link = args
-            .into_iter()
-            .find(|a| a.len() < 4096 && a.to_ascii_lowercase().starts_with("hubchat://"));
+        let link = link_arg(args);
         let found = link.is_some();
         if let Some(l) = link {
             *PENDING.lock().unwrap() = Some(l);
         }
         found
+    }
+
+    /// The link this start opens from its own arguments: none on the first
+    /// start of a version. The updater's restart hands the new version the
+    /// old process's arguments, so a link that started the old process would
+    /// open again (an old chat, or a setup or device code long expired) and
+    /// win over the chat that was open. A link clicked now still opens once
+    /// Hubchat runs.
+    pub fn start_link_arg<I: IntoIterator<Item = String>>(
+        args: I,
+        first_of_version: bool,
+    ) -> Option<String> {
+        if first_of_version {
+            None
+        } else {
+            link_arg(args)
+        }
     }
 
     /// Windows: hubchat:// links (a profile QR's chat link, a device link)
@@ -418,13 +439,13 @@ pub fn run() {
                 };
                 core::init(dir, std::sync::Arc::new(platform))?;
                 desktop::tray(app.handle())?;
-                desktop::take_link_arg(std::env::args());
                 #[cfg(windows)]
                 desktop::register_scheme(app.handle());
                 let first = desktop::first_start_of_version(
                     &app.path().app_data_dir()?,
                     &app.package_info().version.to_string(),
                 );
+                desktop::take_link_arg(desktop::start_link_arg(std::env::args(), first));
                 if desktop::stays_hidden(std::env::args(), first) {
                     if let Some(w) = app.get_webview_window("main") {
                         let _ = w.hide();
@@ -450,7 +471,7 @@ pub fn run() {
 
 #[cfg(all(test, desktop))]
 mod start_tests {
-    use super::desktop::{first_start_of_version, stays_hidden};
+    use super::desktop::{first_start_of_version, start_link_arg, stays_hidden};
 
     fn args(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| s.to_string()).collect()
@@ -470,6 +491,21 @@ mod start_tests {
     fn a_normal_start_shows_the_window() {
         assert!(!stays_hidden(args(&["hubchat.exe"]), false));
         assert!(!stays_hidden(args(&["hubchat.exe"]), true));
+    }
+
+    #[test]
+    fn a_start_opens_the_link_it_was_started_with() {
+        let link = "hubchat://chat?to=pat-peer.050529";
+        assert_eq!(start_link_arg(args(&["hubchat.exe", link]), false).as_deref(), Some(link));
+        assert_eq!(start_link_arg(args(&["hubchat.exe", "--hidden"]), false), None);
+        assert_eq!(start_link_arg(args(&["hubchat.exe"]), false), None);
+    }
+
+    #[test]
+    fn the_first_start_of_a_version_leaves_the_old_process_link_alone() {
+        // the updater's restart: the old process's arguments, its link included
+        let old = args(&["hubchat.exe", "hubchat://setup?v=1&code=ABCD-EFGH"]);
+        assert_eq!(start_link_arg(old, true), None);
     }
 
     #[test]
