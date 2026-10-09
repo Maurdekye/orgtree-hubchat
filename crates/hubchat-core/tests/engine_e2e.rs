@@ -316,8 +316,8 @@ async fn a_pinned_hub_carries_the_chat_and_waits_when_it_cannot() {
     assert_eq!(sent_via("p2"), Some(other.clone()));
 
     // The pinned hub goes down: the message waits instead of switching.
-    let (down, up) = if other == urls[0].to_string() { (hub_a, hub_b) } else { (hub_b, hub_a) };
-    drop(down);
+    let (mut down, up) = if other == urls[0].to_string() { (hub_a, hub_b) } else { (hub_b, hub_a) };
+    down.stop();
     until("pinned hub down", 30, || connected(&alex, 1)).await;
     let r = alex.send_route(&peer).unwrap();
     assert_eq!((r.pinned.clone(), r.next.clone()), (Some(other.clone()), None));
@@ -327,11 +327,23 @@ async fn a_pinned_hub_carries_the_chat_and_waits_when_it_cannot() {
     let p3 = alex.store().message("p3").unwrap().unwrap();
     assert_eq!((p3.state.as_str(), p3.hub), ("queued", None));
 
-    // Back to Automatic: it goes through the hub that can.
+    // The pinned hub comes back: the waiting message goes through it.
+    down.restart().await;
+    alex.retry_now();
+    maya.retry_now();
+    until("p3 sent through the pinned hub", 30, || sent_via("p3").is_some()).await;
+    assert_eq!(sent_via("p3"), Some(other.clone()));
+
+    // Back to Automatic: the next goes through Automatic's choice.
     alex.set_send_hub(&peer, None).unwrap();
-    until("p3 sent", 15, || sent_via("p3").is_some()).await;
-    assert_eq!(sent_via("p3"), Some(first.clone()));
+    let r = alex.send_route(&peer).unwrap();
+    assert_eq!((r.pinned.clone(), r.next.clone()), (None, r.automatic.clone()));
+    let auto = r.automatic.clone().expect("a hub can reach maya");
+    alex.send(msg("p4", &peer, "auto again")).unwrap();
+    until("p4 sent", 15, || sent_via("p4").is_some()).await;
+    assert_eq!(sent_via("p4"), Some(auto));
     alex.shutdown();
     maya.shutdown();
     drop(up);
+    drop(down);
 }

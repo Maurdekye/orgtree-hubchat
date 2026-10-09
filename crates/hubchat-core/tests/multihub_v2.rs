@@ -80,11 +80,17 @@ fn two_hubs() -> Option<(String, String)> {
 struct Forwarder {
     port: u16,
     target: String,
+    /// Uploads crawl (about 1 MB/s), so a test can act during one.
+    slow: bool,
     tasks: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
 impl Forwarder {
     async fn start(target: &str) -> Self {
+        Self::start_with(target, false).await
+    }
+
+    async fn start_with(target: &str, slow: bool) -> Self {
         let port = std::net::TcpListener::bind("127.0.0.1:0")
             .unwrap()
             .local_addr()
@@ -93,6 +99,7 @@ impl Forwarder {
         let f = Forwarder {
             port,
             target: target.trim_start_matches("http://").to_owned(),
+            slow,
             tasks: Arc::new(Mutex::new(Vec::new())),
         };
         f.up();
@@ -108,14 +115,34 @@ impl Forwarder {
         sock.set_reuseaddr(true).unwrap();
         sock.bind(([127, 0, 0, 1], self.port).into()).unwrap();
         let listener = sock.listen(64).unwrap();
-        let (target, tasks) = (self.target.clone(), self.tasks.clone());
+        let (target, tasks, slow) = (self.target.clone(), self.tasks.clone(), self.slow);
         let accept = tokio::spawn(async move {
             while let Ok((mut inbound, _)) = listener.accept().await {
                 let target = target.clone();
                 let pipe = tokio::spawn(async move {
-                    if let Ok(mut out) = tokio::net::TcpStream::connect(&target).await {
+                    let Ok(mut out) = tokio::net::TcpStream::connect(&target).await else {
+                        return;
+                    };
+                    if !slow {
                         let _ = tokio::io::copy_bidirectional(&mut inbound, &mut out).await;
+                        return;
                     }
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let (mut ir, mut iw) = inbound.into_split();
+                    let (mut or, mut ow) = out.into_split();
+                    let up = async move {
+                        let mut buf = vec![0u8; 16 * 1024];
+                        while let Ok(n) = ir.read(&mut buf).await {
+                            if n == 0 || ow.write_all(&buf[..n]).await.is_err() {
+                                break;
+                            }
+                            tokio::time::sleep(Duration::from_millis(15)).await;
+                        }
+                    };
+                    let down = async move {
+                        let _ = tokio::io::copy(&mut or, &mut iw).await;
+                    };
+                    tokio::join!(up, down);
                 });
                 tasks.lock().unwrap().push(pipe);
             }
@@ -275,11 +302,22 @@ async fn delete_chat_reaches_every_hub_even_one_that_was_down() {
     let c = fresh_device(&alex, &[&hub_a], dir.path()).await;
     assert!(chat(&c).is_empty(), "hub A kept the chat deleted while hub B was down");
 
+    // review finding 1: maya writes again through hub B before A is back
+    // there; the queued delete must not take that newer message
+    let later = uid("c2-");
+    let cb = HubClient::new(HubAddress::parse(&hub_b).unwrap());
+    let mut out = Outgoing::new(&alex.address(), "after the delete");
+    out.id = later.clone();
+    cb.send(&maya, &out).await.unwrap();
+
     b_back(&a, &fwd).await;
     // hub B on its own: hub A's sync could tell a device the message was
     // deleted and so hide a copy hub B kept
     let d = fresh_device(&alex, &[&hub_b], dir.path()).await;
-    assert!(chat(&d).is_empty(), "hub B kept the deleted chat");
+    let ids: Vec<String> = chat(&d).into_iter().map(|m| m.id).collect();
+    assert!(!ids.contains(&id), "hub B kept the deleted chat");
+    assert_eq!(ids, [later.clone()], "the message that came after the delete is gone");
+    until("A has the newer message", 20, || a.store().message(&later).unwrap().is_some()).await;
     for e in [&a, &c, &d] {
         e.shutdown();
     }
@@ -344,4 +382,65 @@ async fn a_hub_starting_over_keeps_what_the_other_hub_holds() {
     assert!(a.store().message(&id).unwrap().is_some());
     until("both hubs hold it again", 10, || a.store().message_hubs(&id).unwrap().len() == 2).await;
     a.shutdown();
+}
+
+/// Review finding 3: "Delete for me" while the message is still uploading
+/// its file: the send stops, and no hub keeps a copy for our other devices.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn deleting_a_message_on_its_way_stops_it() {
+    let Some((hub_a, _)) = two_hubs() else {
+        eprintln!("SKIPPED: set HUBCHAT_V2_HUB to a scratch mail hub v2.0");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let alex = Identity::generate("alex").unwrap();
+    let maya = Identity::generate("maya").unwrap();
+    let ca = HubClient::new(HubAddress::parse(&hub_a).unwrap());
+    ca.register(&maya, &profile("maya")).await.unwrap();
+    let fwd = Forwarder::start_with(&hub_a, true).await;
+    let a = device(&alex, "alex-pc", dir.path());
+    a.start().unwrap();
+    a.add_hub(&fwd.addr()).unwrap();
+    until("A connected", 20, || caught_up(&a, 1)).await;
+    until("A's hub lists maya", 20, || {
+        !a.store().hubs_reaching(&maya.address()).unwrap().is_empty()
+    })
+    .await;
+
+    // 4 MB at about 1 MB/s through the forwarder
+    let file = dir.path().join("big.bin");
+    std::fs::write(&file, vec![7u8; 4 * 1024 * 1024]).unwrap();
+    let id = uid("s1-");
+    a.send(hubchat_core::store::NewOutgoing {
+        id: id.clone(),
+        peer: maya.address(),
+        body: "with a file".into(),
+        kind: None,
+        reply_to: None,
+        attachments: vec![hubchat_core::store::NewAttachment {
+            name: "big.bin".into(),
+            bytes: 4 * 1024 * 1024,
+            source: file.to_string_lossy().into(),
+        }],
+    })
+    .unwrap();
+    until("the file is uploading", 20, || {
+        a.store()
+            .message(&id)
+            .unwrap()
+            .is_some_and(|m| m.attachments[0].state == "uploading")
+    })
+    .await;
+    a.delete_message(&id).await.unwrap();
+    // long enough for the rest of the upload and the send
+    tokio::time::sleep(Duration::from_secs(8)).await;
+    assert!(a.store().message(&id).unwrap().is_none(), "the deleted message came back");
+    let c = fresh_device(&alex, &[&hub_a], dir.path()).await;
+    assert!(
+        c.store().message(&id).unwrap().is_none(),
+        "the hub kept a message deleted while it was on its way"
+    );
+    for e in [&a, &c] {
+        e.shutdown();
+    }
 }

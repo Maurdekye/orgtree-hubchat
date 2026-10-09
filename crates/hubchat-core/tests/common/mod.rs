@@ -10,6 +10,7 @@ use hubchat_core::{HubAddress, HubClient};
 pub struct Hub {
     child: Child,
     pub port: u16,
+    dir: PathBuf,
     _data: tempfile::TempDir,
 }
 
@@ -25,6 +26,33 @@ fn mailhub_dir() -> Option<PathBuf> {
     d.join("mailhub").join("app.py").is_file().then_some(d)
 }
 
+fn spawn(dir: &PathBuf, data: &std::path::Path, port: u16) -> Option<Child> {
+    Command::new("python")
+        .args(["-m", "mailhub.serve"])
+        .current_dir(dir)
+        .env("PYTHONPATH", dir)
+        .env("HUB_DATA", data)
+        .env("HUB_PORT", port.to_string())
+        .env("HUB_BIND", "127.0.0.1")
+        .env("HUB_NAME", "testhub")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()
+}
+
+async fn wait_up(port: u16) {
+    let client = HubClient::new(HubAddress::parse(&format!("127.0.0.1:{port}")).unwrap());
+    let t0 = std::time::Instant::now();
+    while t0.elapsed() < Duration::from_secs(30) {
+        if client.healthz().await.is_ok() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("test hub did not come up on port {port}");
+}
+
 pub async fn start_hub() -> Option<Hub> {
     let dir = mailhub_dir()?;
     let port = {
@@ -32,30 +60,28 @@ pub async fn start_hub() -> Option<Hub> {
         l.local_addr().unwrap().port()
     };
     let data = tempfile::tempdir().unwrap();
-    let child = Command::new("python")
-        .args(["-m", "mailhub.serve"])
-        .current_dir(&dir)
-        .env("PYTHONPATH", &dir)
-        .env("HUB_DATA", data.path())
-        .env("HUB_PORT", port.to_string())
-        .env("HUB_BIND", "127.0.0.1")
-        .env("HUB_NAME", "testhub")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
+    let child = spawn(&dir, data.path(), port)?;
     let hub = Hub {
         child,
         port,
+        dir,
         _data: data,
     };
-    let client = HubClient::new(HubAddress::parse(&format!("127.0.0.1:{port}")).unwrap());
-    let t0 = std::time::Instant::now();
-    while t0.elapsed() < Duration::from_secs(30) {
-        if client.healthz().await.is_ok() {
-            return Some(hub);
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+    wait_up(port).await;
+    Some(hub)
+}
+
+impl Hub {
+    /// Take the hub down (its data stays).
+    pub fn stop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
-    panic!("test hub did not come up on port {port}");
+
+    /// Bring it back on the same port with the same data.
+    pub async fn restart(&mut self) {
+        self.stop();
+        self.child = spawn(&self.dir, self._data.path(), self.port).expect("restart the test hub");
+        wait_up(self.port).await;
+    }
 }
