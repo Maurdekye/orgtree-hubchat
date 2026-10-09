@@ -148,6 +148,13 @@ impl crate::core::Platform for AndroidPlatform {
             .map(|_| ())
             .ok_or_else(|| "Android refused the change".to_string())
     }
+    fn device_name(&self) -> String {
+        JNI.get()
+            .and_then(|j| call(&j.service, "deviceName", &[], true))
+            .map(|n| n.trim().to_owned())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| "Android phone".into())
+    }
 }
 
 #[no_mangle]

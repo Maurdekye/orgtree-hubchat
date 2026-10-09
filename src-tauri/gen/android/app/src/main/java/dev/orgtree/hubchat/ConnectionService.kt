@@ -172,6 +172,18 @@ class ConnectionService : Service() {
       }
     }
 
+    /** Called from Rust: the phone's own name (Settings › About phone ›
+     *  Device name), else its maker and model (user 00:16Z). */
+    @JvmStatic
+    fun deviceName(): String {
+      val named = appContext?.let {
+        try { android.provider.Settings.Global.getString(it.contentResolver, android.provider.Settings.Global.DEVICE_NAME) } catch (e: Exception) { null }
+      }?.trim()
+      if (!named.isNullOrEmpty()) return named
+      val maker = Build.MANUFACTURER.replaceFirstChar { it.uppercase() }
+      return if (Build.MODEL.startsWith(Build.MANUFACTURER, ignoreCase = true)) Build.MODEL else "$maker ${Build.MODEL}"
+    }
+
     /** Called from Rust: the display name of a content:// URI, or "". */
     @JvmStatic
     fun displayName(uri: String): String {

@@ -51,6 +51,31 @@ pub trait Platform: Send + Sync + 'static {
     fn set_stay_connected(&self, _on: bool) -> Result<(), String> {
         Err("only Android has this setting".into())
     }
+    /// The device's own name (user 00:16Z: linking asks for none): the
+    /// computer's name here, the phone's on Android.
+    fn device_name(&self) -> String {
+        computer_name()
+    }
+}
+
+/// Windows: the computer's name as its owner wrote it (Settings › System ›
+/// About; the host name keeps its case, COMPUTERNAME is upper case).
+fn computer_name() -> String {
+    #[cfg(windows)]
+    {
+        use winreg::enums::HKEY_LOCAL_MACHINE;
+        let host: Option<String> = winreg::RegKey::predef(HKEY_LOCAL_MACHINE)
+            .open_subkey(r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters")
+            .and_then(|k| k.get_value("Hostname"))
+            .ok();
+        if let Some(h) = host.filter(|h| !h.trim().is_empty()) {
+            return h.trim().to_owned();
+        }
+    }
+    std::env::var("COMPUTERNAME")
+        .ok()
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| "Windows PC".into())
 }
 
 pub struct Core {
@@ -224,6 +249,35 @@ impl Core {
             .ok_or_else(|| "no identity yet".to_string())
     }
 
+    /// What other devices see this one called: the name set in Settings ›
+    /// Devices, else the device's own.
+    pub fn device_name(&self) -> String {
+        self.store
+            .meta("device.name")
+            .ok()
+            .flatten()
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| self.host.platform.device_name())
+    }
+
+    /// Settings › Devices › Rename: kept, and sent with the next sync (a
+    /// v2 hub shows it on the device list). Empty goes back to the device's own.
+    pub fn set_device_name(&self, name: &str) -> Result<String, String> {
+        let name = name.trim();
+        if name.chars().count() > 64 {
+            return Err("a device name has at most 64 characters".into());
+        }
+        self.store
+            .set_meta("device.name", name)
+            .map_err(|e| e.to_string())?;
+        let now = self.device_name();
+        if let Ok(e) = self.engine() {
+            let (id, _) = e.device();
+            e.set_device(&id, &now);
+        }
+        Ok(now)
+    }
+
     pub fn has_identity(&self) -> bool {
         self.engine.lock().unwrap().is_some()
     }
@@ -285,7 +339,7 @@ impl Core {
                 id
             }
         };
-        engine.set_device(&device_id, &device_name());
+        engine.set_device(&device_id, &self.device_name());
         let read = self.store.meta("settings.read_receipts").ok().flatten();
         engine.set_read_receipts(read.as_deref() != Some("off"));
         {
@@ -313,13 +367,4 @@ fn rand_u16() -> u16 {
     h.finish() as u16
 }
 
-/// What other devices see this one called (Settings › Devices).
-fn device_name() -> String {
-    if cfg!(target_os = "android") {
-        "Android phone".into()
-    } else {
-        std::env::var("COMPUTERNAME")
-            .map(|n| format!("PC {n}"))
-            .unwrap_or_else(|_| "Windows PC".into())
-    }
-}
+

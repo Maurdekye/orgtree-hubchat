@@ -52,6 +52,8 @@ pub struct State {
     stay_connected: Option<bool>,
     hubs: Vec<HubStatus>,
     platform: &'static str,
+    /// What other devices see this one called (linking uses it as is).
+    device_name: String,
 }
 
 fn meta(c: &Core, k: &str) -> String {
@@ -73,6 +75,7 @@ pub fn hc_state() -> R<State> {
         read_receipts: meta(c, "settings.read_receipts") != "off",
         notifications: c.notify_settings(),
         stay_connected: c.platform().stay_connected(),
+        device_name: c.device_name(),
         hubs: engine.map(|e| e.hub_statuses()).unwrap_or_default(),
         platform: if cfg!(target_os = "android") {
             "android"
@@ -180,6 +183,12 @@ pub fn hc_set_stay_connected(on: bool) -> R<()> {
             .status(&format!("Connected as {}", e.me().address()));
     }
     Ok(())
+}
+
+/// Settings › Devices: rename this device; returns the name it now has.
+#[tauri::command]
+pub fn hc_set_device_name(name: String) -> R<String> {
+    core::get()?.set_device_name(&name)
 }
 
 #[tauri::command]
