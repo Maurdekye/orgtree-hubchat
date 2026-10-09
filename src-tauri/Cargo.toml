@@ -44,6 +44,11 @@ tauri-plugin-single-instance = "2"
 arboard = "3"
 png = "0.17"
 
+# Linux: the identity key goes to the desktop keyring (Secret Service:
+# GNOME Keyring / KWallet); without a backend keyring keeps it only in memory.
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56"
 # message toasts whose click opens the chat (the version the notification plugin uses)
