@@ -40,6 +40,9 @@ tauri-plugin-updater = "2"
 keyring = { version = "3", features = ["windows-native"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
+# the right-click menu's Paste reads the clipboard natively (text, and pictures as PNG)
+arboard = "3"
+png = "0.17"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56"

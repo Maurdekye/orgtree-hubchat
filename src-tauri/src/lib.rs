@@ -1,5 +1,6 @@
 #[cfg(target_os = "android")]
 mod android;
+mod clip;
 mod commands;
 mod core;
 mod link;
@@ -348,6 +349,8 @@ pub fn run() {
             commands::hc_open_attachment,
             media::hc_attachment_preview,
             media::hc_file_preview,
+            clip::hc_clipboard_text,
+            clip::hc_clipboard_image,
             media::hc_save_pasted,
             link::hc_link_start,
             link::hc_link_cancel,
