@@ -20,7 +20,7 @@ const PKG = 'dev.orgtree.hubchat.test';
 // the PC's tailnet name and Tailscale address (HUBCHAT_PC, HUBCHAT_PC_IP)
 const PC = process.env.HUBCHAT_PC || 'home-pc';
 const PC_IP = process.env.HUBCHAT_PC_IP || '100.101.102.103';
-const reachedPc = new RegExp(`${PC}|${PC_IP.replaceAll('.', '\.')}`);
+const reachedPc = new RegExp(`${PC}|${PC_IP.replaceAll('.', '\\.')}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const adb = (...a) => spawnSync(ADB, a, { encoding: 'utf8' }).stdout.trim();
 const results = [];

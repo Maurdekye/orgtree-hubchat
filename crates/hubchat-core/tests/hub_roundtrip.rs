@@ -1,8 +1,8 @@
 //! End-to-end against a real mail hub (today's Python hub from the orgtree
 //! repo) on a scratch port with a scratch database.
 //!
-//! Set MAILHUB_DIR to the folder holding the `mailhub` package (default:
-//! <orgtree>\engine\mailhub). Skipped when it is missing.
+//! Set MAILHUB_DIR to the folder holding the `mailhub` package (orgtree's
+//! engine/mailhub). Skipped when it is unset or missing.
 
 mod common;
 

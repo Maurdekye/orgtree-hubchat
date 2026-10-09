@@ -21,10 +21,7 @@ impl Drop for Hub {
 }
 
 fn mailhub_dir() -> Option<PathBuf> {
-    let d = PathBuf::from(
-        std::env::var("MAILHUB_DIR")
-            .unwrap_or_else(|_| r"<orgtree>\engine\mailhub".into()),
-    );
+    let d = PathBuf::from(std::env::var("MAILHUB_DIR").ok()?);
     d.join("mailhub").join("app.py").is_file().then_some(d)
 }
 
