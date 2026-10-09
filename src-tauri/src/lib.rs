@@ -22,14 +22,25 @@ mod desktop {
 
     impl crate::core::Platform for DesktopPlatform {
         fn notify(&self, title: &str, body: &str, peer: &str, sound: bool) {
-            let mut n = self.app.notification().builder().title(title).body(body);
-            if sound {
-                // Windows: the toast's own "IM" sound; without one it is silent
-                n = n.sound("IM");
+            // Windows: our own toast, so clicking it opens the chat
+            #[cfg(windows)]
+            let shown = toast::show(&self.app, title, body, peer, sound).is_ok();
+            #[cfg(not(windows))]
+            let shown = false;
+            if !shown {
+                let mut n = self.app.notification().builder().title(title).body(body);
+                if sound {
+                    // Windows: the toast's own "IM" sound; without one it is silent
+                    n = n.sound("IM");
+                }
+                let _ = n.show();
             }
-            let _ = n.show();
             // Remember who notified last so clicking the tray opens that chat.
             let _ = self.app.emit("hc-notified", peer);
+        }
+        #[cfg(windows)]
+        fn clear_notification(&self, peer: &str) {
+            toast::clear(&self.app, peer);
         }
         fn status(&self, text: &str) {
             if let Some(tray) = self.app.tray_by_id("main") {
@@ -44,6 +55,126 @@ mod desktop {
         }
         fn take_pending_link(&self) -> Option<String> {
             PENDING.lock().unwrap().take()
+        }
+    }
+
+    /// Windows message toasts (user 2026-10-09 06:19Z: clicking one must open
+    /// its chat). The notification plugin's toasts carry no click action;
+    /// these carry the chat's hubchat:// link with protocol activation, so a
+    /// click hands it to the registered Hubchat: the running one through the
+    /// single-instance plugin, or a new start, which opens that chat. One
+    /// toast per chat (its tag): a newer message replaces it, and reading the
+    /// chat anywhere takes it back (user 23:50Z).
+    #[cfg(windows)]
+    pub mod toast {
+        use tauri::AppHandle;
+        use windows::core::{h, Result, HSTRING};
+        use windows::Data::Xml::Dom::XmlDocument;
+        use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
+
+        /// Windows PowerShell's AppUserModelID: an app run from cargo's
+        /// target folder isn't installed, so its toasts show under this one,
+        /// as the notification plugin's do.
+        const POWERSHELL_APP_ID: &str =
+            r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe";
+
+        /// The AppUserModelID toasts show under: the app's identifier, which
+        /// the installer gives the Start menu shortcut.
+        fn app_id(app: &AppHandle) -> HSTRING {
+            let dir = std::env::current_exe()
+                .ok()
+                .and_then(|e| e.parent().map(|d| d.to_string_lossy().to_ascii_lowercase()))
+                .unwrap_or_default();
+            if dir.ends_with(r"\target\debug") || dir.ends_with(r"\target\release") {
+                HSTRING::from(POWERSHELL_APP_ID)
+            } else {
+                HSTRING::from(app.config().identifier.as_str())
+            }
+        }
+
+        /// The chat's toast tag (Windows allows 64 characters): FNV-1a of the
+        /// address, the same in every run.
+        fn tag(peer: &str) -> HSTRING {
+            let mut x: u64 = 0xcbf2_9ce4_8422_2325;
+            for b in peer.bytes() {
+                x ^= u64::from(b);
+                x = x.wrapping_mul(0x0100_0000_01b3);
+            }
+            HSTRING::from(format!("{x:016x}"))
+        }
+
+        /// hubchat://chat?to=<address>, the profile QR's chat link
+        /// (src/lib/chatlink.ts), which opens the chat with that address.
+        pub fn chat_link(peer: &str) -> String {
+            let mut u = url::Url::parse("hubchat://chat").expect("a valid URL");
+            u.query_pairs_mut().append_pair("to", peer);
+            u.into()
+        }
+
+        /// The toast: the sender, the message, and `link` opened by a click.
+        pub fn xml(title: &str, body: &str, link: Option<&str>, sound: bool) -> Result<XmlDocument> {
+            let doc = XmlDocument::new()?;
+            let toast = doc.CreateElement(h!("toast"))?;
+            if let Some(link) = link {
+                toast.SetAttribute(h!("activationType"), h!("protocol"))?;
+                toast.SetAttribute(h!("launch"), &HSTRING::from(link))?;
+            }
+            let visual = doc.CreateElement(h!("visual"))?;
+            let binding = doc.CreateElement(h!("binding"))?;
+            binding.SetAttribute(h!("template"), h!("ToastGeneric"))?;
+            for line in [title, body] {
+                let text = doc.CreateElement(h!("text"))?;
+                text.SetInnerText(&HSTRING::from(line))?;
+                binding.AppendChild(&text)?;
+            }
+            visual.AppendChild(&binding)?;
+            toast.AppendChild(&visual)?;
+            let audio = doc.CreateElement(h!("audio"))?;
+            if sound {
+                audio.SetAttribute(h!("src"), h!("ms-winsoundevent:Notification.IM"))?;
+            } else {
+                audio.SetAttribute(h!("silent"), h!("true"))?;
+            }
+            toast.AppendChild(&audio)?;
+            doc.AppendChild(&toast)?;
+            Ok(doc)
+        }
+
+        pub fn show(app: &AppHandle, title: &str, body: &str, peer: &str, sound: bool) -> Result<()> {
+            // a test build has no hubchat:// of its own: a click would reach
+            // the installed Hubchat, so its toasts have no click action
+            let link = (!app.config().identifier.ends_with(".test")).then(|| chat_link(peer));
+            let n = ToastNotification::CreateToastNotification(&xml(title, body, link.as_deref(), sound)?)?;
+            n.SetTag(&tag(peer))?;
+            n.SetGroup(h!("messages"))?;
+            ToastNotificationManager::CreateToastNotifierWithId(&app_id(app))?.Show(&n)
+        }
+
+        /// Takes back the chat's toast, if it is still shown or in the
+        /// notification centre.
+        pub fn clear(app: &AppHandle, peer: &str) {
+            if let Ok(history) = ToastNotificationManager::History() {
+                let _ = history.RemoveGroupedTagWithId(&tag(peer), h!("messages"), &app_id(app));
+            }
+        }
+
+        #[cfg(test)]
+        mod tests {
+            #[test]
+            fn a_toast_opens_its_chat_when_clicked() {
+                let link = super::chat_link("pat.99e835");
+                assert_eq!(link, "hubchat://chat?to=pat.99e835");
+                let x = super::xml("Pat Peer", "a <b> & \"c\"", Some(&link), false).unwrap().GetXml().unwrap().to_string();
+                println!("{x}");
+                assert!(x.starts_with(r#"<toast activationType="protocol" launch="hubchat://chat?to=pat.99e835">"#), "{x}");
+                assert!(x.contains(r#"<binding template="ToastGeneric"><text>Pat Peer</text><text>a &lt;b&gt; &amp; "c"</text></binding>"#), "{x}");
+                assert!(x.contains(r#"<audio silent="true"/>"#), "{x}");
+                let quiet = super::xml("Pat Peer", "hi", None, true).unwrap().GetXml().unwrap().to_string();
+                assert!(!quiet.contains("launch") && quiet.contains("ms-winsoundevent:Notification.IM"), "{quiet}");
+                assert_eq!(super::tag("pat.99e835"), super::tag("pat.99e835"));
+                assert_ne!(super::tag("pat.99e835"), super::tag("pat.99e836"));
+                assert_eq!(super::tag("x").len(), 16);
+            }
         }
     }
 

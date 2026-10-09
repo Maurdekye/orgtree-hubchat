@@ -43,6 +43,8 @@ tauri-plugin-single-instance = "2"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56"
+# message toasts whose click opens the chat (the version the notification plugin uses)
+windows = { version = "0.62", features = ["Data_Xml_Dom", "UI_Notifications", "Foundation_Collections"] }
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-barcode-scanner = "2"
