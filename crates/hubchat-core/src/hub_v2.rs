@@ -75,6 +75,31 @@ pub struct SyncResult {
     /// "active" feature): a message it brings needs no notification here.
     #[serde(default)]
     pub active: Vec<String>,
+    /// The hub's clock in unix ms when it answered (v2.0.1).
+    #[serde(default)]
+    pub now: Option<i64>,
+    /// "now" when the hub honoured a first sync's `start: "now"` (lazy
+    /// history); absent when it synced from the beginning.
+    #[serde(default)]
+    pub start: Option<String>,
+}
+
+/// Where a history page ends: before a time on the hub's clock (unix ms,
+/// strictly before it) or before an exact cursor from an earlier page.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Before {
+    Time(i64),
+    Cursor(String),
+}
+
+/// One page of a conversation, newest first.
+#[derive(Debug, Clone, Deserialize)]
+pub struct HistoryPage {
+    #[serde(default)]
+    pub messages: Vec<SyncedMessage>,
+    /// The exact cursor for the next older page; None at the start.
+    #[serde(default)]
+    pub before: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -104,24 +129,58 @@ pub struct UploadState {
 }
 
 impl HubClient {
-    /// Every change for our address since `cursor` (None: from the start).
+    /// Every change for our address since `cursor` (None: from the start,
+    /// or with `start_now` from now on, on hubs with lazy_history).
     pub async fn sync(
         &self,
         me: &Identity,
         device_id: &str,
         device_name: &str,
         cursor: Option<&str>,
+        start_now: bool,
         wait_secs: u64,
     ) -> Result<SyncResult> {
         let wait = wait_secs.min(crate::hub::POLL_WAIT_SECS);
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "device_id": device_id,
             "device_name": device_name,
             "cursor": cursor,
             "wait": wait,
         });
+        // the hub refuses `start` alongside a cursor
+        if start_now && cursor.is_none() {
+            body["start"] = "now".into();
+        }
         self.post_json(me, "/api/sync", &body, Duration::from_secs(wait + 30))
             .await
+    }
+
+    /// One page of our conversation with `with`, older than `before`
+    /// (hubs with "history"; a time needs "lazy_history").
+    pub async fn history(
+        &self,
+        me: &Identity,
+        with: &str,
+        before: &Before,
+        limit: u32,
+    ) -> Result<HistoryPage> {
+        let before = match before {
+            Before::Time(ms) => ms.to_string(),
+            Before::Cursor(c) => c.clone(),
+        };
+        let resp = self
+            .http
+            .get(self.address().join(&format!(
+                "/api/history?with={}&before={}&limit={}",
+                urlencode(with),
+                urlencode(&before),
+                limit
+            )))
+            .header("X-Org-Auth", me.auth_header())
+            .timeout(Duration::from_secs(60))
+            .send()
+            .await?;
+        Ok(check(resp).await?.json().await?)
     }
 
     /// This device is in use (true; it counts for 90 s, so repeat it about

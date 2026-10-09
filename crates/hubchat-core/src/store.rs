@@ -121,6 +121,18 @@ CREATE INDEX IF NOT EXISTS messages_by_hub ON messages(hub);
 CREATE INDEX IF NOT EXISTS messages_sent_by_peer ON messages(peer, created_at, id)
   WHERE outgoing=1 AND hub IS NOT NULL;
 "#,
+    // 2 (lazy history): how far back each hub has loaded each chat, for a
+    // device that started from now on that hub
+    r#"
+CREATE TABLE IF NOT EXISTS history_marks (
+  hub       TEXT NOT NULL REFERENCES hubs(url) ON DELETE CASCADE,
+  peer      TEXT NOT NULL,
+  before    TEXT,                       -- the hub's cursor for the next older page
+  oldest_ms INTEGER,                    -- hub clock: the oldest message loaded so far
+  done      INTEGER NOT NULL DEFAULT 0, -- the chat's start is reached
+  PRIMARY KEY (hub, peer)
+);
+"#,
 ];
 
 pub struct Store {
@@ -168,6 +180,18 @@ pub struct Message {
     pub error: Option<String>,
     pub seen: bool,
     pub attachments: Vec<Attachment>,
+}
+
+/// How far back one hub has loaded one chat (lazy history).
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct HistoryMark {
+    /// The hub's exact cursor for the next older page; None before the
+    /// first page (start from the device's start time) or once done.
+    pub before: Option<String>,
+    /// Hub clock, unix ms: the oldest message loaded through this hub.
+    pub oldest_ms: Option<i64>,
+    /// The chat's start on this hub is reached.
+    pub done: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -248,6 +272,10 @@ impl Store {
     }
 
     // ------------------------------------------------------------- hubs
+
+    pub fn delete_meta(&self, key: &str) -> Result<()> {
+        self.with(|c| c.execute("DELETE FROM meta WHERE key=?", [key]).map(|_| ()))
+    }
 
     pub fn add_hub(&self, url: &str, now: &str) -> Result<()> {
         self.with(|c| {
@@ -844,8 +872,47 @@ impl Store {
                 [hub],
             )?;
             tx.execute("DELETE FROM message_hubs WHERE hub=?", [hub])?;
+            // what was paged back from it is gone too: page again
+            tx.execute("DELETE FROM history_marks WHERE hub=?", [hub])?;
             relabel(&tx, hub)?;
             tx.commit()
+        })
+    }
+
+    // ------------------------------------------------------- lazy history
+
+    /// The hub starts this device over: page every chat again.
+    pub fn clear_history_marks(&self, hub: &str) -> Result<()> {
+        self.with(|c| c.execute("DELETE FROM history_marks WHERE hub=?", [hub]).map(|_| ()))
+    }
+
+    /// How far back `hub` has loaded the chat with `peer` (None: not yet).
+    pub fn history_mark(&self, hub: &str, peer: &str) -> Result<Option<HistoryMark>> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT before, oldest_ms, done FROM history_marks WHERE hub=? AND peer=?",
+                [hub, peer],
+                |r| {
+                    Ok(HistoryMark {
+                        before: r.get(0)?,
+                        oldest_ms: r.get(1)?,
+                        done: r.get(2)?,
+                    })
+                },
+            )
+            .optional()
+        })
+    }
+
+    pub fn set_history_mark(&self, hub: &str, peer: &str, m: &HistoryMark) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO history_marks(hub, peer, before, oldest_ms, done) VALUES(?,?,?,?,?)
+                 ON CONFLICT(hub, peer) DO UPDATE SET before=excluded.before,
+                   oldest_ms=excluded.oldest_ms, done=excluded.done",
+                params![hub, peer, m.before, m.oldest_ms, m.done],
+            )
+            .map(|_| ())
         })
     }
 
@@ -1473,6 +1540,32 @@ mod tests {
         assert!(s.message("both").unwrap().is_some(), "hub B still holds it");
         assert!(s.message("a-only").unwrap().is_none());
         assert!(s.message("b-only").unwrap().is_some());
+    }
+
+    #[test]
+    fn history_marks_are_per_hub_and_chat_and_go_when_the_hub_starts_over() {
+        let s = Store::open_in_memory().unwrap();
+        let (a, b) = ("http://a:7370", "http://b:7370");
+        for h in [a, b] {
+            s.add_hub(h, "t0").unwrap();
+        }
+        assert_eq!(s.history_mark(a, "pat").unwrap(), None);
+        let m = HistoryMark {
+            before: Some("1760000000123-7".into()),
+            oldest_ms: Some(1760000000123),
+            done: false,
+        };
+        s.set_history_mark(a, "pat", &m).unwrap();
+        s.set_history_mark(b, "pat", &HistoryMark { done: true, ..Default::default() })
+            .unwrap();
+        assert_eq!(s.history_mark(a, "pat").unwrap(), Some(m));
+        assert_eq!(s.history_mark(a, "sam").unwrap(), None);
+        // a hub starting over pages again; the other hub's mark stays
+        s.forget_hub_messages(a).unwrap();
+        assert_eq!(s.history_mark(a, "pat").unwrap(), None);
+        assert!(s.history_mark(b, "pat").unwrap().unwrap().done);
+        s.remove_hub(b).unwrap();
+        assert_eq!(s.history_mark(b, "pat").unwrap(), None);
     }
 
     #[test]

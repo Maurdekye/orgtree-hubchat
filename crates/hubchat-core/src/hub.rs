@@ -120,6 +120,9 @@ pub struct Health {
     /// whether two addresses lead to the same hub).
     #[serde(default)]
     pub orgs: Option<u64>,
+    /// The hub's clock in unix ms when it answered (v2.0.1, lazy_history).
+    #[serde(default)]
+    pub now: Option<i64>,
 }
 
 impl Health {

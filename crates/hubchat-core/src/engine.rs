@@ -43,6 +43,37 @@ pub const LONG_BODY_FETCH_MAX: u64 = 64 * 1024 * 1024;
 /// Back-off between reconnects (design F7: 8, 16, 32 s, then 32 s).
 const BACKOFF: [u64; 3] = [8, 16, 32];
 
+/// Messages per history page when scrolling back.
+const HISTORY_PAGE: u32 = 50;
+
+/// What one `load_older` call did.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct OlderPage {
+    /// Messages new to this device.
+    pub added: usize,
+    /// Hubs with still older messages of this chat.
+    pub more: Vec<String>,
+    /// Hubs this device started from now on that couldn't be asked
+    /// (offline): their older messages are not loaded yet.
+    pub unreachable: Vec<String>,
+}
+
+fn start_key(url: &str) -> String {
+    format!("sync.start_ms.{url}")
+}
+
+fn clock_key(url: &str) -> String {
+    format!("hub.clock_offset_ms.{url}")
+}
+
+/// A hub timestamp (RFC 3339, `Z`) in unix ms.
+fn hub_ms(t: &str) -> Option<i64> {
+    let st = humantime::parse_rfc3339_weak(t).ok()?;
+    st.duration_since(SystemTime::UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_millis() as i64)
+}
+
 pub fn now() -> String {
     humantime::format_rfc3339_millis(SystemTime::now()).to_string()
 }
@@ -113,6 +144,9 @@ pub struct HubStatus {
     /// Unix ms since which a poll or sync has been waiting for its answer
     /// (the hub parks one while it has no news).
     pub waiting_since_ms: Option<u64>,
+    /// The hub's clock minus ours, in ms (hubs that report `now`): its
+    /// received times are its own clock.
+    pub clock_offset_ms: Option<i64>,
 }
 
 struct HubRuntime {
@@ -454,6 +488,12 @@ impl Engine {
                 version: None,
                 answered_ms: None,
                 waiting_since_ms: None,
+                clock_offset_ms: self
+                    .store
+                    .meta(&clock_key(&addr.to_string()))
+                    .ok()
+                    .flatten()
+                    .and_then(|v| v.parse().ok()),
             },
             retry_now: Arc::new(Notify::new()),
             kick: Arc::new(Notify::new()),
@@ -559,7 +599,9 @@ impl Engine {
 
     /// One connected session: probe, register, then poll until an error.
     async fn session(&self, client: &HubClient, url: &str, stop: &CancelFlag) -> Result<()> {
+        let asked = unix_ms();
         let health = client.healthz().await?;
+        self.clock_reading(url, health.now, asked, unix_ms())?;
         let mut profile = self.profile.lock().unwrap().clone();
         // Older hubs store any kind but org/chat as "org": a person registers
         // as "chat" there (coordinator ruling 2026-10-08).
@@ -681,6 +723,10 @@ impl Engine {
         features: &[String],
     ) -> Result<()> {
         let key = format!("sync.cursor.{url}");
+        let start_key = start_key(url);
+        // lazy history: a device new to this hub starts from now and pages
+        // older mail in as the user scrolls back
+        let lazy = features.iter().any(|f| f == "lazy_history");
         let me = self.me.address();
         let (device_id, device_name) = self.device();
         let mut cursor = self.store.meta(&key)?;
@@ -693,12 +739,14 @@ impl Engine {
                 .await?;
             let first_page = cursor.is_none();
             self.mark(url, |s| s.waiting_since_ms = Some(unix_ms()));
+            let asked = unix_ms();
             let r = match client
                 .sync(
                     &self.me,
                     &device_id,
                     &device_name,
                     cursor.as_deref(),
+                    lazy,
                     // While catching up, don't park: a live message arriving
                     // during the history fetch must still count as news.
                     if catching_up {
@@ -734,9 +782,24 @@ impl Engine {
                 let v = r.version.clone();
                 self.set_status(url, |s| s.version = v);
             }
+            // a parked answer says nothing about the round trip
+            if unix_ms() - asked < 2000 {
+                self.clock_reading(url, r.now, asked, unix_ms())?;
+            }
             if r.reset {
                 self.store.forget_hub_messages(url)?;
             }
+            // where this device's copy of the hub's mail begins: older mail
+            // comes page by page (load_older)
+            if first_page && r.start.as_deref() == Some("now") {
+                self.start_from(url, r.now)?;
+            } else if first_page {
+                self.store.delete_meta(&start_key)?;
+            } else if r.reset && self.store.meta(&start_key)?.is_some() {
+                // a device that started from now starts over from now
+                self.start_from(url, r.now)?;
+            }
+            let start_ms: Option<i64> = self.store.meta(&start_key)?.and_then(|v| v.parse().ok());
             let mut dir_changed = false;
             if first_page && !r.roster.is_empty() {
                 self.store.set_roster(url, &r.roster)?;
@@ -766,6 +829,16 @@ impl Engine {
                         // linked (ours, synced back): no chat.
                         if m.env.body.starts_with(crate::link::LINK_MESSAGE_PREFIX) {
                             continue;
+                        }
+                        // a change to mail from before this device's start
+                        // (a receipt, say) for a message not paged in yet:
+                        // it comes with its page, not on its own
+                        if let Some(start) = start_ms {
+                            if hub_ms(&m.env.received_at).is_some_and(|t| t <= start)
+                                && self.store.message(&m.env.id)?.is_none()
+                            {
+                                continue;
+                            }
                         }
                         let fresh = self.store.upsert_synced(url, &me, m)?;
                         if m.body_bytes.is_some() {
@@ -825,6 +898,127 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    /// A hub's `now` against our clock around the request: the offset is
+    /// the hub's clock minus ours at the round trip's midpoint.
+    fn clock_reading(&self, url: &str, hub_now: Option<i64>, asked: u64, answered: u64) -> Result<()> {
+        let Some(hub_now) = hub_now else {
+            return Ok(());
+        };
+        let offset = hub_now - ((asked + answered) / 2) as i64;
+        self.store.set_meta(&clock_key(url), &offset.to_string())?;
+        self.mark(url, |s| s.clock_offset_ms = Some(offset));
+        Ok(())
+    }
+
+    /// This device's copy of `url`'s mail begins at `hub_now` (hub clock):
+    /// whatever was paged back from it before starts again from there.
+    fn start_from(&self, url: &str, hub_now: Option<i64>) -> Result<()> {
+        // an answer without `now` (none should come): our clock, corrected
+        let t = hub_now.unwrap_or_else(|| {
+            let offset = self
+                .hubs
+                .lock()
+                .unwrap()
+                .get(url)
+                .and_then(|h| h.status.clock_offset_ms);
+            unix_ms() as i64 + offset.unwrap_or(0)
+        });
+        self.store.clear_history_marks(url)?;
+        self.store.set_meta(&start_key(url), &t.to_string())
+    }
+
+    // ---------------------------------------------------------- history
+
+    /// Scrolling back: one older page of the chat with `peer` from every
+    /// hub this device started from now on, stored by id (one row per id,
+    /// whichever hubs hold it). A hub that isn't connected is named in
+    /// `unreachable` and pages in when it is back.
+    pub async fn load_older(&self, peer: &str) -> Result<OlderPage> {
+        let hubs: Vec<(String, HubClient, bool)> = self
+            .hubs
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(u, h)| (u.clone(), h.client.clone(), h.status.state == HubState::Connected))
+            .collect();
+        let me = self.me.address();
+        let mut out = OlderPage::default();
+        for (url, client, connected) in hubs {
+            let Some(start) = self
+                .store
+                .meta(&start_key(&url))?
+                .and_then(|v| v.parse::<i64>().ok())
+            else {
+                continue; // synced from the beginning: it has everything
+            };
+            let mark = self.store.history_mark(&url, peer)?.unwrap_or_default();
+            if mark.done {
+                continue;
+            }
+            if !connected {
+                out.unreachable.push(url);
+                continue;
+            }
+            let before = match &mark.before {
+                Some(c) => crate::hub_v2::Before::Cursor(c.clone()),
+                // the start's own millisecond too: sync may not bring it
+                None => crate::hub_v2::Before::Time(start + 1),
+            };
+            let page = match client.history(&self.me, peer, &before, HISTORY_PAGE).await {
+                Ok(p) => p,
+                Err(e) if e.status().is_some() => return Err(e),
+                // the connection failed: as good as offline
+                Err(_) => {
+                    out.unreachable.push(url);
+                    continue;
+                }
+            };
+            let mut oldest = mark.oldest_ms;
+            for m in &page.messages {
+                if let Some(t) = hub_ms(&m.env.received_at) {
+                    oldest = Some(oldest.map_or(t, |o| o.min(t)));
+                }
+                if m.env.body.starts_with(crate::link::LINK_MESSAGE_PREFIX) {
+                    continue;
+                }
+                if self.store.message(&m.env.id)?.is_none() {
+                    out.added += 1;
+                }
+                self.store.upsert_synced(&url, &me, m)?;
+                if m.body_bytes.is_some() {
+                    if let Ok(body) = client
+                        .message_body(&self.me, &m.env.id, LONG_BODY_FETCH_MAX)
+                        .await
+                    {
+                        let body = if m.env.reply_to.is_some() {
+                            strip_quote(&body).to_owned()
+                        } else {
+                            body
+                        };
+                        self.store.set_body(&m.env.id, &body)?;
+                    }
+                }
+            }
+            let done = page.before.is_none();
+            self.store.set_history_mark(
+                &url,
+                peer,
+                &crate::store::HistoryMark {
+                    before: page.before,
+                    oldest_ms: oldest,
+                    done,
+                },
+            )?;
+            if !done {
+                out.more.push(url);
+            }
+        }
+        if out.added > 0 {
+            self.host.event(Event::Chat { peer: peer.into() });
+        }
+        Ok(out)
     }
 
     // ---------------------------------------------------------- sending
