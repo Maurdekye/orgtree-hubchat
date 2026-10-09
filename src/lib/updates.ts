@@ -73,8 +73,8 @@ async function androidInstall(u: AppUpdate): Promise<void> {
 
 async function checkRaw(): Promise<Available | null> {
   if (platform === "android") {
-    // a test build may read a local feed instead (the update test; the shell
-    // ignores this in the real app)
+    // a test build reads only a local feed (the update test), never the real
+    // release; the shell ignores this in the real app
     const u = await api.appUpdateCheck(localStorage.getItem("hubchat.updates.feed"));
     return u ? { version: u.version, install: () => androidInstall(u) } : null;
   }
@@ -83,6 +83,10 @@ async function checkRaw(): Promise<Available | null> {
     if (new URLSearchParams(location.search).get("update") !== "1") return null;
     return { version: "0.2.0", install: async () => { await new Promise((r) => setTimeout(r, 1500)); location.reload(); } };
   }
+  // a test build runs beside the real app; the real release would install the
+  // real app, so a test build never offers it
+  const { getIdentifier } = await import("@tauri-apps/api/app");
+  if ((await getIdentifier()).endsWith(".test")) return null;
   const { check } = await import("@tauri-apps/plugin-updater");
   const u = await check();
   if (!u) return null;

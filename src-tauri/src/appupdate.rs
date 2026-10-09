@@ -118,6 +118,9 @@ pub async fn hc_app_update_check(app: AppHandle, feed: Option<String>) -> R<Opti
         let (endpoint, _) = updater_config(&app)?;
         let url = match feed {
             Some(f) if crate::android::is_test_build() => f,
+            // a test build sits beside the real app; the real release would
+            // install over the real one, so it reads only a test feed
+            _ if crate::android::is_test_build() => return Ok(None),
             _ => endpoint,
         };
         let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build().map_err(|e| e.to_string())?;
