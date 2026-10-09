@@ -124,7 +124,9 @@ apply(from = file("tauri.build.gradle.kts"))
 val patchRustWebView by tasks.registering {
     val webView = file("src/main/java/dev/orgtree/hubchat/generated/RustWebView.kt")
     doLast {
-        if (!webView.exists()) return@doLast
+        // the Rust build writes it; without it the app would build without
+        // keyboard pictures, so the build stops instead
+        check(webView.exists()) { "RustWebView.kt wasn't generated; route its input connection to KeyboardImages by hand" }
         val text = webView.readText()
         if (text.contains("KeyboardImages")) return@doLast
         val end = text.lastIndexOf('}')
