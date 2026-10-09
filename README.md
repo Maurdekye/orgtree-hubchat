@@ -161,35 +161,29 @@ Notes:
 
 ## Releasing
 
-Each GitHub release is also the update feed for both apps: Windows updates
-itself from it, and so does Android.
+GitHub Actions builds, signs and drafts every release; nobody builds one on
+their own PC. [docs/ci-release.md](docs/ci-release.md) has the whole
+procedure, including checking a draft and rolling a release back. In short:
 
-1. **Bump the version** in five places:
+1. **Bump the version** in five places, in one commit:
    - the workspace `Cargo.toml` (plus the `hubchat` and `hubchat-core`
      entries in `Cargo.lock`);
    - `package.json` and `package-lock.json`;
    - `src-tauri/tauri.conf.json`;
    - the mock's version in `src/lib/native.ts`.
-2. **Build** the Windows installer with the updater key in
-   `TAURI_SIGNING_PRIVATE_KEY` (this also writes its `.sig`), and the Android
-   APK with `scripts/android-build.sh release` and the release keystore. The
-   APK must keep the same signing certificate, or Android refuses to update.
-3. **Sign the APK for the in-app updater**:
-   `npx tauri signer sign -f <updater key file> --app-version <version> Hubchat_<version>_arm64.apk`
-   writes `Hubchat_<version>_arm64.apk.sig`. The version goes into the
-   signature, and the app refuses an update whose signature names a
-   different version.
-4. **Write `latest.json`**. Its `platforms` has two entries, each with the
-   download URL and the contents of that file's `.sig`:
-   - `windows-x86_64`: the setup `.exe`;
-   - `android-aarch64`: the APK.
-   Also write `SHA256SUMS.txt` over every file.
-5. **Publish** a release tagged `v<version>` with:
-   - the setup `.exe` and its `.sig`;
-   - the APK and its `.sig`;
-   - the same APK again as `Hubchat-android.apk`, a name that never changes
-     (`releases/latest/download/Hubchat-android.apk`);
-   - `latest.json` and `SHA256SUMS.txt`.
+2. **Add the notes** in the same commit: `docs/release-notes-<version>.md`
+   (the release's text) and `docs/update-notes-<version>.txt` (one or two
+   sentences the apps show when they offer the update).
+3. **Tag that commit** `v<version>` and push the tag. The `release` workflow
+   builds every platform, signs everything and leaves a draft release.
+4. **Check the draft, then publish it.**
+
+Each published release is also the update feed for the apps. Its
+`latest.json` has one entry per platform, `android-aarch64` (the APK) among
+them, and every entry's signature names the version: an app refuses an update
+whose signature names a different version. The APK is attached a second time
+as `Hubchat-android.apk`, a name that never changes
+(`releases/latest/download/Hubchat-android.apk`).
 
 ## How it's built
 
