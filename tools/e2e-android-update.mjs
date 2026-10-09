@@ -7,10 +7,10 @@
 //      unknown apps" permission, and Hubchat carries on by itself after it;
 //   2. a tampered APK is refused and nothing changes;
 //   3. an older signed APK announced as a newer version is refused;
-//   4. N+1 installs through Android's confirmation, and the identity, the
-//      chats and the settings are kept;
-//   5. N+1 -> N+2: whether Android still wants a tap (on Android 12+ it
-//      shouldn't once Hubchat is the app's installer) is measured and shown.
+//   4. N+1 installs, and the identity, the chats and the settings are kept;
+//      whether Android asks to confirm this first in-app update is shown;
+//   5. N+1 -> N+2 installs the same way, and on Android 12+ without a tap:
+//      Hubchat is now the app's installer and may update it without asking.
 // Hubchat Test's data is cleared at the start; the real Hubchat is never
 // touched. Every adb call names its device (ANDROID_SERIAL).
 //
@@ -97,13 +97,26 @@ let b;
 const attachApp = async () => {
   let pid = '';
   for (let i = 0; i < 40 && !(pid = adb('shell', 'pidof', PKG).trim()); i++) await sleep(500);
+  // after an update the process may be only the background connection, which has
+  // no WebView: its debug socket appears once the app's window has made one
+  await until(() => adb('shell', 'cat', '/proc/net/unix').includes(`webview_devtools_remote_${pid}`), 30000);
   adb('forward', 'tcp:9336', `localabstract:webview_devtools_remote_${pid}`);
   try { await b?.close(); } catch {}
   b = null;
   for (let i = 0; i < 40 && !b; i++) { try { b = await attach(9336); } catch { await sleep(500); } }
   if (!b) throw new Error('could not attach to Hubchat Test');
 };
-const launch = async () => { adb('shell', 'monkey', '-p', PKG, '-c', 'android.intent.category.LAUNCHER', '1'); await attachApp(); await sleep(2000); };
+const inFront = () => /topResumedActivity=.* dev\.orgtree\.hubchat\.test\//.test(adb('shell', 'dumpsys', 'activity', 'activities'));
+// Right after an update Android is still finishing the replacement, and a launch then
+// goes nowhere: launch again until Hubchat Test is the app in front.
+const launch = async () => {
+  for (let i = 0; i < 6 && !inFront(); i++) {
+    adb('shell', 'monkey', '-p', PKG, '-c', 'android.intent.category.LAUNCHER', '1');
+    await until(inFront, 5000);
+  }
+  await attachApp();
+  await sleep(2000);
+};
 const reload = async () => { await b.eval('location.reload()').catch(() => {}); await sleep(2500); await attachApp(); };
 const waitFor = async (expr, ms = 15000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await b.eval(expr).catch(() => false)) return true; await sleep(300); } return false; };
 const banner = () => b.eval(`(document.querySelector('.banner.upd') || {}).innerText || ''`).catch(() => '');
@@ -128,6 +141,22 @@ const keptAfter = async (v, before) => {
   check(`${v}: the same identity, and it connects`, ok && s.me === before.me, J({ me: s.me, connected: s.connected }));
   check(`${v}: the chat and its message are still there`, s.chats.some((c) => c.includes('Before the update')), J(s.chats));
   check(`${v}: the settings are kept (theme, the test feed, a marker)`, s.kept === 'yes' && s.theme === 'light' && s.feed === FEED + '/latest.json', J({ kept: s.kept, theme: s.theme, feed: s.feed }));
+};
+
+// Update in the banner, then wait for the install. Android shows its own
+// confirmation unless Hubchat may update itself without one; a confirmation is
+// tapped when it appears, and whether one appeared is returned.
+const SDK = Number(adb('shell', 'getprop', 'ro.build.version.sdk').trim());
+const installOffered = async (v, confirmShot) => {
+  await tapBanner();
+  let tapped = false;
+  const done = await until(async () => {
+    if (pkgInfo().version === v) return true;
+    const n = nodes().find(confirmButton);
+    if (n) { tapped = true; shot(confirmShot); tapNode(n); }
+    return false;
+  }, 180000);
+  return { done, tapped };
 };
 
 try {
@@ -186,16 +215,13 @@ try {
   shot('upd-5-wrong-version.png');
   check('3. nothing changed', pkgInfo().version === N.version, J(pkgInfo()));
 
-  // 4. N+1, through Android's confirmation
+  // 4. N+1
   offer(V1, `/Hubchat_${V1}_arm64.apk`, sig(V1));
   await reload();
   check(`4. the banner offers ${V1}`, await bannerHas(`Hubchat ${V1} is ready`, 30000), await banner());
-  await tapBanner();
-  const confirm = await findNode(confirmButton, 120000);
-  check("4. Android asks to confirm the first in-app update", !!confirm, confirm ? '' : J(nodes().map((n) => n.text).filter(Boolean)));
-  shot('upd-6-confirm.png');
-  if (confirm) tapNode(confirm);
-  check(`4. ${V1} is installed`, await until(() => pkgInfo().version === V1, 120000), J(pkgInfo()));
+  const first = await installOffered(V1, 'upd-6-confirm.png');
+  check(`4. ${V1} is installed`, first.done, J(pkgInfo()));
+  info('4. Android wanted a tap for the first in-app update', first.tapped ? 'yes' : 'no');
   check('4. Hubchat Test is now its own installer', pkgInfo().installer === PKG, J(pkgInfo()));
   offer(V2, `/Hubchat_${V2}_arm64.apk`, sig(V2));
   await keptAfter(V1, before);
@@ -203,16 +229,10 @@ try {
 
   // 5. N+1 -> N+2
   check(`5. the banner offers ${V2}`, await bannerHas(`Hubchat ${V2} is ready`, 30000), await banner());
-  await tapBanner();
-  let tapped = false;
-  const done = await until(async () => {
-    if (pkgInfo().version === V2) return true;
-    const n = nodes().find(confirmButton);
-    if (n) { tapped = true; shot('upd-8-second-confirm.png'); tapNode(n); }
-    return false;
-  }, 180000);
-  check(`5. ${V2} is installed`, done, J(pkgInfo()));
-  info('5. Android wanted a tap for the second in-app update', tapped ? 'yes' : 'no (silent, Android 12+)');
+  const second = await installOffered(V2, 'upd-8-second-confirm.png');
+  check(`5. ${V2} is installed`, second.done, J(pkgInfo()));
+  if (SDK >= 31) check('5. Android 12+ installs it without asking for a tap', !second.tapped);
+  else info('5. Android wanted a tap for the second in-app update', second.tapped ? 'yes' : 'no');
   await keptAfter(V2, before);
   shot('upd-9-after-second.png');
 } catch (e) {
