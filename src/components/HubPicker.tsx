@@ -13,8 +13,10 @@ import { useSnap } from "../lib/store";
 import { toast } from "../lib/toast";
 
 /** The hub a chat's messages go through now, as the header names it: the
- *  next hub, else the pinned one (waiting), else Automatic's. */
-export const routeVia = (r: SendRoute | null) => r && (r.next ?? r.pinned ?? r.automatic);
+ *  next hub, else the pinned one (waiting), else Automatic's. None when no
+ *  hub lists them and nothing is pinned (the composer says they're on none). */
+export const routeVia = (r: SendRoute | null) =>
+  r && (r.hubs.length || r.pinned) ? r.next ?? r.pinned ?? r.automatic : null;
 
 /** "via office" or "via office · pinned". */
 export function routeLabel(r: SendRoute | null, hubs: HubStatus[]): string {
@@ -34,8 +36,8 @@ function Choices({ peer, route, who, onDone }: { peer: string; route: SendRoute;
     onDone();
     if (hub !== route.pinned) api.setSendHub(peer, hub).catch((e) => toast(errText(e)));
   };
-  const row = (sel: boolean, label: string, sub: string, run: () => void, dot?: HubAt) => (
-    <button key={label} type="button" className={"mi hubopt" + (sel ? " sel" : "")} role="menuitemradio" aria-checked={sel} onClick={run}>
+  const row = (key: string, sel: boolean, label: string, sub: string, run: () => void, dot?: HubAt) => (
+    <button key={key} type="button" className={"mi hubopt" + (sel ? " sel" : "")} role="menuitemradio" aria-checked={sel} onClick={run}>
       <span className="ck">{sel ? <Icon name="check" /> : null}</span>
       {dot ? <span className="hic"><span className={"hdot " + dot} /></span> : <Icon name="sync" />}
       <span className="t"><b>{label}</b><small>{sub}</small></span>
@@ -43,12 +45,12 @@ function Choices({ peer, route, who, onDone }: { peer: string; route: SendRoute;
   );
   return (
     <>
-      {row(!route.pinned, "Automatic",
+      {row("auto", !route.pinned, "Automatic",
         route.automatic ? "Now: " + hubName(hubs, route.automatic) : "None of your hubs can reach " + who + " right now.",
         () => pick(null))}
       {route.hubs.map(({ url, online }) => {
         const at: HubAt = hubByUrl(hubs, url)?.state !== "connected" ? "down" : online ? "online" : "offline";
-        return row(route.pinned === url, hubName(hubs, url),
+        return row(url, route.pinned === url, hubName(hubs, url),
           at === "down" ? "Can't reach this hub" : who + (online ? " is online here" : " is offline here"),
           () => pick(url), at);
       })}

@@ -278,9 +278,13 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
     rows.push(<div className="sysnote" key="pend"><Icon name="schedule" />{name} is offline ({p.short}). Your message waits on hub {via?.name} and is delivered when they reconnect.</div>);
   }
   const waiting = msgs.some((m) => m.outgoing && (m.state === "queued" || m.state === "sending"));
-  if (route?.pinned && !route.next) {
-    // a pinned hub that can't reach them: say so, never switch on our own
-    rows.push(<div className="sysnote" key="pinwait"><Icon name="schedule" />Messages to {name} wait for hub {hubName(hubs, route.pinned)}, which can't reach them right now. <button className="link" onClick={() => api.setSendHub(peer, null).catch((e) => toast(errText(e)))}>Use Automatic</button></div>);
+  if (waiting && route?.pinned && !route.next) {
+    // a pinned hub that can't reach them: say why, never switch on our own
+    const pin = hubName(hubs, route.pinned);
+    const why = hubByUrl(hubs, route.pinned)?.state !== "connected"
+      ? <>Messages to {name} wait until hub {pin} is back.</>
+      : <>Messages to {name} wait: hub {pin} doesn't list them.</>;
+    rows.push(<div className="sysnote" key="pinwait"><Icon name="schedule" />{why} <button className="link" onClick={() => api.setSendHub(peer, null).catch((e) => toast(errText(e)))}>Use Automatic</button></div>);
   } else if (waiting && !viaHub(c, hubs)) {
     rows.push(<div className="sysnote" key="wait"><Icon name="schedule" />Waiting for a connection. Queued messages go out on their own.</div>);
   }

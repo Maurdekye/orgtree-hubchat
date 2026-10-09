@@ -319,6 +319,8 @@ const contactOf = (a: string) => dir.find((c) => c.address === a);
 // hub only while it is connected and lists the peer; Automatic = a hub where
 // they are online, then the one the chat last went through, then by address
 const pins: Record<string, string> = {};
+// messages that found no hub and wait for one (a pin change sends them)
+const parked = new Set<string>();
 function route(peer: string): SendRoute {
   const c = contactOf(peer);
   const listed = (c?.hubs || []).filter((u) => st.hubs.some((h) => h.url === u)).sort();
@@ -326,7 +328,10 @@ function route(peer: string): SendRoute {
   const usable = listed.filter(up);
   const last = [...msgs].reverse().find((m) => m.peer === peer && m.outgoing && m.hub)?.hub;
   // (a mock contact is online on all its hubs or none: online decides nothing)
-  const automatic = (last && usable.includes(last) ? last : usable[0]) ?? null;
+  // no hub lists them: the first connected hub tries (and the hub says no)
+  const automatic = !listed.length
+    ? st.hubs.map((h) => h.url).filter(up).sort()[0] ?? null
+    : (last && usable.includes(last) ? last : usable[0]) ?? null;
   const pinned = pins[peer] && st.hubs.some((h) => h.url === pins[peer]) ? pins[peer] : null;
   const next = pinned ? (usable.includes(pinned) ? pinned : null) : automatic;
   return { pinned, automatic, next, hubs: listed.map((url) => ({ url, online: !!c?.online })) };
@@ -359,7 +364,7 @@ async function pipeline(m: Message) {
     await sleep(600);
     m.state = "failed"; m.error = "no hub knows " + m.peer + " (address not found)"; chatEv(m.peer); return;
   }
-  if (!hub) return; // waits, like the core does, until a hub reaches them
+  if (!hub) { parked.add(m.id); return; } // waits, like the core does, until a hub reaches them
   m.state = "sending"; chatEv(m.peer);
   if (!(await upload(m))) { m.state = "failed"; m.error = "upload cancelled"; chatEv(m.peer); return; }
   await sleep(500);
@@ -482,7 +487,12 @@ export const mockApi: Api = {
     }
     return url;
   },
-  removeHub: async (url) => { await sleep(300); st.hubs = st.hubs.filter((h) => h.url !== url); dir = dir.map((c) => ({ ...c, hubs: c.hubs.filter((x) => x !== url) })).filter((c) => c.hubs.length); hubEv(url); emit({ type: "directory" }); },
+  removeHub: async (url) => {
+    await sleep(300); st.hubs = st.hubs.filter((h) => h.url !== url);
+    // like the core: a pin goes with its hub (adding it again doesn't bring it back)
+    for (const p of Object.keys(pins)) if (pins[p] === url) delete pins[p];
+    dir = dir.map((c) => ({ ...c, hubs: c.hubs.filter((x) => x !== url) })).filter((c) => c.hubs.length); hubEv(url); emit({ type: "directory" });
+  },
   retryNow: async () => { for (const h of st.hubs) if (h.state === "disconnected") reconnect(h); },
 
   directory: async () => clone(dir),
@@ -539,8 +549,9 @@ export const mockApi: Api = {
   setSendHub: async (peer, hub) => {
     if (hub) pins[peer] = hub; else delete pins[peer];
     chatEv(peer);
-    // what waited for a hub goes now, if it can (the core's sender wakes)
-    for (const m of msgs) if (m.peer === peer && m.outgoing && m.state === "queued") void pipeline(m);
+    // what waited for a hub goes now, if it can (the core's sender wakes);
+    // a message still on its way is not sent twice
+    for (const m of msgs) if (m.peer === peer && parked.delete(m.id) && m.state === "queued") void pipeline(m);
   },
   markRead: async (peer) => {
     let n = 0;
