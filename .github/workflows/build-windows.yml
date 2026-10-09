@@ -1,0 +1,180 @@
+# Hubchat Windows release build: the NSIS setup .exe plus its Tauri updater .sig.
+# Mirrors the local build (`npx tauri build --bundles nsis` with the updater key in
+# TAURI_SIGNING_PRIVATE_KEY) on a pinned windows-2025 runner. See docs/ci-release.md.
+#
+# Called by release.yml (workflow_call) or run on its own by pushing to ci-test/hubchat-windows.
+# A push run builds the pushed commit, unless .github/ci/windows/test-ref.txt names another
+# ref (test branches only, e.g. to rebuild a published tag; never commit that file to main).
+name: build-windows
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: tag or commit to build
+        type: string
+        required: true
+      signing:
+        description: "test = throwaway updater key made in the job; release = the real key from secrets"
+        type: string
+        default: test
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY:
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
+        required: false
+  push:
+    branches: ['ci-test/hubchat-windows']
+
+permissions:
+  contents: read
+
+env:
+  # pins measured from the local build of v0.1.1 (no rust-toolchain.toml in the repo)
+  RUST_TOOLCHAIN: nightly-2025-12-12
+  NODE_VERSION: 24.12.0
+  CARGO_TERM_COLOR: never
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      SIGNING: ${{ inputs.signing || 'test' }}
+      CARGO_TARGET_DIR: ${{ github.workspace }}\target
+    steps:
+      - name: Check out the CI helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: ci
+          sparse-checkout: .github/ci
+          persist-credentials: false
+
+      - name: Resolve the ref to build
+        id: ref
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+        run: |
+          $ref = $env:INPUT_REF
+          $override = 'ci/.github/ci/windows/test-ref.txt'
+          if (-not $ref -and (Test-Path $override)) { $ref = (Get-Content -Raw $override).Trim() }
+          if (-not $ref) { $ref = '${{ github.sha }}' }
+          if ($env:SIGNING -notin @('test', 'release')) { throw "signing must be test or release, got '$env:SIGNING'" }
+          "Building ref $ref with signing=$env:SIGNING"
+          "ref=$ref" >> $env:GITHUB_OUTPUT
+
+      - name: Check out the app
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.ref.outputs.ref }}
+          path: app
+          persist-credentials: false
+
+      - name: Read the app version
+        id: app
+        working-directory: app
+        run: |
+          $conf = Get-Content -Raw src-tauri/tauri.conf.json | ConvertFrom-Json
+          $v = $conf.version
+          if (-not $v) { throw 'no version in src-tauri/tauri.conf.json' }
+          "commit $(git rev-parse HEAD), version $v, productName $($conf.productName)"
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "setup=$($conf.productName)_${v}_x64-setup.exe" >> $env:GITHUB_OUTPUT
+
+      - name: Install Rust ${{ env.RUST_TOOLCHAIN }}
+        run: |
+          rustup toolchain install $env:RUST_TOOLCHAIN --profile minimal --no-self-update
+          "RUSTUP_TOOLCHAIN=$env:RUST_TOOLCHAIN" >> $env:GITHUB_ENV
+          rustup --version
+          rustc +$env:RUST_TOOLCHAIN -Vv
+          cargo +$env:RUST_TOOLCHAIN -V
+
+      - name: Record the MSVC toolset and Windows SDK
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json | ConvertFrom-Json
+          "Visual Studio: $($vs.displayName) $($vs.installationVersion) at $($vs.installationPath)"
+          $vc = Get-Content "$($vs.installationPath)\VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt"
+          "MSVC tools (default): $vc"
+          "Windows SDKs: $((Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\Lib" -Directory).Name -join ', ')"
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: hubchat-win-cargo-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('app/Cargo.lock') }}
+          restore-keys: hubchat-win-cargo-${{ env.RUST_TOOLCHAIN }}-
+
+      - name: npm ci
+        working-directory: app
+        run: |
+          "node $(node -v), npm $(npm -v)"
+          npm ci
+
+      - name: Make a throwaway updater key (signing=test)
+        if: env.SIGNING == 'test'
+        working-directory: app
+        run: |
+          $key = Join-Path $env:RUNNER_TEMP 'test-updater.key'
+          npx tauri signer generate --ci -w $key
+          if ($LASTEXITCODE) { throw 'tauri signer generate failed' }
+          $priv = (Get-Content -Raw $key).Trim()
+          "::add-mask::$priv"
+          "TEST_SIGNING_KEY=$priv" >> $env:GITHUB_ENV
+          "Test public key (signatures verify against this, not the shipped pubkey):"
+          Get-Content -Raw "$key.pub"
+
+      - name: Check the release key is present (signing=release)
+        if: env.SIGNING == 'release'
+        env:
+          HAVE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          if ($env:HAVE_KEY -ne 'true') { throw 'signing=release but secret TAURI_SIGNING_PRIVATE_KEY is empty: refusing to build' }
+
+      - name: Build the NSIS installer
+        working-directory: app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.SIGNING == 'release' && secrets.TAURI_SIGNING_PRIVATE_KEY || env.TEST_SIGNING_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.SIGNING == 'release' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+        run: |
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) { throw 'no updater signing key: refusing to build' }
+          npx tauri build --bundles nsis
+          if ($LASTEXITCODE) { throw "tauri build failed ($LASTEXITCODE)" }
+
+      - name: Collect the release assets
+        env:
+          SETUP: ${{ steps.app.outputs.setup }}
+        run: |
+          $nsis = Join-Path $env:CARGO_TARGET_DIR 'release\bundle\nsis'
+          Get-ChildItem $nsis | Format-Table Name, Length
+          $out = New-Item -ItemType Directory -Force out
+          Copy-Item "$nsis\$env:SETUP", "$nsis\$env:SETUP.sig" $out
+          $sig = Get-Content -Raw "$out\$env:SETUP.sig"
+          $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($sig.Trim()))
+          if (-not $decoded.StartsWith('untrusted comment:')) { throw '.sig is not a minisign signature' }
+          $json = @{ 'windows-x86_64' = @{ asset = $env:SETUP; signature = $sig } } | ConvertTo-Json -Depth 3
+          [IO.File]::WriteAllText("$out\updater-windows-x86_64.json", $json)
+          Get-ChildItem $out | ForEach-Object { '{0}  {1,10}  {2}' -f (Get-FileHash $_ -Algorithm SHA256).Hash.ToLower(), $_.Length, $_.Name }
+
+      - name: Launch smoke (install, start, stays up)
+        run: ci/.github/ci/windows/smoke.ps1 -Installer "out/${{ steps.app.outputs.setup }}"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hubchat-windows
+          path: out/*
+          if-no-files-found: error
