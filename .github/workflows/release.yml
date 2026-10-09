@@ -56,6 +56,12 @@ jobs:
           MODE: ${{ github.ref_type == 'tag' && 'release' || 'test' }}
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: node .ci-tools/.github/ci/release/check-version.mjs
+      - name: Cargo.lock is complete for every platform
+        # The builds run cargo without --locked, so an incomplete lockfile would be
+        # silently rewritten on each runner; refuse it here instead.
+        run: |
+          rustup toolchain install nightly-2025-12-12 --profile minimal --no-self-update
+          cargo +nightly-2025-12-12 metadata --locked --format-version 1 > /dev/null
 
   windows:
     needs: resolve
