@@ -58,6 +58,8 @@
 .comp-off .ic { flex: none; width: 20px; height: 20px; color: var(--faint); }
 /* lazy history: an older page on its way (user 23:46Z) */
 .tl-older { display: flex; justify-content: center; padding: 10px 0 6px; }
+/* a hub that is down holds older messages this device hasn't loaded */
+.tl-gap { text-align: center; padding: 10px 16px 6px; color: var(--dim); font-size: 12.5px; }
 /* Settings › Devices › Rename (user 00:16Z) */
 .set-row.dev-rename { flex-wrap: wrap; gap: 8px; align-items: center; }
 .dev-rename .input { flex: 1 1 220px; min-width: 0; }

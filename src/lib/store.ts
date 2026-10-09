@@ -3,7 +3,7 @@
 // once and re-reads only what an `hc` event says changed; transfer progress
 // is kept apart so a progress tick re-renders only the file card it concerns.
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { api, type ChatSummary, type Contact, type HcEvent, type Message, type SendRoute, type State } from "../api";
+import { api, type ChatSummary, type Contact, type HcEvent, type Message, type OlderPage, type SendRoute, type State } from "../api";
 import { errText } from "./native";
 
 export interface Snap {
@@ -93,13 +93,13 @@ export const PAGE = 50;
 /** `a` comes before `b` in a chat (by time, then id, as the core pages). */
 const earlier = (a: Message, b: Message) => a.created_at < b.created_at || (a.created_at === b.created_at && a.id < b.id);
 
-interface Paged { peer: string | null; msgs: Message[]; loaded: boolean; more: boolean }
+interface Paged { peer: string | null; msgs: Message[]; loaded: boolean; more: boolean; unreachable: string[] }
 
 /** A chat's messages: the newest `page` first, older pages on request
  *  (`loadOlder`), and on every change the core reports a re-read of the
  *  range already shown plus anything new. */
 export function useMessages(peer: string | null, page = PAGE) {
-  const [data, setData] = useState<Paged>({ peer: null, msgs: [], loaded: false, more: false });
+  const [data, setData] = useState<Paged>({ peer: null, msgs: [], loaded: false, more: false, unreachable: [] });
   const [tick, setTick] = useState(0);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const cur = useRef(data);
@@ -113,27 +113,36 @@ export function useMessages(peer: string | null, page = PAGE) {
     (oldest ? api.chat(peer, { from: oldest, limit: 5000 }) : api.chat(peer, { limit: page })).then((msgs) => {
       if (!live) return;
       setData((prev) => {
-        if (!oldest || prev.peer !== peer) return { peer, msgs, loaded: true, more: msgs.length >= page };
+        // fewer than a page: the hubs may still hold older ones (lazy history)
+        if (!oldest || prev.peer !== peer) return { peer, msgs, loaded: true, more: true, unreachable: [] };
         // an older page that arrived meanwhile stays
-        return { peer, msgs: [...prev.msgs.filter((m) => earlier(m, oldest)), ...msgs], loaded: true, more: prev.more };
+        return { ...prev, msgs: [...prev.msgs.filter((m) => earlier(m, oldest)), ...msgs], loaded: true };
       });
     }, (e) => console.warn("hc_chat", e));
     return () => { live = false; };
   }, [peer, tick, page]);
   useEffect(() => (peer ? onChatChange(peer, () => setTick((t) => t + 1)) : undefined), [peer]);
   /** The next older page (before `from`, else before the oldest shown);
-   *  resolves to its messages (none: the start). */
+   *  resolves to its messages (none: the start). Past what this device
+   *  holds, it asks the hubs for their next older page (lazy history). */
   const loadOlder = useCallback(async (from?: Message): Promise<Message[]> => {
     const d = cur.current;
-    if (!peer || d.peer !== peer || (!from && (!d.more || !d.msgs.length)) || busy.current) return [];
+    if (!peer || d.peer !== peer || (!from && !d.more) || busy.current) return [];
     busy.current = true;
     setLoadingOlder(true);
     try {
-      const older = await api.chat(peer, { before: from ?? d.msgs[0], limit: page });
+      const before = from ?? d.msgs[0] ?? null;
+      let older = await api.chat(peer, { before, limit: page });
+      let hubs: OlderPage | null = null;
+      if (older.length < page) {
+        hubs = await api.loadOlder(peer);
+        if (hubs.added || hubs.more.length) older = await api.chat(peer, { before, limit: page });
+      }
       setData((prev) => (prev.peer !== peer ? prev : {
         ...prev,
         msgs: [...older.filter((m) => !prev.msgs.some((x) => x.id === m.id)), ...prev.msgs],
-        more: older.length >= page,
+        more: older.length >= page || !!hubs?.more.length,
+        unreachable: hubs ? hubs.unreachable : prev.unreachable,
       }));
       return older;
     } catch (e) {
@@ -151,6 +160,10 @@ export function useMessages(peer: string | null, page = PAGE) {
     reload: () => setTick((t) => t + 1),
     /** Older messages exist beyond what is shown. */
     more: same && data.more,
+    /** Hubs whose older messages aren't loaded because they can't be reached. */
+    unreachable: same ? data.unreachable : [],
+    /** A hub that couldn't be reached is back: go on loading from it. */
+    retryOlder: () => setData((prev) => (prev.peer === peer && prev.unreachable.length ? { ...prev, more: true } : prev)),
     loadingOlder,
     loadOlder,
   };

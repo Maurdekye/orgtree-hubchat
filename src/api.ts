@@ -21,6 +21,18 @@ export interface HubStatus {
   features: string[];
   /** The hub's software version, as it reports it (absent or null: unknown). */
   version?: string | null;
+  /** The hub's clock minus ours, ms (hubs that report it). */
+  clock_offset_ms?: number | null;
+}
+
+/** What one step back through a chat's hub history did (lazy history). */
+export interface OlderPage {
+  /** Messages new to this device. */
+  added: number;
+  /** Hubs with still older messages of this chat. */
+  more: string[];
+  /** Hubs that hold older messages not loaded yet but can't be asked now. */
+  unreachable: string[];
 }
 
 export interface Me {
@@ -280,6 +292,9 @@ export const tauriApi = {
    *  message `before`, or everything from message `from` on. */
   chat: (peer: string, o: { before?: Message | null; from?: Message | null; limit?: number } = {}) =>
     invoke<Message[]>("hc_chat", { peer, beforeAt: o.before?.created_at ?? null, beforeId: o.before?.id ?? null, fromAt: o.from?.created_at ?? null, fromId: o.from?.id ?? null, limit: o.limit ?? null }),
+  /** Scrolling back past what this device holds: one older page of the
+   *  chat from each hub this device started from now on. */
+  loadOlder: (peer: string) => invoke<OlderPage>("hc_load_older", { peer }),
   message: (id: string) => invoke<Message | null>("hc_message", { id }),
   send: (msg: NewOutgoing) => invoke<void>("hc_send", { msg }),
   retry: (id: string) => invoke<void>("hc_retry", { id }),

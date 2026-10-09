@@ -39,7 +39,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   const c = snap.byAddr.get(peer);
   const name = displayName(c, peer);
   const kind = kindOf(c);
-  const { msgs, loaded, reload, more, loadingOlder, loadOlder } = useMessages(peer);
+  const { msgs, loaded, reload, more, loadingOlder, loadOlder, unreachable, retryOlder } = useMessages(peer);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [sel, setSel] = useState<string | null>(null);
   // desktop keyboard: the message Shift+Tab has highlighted (R replies to it)
@@ -106,6 +106,9 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
     anchor.current = null;
     el.scrollTop = el.scrollHeight - a.h + a.t;
   }, [msgs]);
+  // a hub whose older messages couldn't be loaded is back: go on from it
+  const backOnline = unreachable.some((u) => hubByUrl(hubs, u)?.state === "connected");
+  useEffect(() => { if (backOnline) retryOlder(); }, [backOnline]); // eslint-disable-line react-hooks/exhaustive-deps
   // a short page that doesn't fill the view: the next one, so it can scroll
   useEffect(() => {
     const el = tl.current;
@@ -246,7 +249,12 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   // ------------------------------------------------------------ timeline
   const rows: React.ReactNode[] = [];
   if (loadingOlder) rows.push(<div className="tl-older" key="older" aria-label="Loading earlier messages"><span className="spin" /></div>);
-  if (loaded && !msgs.length) {
+  if (unreachable.length && !loadingOlder) {
+    const names = unreachable.map((u) => hubByUrl(hubs, u)?.name || u);
+    const list = names.length > 1 ? names.slice(0, -1).join(", ") + " and " + names[names.length - 1] : names[0];
+    rows.push(<div className="tl-gap" key="gap" role="note">Older messages through {list} are not loaded yet. They load when {names.length > 1 ? "those hubs are" : "it is"} back online.</div>);
+  }
+  if (loaded && !msgs.length && !more && !unreachable.length) {
     const k = kindInfo(kind);
     rows.push(
       <div className="chat-start" key="start">

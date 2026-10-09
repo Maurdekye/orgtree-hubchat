@@ -7,14 +7,16 @@
 // notification)  ?link=TEXT (the hubchat:// link Android opened the app with)
 // ?approve=S (the other device approves a link after S seconds)  ?lab=up (the
 // lab hub starts connected: the hubchat-ui session is then on two hubs, for
-// the hub picker).
+// the hub picker). Pat Peer's chat is lazy history: this device holds only
+// its newest messages; older ones load from office as you scroll back, and
+// the lab hub's (down unless ?lab=up) fill in when it is back.
 // Linking: a waiting device shows up on the third lookup; a device joining a
 // code is approved after 45 s and reviews LINK_HUBS (a signed-in device
 // joining one: after 2 s the link turns out to be another identity,
 // maya.e71f2b, or with a code starting "SAME" this device's own); nothing is
 // adopted before linkConfirm. A key file opens with any passphrase but
 // "wrong". Hubs on 127.0.0.1 / localhost can't be reached from the "phone".
-import type { Api, Attachment, ChatSummary, SendRoute, Contact, HcEvent, HubRow, HubStatus, LinkEvent, LinkLookup, LinkRole, Message, NewOutgoing, ParsedLink, Probe, Resolved, State } from "../api";
+import type { Api, Attachment, ChatSummary, SendRoute, Contact, HcEvent, HubRow, HubStatus, LinkEvent, LinkLookup, LinkRole, Message, NewOutgoing, OlderPage, ParsedLink, Probe, Resolved, State } from "../api";
 import { toast } from "./toast";
 
 const params = new URLSearchParams(location.search);
@@ -63,6 +65,7 @@ const SEED_DIR: Contact[] = [
   contact("research.alex.5b0e9a", "org", { org: "Research" }, "Literature and benchmarks", false, now() - 2 * 864e5, [OFFICE]),
   contact("nightly-ci.alex.8d21e0", "chat", { user: "nightly-ci" }, "Builds every night at 02:00", true, now() - 5000, [OFFICE]),
   contact("kim.19ac02", "person", { user: "Kim Okafor" }, "", false, now() - 12 * 864e5, [OFFICE]),
+  contact("pat.4d5e6f", "person", { user: "Pat Peer" }, "Started on this device today", true, now() - 60000, [OFFICE, LAB]),
   // devices' throwaway link addresses (src-tauri/src/link.rs registers them): a
   // leftover and one waiting now; the Directory and New chat leave both out
   contact("link.19356f", "chat", { org: "Pixel 7a", user: "link" }, "Waiting to be linked to a Hubchat identity", false, now() - 5 * 3600e3, [OFFICE]),
@@ -74,6 +77,12 @@ let dir: Contact[] = onboarding ? [] : clone(SEED_DIR);
 
 const msgs: Message[] = [];
 const drafts: Record<string, string> = {};
+/** Lazy history: per chat, per hub, the messages this device hasn't loaded
+ *  (oldest first), and how many of them are unread. */
+const hubOld = new Map<string, Map<string, Message[]>>();
+const oldUnread = new Map<string, number>();
+/** How far back a chat may show (no pop-ins); it never rises again. */
+const shownFloor = new Map<string, string>();
 
 function att(name: string, b: number, state: string, extra?: Partial<Attachment>): Attachment {
   return { local_id: uid(), hub_id: "h" + uid().slice(0, 6), name, bytes: b, source: null, local_path: null, state, error: null, ...extra };
@@ -166,6 +175,39 @@ if (!onboarding) {
     if (i === 1) firstLog = m;
   }
   add(JONAS, false, Date.now() - 3 * 60000, "About that first log entry: can you check it again?", { reply_to: firstLog!.id });
+
+  // lazy history: this device started today; office holds 70 older
+  // messages of Pat's chat, the lab hub 12 (two of them office's too)
+  const PAT = "pat.4d5e6f";
+  const p0 = Date.now() - 4 * 864e5;
+  const office: Message[] = [], lab: Message[] = [];
+  for (let i = 1; i <= 80; i++) {
+    const m = add(PAT, i % 4 === 0, p0 + i * 55 * 60000, "Pat's note " + i + (i % 9 === 0 ? ": the release checklist is up to date." : "."), { seen: i < 74, read_at: i < 74 ? iso(p0 + i * 55 * 60000 + 30000) : null });
+    msgs.pop();
+    if (i % 8 === 3) { lab.push({ ...m, hub: LAB }); if (i === 19 || i === 51) office.push(m); }
+    else office.push(m);
+  }
+  hubOld.set(PAT, new Map([[OFFICE, office], [LAB, lab]]));
+  oldUnread.set(PAT, [...office, ...lab].filter((m, i, a) => !m.outgoing && !m.seen && a.findIndex((x) => x.id === m.id) === i).length);
+  add(PAT, false, at(0, "08:10"), "Morning! Did the new phone pick everything up?", { seen: false, read_at: null });
+  add(PAT, true, at(0, "08:12"), "Only today's messages so far. The rest loads as I scroll back.");
+}
+
+/** The time a chat may show back to (none: everything): what every
+ *  reachable hub that still has older messages has loaded down to. */
+function floorOf(peer: string): string | null {
+  let f: string | null = null;
+  for (const [hub, list] of hubOld.get(peer) || []) {
+    const h = st.hubs.find((x) => x.url === hub);
+    if (!list.length || !h || h.state === "disconnected") continue;
+    const t = list[list.length - 1].created_at;
+    if (!f || t > f) f = t;
+  }
+  const shown = shownFloor.get(peer);
+  if (f === null) shownFloor.delete(peer);
+  else if (!shown || f < shown) shownFloor.set(peer, f);
+  else f = shown;
+  return f;
 }
 
 /** A made-up picture for an image attachment (the mock has no files). */
@@ -392,7 +434,7 @@ function chatsList(): ChatSummary[] {
   const out: ChatSummary[] = [];
   for (const [peer, l] of by) {
     l.sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
-    out.push({ peer, last: clone(l[l.length - 1]), unread: l.filter((m) => !m.outgoing && !m.seen).length });
+    out.push({ peer, last: clone(l[l.length - 1]), unread: l.filter((m) => !m.outgoing && !m.seen).length + (oldUnread.get(peer) || 0) });
   }
   return out.sort((a, b) => Date.parse(b.last.created_at) - Date.parse(a.last.created_at));
 }
@@ -513,11 +555,30 @@ export const mockApi: Api = {
     // as the core pages: by time then id, newest `limit` before `before`, none older than `from`
     const key = (m: Message) => [m.created_at, m.id] as const;
     const lt = (a: Message, b: Message) => { const [x, y] = [key(a), key(b)]; return x[0] < y[0] || (x[0] === y[0] && x[1] < y[1]); };
-    let all = msgs.filter((m) => m.peer === peer).sort((a, b) => (lt(a, b) ? -1 : lt(b, a) ? 1 : 0));
+    const floor = floorOf(peer);
+    let all = msgs.filter((m) => m.peer === peer && (!floor || m.created_at > floor)).sort((a, b) => (lt(a, b) ? -1 : lt(b, a) ? 1 : 0));
     if (o.before) all = all.filter((m) => lt(m, o.before!));
     if (o.from) all = all.filter((m) => !lt(m, o.from!));
     await sleep(o.before ? 350 : 0);
     return clone(all.slice(-(o.limit ?? 50)));
+  },
+  loadOlder: async (peer): Promise<OlderPage> => {
+    const out: OlderPage = { added: 0, more: [], unreachable: [] };
+    const per = hubOld.get(peer);
+    if (!per) return out;
+    await sleep(600);
+    for (const [hub, list] of per) {
+      if (!list.length) continue;
+      if (st.hubs.find((h) => h.url === hub)?.state !== "connected") { out.unreachable.push(hub); continue; }
+      for (const m of list.splice(Math.max(0, list.length - 20))) {
+        if (find(m.id)) continue;
+        msgs.push(clone(m)); out.added++;
+        if (!m.outgoing && !m.seen) oldUnread.set(peer, Math.max(0, (oldUnread.get(peer) || 0) - 1));
+      }
+      if (list.length) out.more.push(hub);
+    }
+    if (out.added) chatEv(peer);
+    return out;
   },
   message: async (id) => { const m = find(id); return m ? clone(m) : null; },
   send: async (n: NewOutgoing) => {
@@ -561,6 +622,8 @@ export const mockApi: Api = {
   markRead: async (peer) => {
     let n = 0;
     for (const m of msgs) if (m.peer === peer && !m.outgoing && !m.seen) { m.seen = true; m.read_at = new Date().toISOString(); n++; }
+    // what the hubs counted but this device hasn't loaded: read too
+    if (oldUnread.get(peer)) { oldUnread.delete(peer); for (const l of hubOld.get(peer)?.values() || []) for (const m of l) m.seen = true; n++; }
     if (n) chatEv(peer);
   },
   deleteMessage: async (id) => { const i = msgs.findIndex((m) => m.id === id); if (i >= 0) { const p = msgs[i].peer; msgs.splice(i, 1); chatEv(p); } },
