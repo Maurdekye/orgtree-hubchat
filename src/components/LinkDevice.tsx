@@ -9,6 +9,7 @@
 //  - Key file: a passphrase twice, then Save….
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, type LinkLookup, type LinkStart } from "../api";
+import { chatLinkTarget } from "../lib/chatlink";
 import { Icon } from "../lib/icons";
 import { routeLink, startJoin } from "../lib/join";
 import { errText, saveKeyFileTo, scanQr } from "../lib/native";
@@ -239,6 +240,7 @@ function ApproveTab({ onClose, initialInput }: { onClose: () => void; initialInp
     try {
       const t = await scanQr("hubchat-link:K7QD-4MXP-9TRA-2HZE@http://hub.office.lan:7370");
       if (!t) return;
+      if (chatLinkTarget(t) !== null) { setSt({ k: "error", msg: "That's someone's chat QR code, not a link code. On the new device choose “I already use Hubchat”, then “Show a code on this phone instead” (a PC: “Link through a hub”), and scan the code it shows." }); return; }
       if (!/^(hubchat-link:|hubchat:\/\/)/i.test(t.trim())) { setSt({ k: "error", msg: "That QR code isn't a Hubchat link code. On the new device choose “I already use Hubchat”, then “Show a code on this phone instead” (a PC: “Link through a hub”), and scan the code it shows." }); return; }
       if (await route(t)) return;
       const p = await api.parseLink(t);

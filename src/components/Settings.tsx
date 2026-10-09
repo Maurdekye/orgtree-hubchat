@@ -3,7 +3,7 @@
 // Desktop: one modal with a nav column. Android: a list and a screen each.
 import { useEffect, useState, type ReactNode } from "react";
 import { api, type Devices, type HubStatus } from "../api";
-import { chatLink } from "../lib/chatlink";
+import { chatLink, chatLinkTarget } from "../lib/chatlink";
 import { Icon, Logo, type IconName } from "../lib/icons";
 import { bytes } from "../lib/format";
 import { appVersion, autostart, copyText, errText, scanQr } from "../lib/native";
@@ -225,6 +225,7 @@ function UseAnother({ onApprove }: { onApprove: (input: string) => void }) {
     try {
       const t = (await scanQr(MOCK_GIVE_QR))?.trim();
       if (!t) return;
+      if (chatLinkTarget(t) !== null) { setErr("That's someone's chat QR code, not a link code. On the device with the other identity: Settings › Devices › Link a device, then scan the QR code it shows."); return; }
       if (!/^(hubchat:\/\/|hubchat-link:)/i.test(t)) { setErr("That QR code isn't a Hubchat link. On the device with the other identity: Settings › Devices › Link a device, then scan the QR code it shows."); return; }
       await go(t);
     } catch (e) { setErr(errText(e)); }

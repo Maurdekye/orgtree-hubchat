@@ -352,6 +352,10 @@ export function Onboarding() {
       const t = (await scanQr(MOCK_LINK_QR))?.trim();
       if (!t) { setBusy(false); return; }
       if (/^hubchat-key/i.test(t)) { setFlow("qr"); const a = await api.restoreQr(t); await arrived(a); return; }
+      if (chatLinkTarget(t) !== null) {
+        setErr("That's someone's chat QR code, not a link code. On your PC, click the QR button at the bottom of Hubchat's chat list, then scan the code it shows.");
+        setBusy(false); return;
+      }
       if (!/^(hubchat:\/\/|hubchat-link:)/i.test(t)) {
         setErr("That QR code isn't from Hubchat. On your PC, click the QR button at the bottom of Hubchat's chat list, then scan the code it shows.");
         setBusy(false); return;
