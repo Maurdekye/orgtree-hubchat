@@ -40,6 +40,10 @@ pub const RESUMABLE_MIN: u64 = 8 * 1024 * 1024;
 /// Long bodies (v2, G6) are fetched whole up to this size.
 pub const LONG_BODY_FETCH_MAX: u64 = 64 * 1024 * 1024;
 
+/// What a hub that was down still owes us (store pending_deletes kind).
+const DELETE_MESSAGE: &str = "message";
+const DELETE_CHAT: &str = "chat";
+
 /// Back-off between reconnects (design F7: 8, 16, 32 s, then 32 s).
 const BACKOFF: [u64; 3] = [8, 16, 32];
 
@@ -572,6 +576,7 @@ impl Engine {
             s.version = health.version.clone();
         });
         self.queue_changed.notify_one();
+        self.send_queued_deletes(client, url, &health.features).await?;
         if health.supports("sync") {
             return self.sync_session(client, url, stop, &profile).await;
         }
@@ -1165,30 +1170,13 @@ impl Engine {
 
     // --------------------------------------------------------- deleting
 
-    /// Connected hubs that can delete our copy on the hub (v2 "delete").
-    fn delete_capable(&self) -> Vec<(String, HubClient)> {
-        self.hubs
-            .lock()
-            .unwrap()
-            .values()
-            .filter(|h| {
-                h.status.state == HubState::Connected
-                    && h.status.features.iter().any(|f| f == "delete")
-            })
-            .map(|h| (h.status.url.clone(), h.client.clone()))
-            .collect()
-    }
-
-    /// "Delete for me": our copy goes from this device and, on a v2 hub,
-    /// from the hub (so from all our devices); the other side keeps theirs.
+    /// "Delete for me": our copy goes from this device and, on v2 hubs, from
+    /// every hub that holds it (so from all our devices); the other side
+    /// keeps theirs. A hub that is down gets the delete when it is back (B2).
     pub async fn delete_message(&self, id: &str) -> Result<()> {
         let m = self.store.message(id)?;
-        if let Some(m) = &m {
-            if let Some(hub) = &m.hub {
-                if let Some((_, c)) = self.delete_capable().into_iter().find(|(u, _)| u == hub) {
-                    c.delete_message(&self.me, id).await?;
-                }
-            }
+        for hub in self.store.message_hubs(id)? {
+            self.delete_on(&hub, DELETE_MESSAGE, id).await?;
         }
         self.store.delete_message(id)?;
         if let Some(m) = m {
@@ -1197,13 +1185,68 @@ impl Engine {
         Ok(())
     }
 
+    /// "Delete chat": on every hub, a hub that is down when it is back (B2).
     pub async fn delete_chat(&self, peer: &str) -> Result<()> {
-        for (_, c) in self.delete_capable() {
-            c.delete_conversation(&self.me, peer).await?;
+        let hubs: Vec<String> = self.hubs.lock().unwrap().keys().cloned().collect();
+        for hub in hubs {
+            self.delete_on(&hub, DELETE_CHAT, peer).await?;
         }
         self.store.delete_chat(peer)?;
         self.host.event(Event::Chat { peer: peer.into() });
         Ok(())
+    }
+
+    /// Delete on one hub now if it is connected, else (or if that fails)
+    /// keep it for when the hub is back. A connected hub without "delete"
+    /// (v1) keeps no history: nothing to do there.
+    async fn delete_on(&self, url: &str, kind: &str, target: &str) -> Result<()> {
+        let now = self.hubs.lock().unwrap().get(url).map(|h| {
+            let connected = h.status.state == HubState::Connected;
+            let capable = h.status.features.iter().any(|f| f == "delete");
+            (h.client.clone(), connected, capable)
+        });
+        let Some((client, connected, capable)) = now else {
+            return Ok(()); // removed: nothing of ours is kept there for us
+        };
+        if connected && !capable {
+            return Ok(());
+        }
+        if connected && self.hub_delete(&client, kind, target).await.is_ok() {
+            return Ok(());
+        }
+        self.store.queue_delete(url, kind, target)
+    }
+
+    async fn hub_delete(&self, client: &HubClient, kind: &str, target: &str) -> Result<u64> {
+        if kind == DELETE_CHAT {
+            client.delete_conversation(&self.me, target).await
+        } else {
+            client.delete_message(&self.me, target).await
+        }
+    }
+
+    /// A hub is back: send the deletes it missed, before its news (so it
+    /// can't hand back what we deleted). Network trouble leaves the rest for
+    /// next time; a hub that refuses one drops it.
+    async fn send_queued_deletes(&self, client: &HubClient, url: &str, features: &[String]) -> Result<()> {
+        let capable = features.iter().any(|f| f == "delete");
+        loop {
+            let batch = self.store.pending_deletes(url)?;
+            if batch.is_empty() {
+                return Ok(());
+            }
+            for (kind, target) in batch {
+                if capable {
+                    if let Err(e) = self.hub_delete(client, &kind, &target).await {
+                        // 401: it forgot us; registering again comes next
+                        if !matches!(e.status(), Some(s) if (400..500).contains(&s) && s != 401) {
+                            return Ok(());
+                        }
+                    }
+                }
+                self.store.delete_done(url, &kind, &target)?;
+            }
+        }
     }
 
     /// The devices that sync as us, per v2 hub (deduplicated by device id).

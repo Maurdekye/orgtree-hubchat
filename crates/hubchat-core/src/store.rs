@@ -184,6 +184,16 @@ impl Store {
         con.busy_timeout(std::time::Duration::from_secs(5))
             .map_err(db)?;
         con.execute_batch(SCHEMA).map_err(db)?;
+        // once, for a store from before message_hubs: its one hub label
+        con.execute_batch(
+            "BEGIN;
+             INSERT OR IGNORE INTO message_hubs(id, hub)
+               SELECT id, hub FROM messages
+               WHERE hub IS NOT NULL AND NOT EXISTS (SELECT 1 FROM meta WHERE key='schema.message_hubs');
+             INSERT OR IGNORE INTO meta(key, value) VALUES('schema.message_hubs', '1');
+             COMMIT;",
+        )
+        .map_err(db)?;
         Ok(Self {
             con: Mutex::new(con),
         })
@@ -235,7 +245,12 @@ impl Store {
     }
 
     pub fn remove_hub(&self, url: &str) -> Result<()> {
-        self.with(|c| c.execute("DELETE FROM hubs WHERE url=?", [url]).map(|_| ()))
+        self.with(|c| {
+            let tx = c.transaction()?;
+            tx.execute("DELETE FROM message_hubs WHERE hub=?", [url])?;
+            tx.execute("DELETE FROM hubs WHERE url=?", [url])?;
+            tx.commit()
+        })
     }
 
     pub fn hub_ok(&self, url: &str, name: &str, max: Option<u64>, now: &str) -> Result<()> {
@@ -409,6 +424,7 @@ impl Store {
                     insert_remote_attachment(&tx, &env.id, i, a)?;
                 }
             }
+            held_by(&tx, &env.id, hub)?;
             tx.commit()?;
             Ok(n > 0)
         })
@@ -426,12 +442,16 @@ impl Store {
 
     pub fn mark_sent(&self, id: &str, hub: &str, received_at: &str) -> Result<()> {
         self.with(|c| {
-            c.execute(
+            let tx = c.transaction()?;
+            let n = tx.execute(
                 "UPDATE messages SET state=CASE WHEN state IN ('queued','sending','failed') THEN 'sent' ELSE state END,
                  hub=?, received_at=?, error=NULL WHERE id=?",
                 params![hub, received_at, id],
-            )
-            .map(|_| ())
+            )?;
+            if n > 0 {
+                held_by(&tx, id, hub)?;
+            }
+            tx.commit()
         })
     }
 
@@ -644,8 +664,11 @@ impl Store {
                 }
                 Some(state) => {
                     let state = if rank(hub_state) > rank(&state) { hub_state.to_owned() } else { state };
+                    // the label stays the hub it first came through (its
+                    // attachments' ids are that hub's); message_hubs keeps
+                    // every hub that holds it
                     tx.execute(
-                        "UPDATE messages SET hub=?, received_at=COALESCE(received_at, ?),
+                        "UPDATE messages SET hub=COALESCE(hub, ?), received_at=COALESCE(received_at, ?),
                            fetched_at=COALESCE(?, fetched_at), delivered_at=COALESCE(?, delivered_at),
                            read_at=COALESCE(?, read_at), state=?, error=CASE WHEN ?='failed' THEN error ELSE NULL END,
                            seen = seen OR ?
@@ -664,6 +687,7 @@ impl Store {
                     )?;
                 }
             }
+            held_by(&tx, &env.id, hub)?;
             tx.commit()?;
             Ok(fresh && !outgoing && m.read_at.is_none())
         })
@@ -885,6 +909,14 @@ fn rank(state: &str) -> u8 {
     }
 }
 
+/// Record that `hub` holds a copy of message `id`.
+fn held_by(tx: &rusqlite::Transaction, id: &str, hub: &str) -> rusqlite::Result<usize> {
+    tx.execute(
+        "INSERT OR IGNORE INTO message_hubs(id, hub) VALUES(?,?)",
+        [id, hub],
+    )
+}
+
 fn insert_remote_attachment(
     tx: &rusqlite::Transaction,
     msg: &str,
@@ -1048,6 +1080,38 @@ mod tests {
             read_at: None,
             body_bytes: None,
         }
+    }
+
+    /// B2: every hub that holds a message is known (the label alone was
+    /// overwritten by each sync), and deletes owed by a hub that is down wait.
+    #[test]
+    fn every_hub_holding_a_message_is_known() {
+        let s = Store::open_in_memory().unwrap();
+        let (a, b) = ("http://a:7370", "http://b:7370");
+        for h in [a, b] {
+            s.add_hub(h, "t0").unwrap();
+        }
+        s.upsert_synced(a, "me.000000", &synced("m1")).unwrap();
+        s.upsert_synced(b, "me.000000", &synced("m1")).unwrap();
+        s.insert_incoming(b, &env("m2", "maya.111111"), "t1").unwrap();
+        assert_eq!(s.message_hubs("m1").unwrap(), [a, b]);
+        assert_eq!(s.message_hubs("m2").unwrap(), [b]);
+        // the label stays the hub it came through first (its attachment ids)
+        assert_eq!(s.message("m1").unwrap().unwrap().hub.as_deref(), Some(a));
+        s.queue_delete(b, "message", "m1").unwrap();
+        s.queue_delete(b, "message", "m1").unwrap();
+        s.queue_delete(b, "chat", "maya.111111").unwrap();
+        assert_eq!(s.pending_deletes(b).unwrap().len(), 2);
+        assert!(s.pending_deletes(a).unwrap().is_empty());
+        s.delete_done(b, "message", "m1").unwrap();
+        assert_eq!(s.pending_deletes(b).unwrap(), [("chat".to_string(), "maya.111111".to_string())]);
+        s.delete_message("m1").unwrap();
+        assert!(s.message_hubs("m1").unwrap().is_empty());
+        // a removed hub owes nothing and holds nothing
+        s.remove_hub(b).unwrap();
+        assert!(s.pending_deletes(b).unwrap().is_empty());
+        assert!(s.message_hubs("m2").unwrap().is_empty());
+        assert!(s.message("m2").unwrap().is_some());
     }
 
     /// B3: a hub that starts its sync over drops only what no other hub
