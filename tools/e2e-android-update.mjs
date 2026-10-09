@@ -191,7 +191,8 @@ try {
   check('1. the first Update asks for the permission', await bannerHas('Allow Hubchat to install its updates', 15000), await banner());
   shot('upd-2-permission.png');
   await tapBanner();
-  const allow = await findNode((n) => /allow from this source/i.test(n.text), 15000);
+  // the switch's label differs by maker: "Allow from this source" (AOSP), "Allow permission" (Samsung)
+  const allow = await findNode((n) => /^(allow from this source|allow permission)$/i.test(n.text), 15000);
   check("1. Allow opens Android's Install unknown apps setting for Hubchat Test", !!allow);
   shot('upd-3-setting.png');
   if (allow) tapNode(allow);
