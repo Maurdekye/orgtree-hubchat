@@ -161,7 +161,7 @@ try {
     return !ta.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
   })()`);
   check('PC: a pasted picture is taken', pasted);
-  check('PC: …attached as pasted-….png', await waitFor(pc, `[...document.querySelectorAll('.attchip')].some((c) => /pasted-\\d{8}-\\d{6}\\.png/.test(c.innerText))`, 8000), await pc.eval(`[...document.querySelectorAll('.attchip')].map((c) => c.innerText).join(' | ')`));
+  check('PC: …attached as pasted-….png, shown as a thumbnail', await waitFor(pc, `[...document.querySelectorAll('.attrow .attthumb img')].some((i) => /^pasted-\\d{8}-\\d{6}\\.png$/.test(i.alt) && i.complete && i.naturalWidth === 120)`, 8000), await pc.eval(`[...document.querySelectorAll('.attrow > *')].map((c) => c.title || c.innerText).join(' | ')`));
   await pc.eval(`document.querySelector('.sendbtn').click()`);
   check('PC: sent, it shows as a picture', await waitFor(pc, `[...document.querySelectorAll('.msg.out .att-img img')].some((i) => /^pasted-/.test(i.alt) && i.complete && i.naturalWidth === 120)`, 20000));
   await shot(pc, 'upd-pc-pasted.png');
