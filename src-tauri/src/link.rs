@@ -9,6 +9,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use hubchat_core::hub::{CancelFlag, Profile};
+use hubchat_core::door::{self, Door};
 use hubchat_core::link::{self, Bundle, LinkUrl};
 use hubchat_core::{HubAddress, HubClient};
 use serde::Serialize;
@@ -77,6 +78,9 @@ pub struct LinkStart {
     /// What the QR carries: `hubchat://link?code=…&hub=…&role=take`.
     qr: String,
     hub: String,
+    /// This PC's hub says its relay-only door is off: other devices can't
+    /// reach it (the UI says so).
+    phone_access_off: bool,
 }
 
 /// Put the bundle to use on this device: identity, profile, and exactly
@@ -332,14 +336,20 @@ pub async fn hc_link_start<R2: Runtime>(
     });
     let hub = addr.to_string();
     let (host, ips) = local_addresses();
+    let (hubs, phone_access_off) = aliases_for(&hub, host.as_deref(), &ips).await;
     let qr = LinkUrl {
         code: link::normalize_code(&code).map_err(s)?,
-        hubs: link::hub_aliases(&hub, host.as_deref(), &ips),
+        hubs,
         hub_name: None,
         role: Some("take".into()),
     }
     .to_url();
-    Ok(LinkStart { qr, code, hub })
+    Ok(LinkStart {
+        qr,
+        code,
+        hub,
+        phone_access_off,
+    })
 }
 
 #[tauri::command]
@@ -392,6 +402,39 @@ fn local_addresses() -> (Option<String>, Vec<std::net::IpAddr>) {
     (host, ips)
 }
 
+/// A hub's addresses for another device, through its door when there is
+/// one (hubchat_core::door): a Tailscale address the door answered on goes
+/// first (the phone reaches the PC through Tailscale; hubchat-opus 11:50Z).
+/// True with them when the hub says no door runs (phone access is off).
+async fn aliases_for(hub: &str, host: Option<&str>, ips: &[std::net::IpAddr]) -> (Vec<String>, bool) {
+    let door = {
+        let (h, i) = (hub.to_string(), ips.to_vec());
+        match core::get() {
+            Ok(c) => c
+                .rt
+                .spawn(async move { door::find_door(&h, &i, &door::DOOR_PORTS, Duration::from_secs(2)).await })
+                .await
+                .unwrap_or(Door::Unknown),
+            Err(_) => Door::Unknown,
+        }
+    };
+    let port = match &door {
+        Door::Found { port, .. } => Some(*port),
+        _ => None,
+    };
+    let mut out = link::hub_aliases(hub, host, ips, port);
+    if let Door::Found { port, on } = &door {
+        if let Some(ts) = on.iter().find(|ip| is_tailnet(ip)) {
+            let first = format!("http://{}", std::net::SocketAddr::new(*ts, *port));
+            if let Some(i) = out.iter().position(|a| *a == first) {
+                let a = out.remove(i);
+                out.insert(0, a);
+            }
+        }
+    }
+    (out, door == Door::Off)
+}
+
 /// 100.64.0.0/10, where Tailscale gives out addresses.
 fn is_tailnet(ip: &std::net::IpAddr) -> bool {
     matches!(ip, std::net::IpAddr::V4(v4) if v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
@@ -431,6 +474,8 @@ pub struct LinkOffer {
     /// What the QR names it: as other devices may reach it (Fix 2,
     /// coordinator 20:28Z: localhost is no address for a phone).
     hubs: Vec<String>,
+    /// This PC's hub says its relay-only door is off.
+    phone_access_off: bool,
 }
 
 /// Signed-in device: make a one-time code for a NEW device to scan
@@ -438,7 +483,7 @@ pub struct LinkOffer {
 /// device then appears under the code's address; hc_link_lookup sees its
 /// name and hc_link_approve sends it the identity, as in the other direction.
 #[tauri::command]
-pub fn hc_link_offer(hub: Option<String>) -> R<LinkOffer> {
+pub async fn hc_link_offer(hub: Option<String>) -> R<LinkOffer> {
     let c = core::get()?;
     let e = c.engine()?;
     let statuses = e.hub_statuses();
@@ -457,7 +502,7 @@ pub fn hc_link_offer(hub: Option<String>) -> R<LinkOffer> {
         .map(|h| h.name.clone())
         .filter(|n| !n.trim().is_empty());
     let (host, ips) = local_addresses();
-    let hubs = link::hub_aliases(&hub, host.as_deref(), &ips);
+    let (hubs, phone_access_off) = aliases_for(&hub, host.as_deref(), &ips).await;
     let code = link::new_link_code();
     let qr = LinkUrl {
         code: link::normalize_code(&code).map_err(s)?,
@@ -471,6 +516,7 @@ pub fn hc_link_offer(hub: Option<String>) -> R<LinkOffer> {
         code,
         hub,
         hubs,
+        phone_access_off,
     })
 }
 

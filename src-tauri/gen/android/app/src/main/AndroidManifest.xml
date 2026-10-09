@@ -12,6 +12,12 @@
          every update, even after the user tapped Update in Hubchat (measured on API 35) -->
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
 
+    <!-- Scan setup code checks that the Tailscale app is installed (Android 11+
+         hides other apps unless they are named here) -->
+    <queries>
+        <package android:name="com.tailscale.ipn" />
+    </queries>
+
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
@@ -42,6 +48,8 @@
                 <data android:scheme="hubchat" android:host="link" />
                 <!-- a profile QR: hubchat://chat?to=<address> (user 23:53Z) -->
                 <data android:scheme="hubchat" android:host="chat" />
+                <!-- Orgtree's setup QR: hubchat://setup?v=1&hub=...&code=... -->
+                <data android:scheme="hubchat" android:host="setup" />
             </intent-filter>
         </activity>
 

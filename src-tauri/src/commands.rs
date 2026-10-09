@@ -718,6 +718,87 @@ pub fn hc_save_recovery<RT: tauri::Runtime>(
     Ok(place)
 }
 
+// ------------------------------------------------------- setup codes
+
+/// A scanned or opened `hubchat://setup` link: the link, or why it isn't one.
+#[derive(Serialize)]
+pub struct ParsedSetup {
+    link: Option<hubchat_core::setup::SetupLink>,
+    error: Option<hubchat_core::setup::SetupError>,
+}
+
+#[tauri::command]
+pub fn hc_parse_setup(input: String) -> ParsedSetup {
+    match hubchat_core::setup::SetupLink::parse(&input) {
+        Ok(l) => ParsedSetup { link: Some(l), error: None },
+        Err(e) => ParsedSetup { link: None, error: Some(e) },
+    }
+}
+
+#[derive(Serialize)]
+pub struct SetupReach {
+    reachable: bool,
+    /// The name the hub gave, when it answered.
+    name: Option<String>,
+    error: Option<String>,
+}
+
+/// Can this device reach the setup link's hub? Any ok /healthz answer
+/// within 5 s passes. Another name than the link's `hubname` is only
+/// logged: Orgtree sends the PC's Tailscale name there when the hub's own
+/// name is blank (hubchat-opus 11:38Z).
+#[tauri::command]
+pub async fn hc_setup_check(hub: String, hubname: String) -> R<SetupReach> {
+    let addr = HubAddress::parse(&hub).map_err(s)?;
+    on_core(async move {
+        let r = tokio::time::timeout(Duration::from_secs(5), HubClient::new(addr).healthz()).await;
+        Ok(match r {
+            Ok(Ok(h)) if h.ok => {
+                if h.name != hubname {
+                    eprintln!("setup: {hub} answers as {:?}, the setup code says {hubname:?}", h.name);
+                }
+                SetupReach { reachable: true, name: Some(h.name), error: None }
+            }
+            Ok(Ok(h)) => SetupReach { reachable: false, name: Some(h.name), error: Some("the hub says it isn't ok".into()) },
+            Ok(Err(e)) => SetupReach { reachable: false, name: None, error: Some(s(e)) },
+            Err(_) => SetupReach { reachable: false, name: None, error: Some("no answer within 5 s".into()) },
+        })
+    })
+    .await
+}
+
+/// Whether an app is installed (Android); None where it can't be told.
+#[tauri::command]
+pub fn hc_app_installed(package: String) -> R<Option<bool>> {
+    Ok(core::get()?.platform().app_installed(&package))
+}
+
+/// Open Tailscale's store page, the Tailscale app or the Wi-Fi settings.
+#[tauri::command]
+pub fn hc_open_app(what: String) -> R<bool> {
+    Ok(core::get()?.platform().open_app(&what))
+}
+
+/// Join the setup link's hub and send the org our code (the identity
+/// exists by now). Returns the chat to open.
+#[tauri::command]
+pub async fn hc_setup_start(input: String, name: String) -> R<String> {
+    let link = hubchat_core::setup::SetupLink::parse(&input).map_err(s)?;
+    let e = engine()?;
+    on_core(async move {
+        e.setup_join(&link, name.trim(), Duration::from_secs(20))
+            .await
+            .map_err(s)
+    })
+    .await
+}
+
+/// Where the setup with `org` stands (its chat's note), if one was started.
+#[tauri::command]
+pub fn hc_setup_status(org: String) -> R<Option<hubchat_core::setup::SetupState>> {
+    Ok(engine().ok().and_then(|e| e.setup_state(&org)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

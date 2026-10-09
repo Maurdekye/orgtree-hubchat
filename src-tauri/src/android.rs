@@ -116,6 +116,19 @@ struct AndroidPlatform {
 }
 
 impl crate::core::Platform for AndroidPlatform {
+    fn app_installed(&self, package: &str) -> Option<bool> {
+        let j = JNI.get()?;
+        match call(&j.service, "isInstalled", &[package], true)?.as_str() {
+            "1" => Some(true),
+            "0" => Some(false),
+            _ => None,
+        }
+    }
+    fn open_app(&self, what: &str) -> bool {
+        JNI.get()
+            .and_then(|j| call(&j.service, "openApp", &[what], true))
+            .is_some_and(|r| r == "1")
+    }
     /// The sound follows Android's own settings for the Messages channel
     /// (the design has no sound switch on Android).
     fn notify(&self, title: &str, body: &str, peer: &str, _sound: bool) {

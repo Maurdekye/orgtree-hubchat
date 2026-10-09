@@ -231,6 +231,45 @@ class ConnectionService : Service() {
       return if (Build.MODEL.startsWith(Build.MANUFACTURER, ignoreCase = true)) Build.MODEL else "$maker ${Build.MODEL}"
     }
 
+    /** Called from Rust (Scan setup code): "1" when the package is
+     *  installed. Visible only for packages named in the manifest's <queries>. */
+    @JvmStatic
+    fun isInstalled(pkg: String): String {
+      val ctx = appContext ?: return ""
+      return try {
+        ctx.packageManager.getPackageInfo(pkg, 0)
+        "1"
+      } catch (e: Exception) {
+        "0"
+      }
+    }
+
+    /** Called from Rust (Scan setup code): open Tailscale's store page, the
+     *  Tailscale app, or the Wi-Fi settings. "1" when something opened. */
+    @JvmStatic
+    fun openApp(what: String): String {
+      val ctx = appContext ?: return ""
+      val ts = "com.tailscale.ipn"
+      val tries = when (what) {
+        "get_tailscale" -> listOf(
+          Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$ts")),
+          Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=$ts")),
+        )
+        "open_tailscale" -> listOfNotNull(ctx.packageManager.getLaunchIntentForPackage(ts))
+        "wifi_settings" -> listOf(Intent(android.provider.Settings.ACTION_WIFI_SETTINGS))
+        else -> emptyList()
+      }
+      for (i in tries) {
+        try {
+          ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+          return "1"
+        } catch (e: Exception) {
+          // no app takes it: try the next
+        }
+      }
+      return "0"
+    }
+
     /** Called from Rust: the display name of a content:// URI, or "". */
     @JvmStatic
     fun displayName(uri: String): String {

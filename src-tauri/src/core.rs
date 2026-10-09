@@ -42,6 +42,17 @@ pub trait Platform: Send + Sync + 'static {
     fn take_pending_chat(&self) -> Option<String> {
         None
     }
+    /// Whether an app is installed (Android, Scan setup code's Tailscale
+    /// check). None where it can't be told.
+    fn app_installed(&self, _package: &str) -> Option<bool> {
+        None
+    }
+    /// Open another app or a settings page for Scan setup code
+    /// ("get_tailscale", "open_tailscale", "wifi_settings"). False when
+    /// nothing opened.
+    fn open_app(&self, _what: &str) -> bool {
+        false
+    }
     /// Android (design D6): stay connected with the ongoing notification
     /// (true, the default) or check about every 15 minutes (false). None
     /// where there is no such choice.
