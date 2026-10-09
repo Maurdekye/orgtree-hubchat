@@ -156,6 +156,23 @@ try {
   app = await attachApp();
   check("on Pat's chat", await waitUntil(async () => (await chatOpen(app)).includes('Pat Peer'), 15000), J(await chatOpen(app)));
   shoot('tap-closed.png');
+
+  // 3. two chats waiting: their own group (with its summary), and a tap on
+  //    one opens that chat while the other's notification stays
+  const bo = (...a) => spawnSync('node', [join(import.meta.dirname, 'peer2.mjs'), HUB, ...a], { encoding: 'utf8', env: { ...process.env, PEER: 'Bo Peer' } }).stdout.trim().split('\n').pop();
+  const boSlug = bo('whoami');
+  adb('shell', 'input', 'keyevent', 'KEYCODE_HOME');
+  await sleep(1500);
+  const t3a = 'two chats: from Pat', t3b = 'two chats: from Bo';
+  peer('send', me, t3a);
+  bo('send', me, t3b);
+  check('two chats: both notifications and their summary show', await waitUntil(() => { const o = ours(); return o.some((n) => n.tag === pat && n.text === t3a) && o.some((n) => n.tag === boSlug && n.text === t3b) && o.some((n) => n.tag === 'messages-summary'); }, 20000), J(ours()));
+  const taps3 = await openFromShade(t3a);
+  check("two chats: tapping Pat's opens Hubchat Test", taps3 > 0, `${taps3} tap(s); top ${top()}`);
+  app = await attachApp();
+  check("two chats: …on Pat's chat", await waitUntil(async () => (await chatOpen(app)).includes('Pat Peer') && await app.eval(`[...document.querySelectorAll('.bubble')].some((b) => b.innerText.includes(${J(t3a)}))`), 15000), J(await chatOpen(app)));
+  check("two chats: Bo's notification stays", ours().some((n) => n.tag === boSlug && n.text === t3b), J(ours()));
+  shoot('tap-two-chats.png');
 } catch (e) {
   check('ran to the end', false, String(e));
 } finally {
