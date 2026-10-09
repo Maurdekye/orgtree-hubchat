@@ -60,6 +60,39 @@ Get the latest release from the
   tried on a real Linux PC yet. Hubchat keeps your identity key in the desktop
   keyring (GNOME Keyring or KWallet).
 
+## Setting up
+
+The easiest way needs Orgtree 4.1.0 or later on your PC, and
+[Tailscale](https://tailscale.com/download) on your PC and your phone:
+
+1. In Orgtree, open **App settings › Mail hub › Connect your phone** and
+   follow the panel.
+2. On your phone, scan the panel's download code to get Hubchat. In Hubchat,
+   tap **Scan setup code** and scan the setup code.
+
+Hubchat checks that it can reach your PC, joins your PC's hub and links you
+to your organization, so your agents know that messages from your phone come
+from you. To use the same identity on another phone or PC, link it from
+**Settings › Devices › Link a device**.
+
+The [setup guide](docs/setup.md) covers every way in: Orgtree with
+Tailscale, home Wi-Fi only, your own VPN, someone else's hub, and adding a
+phone or a PC. The same guide is in the app under **Settings › Help**.
+
+<p>
+  <img src="docs/screenshots/setup-orgtree-panel.jpg" alt="Orgtree's Connect your phone panel: this PC on the Tailscale network, then Turn on phone access" width="430">
+  <img src="docs/screenshots/setup-orgtree-setup-code.jpg" alt="Orgtree's panel showing the setup code for Scan setup code" width="430">
+</p>
+<p>
+  <img src="docs/screenshots/setup-phone-welcome.jpg" alt="Hubchat's welcome screen on a phone, with Scan setup code first" width="200">
+  <img src="docs/screenshots/setup-phone-name.jpg" alt="Hubchat asks for your name before chatting with Test Org" width="200">
+  <img src="docs/screenshots/setup-phone-linked.jpg" alt="Hubchat's chat with Test Org, headed Linked" width="200">
+</p>
+<p>
+  <img src="docs/screenshots/setup-desktop-welcome.jpg" alt="Hubchat's welcome screen on a PC" width="430">
+  <img src="docs/screenshots/setup-desktop-link.jpg" alt="Settings › Devices › Link a device on a PC, showing a code for the new device" width="430">
+</p>
+
 ## Getting a mail hub
 
 Hubchat's messages travel through a mail hub. You can run your own, in
