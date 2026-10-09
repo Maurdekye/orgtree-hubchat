@@ -77,6 +77,22 @@ CREATE TABLE IF NOT EXISTS drafts (
   peer TEXT PRIMARY KEY,
   body TEXT NOT NULL
 );
+-- every hub known to hold a copy of a message (B2, B3): a message sent
+-- again through another hub, or synced from two, is on more than one
+CREATE TABLE IF NOT EXISTS message_hubs (
+  id  TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  hub TEXT NOT NULL,
+  PRIMARY KEY (id, hub)
+);
+CREATE INDEX IF NOT EXISTS message_hubs_by_hub ON message_hubs(hub);
+-- deletes a hub still owes us because it was down (B2): kind 'message'
+-- (target = a message id) or 'chat' (target = the peer's address)
+CREATE TABLE IF NOT EXISTS pending_deletes (
+  hub    TEXT NOT NULL REFERENCES hubs(url) ON DELETE CASCADE,
+  kind   TEXT NOT NULL,
+  target TEXT NOT NULL,
+  PRIMARY KEY (hub, kind, target)
+);
 -- the hub a chat is pinned to (the hub picker); no row = Automatic.
 -- Per device, never synced (hubchat-opus 2026-10-09 09:36Z).
 CREATE TABLE IF NOT EXISTS chat_hub (
@@ -653,6 +669,47 @@ impl Store {
         })
     }
 
+    /// The hubs known to hold a copy of a message, by address.
+    pub fn message_hubs(&self, id: &str) -> Result<Vec<String>> {
+        self.with(|c| {
+            let mut st = c.prepare("SELECT hub FROM message_hubs WHERE id=? ORDER BY hub")?;
+            let rows = st.query_map([id], |r| r.get(0))?;
+            rows.collect()
+        })
+    }
+
+    /// A delete a hub that is down gets when it is back.
+    pub fn queue_delete(&self, hub: &str, kind: &str, target: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "INSERT OR IGNORE INTO pending_deletes(hub, kind, target) VALUES(?,?,?)",
+                [hub, kind, target],
+            )
+            .map(|_| ())
+        })
+    }
+
+    /// Deletes this hub still owes us: (kind, target), a bounded batch.
+    pub fn pending_deletes(&self, hub: &str) -> Result<Vec<(String, String)>> {
+        self.with(|c| {
+            let mut st = c.prepare(
+                "SELECT kind, target FROM pending_deletes WHERE hub=? ORDER BY kind, target LIMIT 200",
+            )?;
+            let rows = st.query_map([hub], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.collect()
+        })
+    }
+
+    pub fn delete_done(&self, hub: &str, kind: &str, target: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "DELETE FROM pending_deletes WHERE hub=? AND kind=? AND target=?",
+                [hub, kind, target],
+            )
+            .map(|_| ())
+        })
+    }
+
     /// Replace a message's body (a long one fetched whole).
     pub fn set_body(&self, id: &str, body: &str) -> Result<()> {
         self.with(|c| {
@@ -981,6 +1038,44 @@ mod tests {
             s.directory().unwrap()[0].hubs,
             vec!["http://a:7370".to_string()]
         );
+    }
+
+    fn synced(id: &str) -> SyncedMessage {
+        SyncedMessage {
+            env: env(id, "maya.111111"),
+            fetched_at: None,
+            delivered_at: None,
+            read_at: None,
+            body_bytes: None,
+        }
+    }
+
+    /// B3: a hub that starts its sync over drops only what no other hub
+    /// still holds.
+    #[test]
+    fn a_hub_starting_over_keeps_what_another_hub_holds() {
+        let s = Store::open_in_memory().unwrap();
+        let (a, b) = ("http://a:7370", "http://b:7370");
+        for h in [a, b] {
+            s.add_hub(h, "t0").unwrap();
+        }
+        let me = "me.000000";
+        // on both hubs (synced from A, then from B), on A only, on B only
+        s.upsert_synced(a, me, &synced("both")).unwrap();
+        s.upsert_synced(b, me, &synced("both")).unwrap();
+        s.upsert_synced(a, me, &synced("a-only")).unwrap();
+        s.upsert_synced(b, me, &synced("b-only")).unwrap();
+        s.forget_hub_messages(b).unwrap();
+        assert!(s.message("both").unwrap().is_some(), "hub A still holds it");
+        assert!(s.message("a-only").unwrap().is_some());
+        assert!(s.message("b-only").unwrap().is_none(), "no hub holds it any more");
+        // B's sync from the start brings back what it has; then A starts over
+        s.upsert_synced(b, me, &synced("both")).unwrap();
+        s.upsert_synced(b, me, &synced("b-only")).unwrap();
+        s.forget_hub_messages(a).unwrap();
+        assert!(s.message("both").unwrap().is_some(), "hub B still holds it");
+        assert!(s.message("a-only").unwrap().is_none());
+        assert!(s.message("b-only").unwrap().is_some());
     }
 
     #[test]
