@@ -220,15 +220,20 @@ try {
   await reload();
   check(`4. the banner offers ${V1}`, await bannerHas(`Hubchat ${V1} is ready`, 30000), await banner());
   const first = await installOffered(V1, 'upd-6-confirm.png');
+  const firstAt = Date.now();
   check(`4. ${V1} is installed`, first.done, J(pkgInfo()));
-  info('4. Android wanted a tap for the first in-app update', first.tapped ? 'yes' : 'no');
+  // updating itself counts even when adb or a browser installed it
+  if (SDK >= 31) check('4. Android 12+ installs it without asking for a tap', !first.tapped);
+  else info('4. Android wanted a tap for the first in-app update', first.tapped ? 'yes' : 'no');
   check('4. Hubchat Test is now its own installer', pkgInfo().installer === PKG, J(pkgInfo()));
   offer(V2, `/Hubchat_${V2}_arm64.apk`, sig(V2));
   await keptAfter(V1, before);
   shot('upd-7-after-first.png');
 
-  // 5. N+1 -> N+2
+  // 5. N+1 -> N+2. Android lets an installer update the same app without asking
+  // at most once every 30 seconds (SilentUpdatePolicy); real updates are days apart.
   check(`5. the banner offers ${V2}`, await bannerHas(`Hubchat ${V2} is ready`, 30000), await banner());
+  await sleep(Math.max(0, firstAt + 35000 - Date.now()));
   const second = await installOffered(V2, 'upd-8-second-confirm.png');
   check(`5. ${V2} is installed`, second.done, J(pkgInfo()));
   if (SDK >= 31) check('5. Android 12+ installs it without asking for a tap', !second.tapped);
