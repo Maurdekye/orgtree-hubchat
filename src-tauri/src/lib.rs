@@ -1,5 +1,6 @@
 #[cfg(target_os = "android")]
 mod android;
+mod appupdate;
 mod clip;
 mod commands;
 mod core;
@@ -354,6 +355,10 @@ pub fn run() {
             clip::hc_clipboard_text,
             clip::hc_clipboard_image,
             media::hc_save_pasted,
+            appupdate::hc_app_update_check,
+            appupdate::hc_app_update_install,
+            appupdate::hc_app_update_allow,
+            appupdate::hc_app_update_state,
             link::hc_link_start,
             link::hc_link_cancel,
             link::hc_link_lookup,

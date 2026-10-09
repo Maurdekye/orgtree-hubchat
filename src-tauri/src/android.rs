@@ -49,6 +49,38 @@ fn call(class: &GlobalRef, method: &str, args: &[&str], returns_string: bool) ->
     }
 }
 
+/// In-app updates: may Hubchat install its own updates?
+pub fn can_install_updates() -> bool {
+    JNI.get().and_then(|j| call(&j.service, "canInstallUpdates", &[], true)).as_deref() == Some("1")
+}
+
+/// Open Settings › Install unknown apps for Hubchat.
+pub fn open_install_settings() {
+    if let Some(j) = JNI.get() {
+        call(&j.service, "openInstallSettings", &[], false);
+    }
+}
+
+/// Hand a verified APK to Android's installer.
+pub fn install_update(path: &std::path::Path) -> Result<(), String> {
+    let j = JNI.get().ok_or("Hubchat isn't ready yet")?;
+    match call(&j.service, "installUpdate", &[&path.to_string_lossy()], true) {
+        Some(e) if e.is_empty() => Ok(()),
+        Some(e) => Err(e),
+        None => Err("Android's installer didn't answer".into()),
+    }
+}
+
+/// The installer's last word: "", "confirm", "done" or "failed: …".
+pub fn install_state() -> String {
+    JNI.get().and_then(|j| call(&j.service, "installState", &[], true)).unwrap_or_default()
+}
+
+/// A test build (package *.test), which may read a local update feed.
+pub fn is_test_build() -> bool {
+    JNI.get().and_then(|j| call(&j.service, "isTestBuild", &[], true)).as_deref() == Some("1")
+}
+
 /// Seal a secret with the Keystore-held key. None if the Keystore failed.
 pub fn seal(plain: &str) -> Option<String> {
     call(&JNI.get()?.secret_box, "seal", &[plain], true).filter(|s| !s.is_empty())
