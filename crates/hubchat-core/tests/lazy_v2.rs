@@ -423,10 +423,11 @@ async fn a_hub_that_is_down_is_named_and_fills_in_when_back() {
     let r = d.load_older(&peer).await.unwrap();
     assert!(r.more.is_empty(), "{r:?}");
     let before_back = shown(&d, &peer);
-    let a_set: BTreeSet<_> = on_a.iter().cloned().collect();
-    // hub B's newest message came with its chat list
-    let want: BTreeSet<_> = a_set.iter().cloned().chain([on_b.last().unwrap().clone()]).collect();
-    assert_eq!(before_back.iter().cloned().collect::<BTreeSet<_>>(), want, "hub A's all show");
+    // hub A's all show, and hub B's newest (by its clock: the sends ran in
+    // parallel), which came with its chat list
+    let (from_a, from_b): (Vec<_>, Vec<_>) = before_back.iter().partition(|id| on_a.contains(id));
+    assert_eq!(from_a.len(), on_a.len(), "hub A's all show");
+    assert!(from_b.len() == 1 && on_b.contains(from_b[0]), "{from_b:?}");
     fwd.up();
     d.retry_now();
     until("hub B back", 60, || {
@@ -437,9 +438,11 @@ async fn a_hub_that_is_down_is_named_and_fills_in_when_back() {
     let reconnected = shown(&d, &peer);
     assert!(
         before_back.iter().all(|id| reconnected.contains(id)),
-        "messages went off screen when hub B reconnected: {} of {} left",
+        "messages went off screen when hub B reconnected: {} of {} left (held {}, floor {:?})",
         reconnected.len(),
-        before_back.len()
+        before_back.len(),
+        chat_ids(&d, &peer).len(),
+        d.store().meta(&format!("history.floor.{peer}")).unwrap(),
     );
     page_to_start(&d, &peer).await;
     let after = shown(&d, &peer);

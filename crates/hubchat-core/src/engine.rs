@@ -1019,11 +1019,11 @@ impl Engine {
             (Some(n), Some(s)) => Some(n.min(s)),
             (n, _) => n,
         };
-        if floor != shown {
-            match floor {
-                Some(f) => self.store.set_meta(&key, &f.to_string())?,
-                None => self.store.set_meta(&key, "all")?,
-            }
+        match floor {
+            Some(f) if Some(f) != shown => self.store.set_meta(&key, &f.to_string())?,
+            Some(_) => {}
+            // unset or a time before: either way it is everything from now on
+            None => self.store.set_meta(&key, "all")?,
         }
         Ok(floor.and_then(|ms| {
             let st = SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(u64::try_from(ms).ok()?))?;
