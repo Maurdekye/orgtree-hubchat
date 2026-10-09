@@ -69,6 +69,7 @@ export function usePendingLink(f: (link: string) => void): void {
     take();
     window.addEventListener("focus", take);
     document.addEventListener("visibilitychange", take);
-    return () => { window.removeEventListener("focus", take); document.removeEventListener("visibilitychange", take); };
+    const un = api.onPendingLink(take);
+    return () => { window.removeEventListener("focus", take); document.removeEventListener("visibilitychange", take); void un.then((u) => u()); };
   }, []);
 }

@@ -53,3 +53,6 @@
 .hr-x { flex: none; }
 .hr-add { align-self: flex-start; }
 .hubrev .note-card { margin: 0; }
+/* the composer when no hub you're connected to lists the address (user 23:53Z) */
+.comp-off { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px dashed var(--line); border-radius: 14px; color: var(--dim); font-size: 13.5px; line-height: 1.35; }
+.comp-off .ic { flex: none; width: 20px; height: 20px; color: var(--faint); }

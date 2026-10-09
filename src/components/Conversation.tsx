@@ -121,7 +121,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
         <div className="mono" style={{ fontSize: 12.5, overflowWrap: "anywhere" }}>@net:{peer}</div>
         <NoteCard icon={c ? k.icon : "search"}>
           {c ? <><b>{k.label}.</b> {k.what}{kind !== "person" ? " Replies can take a minute: an agent has to pick your message up first." : ""}{via ? <> Messages go through hub <b>{via.name}</b>.</> : null}</>
-            : <><b>Not in your hubs' directories.</b> You can still write: if no hub knows this address, the message fails visibly and you can retry or delete it.</>}
+            : <><b>Not on your mail hubs.</b> None of the hubs you're connected to lists this address, so a message can't reach it.</>}
         </NoteCard>
       </div>,
     );
@@ -189,10 +189,13 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
     gesture.current = null;
   }
 
+  // no hub you're connected to lists this address: nothing can reach it
+  // (an empty directory, say before any hub answered, blocks nothing)
+  const off = !c && snap.directory.length > 0 ? name + " isn't on any of the mail hubs you're connected to." : null;
   const comp = useRef<ComposerApi>(null);
   const conv = useRef<HTMLElement>(null);
-  const dragging = useFileDrop(conv, platform === "desktop", (paths) => comp.current?.addFiles(paths));
-  const composer = <Composer ref={comp} peer={peer} c={c} hubs={hubs} replyTo={replyTo} onCancelReply={() => setReplyTo(null)} onSent={() => { pinned.current = true; reload(); }} />;
+  const dragging = useFileDrop(conv, platform === "desktop" && !off, (paths) => comp.current?.addFiles(paths));
+  const composer = <Composer ref={comp} peer={peer} c={c} hubs={hubs} replyTo={replyTo} onCancelReply={() => setReplyTo(null)} onSent={() => { pinned.current = true; reload(); }} off={off} />;
   const jumpBtn = <button className={"jump" + (far ? "" : " hide")} onClick={toBottom} title="Jump to the newest message" aria-label="Jump to the newest message"><Icon name="arrow_down" /></button>;
   const copyAddr = () => copyText("@net:" + peer, "Address copied");
 

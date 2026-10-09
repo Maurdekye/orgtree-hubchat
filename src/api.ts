@@ -296,8 +296,10 @@ export const tauriApi = {
 
   /** Android: the chat a tapped notification named, taken once. */
   takePendingChat: () => invoke<string | null>("hc_take_pending_chat"),
-  /** Android: the hubchat:// link the system opened the app with, taken once. */
+  /** The hubchat:// link the system opened the app with, taken once. */
   takePendingLink: () => invoke<string | null>("hc_take_pending_link"),
+  /** Desktop: a hubchat:// link arrived while Hubchat runs (take it). */
+  onPendingLink: (f: () => void): Promise<UnlistenFn> => listen("hc-link-pending", () => f()),
   /** Open a downloaded attachment (or, desktop, show it in its folder). */
   openAttachment: (messageId: string, localId: string, reveal: boolean) => invoke<void>("hc_open_attachment", { messageId, localId, reveal }),
 

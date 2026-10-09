@@ -3,6 +3,7 @@
 // Desktop: one modal with a nav column. Android: a list and a screen each.
 import { useEffect, useState, type ReactNode } from "react";
 import { api, type Devices, type HubStatus } from "../api";
+import { chatLink } from "../lib/chatlink";
 import { Icon, Logo, type IconName } from "../lib/icons";
 import { bytes } from "../lib/format";
 import { appVersion, autostart, copyText, errText, scanQr } from "../lib/native";
@@ -89,8 +90,8 @@ function Profile() {
           <Row icon="at" t1={<span className="mono"><Addr a={me.address} net /></span>} t2="Share it so people and agents can reach you. The tag after the dot comes from your key."
             right={<button className={platform === "android" ? "icon-btn" : "btn"} onClick={() => copyText("@net:" + me.address, "Address copied")} aria-label="Copy address"><Icon name="copy" />{platform === "android" ? null : "Copy"}</button>} />
           <div className={platform === "android" ? "qrwrap big" : "set-row"} style={platform === "android" ? undefined : { gap: 18 }}>
-            <QR text={"@net:" + me.address} size={platform === "android" ? 200 : 132} />
-            <span className="help">Someone can scan this to get your address. It holds your address, nothing else.</span>
+            <QR text={chatLink(me.address)} size={platform === "android" ? 200 : 132} />
+            <span className="help">Scanned with a phone's camera, this opens a chat with you in Hubchat. It holds your address, nothing else.</span>
           </div>
         </Card>
       </Sec>

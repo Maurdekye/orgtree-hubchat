@@ -584,6 +584,7 @@ export const mockApi: Api = {
   },
   onLink: async (f) => { linkListeners.add(f); return () => { linkListeners.delete(f); }; },
 
+  onPendingLink: async () => () => {},
   takePendingLink: async () => {
     const p = params.get("link");
     if (!p || linkTaken) return null;

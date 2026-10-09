@@ -17,6 +17,7 @@ import { splitAddr } from "../lib/peers";
 import { toast } from "../lib/toast";
 import { HubAdder } from "./HubAdder";
 import { HubReview, useHubReview } from "./HubReview";
+import { chatLinkTarget } from "../lib/chatlink";
 import { usePendingLink } from "../lib/visibility";
 import { formatCode } from "./LinkDevice";
 import { NoteCard, QR, useNow, usePlatform } from "./ui";
@@ -339,6 +340,7 @@ export function Onboarding() {
   // served from here, this device has no identity to give
   usePendingLink((input) => {
     if (getSnap().state?.me) return;
+    if (chatLinkTarget(input) !== null) { toast("Set up Hubchat first, then open the chat link again."); return; }
     api.parseLink(input).then((p) => { if (p.role === "take") { setFlow("join"); go("needgive"); } else joinWith(p.code, p.hub, "join", p.hubs, p.hub_name); }, (e) => toast(errText(e)));
   });
   // the name step checks that this device reaches the code's hub; if not, ask for an address that works

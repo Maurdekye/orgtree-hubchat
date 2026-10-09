@@ -10,6 +10,7 @@ import { toast } from "../lib/toast";
 import { hubSummary } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { useForeground, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
+import { chatLinkTarget } from "../lib/chatlink";
 import { startUpdateChecks } from "../lib/updates";
 import { HubBanner, RecoveryBanner, UpdateBanner } from "./Banners";
 import { ChatRows, EmptyChats, useFilteredChats, type ChatFilter } from "./ChatList";
@@ -86,6 +87,14 @@ export function Desktop() {
   // a hubchat:// link the system opened us with: a signed-in device's (role
   // give) is joined; a new device's (role take) is approved here
   usePendingLink((input) => {
+    // a profile QR's chat link opens that chat; your own opens your profile
+    const to = chatLinkTarget(input);
+    if (to !== null) {
+      if (!to) toast("That chat link doesn't name an address.");
+      else if (to === snap.state?.me?.address) settings("profile");
+      else open(to);
+      return;
+    }
     routeLink(input, "approve").then((r) => (r.k === "join" ? startJoin(r.p.code, r.p.hub, r.p.hubs, r.p.hub_name) : setOv({ k: "link", tab: "approve", input: r.input })), (e) => toast(errText(e)));
   });
   // joining another identity's link: it replaces whatever overlay started it

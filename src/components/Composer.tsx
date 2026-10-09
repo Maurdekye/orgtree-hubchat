@@ -19,6 +19,8 @@ interface Props {
   onCancelReply: () => void;
   onSent: () => void;
   ref?: Ref<ComposerApi>;
+  /** Why nothing can be sent here (no hub lists the address): shown instead of the box. */
+  off?: string | null;
 }
 
 /** For the conversation: files dropped on the chat join the attachments. */
@@ -26,7 +28,7 @@ export interface ComposerApi {
   addFiles: (sources: string[]) => void;
 }
 
-export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref }: Props) {
+export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref, off }: Props) {
   const platform = usePlatform();
   const [text, setText] = useState("");
   const [atts, setAtts] = useState<NewAttachment[]>([]);
@@ -161,6 +163,10 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref }:
       <button className="sendbtn" disabled={!can} onMouseDown={(e) => e.preventDefault()} onClick={send}title={platform === "desktop" ? "Send (Enter)" : "Send"} aria-label="Send"><Icon name="send" /></button>
     </div>
   );
+  if (off) {
+    const note = <div className="comp-off" role="status"><Icon name="cloud_off" /><span>{off}</span></div>;
+    return platform === "android" ? <div className="composer">{note}</div> : <div className="composer"><div className="composer-in">{note}</div></div>;
+  }
   if (platform === "android") return <div className="composer">{top}{row}<div className="comp-meta">{meta}</div></div>;
   return <div className="composer"><div className="composer-in">{top}{row}<div className="comp-meta">{meta}</div></div></div>;
 }

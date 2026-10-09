@@ -5,7 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message } from "../api";
 import { Icon } from "../lib/icons";
 import { displayName, kindOf } from "../lib/peers";
-import { useSnap } from "../lib/store";
+import { getSnap, useSnap } from "../lib/store";
+import { chatLinkTarget } from "../lib/chatlink";
 import { useForeground, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { HubBanner, RecoveryBanner } from "./Banners";
 import { ChatRows, EmptyChats, useFilteredChats, type ChatFilter } from "./ChatList";
@@ -177,6 +178,14 @@ export function Android() {
   // is joined; a new device's (role take) is looked up on Link a device ›
   // Approve a code
   usePendingLink((input) => {
+    // a profile QR's chat link opens that chat; your own opens your profile
+    const to = chatLinkTarget(input);
+    if (to !== null) {
+      if (!to) toast("That chat link doesn't name an address.");
+      else if (to === getSnap().state?.me?.address) go({ s: "set", tab: "profile" });
+      else go({ s: "conv", p: to });
+      return;
+    }
     routeLink(input, "approve").then((r) => (r.k === "join" ? startJoin(r.p.code, r.p.hub, r.p.hubs, r.p.hub_name) : go({ s: "link", tab: "approve", input: r.input })), (e) => toast(errText(e)));
   });
   const join = useJoin();
