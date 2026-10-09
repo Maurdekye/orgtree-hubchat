@@ -418,10 +418,24 @@ impl Store {
     }
 
     /// One chat, oldest first, at most `limit` messages before `before` (created_at).
-    pub fn chat(&self, peer: &str, before: Option<&str>, limit: u32) -> Result<Vec<Message>> {
+    /// A page of a chat, oldest first: the newest `limit` messages before
+    /// `before` (a message's created_at and id), and none older than `from`
+    /// (inclusive; a chat re-read keeps the range already shown). Ties on the
+    /// time go by id, so a page never skips one.
+    pub fn chat(
+        &self,
+        peer: &str,
+        before: Option<(&str, &str)>,
+        from: Option<(&str, &str)>,
+        limit: u32,
+    ) -> Result<Vec<Message>> {
+        let (bt, bid) = before.unzip();
+        let (ft, fid) = from.unzip();
         let mut v = self.messages_where(
-            "m.peer=? AND (? IS NULL OR m.created_at < ?) ORDER BY m.created_at DESC LIMIT ?",
-            params![peer, before, before, limit],
+            "m.peer=? AND (? IS NULL OR m.created_at < ? OR (m.created_at = ? AND m.id < ?))
+               AND (? IS NULL OR m.created_at > ? OR (m.created_at = ? AND m.id >= ?))
+             ORDER BY m.created_at DESC, m.id DESC LIMIT ?",
+            params![peer, bt, bt, bt, bid, ft, ft, ft, fid, limit],
         )?;
         v.reverse();
         Ok(v)
@@ -462,7 +476,7 @@ impl Store {
         })?;
         let mut out = Vec::with_capacity(peers.len());
         for (peer, _, unread) in peers {
-            if let Some(last) = self.chat(&peer, None, 1)?.pop() {
+            if let Some(last) = self.chat(&peer, None, None, 1)?.pop() {
                 out.push(ChatSummary { peer, last, unread });
             }
         }
@@ -833,6 +847,29 @@ mod tests {
         let m = s.message("m1").unwrap().unwrap();
         assert_eq!(m.read_at.as_deref(), Some("2026-10-09T00:00:00Z"));
         assert!(s.mark_seen("maya.111111", "2026-10-09T01:00:00Z").unwrap().is_empty());
+    }
+
+    #[test]
+    fn pages_of_history_skip_nothing_even_on_equal_times() {
+        let s = Store::open_in_memory().unwrap();
+        s.add_hub("http://h:7370", "t0").unwrap();
+        // one poll's worth: the same local time for all five
+        for id in ["m1", "m2", "m3", "m4", "m5"] {
+            s.insert_incoming("http://h:7370", &env(id, "maya.111111"), "t1").unwrap();
+        }
+        let ids = |v: &[Message]| v.iter().map(|m| m.id.clone()).collect::<Vec<_>>();
+        let p1 = s.chat("maya.111111", None, None, 2).unwrap();
+        assert_eq!(ids(&p1), ["m4", "m5"]);
+        let cur = |m: &Message| (m.created_at.clone(), m.id.clone());
+        let (t, id) = cur(&p1[0]);
+        let p2 = s.chat("maya.111111", Some((&t, &id)), None, 2).unwrap();
+        assert_eq!(ids(&p2), ["m2", "m3"]);
+        let (t, id) = cur(&p2[0]);
+        let p3 = s.chat("maya.111111", Some((&t, &id)), None, 2).unwrap();
+        assert_eq!(ids(&p3), ["m1"]);
+        // a re-read from the oldest shown keeps exactly that range
+        let (t, id) = cur(&p2[0]);
+        assert_eq!(ids(&s.chat("maya.111111", None, Some((&t, &id)), 5000).unwrap()), ["m2", "m3", "m4", "m5"]);
     }
 
     #[test]
