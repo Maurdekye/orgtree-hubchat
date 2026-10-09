@@ -164,6 +164,9 @@ function OfferTab({ onClose }: { onClose: () => void }) {
         <div className="paircode long">{st.o.code}</div>
         <div className="offer-hub">Through <b>{hubLabel(hubs, st.o.hub)}</b> <span className="mono">{st.o.hub}</span></div>
       </div>
+      {st.o.phone_access_off
+        ? <NoteCard icon="warning" warn><b>Phone access is off on this PC,</b> so other devices can't reach its hub. In Orgtree, open App settings › Mail hub › Connect your phone and turn on phone access, then show a new code.</NoteCard>
+        : null}
       <div className="offer-how">
         {platform === "android"
           ? <>On the new device: open Hubchat › <b>I already use Hubchat</b>, then scan this QR code or type the code.</>

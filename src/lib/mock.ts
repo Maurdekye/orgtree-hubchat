@@ -11,13 +11,17 @@
 // its newest messages; older ones load from office as you scroll back, and
 // the lab hub's (down unless ?lab=up) fill in when it is back (?labback=S:
 // it comes back after S seconds).
+// Scan setup code: ?setupfail=update|damaged|no-ts|unreach|unreach-wifi|join
+// fails that check; ?setupreply=expired|none (the org's answer; default
+// linked, after 2.5 s). ?dooroff=1: Link a device's code says phone access
+// is off on this PC.
 // Linking: a waiting device shows up on the third lookup; a device joining a
 // code is approved after 45 s and reviews LINK_HUBS (a signed-in device
 // joining one: after 2 s the link turns out to be another identity,
 // maya.e71f2b, or with a code starting "SAME" this device's own); nothing is
 // adopted before linkConfirm. A key file opens with any passphrase but
 // "wrong". Hubs on 127.0.0.1 / localhost can't be reached from the "phone".
-import type { Api, Attachment, ChatSummary, SendRoute, Contact, HcEvent, HubRow, HubStatus, LinkEvent, LinkLookup, LinkRole, Message, NewOutgoing, OlderPage, ParsedLink, Probe, Resolved, State } from "../api";
+import type { Api, SetupLink, SetupState, Attachment, ChatSummary, SendRoute, Contact, HcEvent, HubRow, HubStatus, LinkEvent, LinkLookup, LinkRole, Message, NewOutgoing, OlderPage, ParsedLink, Probe, Resolved, State } from "../api";
 import { toast } from "./toast";
 
 const params = new URLSearchParams(location.search);
@@ -467,6 +471,31 @@ const hubLabel = (url: string) => {
   return ALIASES[host] ?? (h[0] === "hub" && h[1] ? h[1] : /^\d+$/.test(h[0]) ? "hub-" + h[h.length - 1] : h[0]);
 };
 
+// Scan setup code: the core's parsing (crates/hubchat-core/src/setup.rs), in short
+function parseSetupLink(input: string): { link: SetupLink | null; error: { kind: "not_setup" } | { kind: "needs_newer"; v: string } | { kind: "invalid"; param: string } | null } {
+  const t = input.trim();
+  if (!/^hubchat:\/\/setup(?:[/?#]|$)/i.test(t)) return { link: null, error: { kind: "not_setup" } };
+  const q = new URLSearchParams(t.split("?")[1] || "");
+  const get = (k: string) => (q.get(k) || "").trim() || null;
+  const bad = (param: string) => ({ link: null, error: { kind: "invalid" as const, param } });
+  const v = get("v");
+  if (!v || !/^\d+$/.test(v) || Number(v) < 1) return bad("v");
+  if (Number(v) > 1) return { link: null, error: { kind: "needs_newer", v } };
+  const hub = normHub(get("hub") || "");
+  if (!hub) return bad("hub");
+  const org = (get("org") || "").replace(/^@net:/, "").toLowerCase();
+  if (!/^[a-z0-9_-][a-z0-9._-]*\.[a-z0-9._-]*[a-z0-9_-]$/.test(org)) return bad("org");
+  for (const p of ["orgname", "pc", "hubname"]) if (!get(p)) return bad(p);
+  const raw = (get("code") || "").replace(/[- ]/g, "").toUpperCase();
+  if (!/^[A-Z0-9]{8}$/.test(raw)) return bad("code");
+  const net = get("net");
+  if (net !== "tailscale" && net !== "wifi") return bad("net");
+  if (net === "tailscale" && !get("ts")) return bad("ts");
+  return { link: { hub, org, orgname: get("orgname")!.slice(0, 64), pc: get("pc")!.slice(0, 64), ts: net === "tailscale" ? get("ts") : null, code: raw.slice(0, 4) + "-" + raw.slice(4), net, hubname: get("hubname")! }, error: null };
+}
+const setups = new Map<string, SetupState>();
+const setupFail = params.get("setupfail");
+
 export const mockApi: Api = {
   state: async () => clone(st),
   uiState: async () => {},
@@ -731,7 +760,7 @@ export const mockApi: Api = {
     const url = hub ? normHub(hub) : (st.hubs.find((h) => h.state === "connected") || st.hubs[0])?.url;
     if (!url) throw "add a hub first: the new device links through one";
     const code = Array.from({ length: 4 }, () => Array.from({ length: 4 }, () => "ABCDEFGHJKMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 31)]).join("")).join("-");
-    return { code, qr: "hubchat://link?code=" + encodeURIComponent(code) + "&hub=" + encodeURIComponent(url) + "&role=give", hub: url };
+    return { code, qr: "hubchat://link?code=" + encodeURIComponent(code) + "&hub=" + encodeURIComponent(url) + "&role=give", hub: url, phone_access_off: params.get("dooroff") === "1" };
   },
   parseLink: async (input) => parseLink(input),
   linkLookup: async (input): Promise<LinkLookup> => {
@@ -760,6 +789,48 @@ export const mockApi: Api = {
     return adopt(true);
   },
   onLink: async (f) => { linkListeners.add(f); return () => { linkListeners.delete(f); }; },
+
+  parseSetup: async (input) => {
+    await sleep(300);
+    if (setupFail === "update") return { link: null, error: { kind: "needs_newer", v: "2" } };
+    if (setupFail === "damaged") return { link: null, error: { kind: "invalid", param: "code" } };
+    return parseSetupLink(input);
+  },
+  setupCheck: async (hub) => {
+    await sleep(900);
+    if (setupFail === "unreach" || setupFail === "unreach-wifi") return { reachable: false, name: null, error: "no answer within 5 s" };
+    return { reachable: true, name: hubLabel(hub), error: null };
+  },
+  appInstalled: async () => (st.platform === "android" ? setupFail !== "no-ts" : null),
+  openApp: async (what) => { toast("[Opens " + (what === "get_tailscale" ? "Tailscale in Google Play" : what === "open_tailscale" ? "the Tailscale app" : "Android's Wi-Fi settings") + "]"); return true; },
+  setupStart: async (input, name) => {
+    const l = parseSetupLink(input).link;
+    if (!l) throw "not a setup code";
+    await sleep(1200);
+    if (setupFail === "join") throw "invalid input: couldn't join " + l.pc + "'s hub";
+    if (!st.hubs.some((h) => h.url === l.hub)) {
+      st.hubs.push({ url: l.hub, name: l.hubname, state: "connected", error: null, retry_at_ms: null, max_attachment_bytes: GB, features: ["v2"], version: "2.0.0" });
+      hubEv(l.hub);
+    }
+    if (!dir.some((c) => c.address === l.org)) dir.push(contact(l.org, "org", { org: l.orgname }, "", true, now(), [l.hub]));
+    emit({ type: "directory" });
+    setups.set(l.org, { outcome: null, code: l.code, orgname: l.orgname, pc: l.pc, sent_at: iso(now()), at: null, reply_id: null });
+    add(l.org, true, now(), "Hi " + l.orgname + ", this is " + name + ", linking Hubchat on my phone.\n\nSetup code: " + l.code, { state: "sent", read_at: null, delivered_at: null, fetched_at: null });
+    chatEv(l.org);
+    const reply = params.get("setupreply") || "linked";
+    if (reply !== "none") {
+      setTimeout(() => {
+        const m = add(l.org, false, now(), reply === "linked"
+          ? "Welcome, " + name + ". " + l.orgname + " now knows this address is you.\n\nSetup code: " + l.code + " linked"
+          : "That setup code has expired or was already used.\n\nSetup code: " + l.code + " expired", { seen: false });
+        setups.set(l.org, { ...setups.get(l.org)!, outcome: reply === "linked" ? "linked" : "expired", at: m.created_at, reply_id: m.id });
+        emit({ type: "incoming", peer: l.org, id: m.id, preview: m.body });
+        chatEv(l.org);
+      }, 2500);
+    }
+    return l.org;
+  },
+  setupStatus: async (org) => clone(setups.get(org) ?? null),
 
   onPendingLink: async () => () => {},
   takePendingLink: async () => {

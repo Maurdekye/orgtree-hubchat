@@ -18,6 +18,7 @@ import { createRoot } from "react-dom/client";
 import { Icon } from "../lib/icons";
 import { openLink } from "../lib/native";
 import { Modal, ModalHead, PlatformCtx, usePlatform, type Platform } from "./ui";
+import { openGuide } from "./Guide";
 import "../styles/hubhelp.css";
 
 const HUB_REPO = "https://github.com/Maurdekye/orgtree-mailhub";
@@ -58,7 +59,7 @@ export function HubHelpBody() {
       <h5>The open internet: only the relay-only door</h5>
       <p>Without Tailscale, open only the relay-only door to the internet, never the main port 7370. Anyone who reaches the door can register an address and send mail, but can read only their own.</p>
       <p>Put a tunnel or reverse proxy that gives you an <M>https://</M> address in front of it, and add that address in Hubchat. A plain port forward sends every message and secret unencrypted.</p>
-      <p className="hubhelp-more"><Ext href={HUB_DOCS}>Full instructions in the hub's README</Ext></p>
+      <p className="hubhelp-more"><button type="button" className="link" onClick={() => openGuide()}>Hubchat's setup guide</button> · <Ext href={HUB_DOCS}>Full instructions in the hub's README</Ext></p>
     </div>
   );
 }
@@ -116,7 +117,7 @@ let seq = 0;
 /** Android: the sheet holds a history entry of its own, so the system back
  *  button closes it and the screen below stays; closed any other way, it
  *  takes that entry back off without the screens seeing it. */
-function useBackCloses(on: boolean, close: () => void) {
+export function useBackCloses(on: boolean, close: () => void) {
   const [id] = useState(() => ++seq);
   const closeRef = useRef(close);
   closeRef.current = close;

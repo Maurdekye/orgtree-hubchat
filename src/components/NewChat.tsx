@@ -7,6 +7,7 @@ import { Icon } from "../lib/icons";
 import { displayName, kindInfo, kindOf, presence, viaHub } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { isLinkWaiting, listed } from "./Directory";
+import { scanSetup } from "../lib/setup";
 import { Addr, KindGlyph, PeerAvatar, pressKeys, usePlatform } from "./ui";
 
 export function useResolve(q: string): Resolved | null {
@@ -67,7 +68,10 @@ export function NewChatResults({ q, r, onOpen, onDirectory }: { q: string; r: Re
         <div className="nc-sec">Directory</div>
         <div className={platform === "android" ? "" : "dir-chips"}>
           {platform === "android"
-            ? <div className="li" onClick={onDirectory} role="button" tabIndex={0} onKeyDown={pressKeys(onDirectory)}><Icon name="contacts" /><div className="t"><div className="t1">Browse the directory</div><div className="t2">{everyone.length} on your hubs · {onlineN} online</div></div><Icon name="chevron_right" className="chev" /></div>
+            ? <>
+              <div className="li" onClick={onDirectory} role="button" tabIndex={0} onKeyDown={pressKeys(onDirectory)}><Icon name="contacts" /><div className="t"><div className="t1">Browse the directory</div><div className="t2">{everyone.length} on your hubs · {onlineN} online</div></div><Icon name="chevron_right" className="chev" /></div>
+              <div className="li" onClick={() => void scanSetup()} role="button" tabIndex={0} onKeyDown={pressKeys(() => void scanSetup())}><Icon name="qr" /><div className="t"><div className="t1">Scan setup code</div><div className="t2">From Orgtree</div></div><Icon name="chevron_right" className="chev" /></div>
+            </>
             : <button className="btn" onClick={onDirectory}><Icon name="contacts" />Browse everyone on your hubs <span className="dim" style={{ fontWeight: 400 }}>{everyone.length} people and agents · {onlineN} online</span></button>}
         </div>
         <div className="nc-msg"><Icon name="at" /><div><b>Or type an address</b>Someone may give you theirs, or click an <span className="mono">@net:</span> link in any message.</div></div>

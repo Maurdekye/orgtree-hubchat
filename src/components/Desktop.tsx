@@ -10,6 +10,7 @@ import { toast } from "../lib/toast";
 import { hubSummary } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { useActive, useForeground, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
+import { isSetupLink, startSetup, useSetupChat } from "../lib/setup";
 import { chatLinkTarget } from "../lib/chatlink";
 import { startUpdateChecks } from "../lib/updates";
 import { HubBanner, RecoveryBanner, UpdateBanner } from "./Banners";
@@ -99,7 +100,10 @@ export function Desktop() {
   const settings = (tab: SetTab) => setOv({ k: "settings", tab });
   // a hubchat:// link the system opened us with: a signed-in device's (role
   // give) is joined; a new device's (role take) is approved here
+  // Scan setup code opens the org's chat when it's done
+  useSetupChat((p) => open(p));
   usePendingLink((input) => {
+    if (isSetupLink(input)) { startSetup(input); return; }
     // a profile QR's chat link opens that chat; your own opens your profile
     const to = chatLinkTarget(input);
     if (to !== null) {

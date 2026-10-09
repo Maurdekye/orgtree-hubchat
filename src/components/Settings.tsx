@@ -17,11 +17,13 @@ import { formatCode, LinkDeviceModal, type LinkTab } from "./LinkDevice";
 import { copyWords, downloadWords } from "../lib/recovery";
 import { HubAdder } from "./HubAdder";
 import { HubHelpLink } from "./HubHelp";
+import { GuideBody } from "./Guide";
+import { scanSetup } from "../lib/setup";
 import { Addr, Avatar, Confirm, NoteCard, QR, Switch, pressKeys, useDialogFocus, useNow, usePlatform } from "./ui";
 
-export type SetTab = "profile" | "hubs" | "devices" | "notifications" | "recovery" | "privacy" | "appearance" | "general" | "about";
+export type SetTab = "profile" | "hubs" | "devices" | "notifications" | "recovery" | "privacy" | "appearance" | "general" | "help" | "about";
 /** Every section (Android titles its screens from this too; General is desktop only). */
-export const TABS: [SetTab, string, IconName][] = [["profile", "Profile", "person"], ["hubs", "Hubs", "dns"], ["devices", "Devices", "computer"], ["notifications", "Notifications", "bell"], ["recovery", "Recovery words", "key"], ["privacy", "Privacy", "privacy"], ["appearance", "Appearance", "palette"], ["general", "General", "tune"], ["about", "About", "info"]];
+export const TABS: [SetTab, string, IconName][] = [["profile", "Profile", "person"], ["hubs", "Hubs", "dns"], ["devices", "Devices", "computer"], ["notifications", "Notifications", "bell"], ["recovery", "Recovery words", "key"], ["privacy", "Privacy", "privacy"], ["appearance", "Appearance", "palette"], ["general", "General", "tune"], ["help", "Help", "help"], ["about", "About", "info"]];
 
 // ---------------------------------------------------------------- shapes
 function Row({ icon, t1, t2, right, onClick }: { icon?: IconName; t1: ReactNode; t2?: ReactNode; right?: ReactNode; onClick?: () => void }) {
@@ -144,7 +146,7 @@ function Hubs() {
           {adding
             ? <div className={platform === "android" ? "" : "addhub"} style={platform === "android" ? { paddingTop: 12 } : undefined}><HubAdder existing={hubs.map((h) => h.url)} autoFocus onAdded={(_u, n) => { setAdding(false); toast("Added hub " + n); }} onCancel={() => setAdding(false)} /></div>
             : platform === "android"
-              ? <div className="pad" style={{ marginTop: 8 }}><button className="btn block" onClick={() => setAdding(true)}><Icon name="add" />Add a hub</button></div>
+              ? <div className="pad" style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}><button className="btn block" onClick={() => setAdding(true)}><Icon name="add" />Add a hub</button><button className="btn block" onClick={() => void scanSetup()}><Icon name="qr" />Scan setup code</button></div>
               : <div className="set-row"><button className="btn" onClick={() => setAdding(true)}><Icon name="add" />Add a hub</button><span className="help">You can be on several hubs at once. Your address is the same on all of them.</span></div>}
         </Card>
       </Sec>
@@ -490,6 +492,7 @@ export function SettingsSection({ tab, onLink, goTab }: { tab: SetTab; onLink?: 
     case "recovery": return <Recovery />;
     case "privacy": return <Privacy />;
     case "appearance": return <Appearance />;
+    case "help": return <GuideBody />;
     default: return <About />;
   }
 }
@@ -545,6 +548,7 @@ export function SettingsList({ onOpen, onBack }: { onOpen: (t: SetTab) => void; 
         <Row icon="key" t1="Recovery words" t2={snap.state!.recovery_saved ? "Saved" : <span style={{ color: "var(--warn)" }}>Not saved yet</span>} right={<>{snap.state!.recovery_saved ? null : warn}{chev}</>} onClick={() => onOpen("recovery")} />
         <Row icon="privacy" t1="Privacy" t2="Read receipts · who can reach you" right={chev} onClick={() => onOpen("privacy")} />
         <Row icon="palette" t1="Appearance" t2={pref === "system" ? "Follow system" : pref === "light" ? "Light" : "Dark"} right={chev} onClick={() => onOpen("appearance")} />
+        <Row icon="help" t1="Help" t2="Setting up Hubchat" right={chev} onClick={() => onOpen("help")} />
         <Row icon="info" t1="About" t2={version ? "Version " + version : undefined} right={chev} onClick={() => onOpen("about")} />
       </div>
     </div>

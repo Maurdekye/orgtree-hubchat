@@ -1,0 +1,42 @@
+/* Scan setup code (SetupFlow.tsx): its screen (Android) or modal (desktop),
+   the "No code?" line under the welcome choice, the chat's setup note, and
+   the setup guide (Guide.tsx). */
+
+/* the flow */
+.screen.setup-over { z-index: 40; }
+.modal.setup { width: 480px; }
+.modal.setup .modal-b { padding-bottom: 6px; }
+.modal.setup .lead { margin: 0 0 14px; color: var(--dim); font-size: 13.5px; }
+.modal.setup .field { margin-bottom: 4px; }
+.probe-card b.inl { display: inline; margin: 0; }
+.setup-instead { margin: 14px 0 0; font-size: 13.5px; }
+[data-platform="android"] .setup-instead { margin: 16px 20px; font-size: 14.5px; }
+.setup-instead .link { text-align: left; }
+
+/* "No code?" under Scan setup code */
+.nocode { margin: 14px 0 0; font-size: 13px; line-height: 1.5; color: var(--dim); text-align: left; }
+[data-platform="android"] .nocode { margin: 12px 24px 0; font-size: 14px; }
+.nocode b { color: var(--ink); font-weight: 600; }
+
+/* the chat's note */
+.sysnote.linked { color: var(--ok); font-weight: 600; }
+.sysnote.setup-bad { color: var(--bad); }
+.sysnote.setup-bad .btn { margin-top: 8px; }
+
+/* the guide */
+.guide { font-size: 13.5px; line-height: 1.55; color: var(--ink); text-align: left; }
+[data-platform="android"] .guide { font-size: 15px; padding: 4px 20px 28px; }
+.guide p { margin: 0 0 10px; }
+.guide .md-h { margin: 18px 0 6px; font-weight: 700; color: var(--ink-strong); line-height: 1.3; }
+.guide .md-h:first-child { margin-top: 0; }
+.guide .md-h2 { font-size: 1.12em; }
+.guide .md-h3 { font-size: 1em; }
+.guide ol, .guide ul { margin: 0 0 10px; padding-left: 22px; }
+.guide li { margin: 0 0 4px; }
+.guide li::marker { color: var(--dim); }
+.guide strong { color: var(--ink-strong); }
+.guide code { font: .92em var(--mono); padding: 1px 5px; border-radius: 5px; background: var(--panel-2); color: var(--ink-strong); }
+.guide a { color: var(--accent-text); font-weight: 600; cursor: pointer; }
+.modal.guide-modal { width: 640px; }
+.screen.guide-screen { z-index: 60; }
+.guide-screen .scr-body { overflow-y: auto; }

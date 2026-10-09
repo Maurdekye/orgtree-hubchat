@@ -5,14 +5,17 @@ import { Android } from "./components/Android";
 import { CtxMenu } from "./components/CtxMenu";
 import { Desktop } from "./components/Desktop";
 import { Onboarding } from "./components/Onboarding";
+import { SetupFlow } from "./components/SetupFlow";
 import { PlatformCtx, Toasts } from "./components/ui";
 import { TitleBar } from "./components/TitleBar";
 import { onContextMenu } from "./lib/ctxmenu";
 import { Logo } from "./lib/icons";
+import { useSetup } from "./lib/setup";
 import { startStore, useSnap } from "./lib/store";
 
 export default function App() {
   const snap = useSnap();
+  const setup = useSetup();
   useEffect(() => { void startStore(); }, []);
   const platform = snap.state?.platform ?? "desktop";
   // desktop: Hubchat's own right-click menus, never the WebView's (user
@@ -39,5 +42,7 @@ export default function App() {
   if (snap.onboarding || !snap.state.me) body = <><Onboarding /><Toasts /></>;
   // keyed by address: after switching identity the layout starts afresh
   else body = platform === "android" ? <Android key={snap.state.me.address} /> : <Desktop key={snap.state.me.address} />;
+  // Scan setup code: a screen over everything on Android, a modal on desktop
+  if (setup) body = <>{body}<SetupFlow key={setup.n} req={setup} /></>;
   return <PlatformCtx.Provider value={platform}>{framed(<>{body}{desktop ? <CtxMenu /> : null}</>)}</PlatformCtx.Provider>;
 }

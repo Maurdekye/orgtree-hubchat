@@ -201,6 +201,8 @@ export interface LinkStart {
   hub: string;
   /** What a link offer's QR names it: as other devices may reach it (localhost is no address for a phone). */
   hubs?: string[];
+  /** This PC's hub says its relay-only door is off: other devices can't reach it. */
+  phone_access_off?: boolean;
 }
 
 /** What a typed code, a hubchat://link URL or an older hubchat-link: text holds.
@@ -260,6 +262,31 @@ export interface LinkLookup {
 }
 
 /** The real commands. Names and argument shapes match commands.rs. */
+/** A checked hubchat://setup link (crates/hubchat-core/src/setup.rs). */
+export interface SetupLink {
+  hub: string;
+  org: string;
+  orgname: string;
+  pc: string;
+  ts: string | null;
+  code: string;
+  net: "tailscale" | "wifi";
+  hubname: string;
+}
+export type SetupError = { kind: "not_setup" } | { kind: "needs_newer"; v: string } | { kind: "invalid"; param: string };
+export interface ParsedSetup { link: SetupLink | null; error: SetupError | null }
+export interface SetupReach { reachable: boolean; name: string | null; error: string | null }
+/** Where a setup with one org stands: outcome null while waiting for its answer. */
+export interface SetupState {
+  outcome: "linked" | "expired" | null;
+  code: string;
+  orgname: string;
+  pc: string;
+  sent_at: string;
+  at: string | null;
+  reply_id: string | null;
+}
+
 export const tauriApi = {
   state: () => invoke<State>("hc_state"),
   uiState: (foreground: boolean, chat: string | null) => invoke<void>("hc_ui_state", { foreground, chat }),
@@ -356,6 +383,18 @@ export const tauriApi = {
   keyFileExport: (passphrase: string, dest: string) => invoke<void>("hc_key_file_export", { passphrase, dest }),
   keyFileImport: (source: string, passphrase: string) => invoke<string>("hc_key_file_import", { source, passphrase }),
   onLink: (f: (e: LinkEvent) => void): Promise<UnlistenFn> => listen<LinkEvent>("hc-link", (e) => f(e.payload)),
+
+  // Scan setup code (src-tauri/src/commands.rs)
+  parseSetup: (input: string) => invoke<ParsedSetup>("hc_parse_setup", { input }),
+  /** Any ok /healthz answer from `hub` within 5 s; `hubname` is only logged. */
+  setupCheck: (hub: string, hubname: string) => invoke<SetupReach>("hc_setup_check", { hub, hubname }),
+  /** Android: whether a package is installed; null where it can't be told. */
+  appInstalled: (pkg: string) => invoke<boolean | null>("hc_app_installed", { package: pkg }),
+  /** Android: open "get_tailscale" (its store page), "open_tailscale" or "wifi_settings". */
+  openApp: (what: "get_tailscale" | "open_tailscale" | "wifi_settings") => invoke<boolean>("hc_open_app", { what }),
+  /** Join the setup link's hub and send its org the code; returns the chat to open. */
+  setupStart: (input: string, name: string) => invoke<string>("hc_setup_start", { input, name }),
+  setupStatus: (org: string) => invoke<SetupState | null>("hc_setup_status", { org }),
 
   /** Android: the chat a tapped notification named, taken once. */
   takePendingChat: () => invoke<string | null>("hc_take_pending_chat"),

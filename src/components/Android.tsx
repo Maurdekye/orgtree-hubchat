@@ -11,6 +11,7 @@ import { installKeyboardImages } from "../lib/keyboardImages";
 import { useActive, useForeground, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { HubBanner, RecoveryBanner, UpdateBanner } from "./Banners";
 import { startUpdateChecks } from "../lib/updates";
+import { isSetupLink, startSetup, useSetupChat } from "../lib/setup";
 import { ChatRows, EmptyChats, useFilteredChats, type ChatFilter } from "./ChatList";
 import { ContactInfo } from "./ContactInfo";
 import { Conversation } from "./Conversation";
@@ -190,7 +191,10 @@ export function Android() {
   // a phone camera opened a hubchat:// link: a signed-in device's (role give)
   // is joined; a new device's (role take) is looked up on Link a device ›
   // Approve a code
+  // Scan setup code opens the org's chat when it's done
+  useSetupChat((p) => go({ s: "conv", p }));
   usePendingLink((input) => {
+    if (isSetupLink(input)) { startSetup(input); return; }
     // a profile QR's chat link opens that chat; your own opens your profile
     const to = chatLinkTarget(input);
     if (to !== null) {

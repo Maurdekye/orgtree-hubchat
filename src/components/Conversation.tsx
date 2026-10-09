@@ -2,12 +2,13 @@
 // dividers, grouped bubbles) and the composer. On desktop, files dropped on
 // it are attached.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { api, type Message } from "../api";
+import { api, type Message, type SetupState } from "../api";
 import { Icon } from "../lib/icons";
 import { useFileDrop } from "../lib/drop";
 import { bytes, dayLabel, dayStart, MAX_FILES } from "../lib/format";
 import { copyText, errText } from "../lib/native";
 import { displayName, hubByUrl, hubName, hubStatusText, kindInfo, kindOf, limitFor, msgTime, peerHubs, presence, preview, viaHub } from "../lib/peers";
+import { scanSetup } from "../lib/setup";
 import { refreshChats, useMessages, useSendRoute, useSnap } from "../lib/store";
 import { toast } from "../lib/toast";
 import { Composer, type ComposerApi } from "./Composer";
@@ -53,6 +54,15 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   const newMark = useRef<{ peer: string; id: string | null } | null>(null);
 
   useEffect(() => { setReplyTo(null); setSel(null); setHl(null); pinned.current = true; }, [peer]);
+
+  // Scan setup code: where linking this address with the org stands (a
+  // chat-level note, hubchat-opus 11:38Z), read again as messages come
+  const [setup, setSetup] = useState<SetupState | null>(null);
+  useEffect(() => {
+    let live = true;
+    api.setupStatus(peer).then((s) => { if (live) setSetup(s); }, () => {});
+    return () => { live = false; };
+  }, [peer, msgs.length]);
 
   // "N new messages": where the unread messages began when the chat opened
   // (taken from the chat list's count, which a quick mark-read can't race)
@@ -286,7 +296,9 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
         onReply={reply} onInfo={info} onDelete={del} onJump={jump} onOpenAddr={onOpenAddr} />,
     );
     prev = m;
+    if (setup?.reply_id === m.id) rows.push(setupNote(setup, platform));
   }
+  if (setup && (!setup.outcome || !msgs.some((m) => m.id === setup.reply_id))) rows.push(setupNote(setup, platform));
   const p = presence(c, hubs);
   if (p.state === "offline" && msgs.some((m) => m.outgoing && m.state === "sent")) {
     rows.push(<div className="sysnote" key="pend"><Icon name="schedule" />{name} is offline ({p.short}). Your message waits on hub {via?.name} and is delivered when they reconnect.</div>);
@@ -430,4 +442,17 @@ function DropZone({ lim }: { lim: ReturnType<typeof limitFor> }) {
       <span>Up to {MAX_FILES} files{lim ? <> and {bytes(lim.bytes)} per message on hub {lim.hub.name}, text included</> : " per message"}</span>
     </div>
   );
+}
+
+/** The setup note: waiting for the org's answer, Linked, or the code didn't work. */
+function setupNote(s: SetupState, platform: string) {
+  if (s.outcome === "linked") return <div className="sysnote linked" key="setup" data-setup="linked"><Icon name="link" />Linked — {s.orgname} knows this address is you.</div>;
+  if (s.outcome === "expired") {
+    return (
+      <div className="sysnote setup-bad" key="setup" data-setup="expired"><Icon name="error_outline" />That setup code didn't work. It may have expired or already been used. Show a new code on your PC, then scan again.
+        {platform === "android" ? <div><button className="btn sm" onClick={() => void scanSetup()}><Icon name="qr" />Scan again</button></div> : null}
+      </div>
+    );
+  }
+  return <div className="sysnote" key="setup" data-setup="pending"><Icon name="schedule" />Waiting for {s.orgname} to confirm…</div>;
 }

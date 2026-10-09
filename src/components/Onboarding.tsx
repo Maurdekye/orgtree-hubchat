@@ -19,7 +19,9 @@ import { HubAdder } from "./HubAdder";
 import { HubReview, useHubReview } from "./HubReview";
 import { chatLinkTarget } from "../lib/chatlink";
 import { usePendingLink } from "../lib/visibility";
+import { isSetupLink, scanSetup, startSetup, useLinkInstead } from "../lib/setup";
 import { formatCode } from "./LinkDevice";
+import { openGuide } from "./Guide";
 import { NoteCard, QR, useNow, usePlatform } from "./ui";
 import footerCrop from "../assets/desktop-footer-qr.png";
 import footerQr from "../assets/desktop-footer-qr.json";
@@ -93,6 +95,13 @@ function Opt({ cls, ic, t, s, tag, onClick }: { cls: string; ic: IconName; t: st
 }
 const Tag = ({ acc, children }: { acc?: boolean; children: ReactNode }) => <> <span className={"chip" + (acc ? " acc" : "")}>{children}</span></>;
 const pad = (platform: string) => (platform === "android" ? { padding: "0 20px" } : undefined);
+
+/** Under Scan setup code (hubchat-ux-flow.md §5): where the code comes from. */
+export function NoCode() {
+  return (
+    <p className="nocode">No code? On your PC, open <b>Orgtree › App settings › Mail hub › Connect your phone</b>. No Orgtree? <button className="link" onClick={() => openGuide()}>See the guide.</button></p>
+  );
+}
 
 /** What the browser mock's camera reads by default: a PC's link QR. */
 const MOCK_LINK_QR = "hubchat://link?code=M3PX-7QRT-K2ZD-9HAW&hub=" + encodeURIComponent("http://hub.office.lan:7370") + "&role=give";
@@ -326,6 +335,7 @@ export function Onboarding() {
   // give) is joined straight away; a waiting device's (role take) can't be
   // served from here, this device has no identity to give
   usePendingLink((input) => {
+    if (isSetupLink(input)) { startSetup(input); return; }
     if (getSnap().state?.me) return;
     if (chatLinkTarget(input) !== null) { toast("Set up Hubchat first, then open the chat link again."); return; }
     api.parseLink(input).then((p) => { if (p.role === "take") { setFlow("join"); go("needgive"); } else joinWith(p.code, p.hub, "join", p.hubs, p.hub_name); }, (e) => toast(errText(e)));
@@ -366,6 +376,8 @@ export function Onboarding() {
     } catch (e) { setErr(errText(e)); setBusy(false); }
   };
   const startScan = () => { pick("join", "scan"); void scanLink(); };
+  // Scan setup code's name step: "Link this phone instead" (gap 4)
+  useLinkInstead(() => pick("words", "method"));
 
   if (step === "welcome") {
     return (
@@ -379,9 +391,11 @@ export function Onboarding() {
           <Feat ic="bot" t="Agents are first-class" s="Talk to Orgtree orgs and AI agent sessions, such as Claude Code or Codex, the way you talk to people." />
         </div>
         <div className="fork" style={pad(platform)}>
-          <Opt cls="fork-opt primary" ic="add" t="Create a new identity" s="Choose an id. Hubchat makes your key and your address." onClick={() => pick("new", "id")} />
+          {platform === "android" ? <Opt cls="fork-opt primary" ic="qr" t="Scan setup code" s="From Orgtree on your PC" onClick={() => void scanSetup()} /> : null}
+          <Opt cls={"fork-opt" + (platform === "android" ? "" : " primary")} ic="add" t="Create a new identity" s="Choose an id. Hubchat makes your key and your address." onClick={() => pick("new", "id")} />
           <Opt cls="fork-opt" ic="sync" t="I already use Hubchat" s="Bring your identity from another device, a key file or your recovery words." onClick={() => pick("words", "method")} />
         </div>
+        {platform === "android" ? <NoCode /> : null}
       </Frame>
     );
   }
