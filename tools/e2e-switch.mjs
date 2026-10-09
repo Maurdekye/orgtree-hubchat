@@ -13,7 +13,7 @@ import { attach } from './cdp.mjs';
 
 const [exe, shots] = process.argv.slice(2);
 const HUB = '127.0.0.1:7397';
-const ADB = '<toolchain>/android-sdk/platform-tools/adb.exe';
+const ADB = process.env.ADB || 'adb'; // adb on PATH, or its full path in ADB
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
 const check = (name, ok, detail = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`); };

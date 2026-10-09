@@ -15,8 +15,12 @@ import { join } from 'node:path';
 import { attach } from './cdp.mjs';
 
 const [exe, shots] = process.argv.slice(2);
-const ADB = '<toolchain>/android-sdk/platform-tools/adb.exe';
+const ADB = process.env.ADB || 'adb'; // adb on PATH, or its full path in ADB
 const PKG = 'dev.orgtree.hubchat.test';
+// the PC's tailnet name and Tailscale address (HUBCHAT_PC, HUBCHAT_PC_IP)
+const PC = process.env.HUBCHAT_PC || 'home-pc';
+const PC_IP = process.env.HUBCHAT_PC_IP || '100.101.102.103';
+const reachedPc = new RegExp(`${PC}|${PC_IP.replaceAll('.', '\.')}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const adb = (...a) => spawnSync(ADB, a, { encoding: 'utf8' }).stdout.trim();
 const results = [];
@@ -51,8 +55,8 @@ try {
 
   const offer = await inv(pc, 'hc_link_offer', {});
   console.log('QR:', offer.qr);
-  check('the QR names the hub as this PC is reached', offer.hub === 'http://localhost:7397' && offer.hubs[0] === 'http://home-pc:7397'
-    && offer.hubs.includes('http://100.101.102.103:7397') && offer.hubs.at(-1) === 'http://localhost:7397', JSON.stringify(offer.hubs));
+  check('the QR names the hub as this PC is reached', offer.hub === 'http://localhost:7397' && offer.hubs[0] === `http://${PC}:7397`
+    && offer.hubs.includes(`http://${PC_IP}:7397`) && offer.hubs.at(-1) === 'http://localhost:7397', JSON.stringify(offer.hubs));
   check('the QR carries the hub name', offer.qr.includes('name=v2scratch'));
 
   // The phone opens the link as a camera app would.
@@ -83,7 +87,7 @@ try {
     const before = await inv(phone, 'hc_state');
     check('nothing saved before Confirm', !before.me && before.hubs.length === 0, JSON.stringify(before.hubs));
     const rows = await phone.eval(`[...document.querySelectorAll('.hubrev input[type=text], .hubrev input:not([type])')].map((i) => i.value)`);
-    check('the review proposes the reached address, not localhost', rows.some((v) => /home-pc|100\.101\.102\.103/.test(v)) && !rows.some((v) => /localhost|127\.0\.0\.1/.test(v)), JSON.stringify(rows));
+    check('the review proposes the reached address, not localhost', rows.some((v) => reachedPc.test(v)) && !rows.some((v) => /localhost|127\.0\.0\.1/.test(v)), JSON.stringify(rows));
     check('Confirm', await click(phone, /^Confirm/));
   } else {
     check('the phone shows the hub review', false, (await text(phone)).replace(/\s+/g, ' ').slice(0, 300));
@@ -94,7 +98,7 @@ try {
   const connected = await waitFor(phone, `window.__TAURI_INTERNALS__.invoke('hc_state').then((s) => s.hubs.length > 0 && s.hubs.every((h) => h.state === 'connected'))`, 40000);
   const st = await inv(phone, 'hc_state');
   const urls = st.hubs.map((h) => h.url);
-  check('phone keeps the tailnet address, never localhost', urls.length === 1 && /home-pc|100\.101\.102\.103/.test(urls[0]), JSON.stringify(urls));
+  check('phone keeps the tailnet address, never localhost', urls.length === 1 && reachedPc.test(urls[0]), JSON.stringify(urls));
   check('phone connects to the hub over the tailnet', connected, JSON.stringify(st.hubs.map((h) => [h.url, h.state, h.error])));
   await sleep(1500);
   await shot(phone, 'tailnet-phone-after.png');

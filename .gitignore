@@ -26,3 +26,6 @@ dist-ssr
 # Rust / Tauri
 target/
 src-tauri/gen/schemas
+
+# the scripted test partner's identity (tools/peer2.mjs), per machine
+tools/peer2.json

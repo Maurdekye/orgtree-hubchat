@@ -13,7 +13,8 @@ import { join } from 'node:path';
 import { attach } from './cdp.mjs';
 
 const [exe, shots] = process.argv.slice(2);
-const MAILHUB = process.env.MAILHUB_DIR || '<orgtree>/engine/mailhub';
+const MAILHUB = process.env.MAILHUB_DIR; // the v1 mail hub's folder (orgtree's engine/mailhub)
+if (!MAILHUB) { console.error('set MAILHUB_DIR to the folder holding the v1 mail hub (python -m mailhub.serve)'); process.exit(2); }
 const HUB = 'http://127.0.0.1:7399';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];

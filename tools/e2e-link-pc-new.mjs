@@ -1,17 +1,18 @@
-// The PC is the new device: the phone (signed in, its hub as home-pc:7397)
+// The PC is the new device: the phone (signed in, its hub as <PC>:7397)
 // offers a link code, the PC types it and joins through the same hub as
 // localhost:7397, the phone approves. The PC's review must show ONE row for
 // that hub (it answers under both names), keep localhost and say the phone
-// knows it as home-pc; confirming makes the PC that identity on localhost.
+// knows it as <PC>; confirming makes the PC that identity on localhost.
 //
 //   needs: the scratch hub on 0.0.0.0:7397; Hubchat Test on the phone signed
-//   in with its hub as http://home-pc:7397; adb forward tcp:9334 to its
+//   in with its hub as http://<PC>:7397 (PC = HUBCHAT_PC, the PC's tailnet name); adb forward tcp:9334 to its
 //   WebView; the desktop test build reset (tools/e2e-reset.sh)
 //   node tools/e2e-link-pc-new.mjs <hubchat.exe test build>
 import { spawn, spawnSync } from 'node:child_process';
 import { attach } from './cdp.mjs';
 
 const [exe] = process.argv.slice(2);
+const PC = process.env.HUBCHAT_PC || 'home-pc'; // the PC's tailnet name
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
 const check = (name, ok, detail = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`); };
@@ -26,7 +27,7 @@ try {
   const waitFor = async (b, expr, ms) => { const t = Date.now(); while (Date.now() - t < ms) { if (await b.eval(expr).catch(() => false)) return true; await sleep(500); } return false; };
 
   const ph = await inv(phone, 'hc_state');
-  check('phone is signed in on home-pc:7397', !!ph.me && ph.hubs.some((h) => h.url === 'http://home-pc:7397'), JSON.stringify(ph.hubs.map((h) => h.url)));
+  check(`phone is signed in on ${PC}:7397`, !!ph.me && ph.hubs.some((h) => h.url === `http://${PC}:7397`), JSON.stringify(ph.hubs.map((h) => h.url)));
   const pcs = await inv(pc, 'hc_state');
   check('PC is new', !pcs.me);
 
@@ -38,7 +39,7 @@ try {
   })()`);
 
   const offer = await inv(phone, 'hc_link_offer', {});
-  check('the phone offers a code through home-pc', offer.hubs.length === 1 && offer.hubs[0] === 'http://home-pc:7397', JSON.stringify(offer.hubs));
+  check(`the phone offers a code through ${PC}`, offer.hubs.length === 1 && offer.hubs[0] === `http://${PC}:7397`, JSON.stringify(offer.hubs));
   // typed on the PC: a code alone, through the hub as the PC knows it
   await inv(pc, 'hc_link_start', { hub: 'localhost:7397', deviceName: 'PC (test)', code: offer.code, aliases: null });
   let look = null;
@@ -55,7 +56,7 @@ try {
   console.log('review:', JSON.stringify(ev));
   check('the PC gets a review', got);
   check('one row for the hub it reached under two names', ev?.hubs.length === 1 && ev.hubs[0].address === 'http://localhost:7397'
-    && ev.hubs[0].theirs === 'http://home-pc:7397' && ev.hubs[0].reachable, JSON.stringify(ev?.hubs));
+    && ev.hubs[0].theirs === `http://${PC}:7397` && ev.hubs[0].reachable, JSON.stringify(ev?.hubs));
   const still = await inv(pc, 'hc_state');
   check('nothing saved before confirming', !still.me && still.hubs.length === 0);
 

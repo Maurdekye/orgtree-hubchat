@@ -7,7 +7,8 @@
 set -u
 cd "$(dirname "$0")/.."
 PROFILE="${1:-debug}"
-[ -f <toolchain>/env.sh ] && source <toolchain>/env.sh
+# HUBCHAT_ENV: optionally, a script that sets JAVA_HOME, ANDROID_HOME, NDK_HOME and PATH
+[ -n "${HUBCHAT_ENV:-}" ] && source "$HUBCHAT_ENV"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
 FLAG=""; [ "$PROFILE" = debug ] && FLAG="--debug"
 npx tauri android build $FLAG --target aarch64 --apk >/dev/null 2>&1 || true   # fails at the symlink step on purpose

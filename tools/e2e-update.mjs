@@ -15,6 +15,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { deflateSync, crc32 } from 'node:zlib';
 import { attach } from './cdp.mjs';
 
@@ -35,9 +36,9 @@ function pngOf(w, h, rgb) {
 
 const [exe, shots, hub] = process.argv.slice(2);
 mkdirSync(shots, { recursive: true });
-const ADB = '<toolchain>/android-sdk/platform-tools/adb.exe';
+const ADB = process.env.ADB || 'adb'; // adb on PATH, or its full path in ADB
 const PKG = 'dev.orgtree.hubchat.test';
-const PEER = '<scratch>/tools/peer2.mjs';
+const PEER = fileURLToPath(new URL('./peer2.mjs', import.meta.url));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const env = { ...process.env, MSYS_NO_PATHCONV: '1' };
 const adb = (...a) => spawnSync(ADB, a, { encoding: 'utf8', env, maxBuffer: 64 << 20 }).stdout.trim();

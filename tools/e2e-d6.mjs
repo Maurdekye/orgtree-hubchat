@@ -1,5 +1,5 @@
 // Android background modes (design D6) on the real phone, Hubchat Test,
-// through the scratch v2 hub over Tailscale (home-pc:7397).
+// through the scratch v2 hub over Tailscale (<the PC's tailnet name>:7397, HUBCHAT_PC).
 //
 //   node tools/e2e-d6.mjs            the quick part:
 //     1. default "Stay connected": the foreground service and its ongoing
@@ -17,9 +17,9 @@
 import { spawnSync } from 'node:child_process';
 import { attach } from './cdp.mjs';
 
-const ADB = '<toolchain>/android-sdk/platform-tools/adb.exe';
+const ADB = process.env.ADB || 'adb'; // adb on PATH, or its full path in ADB
 const PKG = 'dev.orgtree.hubchat.test';
-const HUB = 'http://home-pc:7397';
+const HUB = `http://${process.env.HUBCHAT_PC || 'home-pc'}:7397`;
 const HUB_LOCAL = 'http://127.0.0.1:7397';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // dumpsys jobscheduler runs past spawnSync's default 1 MB

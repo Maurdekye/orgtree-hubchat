@@ -14,7 +14,8 @@ import { join } from 'node:path';
 import { attach } from './cdp.mjs';
 
 const [exe, shots] = process.argv.slice(2);
-const MAILHUB = process.env.MAILHUB_DIR || '<orgtree>/engine/mailhub';
+const MAILHUB = process.env.MAILHUB_DIR; // the v1 mail hub's folder (orgtree's engine/mailhub)
+if (!MAILHUB) { console.error('set MAILHUB_DIR to the folder holding the v1 mail hub (python -m mailhub.serve)'); process.exit(2); }
 const HUB_PORT = 7399;
 // E2E_ATTACH=<port>: drive an already-running app (e.g. Android via adb forward) instead of launching one.
 const CDP_PORT = Number(process.env.E2E_ATTACH || 9333);
