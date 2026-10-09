@@ -16,6 +16,9 @@ use crate::{Error, Identity, Result};
 
 /// The hub's default port when an `http` address names none.
 pub const DEFAULT_PORT: u16 = 7370;
+/// The ports a bare host is tried on, in order: the main port, a Docker
+/// hub's relay-only door (host port), the relay-only door itself.
+pub const DISCOVERY_PORTS: [u16; 3] = [DEFAULT_PORT, 7378, 7371];
 /// Upload cap assumed for a hub that does not advertise one (today's hub).
 pub const LEGACY_MAX_ATTACHMENT_BYTES: u64 = 25 * 1024 * 1024;
 /// The hub caps a long poll at 55 s; we ask for that and allow slack on top.
@@ -44,10 +47,31 @@ impl HubAddress {
         if u.host_str().is_none_or(str::is_empty) {
             return Err(Error::Invalid("the address has no host".into()));
         }
-        if u.scheme() == "http" && u.port().is_none() {
+        // a typed :80 is kept (the URL itself drops a scheme's default port)
+        if u.scheme() == "http" && u.port().is_none() && !has_port(&a) {
             let _ = u.set_port(Some(DEFAULT_PORT));
         }
         Ok(Self(u.as_str().trim_end_matches('/').to_owned()))
+    }
+
+    /// Where to look for a hub the user typed (user 23:46Z: no port to
+    /// enter). A bare host, without scheme or port, is tried as the main port
+    /// 7370, then 7378 (a Docker hub's relay-only door), then 7371 (the door
+    /// itself, Orgtree's included), then https (a tunnel), in that order of
+    /// preference; anything else is used as typed.
+    pub fn candidates(input: &str) -> Result<Vec<Self>> {
+        let typed = Self::parse(input)?;
+        let t = input.trim().trim_end_matches('/');
+        let authority = t.split(['/', '?', '#']).next().unwrap_or("");
+        if t.contains("://") || has_port(t) || authority.len() != t.len() {
+            return Ok(vec![typed]);
+        }
+        let mut all: Vec<Self> = DISCOVERY_PORTS
+            .iter()
+            .map(|p| Self::parse(&format!("http://{authority}:{p}")))
+            .collect::<Result<_>>()?;
+        all.push(Self::parse(&format!("https://{authority}"))?);
+        Ok(all)
     }
 
     pub fn as_str(&self) -> &str {
@@ -57,6 +81,15 @@ impl HubAddress {
     pub(crate) fn join(&self, path: &str) -> String {
         format!("{}{}", self.0, path)
     }
+}
+
+/// The address names a port (`host:8000`, `http://[::1]:7371/x`).
+fn has_port(addr: &str) -> bool {
+    let rest = addr.split_once("://").map_or(addr, |(_, r)| r);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    authority
+        .rsplit_once(':')
+        .is_some_and(|(h, p)| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) && !h.ends_with(':'))
 }
 
 impl std::fmt::Display for HubAddress {
@@ -592,5 +625,30 @@ mod tests {
         assert_eq!(n("https://hub.example.com"), "https://hub.example.com");
         assert!(HubAddress::parse("  ").is_err());
         assert!(HubAddress::parse("ftp://x").is_err());
+    }
+
+    #[test]
+    fn a_bare_host_is_looked_for_on_the_known_ports() {
+        let c = |s: &str| -> Vec<String> {
+            HubAddress::candidates(s).unwrap().iter().map(|a| a.as_str().to_owned()).collect()
+        };
+        assert_eq!(
+            c("star-hub"),
+            [
+                "http://star-hub:7370",
+                "http://star-hub:7378",
+                "http://star-hub:7371",
+                "https://star-hub"
+            ]
+        );
+        assert_eq!(c(" 100.64.1.2/ ").len(), 4);
+        // an explicit port or URL is used as typed
+        assert_eq!(c("star-hub:7378"), ["http://star-hub:7378"]);
+        assert_eq!(c("star-hub:80"), ["http://star-hub"]);
+        assert_eq!(c("http://star-hub"), ["http://star-hub:7370"]);
+        assert_eq!(c("https://xyz.trycloudflare.com"), ["https://xyz.trycloudflare.com"]);
+        assert_eq!(c("[::1]:7371"), ["http://[::1]:7371"]);
+        assert_eq!(c("star-hub/some/path"), ["http://star-hub:7370/some/path"]);
+        assert!(HubAddress::candidates(" ").is_err());
     }
 }
