@@ -21,7 +21,7 @@ cp "$dmg" "$out/Hubchat_${v}_universal.dmg"
 cp "$tgz" "$out/$name"
 cp "$tgz.sig" "$out/$name.sig"
 for key in darwin-aarch64 darwin-x86_64; do
-  ASSET="$name" KEY="$key" SIG="$out/$name.sig" node .github/ci/macos/updater-json.cjs > "$out/updater-$key.json"
+  ASSET="$name" KEY="$key" SIG="$out/$name.sig" node "$(dirname "$0")/updater-json.cjs" > "$out/updater-$key.json"
 done
 ls -la "$out"
 (cd "$out" && shasum -a 256 -- *)

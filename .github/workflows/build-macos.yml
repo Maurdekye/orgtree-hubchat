@@ -22,7 +22,7 @@ env:
   RUSTC_COMMIT: f52090008
   NODE_VERSION: 24.12.0
   NPM_VERSION: 11.6.2
-  TARGETS: aarch64-apple-darwin x86_64-apple-darwin
+  TARGETS: aarch64-apple-darwin,x86_64-apple-darwin
 
 jobs:
   build:
@@ -32,6 +32,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      # The helper scripts come from this workflow's own commit, so any ref
+      # (also one older than these scripts) can be built.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: .ci-tools
+          sparse-checkout: .github/ci
           persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -48,7 +57,7 @@ jobs:
 
       - name: Rust ${{ env.RUST_TOOLCHAIN }} (preinstalled rustup)
         run: |
-          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update --target $TARGETS
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update --target "$TARGETS"
           echo "RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN" >> "$GITHUB_ENV"
           RUSTUP_TOOLCHAIN="$RUST_TOOLCHAIN" rustc -Vv
           RUSTUP_TOOLCHAIN="$RUST_TOOLCHAIN" rustc -Vv | grep -q "commit-hash: $RUSTC_COMMIT"
@@ -72,7 +81,7 @@ jobs:
           SIGNING: ${{ inputs.signing || 'test' }}
           REAL_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           REAL_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: .github/ci/macos/signing-key.sh
+        run: .ci-tools/.github/ci/macos/signing-key.sh
 
       - name: Build (universal app + dmg + updater bundle)
         env:
@@ -82,10 +91,10 @@ jobs:
         run: npx tauri build --target universal-apple-darwin --bundles app,dmg --ci
 
       - name: Stage release assets
-        run: .github/ci/macos/stage.sh target/universal-apple-darwin/release/bundle "$RUNNER_TEMP/out"
+        run: .ci-tools/.github/ci/macos/stage.sh target/universal-apple-darwin/release/bundle "$RUNNER_TEMP/out"
 
       - name: Launch smoke
-        run: .github/ci/macos/smoke.sh "$RUNNER_TEMP/out"
+        run: .ci-tools/.github/ci/macos/smoke.sh "$RUNNER_TEMP/out"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
