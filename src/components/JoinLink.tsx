@@ -11,7 +11,7 @@ import { Icon } from "../lib/icons";
 import { endJoin, type JoinReq } from "../lib/join";
 import { errText } from "../lib/native";
 import { copyWords, downloadWords } from "../lib/recovery";
-import { reloadAfterSwitch, useSnap } from "../lib/store";
+import { getSnap, reloadAfterSwitch, useSnap } from "../lib/store";
 import { toast } from "../lib/toast";
 import { HubAdder } from "./HubAdder";
 import { HubReview, useHubReview } from "./HubReview";
@@ -169,8 +169,7 @@ export function JoinFlow({ req }: { req: JoinReq }) {
     const hub = st.hub;
     hubRef.current = hub;
     void (async () => {
-      let name = platform === "android" ? "Android phone" : "Windows PC";
-      try { const d = await api.devices(); name = d.devices.find((x) => x.device_id === d.this_device)?.name || name; } catch { /* the default name */ }
+      const name = getSnap().state?.device_name || (platform === "android" ? "Android phone" : "Windows PC");
       try {
         const s = await api.linkStart(hub.url, name, req.code, req.hubs);
         setSt((c) => (c.k === "starting" ? { k: "waiting", hub, s, until: Date.now() + 600e3 } : c));

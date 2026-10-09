@@ -276,11 +276,28 @@ function Devices({ onLink, goTab }: { onLink?: (tab?: LinkTab, input?: string) =
   const [list, setList] = useState<Devices | null>(null);
   useEffect(() => { api.devices().then(setList, () => setList(null)); }, []);
   const others = (list?.devices || []).filter((d) => d.device_id !== list?.this_device);
+  // its name is its own (linking asks for none, user 00:16Z); renamed here
+  const devName = snap.state!.device_name || self;
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const rename = async () => {
+    try { await api.setDeviceName(renaming ?? ""); await refreshState(); setRenaming(null); toast("Renamed this device"); }
+    catch (e) { toast(errText(e)); }
+  };
   return (
     <>
       <Sec title="Your devices" first>
         <Card>
-          <Row icon={platform === "android" ? "phone" : "computer"} t1={<>{self} <span className="chip">this device</span></>} t2={<>Holds your key · <span className="mono"><Addr a={me.address} net /></span></>} />
+          <Row icon={platform === "android" ? "phone" : "computer"} t1={<>{devName} <span className="chip">this device</span></>} t2={<>Holds your key · <span className="mono"><Addr a={me.address} net /></span></>}
+            right={renaming === null ? <button className={platform === "android" ? "icon-btn" : "btn"} onClick={() => setRenaming(devName)} aria-label="Rename this device" title="Rename this device"><Icon name="edit" />{platform === "android" ? null : "Rename"}</button> : null} />
+          {renaming !== null ? (
+            <div className={"set-row dev-rename" + pad}>
+              <label className="input"><input value={renaming} maxLength={64} autoFocus aria-label="Device name" onChange={(e) => setRenaming(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") void rename(); else if (e.key === "Escape") { e.stopPropagation(); setRenaming(null); } }} /></label>
+              <button className="btn primary" onClick={() => void rename()} disabled={!renaming.trim()}>Save</button>
+              <button className="btn ghost" onClick={() => setRenaming(null)}>Cancel</button>
+              <span className="help">Your other devices show this name, and it's what a device you link to asks you to approve.</span>
+            </div>
+          ) : null}
           {platform === "android"
             ? <div className="pad" style={{ marginTop: 6 }}><button className="btn block" onClick={() => link()}><Icon name="link" />Link a device</button></div>
             : <div className="set-row"><button className="btn" onClick={() => link()}><Icon name="link" />Link a device</button><span className="help">Bring your identity to a new phone or PC: show a QR code for it to scan, approve its code, show your key as a QR code, or save a key file.</span></div>}

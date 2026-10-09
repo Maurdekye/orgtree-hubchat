@@ -47,6 +47,8 @@ export interface State {
   notifications: NotifySettings;
   /** Android (design D6): stay connected (true) or check about every 15 minutes; null on desktop. */
   stay_connected: boolean | null;
+  /** What other devices see this one called: its own name, or the one set in Settings › Devices. */
+  device_name: string;
   hubs: HubStatus[];
   platform: "desktop" | "android";
 }
@@ -239,6 +241,8 @@ export const tauriApi = {
   setReadReceipts: (on: boolean) => invoke<void>("hc_set_read_receipts", { on }),
   setNotifications: (n: NotifySettings) => invoke<void>("hc_set_notifications", { enabled: n.enabled, preview: n.preview, sound: n.sound }),
   setStayConnected: (on: boolean) => invoke<void>("hc_set_stay_connected", { on }),
+  /** Settings › Devices: rename this device (empty: its own name again); the name it now has. */
+  setDeviceName: (name: string) => invoke<string>("hc_set_device_name", { name }),
 
   probeHub: (input: string) => invoke<Probe>("hc_probe_hub", { input }),
   /** A link's hub under each address it names: the likeliest that answers as `name`. */

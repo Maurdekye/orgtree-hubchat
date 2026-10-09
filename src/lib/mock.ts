@@ -40,6 +40,7 @@ const st: State = {
   read_receipts: true,
   notifications: { enabled: true, preview: true, sound: false },
   stay_connected: new URLSearchParams(location.search).get("platform") === "android" ? true : null,
+  device_name: new URLSearchParams(location.search).get("platform") === "android" ? "Pixel 8" : "Home-PC",
   platform: params.get("platform") === "android" ? "android" : "desktop",
   hubs: onboarding ? [] : [
     { url: OFFICE, name: "office", state: "connected", error: null, retry_at_ms: null, max_attachment_bytes: GB, features: ["v2"], version: "1.4.0" },
@@ -420,6 +421,12 @@ export const mockApi: Api = {
   setReadReceipts: async (on) => { st.read_receipts = on; },
   setNotifications: async (n) => { st.notifications = { ...n }; },
   setStayConnected: async (on) => { await sleep(300); st.stay_connected = on; },
+  setDeviceName: async (name) => {
+    await sleep(200);
+    if (name.trim().length > 64) throw "a device name has at most 64 characters";
+    st.device_name = name.trim() || (st.platform === "android" ? "Pixel 8" : "Home-PC");
+    return st.device_name;
+  },
 
   probeHub: async (input): Promise<Probe> => {
     const url = normHub(input);

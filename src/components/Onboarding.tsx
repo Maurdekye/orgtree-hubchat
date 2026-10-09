@@ -25,14 +25,14 @@ import footerCrop from "../assets/desktop-footer-qr.png";
 import footerQr from "../assets/desktop-footer-qr.json";
 
 // review: the hubs a linked identity brings (shown by LinkWait once it arrives)
-type Step = "welcome" | "id" | "addr" | "hub" | "key" | "method" | "restore" | "linkhub" | "linkname" | "linkcode" | "scan" | "keyfile"
+type Step = "welcome" | "id" | "addr" | "hub" | "key" | "method" | "restore" | "linkhub" | "linkcode" | "scan" | "keyfile"
   | "typecode" | "joinname" | "joinhub" | "join" | "needgive" | "review";
 // join: scan the other device's link QR; type: type its code (and the hub)
 type Flow = "new" | "words" | "link" | "qr" | "file" | "join" | "type";
 const FLOW: Record<Flow, Step[]> = {
   new: ["welcome", "id", "addr", "hub", "key"],
   words: ["welcome", "method", "restore", "hub"],
-  link: ["welcome", "method", "linkhub", "linkname", "linkcode", "review"],
+  link: ["welcome", "method", "linkhub", "linkcode", "review"],
   qr: ["welcome", "method", "scan", "hub"],
   file: ["welcome", "method", "keyfile", "hub"],
   join: ["welcome", "method", "scan", "joinname", "join", "review"],
@@ -96,20 +96,6 @@ const pad = (platform: string) => (platform === "android" ? { padding: "0 20px" 
 
 /** What the browser mock's camera reads by default: a PC's link QR. */
 const MOCK_LINK_QR = "hubchat://link?code=M3PX-7QRT-K2ZD-9HAW&hub=" + encodeURIComponent("http://hub.office.lan:7370") + "&role=give";
-
-/** The device-name field the other device shows when it asks to approve. */
-function DevName({ value, set, onEnter, help }: { value: string; set: (v: string) => void; onEnter: () => void; help?: ReactNode }) {
-  const platform = usePlatform();
-  return (
-    <div className="field">
-      <label htmlFor="ob-dev">Device name</label>
-      <label className="input"><Icon name={platform === "android" ? "phone" : "computer"} />
-        <input id="ob-dev" value={value} autoFocus={platform === "desktop"} maxLength={48} autoComplete="off" onChange={(e) => set(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") onEnter(); }} />
-      </label>
-      {help ? <div className="help">{help}</div> : null}
-    </div>
-  );
-}
 
 /** A real crop of the desktop sidebar footer (tools/make-footer-crop.mjs) with
  *  its QR button ringed: where to click on the PC to show the link QR. */
@@ -302,7 +288,8 @@ export function Onboarding() {
   const [words, setWords] = useState<string[]>([]);
   const [restore, setRestore] = useState("");
   const [linkHub, setLinkHub] = useState<{ url: string; name: string } | null>(null);
-  const [devName, setDevName] = useState(platform === "android" ? "Android phone" : "Windows PC");
+  // what the other device shows when it asks to approve: this device's own name
+  const devName = snap.state?.device_name || (platform === "android" ? "Android phone" : "Windows PC");
   const [keyFile, setKeyFile] = useState<string | null>(null);
   const [pass, setPass] = useState("");
   const [join, setJoin] = useState<Join | null>(null);
@@ -345,7 +332,8 @@ export function Onboarding() {
   });
   // the name step checks that this device reaches the code's hub; if not, ask for an address that works
   useEffect(() => {
-    if (step !== "joinname" || !join || join.ok) return;
+    if (step !== "joinname" || !join) return;
+    if (join.ok) { go("join"); return; }
     if (!join.hub) { go("joinhub"); return; }
     let live = true;
     // the link may name its hub several ways (a PC's localhost hub: its Tailscale name and addresses)
@@ -541,19 +529,7 @@ export function Onboarding() {
       <Frame step={step} flow={flow} back={() => go("method")} wide actions={[]}>
         <h2>Which hub does your other device use?</h2>
         <p className="lead">Linking travels through a hub, so this {device} needs to reach one that your other device uses. Nothing is added yet: the hubs you use come with your identity.</p>
-        <HubAdder existing={[]} autoFocus onPick={(url, n) => { setLinkHub({ url, name: n }); go("linkname"); }} />
-      </Frame>
-    );
-  }
-
-  if (step === "linkname") {
-    const ok = !!devName.trim();
-    return (
-      <Frame step={step} flow={flow} back={() => go("linkhub")} actions={[{ label: "Show the code", primary: true, disabled: !ok, onClick: () => go("linkcode") }]}>
-        <h2>Name this {device}</h2>
-        <p className="lead">Your other device shows this name when it asks you to approve, so you can tell it's this {device}.</p>
-        <DevName value={devName} set={setDevName} onEnter={() => { if (ok) go("linkcode"); }}
-          help={<>Linking through <b>{linkHub?.name}</b> <span className="mono">{linkHub?.url}</span></>} />
+        <HubAdder existing={[]} autoFocus onPick={(url, n) => { setLinkHub({ url, name: n }); go("linkcode"); }} />
       </Frame>
     );
   }
@@ -602,14 +578,11 @@ export function Onboarding() {
   }
 
   if (step === "joinname" && join) {
-    const ok = !!devName.trim() && !!join.ok;
+    // no name to type (user 00:16Z): this step only reaches the code's hub, then goes on
     return (
-      <Frame step={step} flow={flow} back={() => go(flow === "type" ? "typecode" : "method")} actions={[{ label: "Continue", primary: true, disabled: !ok, onClick: () => go("join") }]}>
-        <h2>Name this {device}</h2>
-        <p className="lead">{platform === "android" ? "Your PC" : "Your other device"} shows this name when it asks you to approve, so you can tell it's this {device}.</p>
-        <DevName value={devName} set={setDevName} onEnter={() => { if (ok) go("join"); }}
-          help={join.ok ? <>Code <span className="mono">{join.code}</span> · through <b>{join.ok.name}</b> <span className="mono">{join.ok.url}</span></> : undefined} />
-        {join.ok ? null : <div className="probe-card busy"><span className="spin" /><div>Reaching the hub at <span className="mono">{join.hub}</span>…</div></div>}
+      <Frame step={step} flow={flow} back={() => go(flow === "type" ? "typecode" : "method")} actions={[]}>
+        <h2>Linking this {device}</h2>
+        <div className="probe-card busy"><span className="spin" /><div>Reaching the hub at <span className="mono">{join.hub}</span>…</div></div>
       </Frame>
     );
   }
