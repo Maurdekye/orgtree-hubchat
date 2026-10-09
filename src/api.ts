@@ -308,7 +308,7 @@ export const tauriApi = {
   /** A newer Hubchat for this phone, from the release feed (`feed`: test builds only). */
   appUpdateCheck: (feed?: string | null) => invoke<AppUpdate | null>("hc_app_update_check", { feed: feed ?? null }),
   /** Download, verify and hand to Android: "permission" (allow it first) or "installing". */
-  appUpdateInstall: (url: string, signature: string) => invoke<string>("hc_app_update_install", { url, signature }),
+  appUpdateInstall: (url: string, signature: string, version: string) => invoke<string>("hc_app_update_install", { url, signature, version }),
   /** Open Android's "Install unknown apps" setting for Hubchat. */
   appUpdateAllow: () => invoke<void>("hc_app_update_allow"),
   /** Android installer's last word: "", "confirm", "done" or "failed: …". */

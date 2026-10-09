@@ -175,8 +175,10 @@ itself from it, and so does Android.
    APK with `scripts/android-build.sh release` and the release keystore. The
    APK must keep the same signing certificate, or Android refuses to update.
 3. **Sign the APK for the in-app updater**:
-   `npx tauri signer sign -f <updater key file> Hubchat_<version>_arm64.apk`
-   writes `Hubchat_<version>_arm64.apk.sig`.
+   `npx tauri signer sign -f <updater key file> --app-version <version> Hubchat_<version>_arm64.apk`
+   writes `Hubchat_<version>_arm64.apk.sig`. The version goes into the
+   signature, and the app refuses an update whose signature names a
+   different version.
 4. **Write `latest.json`**. Its `platforms` has two entries, each with the
    download URL and the contents of that file's `.sig`:
    - `windows-x86_64`: the setup `.exe`;

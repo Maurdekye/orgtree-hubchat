@@ -63,10 +63,25 @@ fn pick(feed: Feed, current: &semver::Version) -> R<Option<AppUpdate>> {
     }))
 }
 
-/// The updater key's minisign signature over `data`, as the desktop updater
-/// checks it: both are base64 of minisign's text form.
+/// The version a signature was made for: tab-separated `key:value` pairs in
+/// its trusted comment (`tauri signer sign --app-version` writes `version:`).
 #[cfg_attr(not(target_os = "android"), allow(dead_code))]
-fn verify(pubkey: &str, signature: &str, data: &[u8]) -> R<()> {
+fn signed_for(trusted_comment: &str, version: &str) -> bool {
+    let Some(signed) = trusted_comment.split('\t').find_map(|f| f.strip_prefix("version:")) else {
+        return false;
+    };
+    match (semver::Version::parse(signed.trim_start_matches('v')), semver::Version::parse(version.trim_start_matches('v'))) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => signed == version,
+    }
+}
+
+/// The updater key's minisign signature over `data`, as the desktop updater
+/// checks it: both are base64 of minisign's text form. Like the desktop's
+/// requireSignedVersion, the signature must also name `version`, so an older
+/// signed release can't be passed off as a newer one.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn verify(pubkey: &str, signature: &str, data: &[u8], version: &str) -> R<()> {
     use base64::Engine;
     let text = |b64: &str| -> R<String> {
         let raw = base64::engine::general_purpose::STANDARD.decode(b64.trim()).map_err(|e| e.to_string())?;
@@ -74,7 +89,12 @@ fn verify(pubkey: &str, signature: &str, data: &[u8]) -> R<()> {
     };
     let key = minisign_verify::PublicKey::decode(&text(pubkey)?).map_err(|e| e.to_string())?;
     let sig = minisign_verify::Signature::decode(&text(signature)?).map_err(|_| "the update's signature can't be read".to_string())?;
-    key.verify(data, &sig, true).map_err(|_| "the download isn't signed by Hubchat's update key".to_string())
+    key.verify(data, &sig, true).map_err(|_| "the download isn't signed by Hubchat's update key".to_string())?;
+    // only now is the trusted comment trustworthy: the verify above covers it
+    if !signed_for(sig.trusted_comment(), version) {
+        return Err(format!("the download isn't signed as Hubchat {version}"));
+    }
+    Ok(())
 }
 
 /// Is there a newer Hubchat for this phone? `feed` replaces the release feed
@@ -106,7 +126,7 @@ pub async fn hc_app_update_check(app: AppHandle, feed: Option<String>) -> R<Opti
 /// install updates (the banner explains and opens that setting), else
 /// "installing". Progress goes out as `app-update-progress` [done, total].
 #[tauri::command]
-pub async fn hc_app_update_install(app: AppHandle, url: String, signature: String) -> R<String> {
+pub async fn hc_app_update_install(app: AppHandle, url: String, signature: String, version: String) -> R<String> {
     #[cfg(target_os = "android")]
     {
         use std::io::Write;
@@ -132,7 +152,7 @@ pub async fn hc_app_update_install(app: AppHandle, url: String, signature: Strin
         }
         drop(file);
         let data = std::fs::read(&path).map_err(|e| e.to_string())?;
-        if let Err(e) = verify(&pubkey, &signature, &data) {
+        if let Err(e) = verify(&pubkey, &signature, &data, &version) {
             let _ = std::fs::remove_file(&path);
             return Err(e);
         }
@@ -142,7 +162,7 @@ pub async fn hc_app_update_install(app: AppHandle, url: String, signature: Strin
     }
     #[cfg(not(target_os = "android"))]
     {
-        let _ = (app, url, signature);
+        let _ = (app, url, signature, version);
         Err("not on this platform".into())
     }
 }
@@ -192,6 +212,14 @@ mod tests {
         // the real updater key, from tauri.conf.json
         let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         let key = conf["plugins"]["updater"]["pubkey"].as_str().unwrap();
-        assert!(verify(key, "bm90IGEgc2lnbmF0dXJl", b"apk").is_err());
+        assert!(verify(key, "bm90IGEgc2lnbmF0dXJl", b"apk", "0.1.3").is_err());
+    }
+
+    #[test]
+    fn the_signature_must_name_the_announced_version() {
+        let c = "timestamp:1791543797\tfile:Hubchat_0.1.3_arm64.apk\tversion:0.1.3";
+        assert!(signed_for(c, "0.1.3") && signed_for(c, "v0.1.3"));
+        assert!(!signed_for(c, "0.1.4"));
+        assert!(!signed_for("timestamp:1791543797\tfile:Hubchat_0.1.3_arm64.apk", "0.1.3"));
     }
 }

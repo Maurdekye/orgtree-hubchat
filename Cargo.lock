@@ -1880,11 +1880,15 @@ name = "hubchat"
 version = "0.1.2"
 dependencies = [
  "arboard",
+ "base64 0.22.1",
  "hubchat-core",
  "humantime",
  "jni 0.21.1",
  "keyring",
+ "minisign-verify",
  "png 0.17.16",
+ "reqwest 0.12.28",
+ "semver",
  "serde",
  "serde_json",
  "tauri",
