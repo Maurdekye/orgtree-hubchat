@@ -276,6 +276,9 @@ export const tauriApi = {
   attachmentPreview: (messageId: string, localId: string) => invoke<ArrayBuffer>("hc_attachment_preview", { messageId, localId }),
   /** An image the composer holds, for its thumbnail. */
   filePreview: (source: string, name: string) => invoke<ArrayBuffer>("hc_file_preview", { source, name }),
+  /** The clipboard, read natively (desktop: the right-click menu's Paste). */
+  clipboardText: () => invoke<string | null>("hc_clipboard_text"),
+  clipboardImage: () => invoke<ArrayBuffer>("hc_clipboard_image"),
   /** A pasted image saved as a file the composer can attach; its path. */
   savePasted: (name: string, data: Uint8Array) => invoke<string>("hc_save_pasted", data, { headers: { "x-name": name } }),
   devices: () => invoke<Devices>("hc_devices"),

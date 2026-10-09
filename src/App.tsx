@@ -2,10 +2,12 @@
 // then the platform's layout.
 import React, { useEffect } from "react";
 import { Android } from "./components/Android";
+import { CtxMenu } from "./components/CtxMenu";
 import { Desktop } from "./components/Desktop";
 import { Onboarding } from "./components/Onboarding";
 import { PlatformCtx, Toasts } from "./components/ui";
 import { TitleBar } from "./components/TitleBar";
+import { onContextMenu } from "./lib/ctxmenu";
 import { Logo } from "./lib/icons";
 import { startStore, useSnap } from "./lib/store";
 
@@ -13,6 +15,14 @@ export default function App() {
   const snap = useSnap();
   useEffect(() => { void startStore(); }, []);
   const platform = snap.state?.platform ?? "desktop";
+  // desktop: Hubchat's own right-click menus, never the WebView's (user
+  // 2026-10-09 05:54Z); Android keeps its own long-press behaviour
+  const desktop = snap.state?.platform === "desktop";
+  useEffect(() => {
+    if (!desktop) return;
+    document.addEventListener("contextmenu", onContextMenu);
+    return () => document.removeEventListener("contextmenu", onContextMenu);
+  }, [desktop]);
 
   // Desktop windows are frameless: our own title bar sits on top of everything.
   const framed = (content: React.ReactNode) =>
@@ -29,5 +39,5 @@ export default function App() {
   if (snap.onboarding || !snap.state.me) body = <><Onboarding /><Toasts /></>;
   // keyed by address: after switching identity the layout starts afresh
   else body = platform === "android" ? <Android key={snap.state.me.address} /> : <Desktop key={snap.state.me.address} />;
-  return <PlatformCtx.Provider value={platform}>{framed(body)}</PlatformCtx.Provider>;
+  return <PlatformCtx.Provider value={platform}>{framed(<>{body}{desktop ? <CtxMenu /> : null}</>)}</PlatformCtx.Provider>;
 }

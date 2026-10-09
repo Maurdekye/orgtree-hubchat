@@ -7,7 +7,8 @@ import { isLong, num, time } from "../lib/format";
 import { esc, md } from "../lib/md";
 import { copyText, errText, openAttachment, openFile, openLink } from "../lib/native";
 import { attView, msgTime, preview, tickInfo, type Kind } from "../lib/peers";
-import { previewable } from "../lib/images";
+import { openImage, previewable } from "../lib/images";
+import { openMenu, selectionIn, type MenuEntry } from "../lib/ctxmenu";
 import { useTransfer } from "../lib/store";
 import { toast } from "../lib/toast";
 import { AttImage } from "./AttImage";
@@ -40,7 +41,7 @@ function FileCard({ a, m }: { a: Attachment; m: Message }) {
     else if (m.outgoing && a.source && v.st === "local" && !a.source.startsWith("content://")) openFile(a.source).catch(() => {});
   };
   return (
-    <div className={"att-file " + v.st} onClick={click} title={a.name} role="button">
+    <div className={"att-file " + v.st} data-att={a.local_id} onClick={click} title={a.name} role="button">
       <span className="att-ic"><Icon name={v.ic} /></span>
       <span className="att-t">
         <span className="att-n">{a.name}</span>
@@ -52,6 +53,27 @@ function FileCard({ a, m }: { a: Attachment; m: Message }) {
       {v.cancel ? <button className="att-x" title={m.outgoing ? "Cancel upload" : "Cancel download"} onClick={(e) => { e.stopPropagation(); api.cancelTransfer(a.local_id).catch(() => {}); }}><Icon name="close" /></button> : null}
     </div>
   );
+}
+
+/** A picture's or a file's own actions, for the right-click menu: what its
+ *  card and the picture viewer offer. */
+function attMenu(m: Message, a: Attachment): MenuEntry[] {
+  const v = attView(a, m);
+  const out: MenuEntry[] = [];
+  const download = () => void api.download(m.id, a.local_id).then(() => toast("Saved to Downloads"), (e) => toast("Download failed: " + errText(e)));
+  if (previewable(a)) out.push({ label: "View", icon: "image", run: () => openImage(m, a) });
+  if (v.download) out.push({ label: "Download", icon: "download", run: download });
+  if (v.retry === "download") out.push({ label: "Retry download", icon: "refresh", run: download });
+  if (v.retry === "send") out.push({ label: "Retry upload", icon: "refresh", run: () => void api.retry(m.id).catch((e) => toast(errText(e))) });
+  if (v.open && a.local_path) {
+    out.push({ label: "Open", icon: "open_in_new", run: () => void openAttachment(m.id, a.local_id, false).catch((e) => toast(errText(e))) });
+    out.push({ label: "Show in folder", icon: "folder", run: () => void openAttachment(m.id, a.local_id, true).catch((e) => toast(errText(e))) });
+  } else if (m.outgoing && a.source && v.st === "local" && !a.source.startsWith("content://")) {
+    const src = a.source;
+    out.push({ label: "Open", icon: "open_in_new", run: () => void openFile(src).catch(() => {}) });
+  }
+  if (v.cancel) out.push({ label: m.outgoing ? "Cancel upload" : "Cancel download", icon: "close", run: () => void api.cancelTransfer(a.local_id).catch(() => {}) });
+  return out;
 }
 
 export interface MsgHandlers {
@@ -120,11 +142,40 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
   }
 
   const failed = m.state === "failed";
+  // desktop right-click (user 2026-10-09 05:54Z): what was clicked first (a
+  // link, an address, a picture or a file), then the message's own actions,
+  // as its hover bar and failed line offer them
+  const menu = (e: MouseEvent<HTMLDivElement>) => {
+    if (platform !== "desktop") return;
+    e.preventDefault();
+    const t = e.target as HTMLElement;
+    const items: MenuEntry[] = [];
+    const link = t.closest("a.md-a") as HTMLElement | null;
+    const addr = t.closest("a.addr") as HTMLElement | null;
+    const att = t.closest("[data-att]") as HTMLElement | null;
+    if (link) {
+      const href = link.dataset.href || "";
+      items.push({ label: "Open link", icon: "open_in_new", run: () => void openLink(href) }, { label: "Copy link", icon: "link", run: () => void copyText(href, "Link copied") }, "sep");
+    } else if (addr) {
+      const slug = addr.dataset.slug || "";
+      items.push({ label: "Open chat", icon: "forum", run: () => onOpenAddr(slug) }, { label: "Copy address", icon: "copy", run: () => void copyText("@net:" + slug, "Address copied") }, "sep");
+    } else if (att) {
+      const a = m.attachments.find((x) => x.local_id === att.dataset.att);
+      if (a) items.push(...attMenu(m, a), "sep");
+    }
+    const sel = selectionIn(e.currentTarget);
+    items.push({ label: "Reply", icon: "reply", run: () => onReply(m) });
+    if (sel) items.push({ label: "Copy selection", icon: "copy", run: () => void copyText(sel, "Copied") });
+    else if (m.body) items.push({ label: "Copy text", icon: "copy", run: () => void copyText(m.body, "Copied") });
+    items.push({ label: "Message info", icon: "info", run: () => onInfo(m) });
+    if (failed) items.push("sep", { label: "Retry", icon: "refresh", run: () => void api.retry(m.id).catch((er) => toast(errText(er))) }, { label: "Delete", icon: "delete", bad: true, run: () => onDelete(m) });
+    openMenu(e.clientX, e.clientY, items);
+  };
   return (
     <div className={"msg " + (m.outgoing ? "out" : "in") + (first ? " first" : "") + (selected ? " sel" : "")} id={"m-" + m.id} data-id={m.id}>
       {platform === "android" ? <span className="swipe-ic"><Icon name="reply" /></span> : null}
       <div className="row">
-        <div className={"bubble" + (m.attachments.length && !m.body ? " only-att" : "") + (m.reply_to ? " has-quote" : "")} onClick={delegate}>
+        <div className={"bubble" + (m.attachments.length && !m.body ? " only-att" : "") + (m.reply_to ? " has-quote" : "")} onClick={delegate} onContextMenu={menu}>
           {k ? <div className={"kchip " + k[1]}>{k[0]}</div> : null}
           {quote}
           {m.attachments.length ? <div className="atts">{m.attachments.map((a) => <AttCard key={a.local_id} a={a} m={m} />)}</div> : null}

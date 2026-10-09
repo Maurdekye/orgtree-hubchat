@@ -8,6 +8,7 @@ import { ms } from "../lib/format";
 import { displayName, kindOf, presence, type Kind } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { HubHelpLink } from "./HubHelp";
+import { chatMenu } from "./ChatList";
 import { Addr, Avatar, KindGlyph, Modal, ModalHead, PeerAvatar, usePlatform } from "./ui";
 
 type KindF = "all" | Kind;
@@ -20,7 +21,7 @@ export const isLinkWaiting = (c: Contact) => /^link\.[^.]+$/.test(c.address) && 
 /** The directory as people see it: without you and without waiting link addresses. */
 export const listed = (dir: Contact[], me: string | undefined) => dir.filter((c) => c.address !== me && !isLinkWaiting(c));
 
-export function Directory({ onOpen, onClose, onBack }: { onOpen: (address: string) => void; onClose?: () => void; onBack?: () => void }) {
+export function Directory({ onOpen, onClose, onBack, onInfo }: { onOpen: (address: string) => void; onClose?: () => void; onBack?: () => void; onInfo?: (address: string) => void }) {
   const snap = useSnap();
   const platform = usePlatform();
   const hubs = snap.state?.hubs || [];
@@ -52,7 +53,8 @@ export function Directory({ onOpen, onClose, onBack }: { onOpen: (address: strin
     const via = c.hubs.map((u) => { const h = hubN(u); return h ? <span key={u} className={"chip hubchip" + (h.state === "connected" ? "" : " stale")} title={"Reachable through " + h.name + (h.state === "connected" ? "" : " (not connected)")}>{h.name}</span> : null; });
     const started = snap.chats.some((x) => x.peer === c.address);
     return (
-      <div className="nc-row dir-row" key={c.address} onClick={() => onOpen(c.address)} role="button">
+      <div className="nc-row dir-row" key={c.address} onClick={() => onOpen(c.address)} role="button"
+        onContextMenu={platform === "desktop" ? (e) => chatMenu(e, c.address, onOpen, onInfo, "Message") : undefined}>
         <PeerAvatar address={c.address} c={c} hubs={hubs} size={platform === "android" ? 44 : 40} />
         <div className="t">
           <div className="t1">{displayName(c, c.address)} <KindGlyph kind={kindOf(c)} /></div>

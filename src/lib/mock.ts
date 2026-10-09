@@ -536,6 +536,14 @@ export const mockApi: Api = {
     const own = a.source ? pasted.get(a.source) : undefined;
     return own ? (own.slice().buffer as ArrayBuffer) : picture(a.name, m.outgoing);
   },
+  // the browser has no native clipboard: tests set window.__clip (text) or
+  // window.__clipImage (PNG bytes)
+  clipboardText: async () => (window as unknown as { __clip?: string }).__clip || null,
+  clipboardImage: async () => {
+    const img = (window as unknown as { __clipImage?: Uint8Array }).__clipImage;
+    if (!img) throw "no picture on the clipboard";
+    return img.slice().buffer as ArrayBuffer;
+  },
   filePreview: async (source, name) => {
     await sleep(80);
     if (/broken/i.test(name)) throw "unreadable";

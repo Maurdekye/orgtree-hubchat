@@ -22,7 +22,7 @@ export function AttImage({ a, m, fallback }: { a: Attachment; m: Message; fallba
   if (failed) return <>{fallback}</>;
   const moving = v.st === "busy" || v.st === "bad";
   return (
-    <div className={"att-img" + (moving ? " xfer" : "") + (url ? "" : " wait")} role="button" title={a.name} aria-label={"Image " + a.name}
+    <div className={"att-img" + (moving ? " xfer" : "") + (url ? "" : " wait")} data-att={a.local_id} role="button" title={a.name} aria-label={"Image " + a.name}
       onClick={(e) => { e.stopPropagation(); if (url) openImage(m, a); }}>
       {url ? <img src={url} alt={a.name} draggable={false} /> : <span className="att-ph"><Icon name="image" /></span>}
       {moving ? (

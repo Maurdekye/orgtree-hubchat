@@ -1,9 +1,12 @@
 // The chat list rows (desktop sidebar and Android's first screen).
+import type { MouseEvent as ReactMouseEvent } from "react";
 import type { ChatSummary } from "../api";
 import { Icon, Logo } from "../lib/icons";
 import { shortWhen } from "../lib/format";
 import { displayName, isAgent, kindOf, msgTime, preview } from "../lib/peers";
 import { useSnap } from "../lib/store";
+import { openMenu } from "../lib/ctxmenu";
+import { copyText } from "../lib/native";
 import { Addr, KindGlyph, PeerAvatar, Tick, usePlatform } from "./ui";
 
 export type ChatFilter = "all" | "agents" | "people";
@@ -26,7 +29,18 @@ export function useFilteredChats(filter: ChatFilter, q: string, open: string | n
   return { rows, counts, total: snap.chats.length };
 }
 
-export function ChatRows({ rows, selected, onOpen }: { rows: ReturnType<typeof useFilteredChats>["rows"]; selected: string | null; onOpen: (peer: string) => void }) {
+/** Desktop right-click on a chat (user 2026-10-09 05:54Z): what the chat's
+ *  header and Android's chat menu offer. */
+export function chatMenu(e: ReactMouseEvent, peer: string, onOpen: (peer: string) => void, onInfo?: (peer: string) => void, open = "Open") {
+  e.preventDefault();
+  openMenu(e.clientX, e.clientY, [
+    { label: open, icon: "forum", run: () => onOpen(peer) },
+    ...(onInfo ? [{ label: "Contact info", icon: "info" as const, run: () => onInfo(peer) }] : []),
+    { label: "Copy address", icon: "copy", run: () => void copyText("@net:" + peer, "Address copied") },
+  ]);
+}
+
+export function ChatRows({ rows, selected, onOpen, onInfo }: { rows: ReturnType<typeof useFilteredChats>["rows"]; selected: string | null; onOpen: (peer: string) => void; onInfo?: (peer: string) => void }) {
   const snap = useSnap();
   const platform = usePlatform();
   const hubs = snap.state?.hubs || [];
@@ -43,6 +57,7 @@ export function ChatRows({ rows, selected, onOpen }: { rows: ReturnType<typeof u
         else prev = <>{m.kind === "question" ? <span className="q">Question ·</span> : null}{m.kind === "question" ? " " : null}<span className="t">{preview(m)}</span></>;
         return (
           <div key={c.peer} className={"crow" + (selected === c.peer ? " sel" : "") + (c.unread ? " unread" : "")} onClick={() => onOpen(c.peer)} role="button" tabIndex={0}
+            onContextMenu={platform === "desktop" ? (e) => chatMenu(e, c.peer, onOpen, onInfo) : undefined}
             onKeyDown={(e) => { if (e.key === "Enter") onOpen(c.peer); }}>
             <PeerAvatar address={c.peer} c={ct} hubs={hubs} size={platform === "android" ? 52 : 44} />
             <div className="crow-main">

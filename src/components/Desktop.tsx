@@ -84,6 +84,8 @@ export function Desktop() {
   const open = useCallback((peer: string) => { setChat(peer); setOv(null); setInfo((i) => (i?.k === "msg" && i.peer !== peer ? { k: "contact" } : i)); }, []);
   const onInfo = useCallback((m: Message) => setInfo({ k: "msg", id: m.id, peer: m.peer }), []);
   const toggleContact = useCallback(() => setInfo((i) => (i?.k === "contact" ? null : { k: "contact" })), []);
+  // the right-click menus' "Contact info": that chat, with its panel
+  const contactInfo = useCallback((peer: string) => { open(peer); setInfo({ k: "contact" }); }, [open]);
   const settings = (tab: SetTab) => setOv({ k: "settings", tab });
   // a hubchat:// link the system opened us with: a signed-in device's (role
   // give) is joined; a new device's (role take) is approved here
@@ -148,7 +150,7 @@ export function Desktop() {
           <div className="filters">{fchip("all", "All")}{fchip("agents", "Agents")}{fchip("people", "People")}</div>
           <div className="clist scroll">
             {!total && !chat ? <EmptyChats onNew={() => setOv({ k: "newchat", q: "" })} />
-              : rows.length ? <ChatRows rows={rows} selected={chat} onOpen={open} />
+              : rows.length ? <ChatRows rows={rows} selected={chat} onOpen={open} onInfo={contactInfo} />
               : <div className="list-empty"><Icon name="search" /><b>No chats match</b>To reach someone new, use <button className="link" onClick={() => setOv({ k: "newchat", q })}>New chat</button> and type their address.</div>}
           </div>
           <div className="side-foot">
@@ -173,7 +175,7 @@ export function Desktop() {
         {chat && info?.k === "msg" && info.peer === chat ? <InfoPanel id={info.id} peer={info.peer} onClose={() => setInfo(null)} /> : null}
       </div>
       {ov?.k === "newchat" ? <NewChatModal initial={ov.q} onOpen={open} onClose={() => setOv(null)} onDirectory={() => setOv({ k: "directory" })} /> : null}
-      {ov?.k === "directory" ? <Directory onOpen={open} onClose={() => setOv(null)} /> : null}
+      {ov?.k === "directory" ? <Directory onOpen={open} onInfo={contactInfo} onClose={() => setOv(null)} /> : null}
       {ov?.k === "link" ? <LinkDeviceModal initial={ov.tab} input={ov.input} onClose={() => setOv(null)} onRecovery={() => settings("recovery")} /> : null}
       {ov?.k === "settings" ? <SettingsModal tab={ov.tab} setTab={(t) => setOv({ k: "settings", tab: t })} onClose={() => setOv(null)} /> : null}
       {join ? <JoinFlow key={join.n} req={join} /> : null}
