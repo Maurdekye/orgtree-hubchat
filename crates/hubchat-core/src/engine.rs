@@ -1353,25 +1353,34 @@ impl Engine {
     }
 }
 
-/// Which connected hub a message to a peer goes through: a connected hub
-/// whose roster lists the peer; else, if no roster lists it anywhere, the
-/// first connected hub (which answers 422 for an unknown address).
+/// Which connected hub a message to a peer goes through (B1: a stable
+/// choice, so a chat doesn't hop between hubs): among connected hubs whose
+/// roster lists the peer, one where the peer is online; among those, the
+/// hub the chat `last` went through, else the first by address. If no
+/// roster lists the peer anywhere, the first connected hub by address
+/// (which answers 422 for an unknown address).
 fn pick_hub(
     connected: &[(String, HubClient, u64)],
     reaching: &[(String, bool)],
-    _last: Option<&str>,
+    last: Option<&str>,
 ) -> Option<(String, HubClient, u64)> {
-    connected
+    let get = |url: &str| connected.iter().find(|(u, _, _)| u == url);
+    if reaching.is_empty() {
+        return connected.iter().min_by(|a, b| a.0.cmp(&b.0)).cloned();
+    }
+    let usable: Vec<&(String, bool)> = reaching.iter().filter(|(u, _)| get(u).is_some()).collect();
+    let online = usable.iter().any(|(_, on)| *on);
+    let mut best: Vec<&str> = usable
         .iter()
-        .find(|(u, _, _)| reaching.iter().any(|(r, _)| r == u))
-        .or_else(|| {
-            if reaching.is_empty() {
-                connected.first()
-            } else {
-                None
-            }
-        })
-        .cloned()
+        .filter(|(_, on)| *on == online)
+        .map(|(u, _)| u.as_str())
+        .collect();
+    best.sort();
+    let url = best
+        .iter()
+        .find(|u| Some(**u) == last)
+        .or(best.first())?;
+    get(*url).cloned()
 }
 
 /// `name`, or `name (2)`, `name (3)`... so a download never overwrites.
