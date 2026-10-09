@@ -233,6 +233,26 @@ mod desktop {
         }
     }
 
+    /// "Start with Windows" starts hidden in the tray, but not the first start
+    /// of a version: the updater's restart hands the installer the old
+    /// process's arguments, `--hidden` among them, and an update the user just
+    /// clicked must come back on screen.
+    pub fn stays_hidden<I: IntoIterator<Item = String>>(args: I, first_of_version: bool) -> bool {
+        !first_of_version && args.into_iter().any(|a| a == "--hidden")
+    }
+
+    /// True when `dir` holds no record of having run `version` before (a new
+    /// install, an update, a downgrade); records it either way.
+    pub fn first_start_of_version(dir: &std::path::Path, version: &str) -> bool {
+        let file = dir.join("last-run-version");
+        let first = std::fs::read_to_string(&file).map_or(true, |v| v.trim() != version);
+        if first {
+            let _ = std::fs::create_dir_all(dir);
+            let _ = std::fs::write(&file, version);
+        }
+        first
+    }
+
     pub fn show(app: &AppHandle) {
         if let Some(w) = app.get_webview_window("main") {
             let _ = w.unminimize();
@@ -401,7 +421,11 @@ pub fn run() {
                 desktop::take_link_arg(std::env::args());
                 #[cfg(windows)]
                 desktop::register_scheme(app.handle());
-                if std::env::args().any(|a| a == "--hidden") {
+                let first = desktop::first_start_of_version(
+                    &app.path().app_data_dir()?,
+                    &app.package_info().version.to_string(),
+                );
+                if desktop::stays_hidden(std::env::args(), first) {
                     if let Some(w) = app.get_webview_window("main") {
                         let _ = w.hide();
                     }
@@ -422,4 +446,45 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(all(test, desktop))]
+mod start_tests {
+    use super::desktop::{first_start_of_version, stays_hidden};
+
+    fn args(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn start_with_windows_stays_hidden_after_the_first_start_of_a_version() {
+        assert!(stays_hidden(args(&["hubchat.exe", "--hidden"]), false));
+    }
+
+    #[test]
+    fn the_first_start_of_a_version_shows_the_window_even_with_hidden() {
+        assert!(!stays_hidden(args(&["hubchat.exe", "--hidden"]), true));
+    }
+
+    #[test]
+    fn a_normal_start_shows_the_window() {
+        assert!(!stays_hidden(args(&["hubchat.exe"]), false));
+        assert!(!stays_hidden(args(&["hubchat.exe"]), true));
+    }
+
+    #[test]
+    fn a_version_is_first_once_then_known_until_it_changes() {
+        let dir = std::env::temp_dir().join(format!("hubchat-first-start-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // nothing stored (a new install, or the update from a version before this fix)
+        assert!(first_start_of_version(&dir, "1.0.0"));
+        // the next start of the same version, e.g. Start with Windows
+        assert!(!first_start_of_version(&dir, "1.0.0"));
+        assert!(!first_start_of_version(&dir, "1.0.0"));
+        // an update, then a downgrade
+        assert!(first_start_of_version(&dir, "1.0.1"));
+        assert!(!first_start_of_version(&dir, "1.0.1"));
+        assert!(first_start_of_version(&dir, "1.0.0"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
