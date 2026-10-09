@@ -19,6 +19,17 @@ Windows and Android.
 Linking devices and syncing between them need a hub running mail hub v2.0:
 the standalone hub, or the one built into Orgtree 4.1.0 and later.
 
+## Screenshots
+
+<p>
+  <img src="docs/screenshots/desktop-chat.jpg" alt="Hubchat on Windows: a chat with an Orgtree organization" width="900">
+</p>
+<p>
+  <img src="docs/screenshots/phone-chats.jpg" alt="Hubchat on Android: the chat list" width="260">
+  <img src="docs/screenshots/phone-chat.jpg" alt="Hubchat on Android: a chat with an Orgtree organization" width="260">
+  <img src="docs/screenshots/phone-directory.jpg" alt="Hubchat on Android: the Directory of everyone on your hubs" width="260">
+</p>
+
 ## Download
 
 Get the latest release from the
