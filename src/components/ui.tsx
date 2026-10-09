@@ -182,14 +182,16 @@ export function NoteCard({ icon, warn, children, style }: { icon: IconName; warn
 
 let version: string | null = null;
 
-/** The app's version (tauri.conf.json), quietly beside the chat list's
- *  title (user 2026-10-09 07:42Z: visible on the main screen). */
-export function AppVersion() {
+/** The app's version (tauri.conf.json), quietly beside the app's name
+ *  (user 2026-10-09 07:42Z: visible on the main screen; 19:00Z: in the
+ *  desktop title bar). `drag` keeps the title bar draggable over it: Tauri
+ *  only drags from an element that carries the attribute itself. */
+export function AppVersion({ drag }: { drag?: boolean } = {}) {
   const [v, setV] = useState(version);
   useEffect(() => {
     if (!version) appVersion().then((x) => { version = x; setV(x); }, () => {});
   }, []);
-  return v ? <span className="ver" title={"Hubchat " + v}>v{v}</span> : null;
+  return v ? <span className="ver" title={"Hubchat " + v} data-tauri-drag-region={drag || undefined}>v{v}</span> : null;
 }
 
 /** Re-render every `ms` while `on` (countdowns, "last seen"). */

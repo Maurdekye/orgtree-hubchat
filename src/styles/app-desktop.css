@@ -40,6 +40,8 @@
 .titlebar { flex: none; height: 32px; display: flex; align-items: stretch; background: var(--side); border-bottom: 1px solid var(--line-soft); user-select: none; position: relative; z-index: 100; }
 .tb-brand { display: flex; align-items: center; gap: 7px; padding: 0 12px; color: var(--dim); font: 600 12px/1 var(--font-ui, inherit); letter-spacing: .02em; }
 .tb-fill { flex: 1; }
+/* the app's version beside its name (user 2026-10-09 19:00Z; was beside "Chats") */
+.tb-brand .ver { font: 400 11px/1 var(--font); color: var(--faint); letter-spacing: 0; }
 .titlebar .window-controls { display: flex; flex: 0 0 auto; height: 100%; }
 .titlebar .window-control { flex: 0 0 46px; width: 46px; height: 100%; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--dim); display: grid; place-items: center; cursor: default; }
 .titlebar .window-control:hover { background: var(--panel-2); color: var(--ink-strong); }

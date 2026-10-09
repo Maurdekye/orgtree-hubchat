@@ -448,8 +448,6 @@
 .dir-row .via { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; width: 150px; flex: none; }
 .chip.hubchip.stale { opacity: .55; border-style: dashed; }
 .dir-me .hubchips { display: flex; gap: 4px; margin-left: auto; }
-/* the app's version beside the chat list's title (user 2026-10-09 07:42Z) */
-.side-title .ver { margin-left: 7px; font: 400 11.5px/1 var(--font); color: var(--faint); letter-spacing: 0; }
 /* the right-click menu (CtxMenu.tsx): the design's popover; the item the
    arrow keys reached, and disabled items staying quiet */
 .pop.ctx { min-width: 190px; z-index: 95; } /* above toasts (90), below the title bar (100) */
@@ -471,8 +469,6 @@
 .side-sub { display: flex; align-items: center; justify-content: space-between; padding-right: 10px; }
 .side-sub .hubpill { margin-bottom: 8px; min-width: 0; }
 .side-sub .icon-btn { margin-bottom: 4px; }
-.rail-ver { padding: 8px 0 10px; border-top: 1px solid var(--line-soft); align-self: stretch; text-align: center; }
-.rail-ver .ver { font: 400 11px/1 var(--font); color: var(--faint); }
 /* with the transfers chip showing, the five header controls overran the panel by 10px */
 .side-head:has(.tb-xfer) { gap: 2px; padding-right: 6px; }
 .side-head .tb-xfer { margin-right: 0; }

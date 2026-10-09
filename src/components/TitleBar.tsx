@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Logo } from "../lib/icons";
+import { AppVersion } from "./ui";
 
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
@@ -34,6 +35,7 @@ export function TitleBar() {
       <div className="tb-brand" data-tauri-drag-region>
         <Logo size={16} />
         <span role="heading" aria-level={1} data-tauri-drag-region>Hubchat</span>
+        <AppVersion drag />
       </div>
       <div className="tb-fill" data-tauri-drag-region />
       <div className="window-controls" role="group" aria-label="Window controls">

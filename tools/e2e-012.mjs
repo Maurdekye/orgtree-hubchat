@@ -111,9 +111,9 @@ try {
   await sleep(2500);
   await open();
 
-  // 6. the version beside the title
-  const ver = await b.eval(`(document.querySelector('.side-title .ver, .side .ver') || {}).innerText || ''`);
-  check('the version shows beside the chat list title', ver === 'v0.1.2', J(ver));
+  // 6. the version beside the app's name in the title bar (moved there 2026-10-09 19:00Z)
+  const ver = await b.eval(`(document.querySelector('.tb-brand .ver') || {}).innerText || ''`);
+  check('the version shows beside the name in the title bar', ver === 'v0.1.2', J(ver));
 
   // two chats: Bo (plain) first, then Pat (markdown), so Pat sorts on top
   const bo = peer('Bo Peer', 'whoami');
@@ -187,8 +187,8 @@ try {
   await sleep(4000);
   await open();
   check('after a restart it is still a rail', await waitFor(`!!document.querySelector('.side.rail')`, 15000));
-  const rver = await b.eval(`(document.querySelector('.rail-ver .ver') || {}).innerText || ''`);
-  check('the rail shows the version', rver === 'v0.1.2', J(rver));
+  const rver = await b.eval(`(document.querySelector('.tb-brand .ver') || {}).innerText || ''`);
+  check('with the rail, the title bar still shows the version', rver === 'v0.1.2', J(rver));
   await b.eval(`document.querySelector('.side.rail .rrow').click(), true`);
   await sleep(900);
   const first = await openName();

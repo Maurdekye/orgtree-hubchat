@@ -26,7 +26,7 @@ import { NewChatInput, NewChatResults, useResolve } from "./NewChat";
 import { SettingsModal, type SetTab } from "./Settings";
 import { TransfersChip } from "./Transfers";
 import { ImageViewer } from "./AttImage";
-import { Addr, AppVersion, Avatar, Modal, ModalHead, Toasts } from "./ui";
+import { Addr, Avatar, Modal, ModalHead, Toasts } from "./ui";
 
 type Overlay = null | { k: "newchat"; q: string } | { k: "directory" } | { k: "settings"; tab: SetTab } | { k: "link"; tab: LinkTab; input?: string };
 /** The right-hand panel: the open chat's Contact info, or one message's info. */
@@ -190,13 +190,12 @@ export function Desktop() {
             <div className="clist scroll rail-list">
               <RailRows rows={rows} selected={chat} onOpen={open} onInfo={contactInfo} />
             </div>
-            <div className="rail-ver"><AppVersion /></div>
           </aside>
         ) : (
         <aside className="side">
           <div className="side-head">
             <span onClick={() => settings("profile")} title="Profile" style={{ cursor: "pointer", marginRight: 8 }}><Avatar kind="me" name={me.name || me.id} size={32} /></span>
-            <div className="side-title">Chats<AppVersion /></div>
+            <div className="side-title">Chats</div>
             <TransfersChip onOpen={open} />
             <button className="icon-btn" onClick={() => setOv({ k: "newchat", q: "" })} title="New chat (Ctrl+N)" aria-label="New chat"><Icon name="new_chat" /></button>
             <button className="icon-btn" onClick={() => setOv({ k: "directory" })} title="Directory: everyone on your hubs" aria-label="Directory"><Icon name="contacts" /></button>
