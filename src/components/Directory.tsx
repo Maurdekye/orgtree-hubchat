@@ -7,6 +7,7 @@ import { Icon } from "../lib/icons";
 import { ms } from "../lib/format";
 import { displayName, kindOf, presence, type Kind } from "../lib/peers";
 import { useSnap } from "../lib/store";
+import { HubHelpLink } from "./HubHelp";
 import { Addr, Avatar, KindGlyph, Modal, ModalHead, PeerAvatar, usePlatform } from "./ui";
 
 type KindF = "all" | Kind;
@@ -80,10 +81,10 @@ export function Directory({ onOpen, onClose, onBack }: { onOpen: (address: strin
   const stale = hubs.filter((h) => h.state !== "connected");
   const body = (
     <>
-      {!hubs.length ? <div className={platform === "android" ? "empty" : "list-empty"}><b>No hubs</b>Add a hub to see who is on it.</div> : null}
+      {!hubs.length ? <div className={platform === "android" ? "empty" : "list-empty"}><b>No hubs</b>Add a hub to see who is on it.<div className="hubhelp-cta"><HubHelpLink label="Don't have a mail hub?" /></div></div> : null}
       {stale.map((h) => (
         <div key={h.url} className="note-card warn" style={{ margin: platform === "android" ? "6px 20px 10px" : "0 0 10px" }}>
-          <Icon name="cloud_off" /><div><b>Can't reach {h.name}.</b> Its part of the list may be out of date; status is unknown for anyone only on {h.name}.</div>
+          <Icon name="cloud_off" /><div><b>Can't reach {h.name}.</b> Its part of the list may be out of date; status is unknown for anyone only on {h.name}. <HubHelpLink /></div>
         </div>
       ))}
       {me && hubs.length ? (

@@ -16,6 +16,7 @@ import { checkForUpdate, useUpdate } from "../lib/updates";
 import { formatCode, LinkDeviceModal, type LinkTab } from "./LinkDevice";
 import { copyWords, downloadWords } from "../lib/recovery";
 import { HubAdder } from "./HubAdder";
+import { HubHelpLink } from "./HubHelp";
 import { Addr, Avatar, Confirm, NoteCard, QR, Switch, useNow, usePlatform } from "./ui";
 
 export type SetTab = "profile" | "hubs" | "devices" | "notifications" | "recovery" | "privacy" | "appearance" | "general" | "about";
@@ -139,7 +140,7 @@ function Hubs() {
       <Sec title="Your hubs">
         <Card>
           {hubs.map((h) => platform === "android" ? <div className="card" key={h.url}><HubRow h={h} now={now} onRemove={() => setRm(h)} /></div> : <HubRow key={h.url} h={h} now={now} onRemove={() => setRm(h)} />)}
-          {!hubs.length ? <Row t1="No hubs" t2="Add a hub to send and receive messages." /> : null}
+          {!hubs.length ? <Row t1="No hubs" t2={<>Add a hub to send and receive messages.{adding ? null : <> <HubHelpLink label="Don't have a mail hub?" /></>}</>} /> : null}
           {adding
             ? <div className={platform === "android" ? "" : "addhub"} style={platform === "android" ? { paddingTop: 12 } : undefined}><HubAdder existing={hubs.map((h) => h.url)} autoFocus onAdded={(_u, n) => { setAdding(false); toast("Added hub " + n); }} onCancel={() => setAdding(false)} /></div>
             : platform === "android"

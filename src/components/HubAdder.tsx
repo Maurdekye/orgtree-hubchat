@@ -2,13 +2,16 @@
 // add it. A hub may be added while unreachable; the core keeps retrying.
 // Used by onboarding and by Settings › Hubs. With `onPick` it only checks:
 // linking a new device needs a reachable hub but adds nothing yet.
-import { useState } from "react";
+// "Don't have a mail hub?" under the field (and a link in the "Can't reach
+// that hub" card) opens the hub help in place.
+import { useEffect, useRef, useState } from "react";
 import { api, type Probe } from "../api";
 import { Icon } from "../lib/icons";
 import { bytes } from "../lib/format";
 import { errText } from "../lib/native";
 import { hubVersion } from "../lib/peers";
 import { refreshState } from "../lib/store";
+import { HubHelp } from "./HubHelp";
 import { NoteCard, usePlatform } from "./ui";
 
 type Phase = { k: "idle" } | { k: "checking"; input: string } | { k: "result"; p: Probe } | { k: "adding" } | { k: "error"; msg: string };
@@ -18,6 +21,12 @@ export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel, initi
   const platform = usePlatform();
   const [value, setValue] = useState(initial ?? "");
   const [ph, setPh] = useState<Phase>({ k: "idle" });
+  const [help, setHelp] = useState(false);
+  const [helpAsk, setHelpAsk] = useState(0);
+  const helpRef = useRef<HTMLDivElement>(null);
+  // the card's link opens the help and brings it into view
+  useEffect(() => { if (helpAsk) helpRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }); }, [helpAsk]);
+  const showHelp = () => { setHelp(true); setHelpAsk((n) => n + 1); };
 
   const check = async () => {
     const input = value.trim(); if (!input) return;
@@ -56,7 +65,7 @@ export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel, initi
     } else if (p.result === "unreachable") {
       card = (
         <div className="probe-card bad"><Icon name="error" />
-          <div><b>Can't reach that hub</b>{p.error}.{onPick ? " Linking needs a hub this device can reach." : ""} Check the address, that the hub is running, and that this device is on its network.
+          <div><b>Can't reach that hub</b>{p.error}.{onPick ? " Linking needs a hub this device can reach." : ""} Check the address, that the hub is running, and that this device is on its network. <button type="button" className="link hubhelp-open" onClick={showHelp}>How to run and reach a hub</button>
             <div className="acts"><button className="btn" onClick={check}><Icon name="refresh" />Try again</button>{onPick ? null : <button className="btn ghost" onClick={() => add(p.url.replace(/^https?:\/\//, ""))}>Add anyway and keep trying</button>}</div>
           </div>
         </div>
@@ -88,6 +97,7 @@ export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel, initi
       </div>
       {card}
       {platform === "android" ? <div className="pad" style={{ marginBottom: 8 }}>{checkBtn}</div> : null}
+      <HubHelp ref={helpRef} open={help} onToggle={setHelp} />
       <NoteCard icon="privacy"><b>The hub can read your messages.</b> The hub's operator can read messages that pass through it; everyone on a hub is listed in its directory. Only use hubs run by people you trust.</NoteCard>
     </>
   );

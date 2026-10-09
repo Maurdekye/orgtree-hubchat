@@ -11,6 +11,7 @@ import { displayName, hubStatusText, kindInfo, kindOf, limitFor, msgTime, peerHu
 import { refreshChats, useMessages, useSnap } from "../lib/store";
 import { toast } from "../lib/toast";
 import { Composer, type ComposerApi } from "./Composer";
+import { HubHelpLink } from "./HubHelp";
 import { MessageView } from "./MessageView";
 import { Addr, KindChip, KindGlyph, NoteCard, PeerAvatar, PresText, useNow, usePlatform } from "./ui";
 
@@ -227,7 +228,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
         {down ? (
           <div className={"strip warn" + (down.state === "refused" ? " bad" : "")}>
             <Icon name="warning" /><span><b>{down.state === "connecting" ? "Connecting to " + down.name + "…" : "Can't reach hub " + down.name}</b>{down.state === "disconnected" ? " · " + hubStatusText(down, now).replace("Can't reach this hub · ", "") : down.state === "refused" ? " · " + (down.error || "refused") : ""}</span>
-            {down.state !== "connecting" ? <button className="link" onClick={() => api.retryNow()}>Retry</button> : null}
+            {down.state === "disconnected" ? <HubHelpLink /> : null}{down.state !== "connecting" ? <button className="link" onClick={() => api.retryNow()}>Retry</button> : null}
           </div>
         ) : null}
         <div className="timeline" ref={tl} onScroll={onScroll} {...touch}><div>{rows}</div></div>

@@ -1,0 +1,48 @@
+/* "Don't have a mail hub?" (HubHelp.tsx): the inline toggle under a hub
+   address field, the help itself, its dialog (desktop modal, Android sheet)
+   and the links that open it from banners, strips and lists. */
+
+/* the inline toggle */
+.hubhelp-wrap { margin: -4px 0 14px; }
+[data-platform="android"] .hubhelp-wrap { margin: 2px 20px 12px; }
+.hubhelp-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; text-align: left; }
+[data-platform="android"] .hubhelp-toggle { font-size: 14px; min-height: 36px; }
+.hubhelp-toggle .ic { width: 18px; height: 18px; }
+.hubhelp-wrap > .hubhelp { margin-top: 8px; padding: 12px 14px 4px; border-radius: var(--r-md); background: var(--panel-2); border: 1px solid var(--line-soft); }
+/* desktop onboarding centres its card in a scrolling box; with the help open
+   the card outgrows the window, so it starts at the top (centred while it fits) */
+[data-platform="desktop"] .ob:has(.hubhelp-wrap > .hubhelp) { align-items: flex-start; }
+[data-platform="desktop"] .ob:has(.hubhelp-wrap > .hubhelp) > .ob-card { margin: auto 0; }
+
+/* the help */
+.hubhelp { font-size: 13px; line-height: 1.5; color: var(--ink); text-align: left; }
+[data-platform="android"] .hubhelp { font-size: 14px; }
+.hubhelp p { margin: 0 0 10px; }
+.hubhelp h5 { margin: 14px 0 6px; font-size: 13px; font-weight: 700; color: var(--ink-strong); }
+[data-platform="android"] .hubhelp h5 { font-size: 14.5px; }
+.hubhelp ol, .hubhelp ul { margin: 0 0 10px; padding-left: 22px; }
+.hubhelp li { margin: 0 0 4px; }
+.hubhelp li::marker { color: var(--dim); }
+.hubhelp b { display: inline; margin: 0; font-size: inherit; color: var(--ink-strong); font-weight: 600; }
+.hubhelp .mono { font-size: .93em; color: var(--ink-strong); white-space: nowrap; }
+.hubhelp a { color: var(--accent-text); font-weight: 600; text-decoration: none; cursor: pointer; }
+.hubhelp a:hover { text-decoration: underline; }
+.hubhelp a .ic { display: inline-block; width: 13px; height: 13px; margin-left: 3px; vertical-align: -1px; }
+.hubhelp-warn { display: flex; gap: 10px; align-items: flex-start; margin: 4px 0 12px; padding: 10px 12px; border-radius: var(--r-md); background: var(--warn-soft); color: var(--ink); }
+.hubhelp-warn > .ic { width: 18px; height: 18px; flex: none; margin-top: 1px; color: var(--warn); }
+.hubhelp-more { margin-top: 2px; }
+
+/* the dialog */
+.modal.hubhelp-modal { width: 600px; }
+.modal.hubhelp-modal .modal-b { padding-bottom: 14px; }
+.sheet.hubhelp-sheet { max-height: 88%; padding-bottom: 18px; }
+.hubhelp-sh { display: flex; align-items: center; }
+.hubhelp-sh h4 { flex: 1; margin: 4px 8px 6px 24px; }
+.hubhelp-sh .icon-btn { width: 40px; height: 40px; margin-right: 12px; }
+.hubhelp-sheet .hubhelp { padding: 0 24px; }
+
+/* the links that open it: Help sits before Retry, which keeps the end */
+.banner .btn.hubhelp-open ~ .btn { margin-left: 0; }
+.strip .link.hubhelp-open ~ .link { margin-left: 0; }
+.strip .hubhelp-open, .note-card .hubhelp-open { white-space: nowrap; }
+.hubhelp-cta { margin-top: 10px; }

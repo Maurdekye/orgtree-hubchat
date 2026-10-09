@@ -1,6 +1,6 @@
 // Calm app-level banners: a hub that can't be reached (with its retry
-// countdown and Retry now), the recovery-words reminder, and (desktop) an
-// available update.
+// countdown, Retry now and Help on running and reaching a hub), the
+// recovery-words reminder, and (desktop) an available update.
 import { useState } from "react";
 import { api } from "../api";
 import { Icon } from "../lib/icons";
@@ -8,6 +8,7 @@ import { errText } from "../lib/native";
 import { useSnap } from "../lib/store";
 import { toast } from "../lib/toast";
 import { useUpdate } from "../lib/updates";
+import { HubHelpLink } from "./HubHelp";
 import { useNow, usePlatform } from "./ui";
 
 export function useHubProblem() {
@@ -30,11 +31,12 @@ export function HubBanner() {
     ? <><b>Hub {p.hub.name} refused the connection</b>{p.hub.error ? ": " + p.hub.error : ""}</>
     : <><b>Can't reach hub {p.hub.name}</b>{p.secs != null ? " · retrying in " + p.secs + " s" : ""}{p.more ? " · " + p.more + " more hub" + (p.more > 1 ? "s" : "") + " down" : ""}</>;
   if (platform === "android") {
-    return <div className={"strip warn" + (p.refused ? " bad" : "")}><Icon name={p.refused ? "error" : "warning"} /><span>{text}</span><button className="link" onClick={retry}>Retry</button></div>;
+    return <div className={"strip warn" + (p.refused ? " bad" : "")}><Icon name={p.refused ? "error" : "warning"} /><span>{text}</span>{p.refused ? null : <HubHelpLink />}<button className="link" onClick={retry}>Retry</button></div>;
   }
   return (
     <div className={"banner warn" + (p.refused ? " bad" : "")}>
       <Icon name={p.refused ? "error" : "warning"} /><span>{text}</span>
+      {p.refused ? null : <HubHelpLink className="btn ghost" icon />}
       <button className="btn" onClick={retry}><Icon name="refresh" />Retry now</button>
     </div>
   );
