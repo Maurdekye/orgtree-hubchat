@@ -35,6 +35,21 @@ type Scr =
   | { s: "chats" } | { s: "conv"; p: string } | { s: "msginfo"; id: string; p: string } | { s: "info"; p: string }
   | { s: "newchat" } | { s: "directory" } | { s: "settings" } | { s: "set"; tab: SetTab } | { s: "link"; tab?: LinkTab; input?: string };
 
+// Back with nothing left in the WebView's own history: MainActivity asks here
+// before Hubchat goes to the background. A screen opened before the first tap
+// (the chat reopened at start, a tapped notification's, a link's) has the
+// entry under it skipped by the system back button (Chromium's history
+// intervention), but this page's own history.back() still reaches it. Every
+// entry the page adds says so: a depth above 1, or a key of its own.
+let closeOpenMenu: (() => boolean) | null = null;
+(window as unknown as { __hcBack: () => boolean }).__hcBack = () => {
+  if (closeOpenMenu?.()) return true;
+  const s = history.state as Record<string, unknown> | null;
+  if (!s || !((typeof s.hc === "number" && s.hc > 1) || Object.keys(s).some((k) => k !== "hc"))) return false;
+  history.back();
+  return true;
+};
+
 function Chats({ go }: { go: (s: Scr) => void }) {
   const [filter, setFilter] = useState<ChatFilter>("all");
   const [q, setQ] = useState("");
@@ -137,6 +152,10 @@ export function Android() {
   const menuRef = useRef<string | null>(null);
   const openMenu = useCallback((p: string) => { menuRef.current = p; setMenu(p); }, []);
   const closeMenu = useCallback(() => { menuRef.current = null; setMenu(null); }, []);
+  useEffect(() => {
+    closeOpenMenu = () => { if (!menuRef.current) return false; closeMenu(); return true; };
+    return () => { closeOpenMenu = null; };
+  }, [closeMenu]);
   const go = useCallback((s: Scr) => {
     const st = stackRef.current;
     const t = st[st.length - 1];
