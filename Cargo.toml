@@ -3,7 +3,7 @@ resolver = "2"
 members = ["src-tauri", "crates/hubchat-core"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.85"
 
