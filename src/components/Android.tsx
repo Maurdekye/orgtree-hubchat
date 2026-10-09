@@ -8,7 +8,8 @@ import { displayName, kindOf } from "../lib/peers";
 import { getSnap, useSendRoute, useSnap } from "../lib/store";
 import { chatLinkTarget } from "../lib/chatlink";
 import { useActive, useForeground, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
-import { HubBanner, RecoveryBanner } from "./Banners";
+import { HubBanner, RecoveryBanner, UpdateBanner } from "./Banners";
+import { startUpdateChecks } from "../lib/updates";
 import { ChatRows, EmptyChats, useFilteredChats, type ChatFilter } from "./ChatList";
 import { ContactInfo } from "./ContactInfo";
 import { Conversation } from "./Conversation";
@@ -51,6 +52,7 @@ function Chats({ go }: { go: (s: Scr) => void }) {
           <button className="icon-btn" onClick={() => go({ s: "settings" })} aria-label="Settings"><Icon name="settings" /></button>
         </>}
       </div>
+      <UpdateBanner />
       <HubBanner />
       <RecoveryBanner onShow={() => go({ s: "set", tab: "recovery" })} />
       <TransfersStrip onOpen={(p) => go({ s: "conv", p })} />
@@ -122,6 +124,7 @@ export function Android() {
   const fg = useForeground("android");
   useActive(fg);
   useReadTracking(top.s === "conv" ? top.p : null, fg);
+  useEffect(() => { startUpdateChecks("android"); }, []);
 
   const stackRef = useRef(stack);
   stackRef.current = stack;

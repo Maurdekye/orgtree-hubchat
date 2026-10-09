@@ -87,7 +87,7 @@ export function Desktop() {
   const fg = useForeground("desktop");
   useActive(fg);
   useReadTracking(ov ? null : chat, fg);
-  useEffect(() => { startUpdateChecks(); }, []);
+  useEffect(() => { startUpdateChecks("desktop"); }, []);
 
   // the panel stays open across chats: Contact info follows the open chat,
   // another chat's message info gives way to it (the prototype's openChat)

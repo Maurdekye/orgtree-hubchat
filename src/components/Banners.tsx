@@ -1,13 +1,14 @@
 // Calm app-level banners: a hub that can't be reached (with its retry
 // countdown, Retry now and Help on running and reaching a hub), the
-// recovery-words reminder, and (desktop) an available update.
-import { useState } from "react";
+// recovery-words reminder, and an available update (desktop installs it on
+// restart; Android walks through its own installer).
+import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Icon } from "../lib/icons";
 import { errText } from "../lib/native";
 import { useSnap } from "../lib/store";
 import { toast } from "../lib/toast";
-import { useUpdate } from "../lib/updates";
+import { useInstallStep, useUpdate, type Available } from "../lib/updates";
 import { HubHelpLink } from "./HubHelp";
 import { useNow, usePlatform } from "./ui";
 
@@ -67,12 +68,14 @@ export function RecoveryBanner({ onShow }: { onShow: () => void }) {
   );
 }
 
-/** Desktop: an update is ready to install. Dismissed until the next check. */
+/** An update is ready to install. Dismissed until the next check. */
 export function UpdateBanner() {
   const avail = useUpdate();
+  const platform = usePlatform();
   const [busy, setBusy] = useState(false);
   const [hidden, setHidden] = useState<string | null>(null);
   if (!avail || hidden === avail.version) return null;
+  if (platform === "android") return <AndroidUpdate avail={avail} onHide={() => setHidden(avail.version)} />;
   const go = async () => {
     setBusy(true);
     try { await avail.install(); } catch (e) { toast("Couldn't update: " + errText(e)); setBusy(false); }
@@ -83,6 +86,51 @@ export function UpdateBanner() {
       <span><b>Hubchat {avail.version} is available.</b>{busy ? " Downloading…" : " It installs when Hubchat restarts."}</span>
       <button className="btn primary" onClick={go} disabled={busy}>{busy ? "Updating…" : "Restart to update"}</button>
       <button className="icon-btn" style={{ width: 28, height: 28 }} onClick={() => setHidden(avail.version)} title="Not now" aria-label="Dismiss"><Icon name="close" /></button>
+    </div>
+  );
+}
+
+/** Android (user 2026-10-09 08:29Z): Update downloads the release's APK and
+ *  hands it to Android's installer. The first time, Android must allow
+ *  Hubchat to install apps; back from that setting, the update carries on. */
+function AndroidUpdate({ avail, onHide }: { avail: Available; onHide: () => void }) {
+  const step = useInstallStep();
+  const go = () => void avail.install();
+  useEffect(() => {
+    if (step.k !== "permission") return;
+    const back = () => { if (document.visibilityState === "visible") go(); };
+    document.addEventListener("visibilitychange", back);
+    return () => document.removeEventListener("visibilitychange", back);
+  });
+  let text: React.ReactNode;
+  let action: React.ReactNode = null;
+  switch (step.k) {
+    case "permission":
+      text = <><b>Allow Hubchat to install its updates.</b> Android asks once. Hubchat only installs updates signed with its own key.</>;
+      action = <button className="btn primary" onClick={() => void api.appUpdateAllow()}>Allow</button>;
+      break;
+    case "downloading":
+      text = <><b>Downloading Hubchat {avail.version}…</b> {step.pct}%</>;
+      break;
+    case "installing":
+    case "confirm":
+      text = <><b>Installing Hubchat {avail.version}.</b> Android may ask you to confirm.</>;
+      break;
+    case "failed":
+      text = <><b>The update didn't install.</b> {step.msg}</>;
+      action = <button className="btn" onClick={go}>Try again</button>;
+      break;
+    default:
+      text = <b>Hubchat {avail.version} is ready.</b>;
+      action = <button className="btn primary" onClick={go}>Update</button>;
+  }
+  const busy = step.k === "downloading" || step.k === "installing" || step.k === "confirm";
+  return (
+    <div className="banner upd" role="status">
+      <Icon name="restart" />
+      <span>{text}</span>
+      {action}
+      {busy ? null : <button className="icon-btn" style={{ width: 28, height: 28 }} onClick={onHide} title="Not now" aria-label="Dismiss"><Icon name="close" /></button>}
     </div>
   );
 }

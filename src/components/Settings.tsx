@@ -12,7 +12,7 @@ import { hubCls, hubStatusText, hubSummary, hubVersion } from "../lib/peers";
 import { refreshDirectory, refreshState, useSnap } from "../lib/store";
 import { setThemePref, useThemePref, type ThemePref } from "../lib/theme";
 import { toast } from "../lib/toast";
-import { checkForUpdate, useUpdate } from "../lib/updates";
+import { checkForUpdate, setAutoChecks, useAutoChecks, useInstallStep, useUpdate } from "../lib/updates";
 import { formatCode, LinkDeviceModal, type LinkTab } from "./LinkDevice";
 import { copyWords, downloadWords } from "../lib/recovery";
 import { HubAdder } from "./HubAdder";
@@ -418,7 +418,10 @@ function Appearance() {
 }
 
 function UpdateCheck() {
+  const platform = usePlatform();
   const avail = useUpdate();
+  const step = useInstallStep();
+  const auto = useAutoChecks();
   const [st, setSt] = useState<{ k: "idle" } | { k: "checking" } | { k: "none" } | { k: "error"; msg: string } | { k: "installing" }>({ k: "idle" });
   const check = async () => {
     setSt({ k: "checking" });
@@ -426,18 +429,33 @@ function UpdateCheck() {
   };
   const install = async () => {
     if (!avail) return;
+    // Android's steps show in the banner and here (useInstallStep)
+    if (platform === "android") { void avail.install(); return; }
     setSt({ k: "installing" });
     try { await avail.install(); } catch (e) { setSt({ k: "error", msg: errText(e) }); }
   };
-  const text = st.k === "checking" ? "Checking…" : st.k === "installing" ? "Downloading the update…" : avail ? "Hubchat " + avail.version + " is available."
-    : st.k === "none" ? "You have the latest version." : st.k === "error" ? "Couldn't check for updates: " + st.msg : "Hubchat checks for updates when it starts and every 6 hours.";
+  const android = platform === "android" && avail && step.k !== "idle"
+    ? step.k === "permission" ? "Allow Hubchat to install its updates in Android's settings, then come back."
+      : step.k === "downloading" ? "Downloading the update… " + step.pct + "%"
+      : step.k === "failed" ? "The update didn't install. " + step.msg
+      : "Installing. Android may ask you to confirm."
+    : null;
+  const text = android ?? (st.k === "checking" ? "Checking…" : st.k === "installing" ? "Downloading the update…" : avail ? "Hubchat " + avail.version + " is available."
+    : st.k === "none" ? "You have the latest version." : st.k === "error" ? "Couldn't check for updates: " + st.msg
+    : auto ? "Hubchat checks for updates when it starts and every 6 hours." : "Automatic checks are off.");
+  const busy = st.k === "installing" || step.k === "downloading" || step.k === "installing" || step.k === "confirm";
   return (
-    <div className="about-upd">
-      <span className={"help" + (st.k === "error" ? " bad" : "")}>{text}</span>
-      {avail
-        ? <button className="btn primary" onClick={install} disabled={st.k === "installing"}><Icon name="restart" />Restart to update</button>
-        : <button className="btn" onClick={check} disabled={st.k === "checking"}><Icon name="refresh" />Check for updates</button>}
-    </div>
+    <>
+      <div className={platform === "android" ? "about-upd pad" : "about-upd"}>
+        <span className={"help" + (st.k === "error" || step.k === "failed" ? " bad" : "")}>{text}</span>
+        {avail
+          ? <button className="btn primary" onClick={install} disabled={busy}><Icon name="restart" />{platform === "android" ? "Update" : "Restart to update"}</button>
+          : <button className="btn" onClick={check} disabled={st.k === "checking"}><Icon name="refresh" />Check for updates</button>}
+      </div>
+      <Card>
+        <Row icon="sync" t1="Check for updates automatically" t2="When Hubchat starts and every 6 hours. Updates never install on their own." right={<Switch on={auto} onChange={setAutoChecks} label="Check for updates automatically" />} />
+      </Card>
+    </>
   );
 }
 
@@ -452,7 +470,7 @@ function About() {
   const version = useVersion();
   const ver = version ? "Version " + version : "\u00a0";
   const text = "Hubchat is a chat client for the Orgtree mail hub. It talks to Orgtree orgs, AI agent sessions (such as Claude Code or Codex) and people by address. There is no account and no cloud: your identity lives on your devices and your messages travel through hubs you choose.";
-  if (platform === "android") return <><div className="hero"><Logo size={72} /><div className="name">Hubchat</div><div className="dim">{ver}</div></div><div className="pad help" style={{ fontSize: 14, lineHeight: 1.55 }}>{text}</div></>;
+  if (platform === "android") return <><div className="hero"><Logo size={72} /><div className="name">Hubchat</div><div className="dim">{ver}</div></div><div className="pad help" style={{ fontSize: 14, lineHeight: 1.55 }}>{text}</div><UpdateCheck /></>;
   return (
     <>
       <div style={{ display: "flex", gap: 16, alignItems: "center", margin: "10px 0 18px" }}><Logo size={56} /><div><div style={{ font: "600 20px var(--font-display)", color: "var(--ink-strong)" }}>Hubchat</div><div className="dim">{ver}</div></div></div>

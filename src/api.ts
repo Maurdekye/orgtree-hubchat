@@ -30,6 +30,14 @@ export interface Me {
   about: string;
 }
 
+/** Android: a newer release this phone can install. */
+export interface AppUpdate {
+  version: string;
+  notes: string;
+  url: string;
+  signature: string;
+}
+
 /** Settings › Notifications. */
 export interface NotifySettings {
   /** Notify for chats that aren't on screen. */
@@ -296,6 +304,16 @@ export const tauriApi = {
   clipboardImage: () => invoke<ArrayBuffer>("hc_clipboard_image"),
   /** A pasted image saved as a file the composer can attach; its path. */
   savePasted: (name: string, data: Uint8Array) => invoke<string>("hc_save_pasted", data, { headers: { "x-name": name } }),
+  // Android's in-app updates (src-tauri/src/appupdate.rs)
+  /** A newer Hubchat for this phone, from the release feed (`feed`: test builds only). */
+  appUpdateCheck: (feed?: string | null) => invoke<AppUpdate | null>("hc_app_update_check", { feed: feed ?? null }),
+  /** Download, verify and hand to Android: "permission" (allow it first) or "installing". */
+  appUpdateInstall: (url: string, signature: string) => invoke<string>("hc_app_update_install", { url, signature }),
+  /** Open Android's "Install unknown apps" setting for Hubchat. */
+  appUpdateAllow: () => invoke<void>("hc_app_update_allow"),
+  /** Android installer's last word: "", "confirm", "done" or "failed: …". */
+  appUpdateState: () => invoke<string>("hc_app_update_state"),
+  onAppUpdateProgress: (f: (done: number, total: number) => void): Promise<UnlistenFn> => listen<[number, number]>("app-update-progress", (e) => f(e.payload[0], e.payload[1])),
   devices: () => invoke<Devices>("hc_devices"),
   saveRecovery: (dest: string | null) => invoke<string>("hc_save_recovery", { dest }),
 

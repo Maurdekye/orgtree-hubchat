@@ -189,6 +189,11 @@ function picture(name: string, outgoing: boolean): Promise<ArrayBuffer> {
   }
   return p;
 }
+/** The acted-out Android update (appUpdate*). */
+let updateAllowed = false;
+let updateState = "";
+const updateProgress = new Set<(done: number, total: number) => void>();
+
 /** Pasted images by the path savePasted gave them. */
 const pasted = new Map<string, Uint8Array>();
 
@@ -584,6 +589,24 @@ export const mockApi: Api = {
     if (!img) throw "no picture on the clipboard";
     return img.slice().buffer as ArrayBuffer;
   },
+  // Android's in-app update, acted out: ?update=1 offers 0.2.0; the first
+  // Update asks for Android's permission, then it downloads and Android's
+  // window "opens"; ?update=bad fails the signature check
+  appUpdateCheck: async () => {
+    await sleep(300);
+    const u = new URLSearchParams(location.search).get("update");
+    return u === "1" || u === "bad" ? { version: "0.2.0", notes: "Markdown and fixes.", url: "https://example.com/Hubchat_0.2.0_arm64.apk", signature: "mock" } : null;
+  },
+  appUpdateInstall: async () => {
+    if (!updateAllowed) return "permission";
+    for (let i = 1; i <= 10; i++) { await sleep(120); updateProgress.forEach((f) => f(i * 1.8e6, 18e6)); }
+    if (new URLSearchParams(location.search).get("update") === "bad") throw "the download isn't signed by Hubchat's update key";
+    updateState = "confirm";
+    return "installing";
+  },
+  appUpdateAllow: async () => { updateAllowed = true; },
+  appUpdateState: async () => updateState,
+  onAppUpdateProgress: async (f) => { updateProgress.add(f); return () => { updateProgress.delete(f); }; },
   filePreview: async (source, name) => {
     await sleep(80);
     if (/broken/i.test(name)) throw "unreadable";
