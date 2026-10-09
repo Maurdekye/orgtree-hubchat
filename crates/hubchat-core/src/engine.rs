@@ -12,7 +12,7 @@ use serde::Serialize;
 use tokio::sync::Notify;
 
 use crate::hub::{CancelFlag, Outgoing, Profile};
-use crate::store::{NewOutgoing, Store};
+use crate::store::{Message, NewOutgoing, Store};
 use crate::{Error, HubAddress, HubClient, Identity, Result};
 
 /// First line of a reply's wire body (see `Engine::wire_body`).
@@ -60,6 +60,10 @@ pub struct OlderPage {
 
 fn start_key(url: &str) -> String {
     format!("sync.start_ms.{url}")
+}
+
+fn chats_key(url: &str) -> String {
+    format!("sync.chat_list_due.{url}")
 }
 
 fn clock_key(url: &str) -> String {
@@ -795,6 +799,7 @@ impl Engine {
                 self.start_from(url, r.now)?;
             } else if first_page {
                 self.store.delete_meta(&start_key)?;
+                self.store.delete_meta(&chats_key(url))?;
             } else if r.reset && self.store.meta(&start_key)?.is_some() {
                 // a device that started from now starts over from now
                 self.start_from(url, r.now)?;
@@ -840,7 +845,7 @@ impl Engine {
                                 continue;
                             }
                         }
-                        let fresh = self.store.upsert_synced(url, &me, m)?;
+                        let fresh = self.store.upsert_synced_at(url, &me, m, self.offset(url))?;
                         if m.body_bytes.is_some() {
                             if let Ok(body) = client
                                 .message_body(&self.me, &m.env.id, LONG_BODY_FETCH_MAX)
@@ -894,6 +899,9 @@ impl Engine {
             cursor = Some(r.cursor);
             if !r.more {
                 catching_up = false;
+                if self.store.meta(&chats_key(url))?.is_some() {
+                    self.take_chat_list(client, url).await?;
+                }
                 self.answered(url);
             }
         }
@@ -926,7 +934,130 @@ impl Engine {
             unix_ms() as i64 + offset.unwrap_or(0)
         });
         self.store.clear_history_marks(url)?;
+        // its chat list is still to be taken in (take_chat_list)
+        self.store.set_meta(&chats_key(url), "1")?;
         self.store.set_meta(&start_key(url), &t.to_string())
+    }
+
+    /// A device that started from now has none of its chats yet: the hub's
+    /// chat list brings each chat's newest message and unread count (the
+    /// rest pages in as the user scrolls back). Once per start: what comes
+    /// after it comes through sync.
+    async fn take_chat_list(&self, client: &HubClient, url: &str) -> Result<()> {
+        let list = client.conversations(&self.me).await?;
+        let me = self.me.address();
+        let offset = self.offset(url);
+        for c in &list {
+            let mut listed = None;
+            if let Some(m) = &c.last {
+                if !m.env.body.starts_with(crate::link::LINK_MESSAGE_PREFIX) {
+                    self.store.upsert_synced_at(url, &me, m, offset)?;
+                    listed = Some(m.env.id.as_str());
+                }
+            }
+            // the newest one counts here already when it is unread
+            let listed_unread = c
+                .last
+                .as_ref()
+                .is_some_and(|m| listed.is_some() && m.env.from != me && m.read_at.is_none());
+            self.store.set_old_unread(
+                url,
+                &c.with,
+                c.unread - i64::from(listed_unread),
+                listed,
+            )?;
+            self.host.event(Event::Chat { peer: c.with.clone() });
+        }
+        self.store.delete_meta(&chats_key(url))
+    }
+
+    /// The hub's clock minus ours (0 when unknown).
+    fn offset(&self, url: &str) -> i64 {
+        self.hubs
+            .lock()
+            .unwrap()
+            .get(url)
+            .and_then(|h| h.status.clock_offset_ms)
+            .unwrap_or(0)
+    }
+
+    /// A page of a chat as the user sees it (`Store::chat`), without what
+    /// lies below the history floor: no message shows up later between
+    /// messages already on screen.
+    pub fn chat(
+        &self,
+        peer: &str,
+        before: Option<(&str, &str)>,
+        from: Option<(&str, &str)>,
+        limit: u32,
+    ) -> Result<Vec<Message>> {
+        let mut v = self.store.chat(peer, before, from, limit)?;
+        if let Some(floor) = self.history_floor(peer)? {
+            v.retain(|m| m.created_at >= floor);
+        }
+        Ok(v)
+    }
+
+    /// How far back the chat with `peer` may show (our clock, the store's
+    /// time form): as far as every hub that still has older messages has
+    /// loaded. None: no limit. A hub that is down doesn't hold the rest
+    /// back (its messages fill in when it is back), and the floor never
+    /// rises again: what was on screen stays.
+    pub fn history_floor(&self, peer: &str) -> Result<Option<String>> {
+        let key = format!("history.floor.{peer}");
+        let now = self.floor_now(peer)?;
+        let shown: Option<i64> = self.store.meta(&key)?.and_then(|v| v.parse().ok());
+        let floor = match (now, shown) {
+            (Some(n), Some(s)) => Some(n.min(s)),
+            (n, _) => n,
+        };
+        if floor != shown {
+            match floor {
+                Some(f) => self.store.set_meta(&key, &f.to_string())?,
+                None => self.store.delete_meta(&key)?,
+            }
+        }
+        Ok(floor.and_then(|ms| {
+            let st = SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(u64::try_from(ms).ok()?))?;
+            Some(humantime::format_rfc3339_millis(st).to_string())
+        }))
+    }
+
+    /// The floor as the hubs stand now, unix ms on our clock.
+    fn floor_now(&self, peer: &str) -> Result<Option<i64>> {
+        let hubs: Vec<(String, bool, i64)> = self
+            .hubs
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(u, h)| {
+                (
+                    u.clone(),
+                    matches!(h.status.state, HubState::Disconnected | HubState::Refused),
+                    h.status.clock_offset_ms.unwrap_or(0),
+                )
+            })
+            .collect();
+        let mut floor: Option<i64> = None;
+        for (url, down, offset) in hubs {
+            if down {
+                continue;
+            }
+            let Some(start) = self
+                .store
+                .meta(&start_key(&url))?
+                .and_then(|v| v.parse::<i64>().ok())
+            else {
+                continue;
+            };
+            let mark = self.store.history_mark(&url, peer)?.unwrap_or_default();
+            if mark.done {
+                continue;
+            }
+            let t = mark.oldest_ms.unwrap_or(start) - offset;
+            floor = Some(floor.map_or(t, |f| f.max(t)));
+        }
+        Ok(floor)
     }
 
     // ---------------------------------------------------------- history
@@ -976,6 +1107,8 @@ impl Engine {
                 }
             };
             let mut oldest = mark.oldest_ms;
+            let mut old_unread = mark.old_unread;
+            let offset = self.offset(&url);
             for m in &page.messages {
                 if let Some(t) = hub_ms(&m.env.received_at) {
                     oldest = Some(oldest.map_or(t, |o| o.min(t)));
@@ -986,7 +1119,14 @@ impl Engine {
                 if self.store.message(&m.env.id)?.is_none() {
                     out.added += 1;
                 }
-                self.store.upsert_synced(&url, &me, m)?;
+                self.store.upsert_synced_at(&url, &me, m, offset)?;
+                // an unread one this hub's chat list counted is now here
+                if m.env.from != me
+                    && m.read_at.is_none()
+                    && mark.listed_id.as_deref() != Some(m.env.id.as_str())
+                {
+                    old_unread -= 1;
+                }
                 if m.body_bytes.is_some() {
                     if let Ok(body) = client
                         .message_body(&self.me, &m.env.id, LONG_BODY_FETCH_MAX)
@@ -1009,6 +1149,8 @@ impl Engine {
                     before: page.before,
                     oldest_ms: oldest,
                     done,
+                    old_unread: old_unread.max(0),
+                    listed_id: mark.listed_id.clone(),
                 },
             )?;
             if !done {
@@ -1424,8 +1566,16 @@ impl Engine {
         self.cancel_transfers(&lids);
         self.host.event(Event::Chat { peer: peer.into() });
         for (url, client, connected, capable) in hubs {
-            if connected && capable && client.delete_conversation(&self.me, peer).await.is_err() {
+            let owed = !connected
+                || (capable && client.delete_conversation(&self.me, peer).await.is_err());
+            if connected && owed {
                 self.store.queue_deletes(&url, &ids, &t)?;
+            }
+            // messages it holds that this device never had (lazy history):
+            // its history up to now goes too, once it is back
+            if owed {
+                let at = unix_ms() as i64 + self.offset(&url);
+                self.store.queue_chat_delete(&url, peer, at)?;
             }
         }
         Ok(())
@@ -1470,6 +1620,15 @@ impl Engine {
         due_ms: u64,
     ) -> Result<()> {
         let capable = features.iter().any(|f| f == "delete");
+        let lazy = features.iter().any(|f| f == "lazy_history");
+        for (peer, before) in self.store.chat_deletes(url)? {
+            if capable && lazy {
+                self.send_chat_delete(client, url, &peer, before).await?;
+            } else {
+                // no history by time: the per-message deletes are all it gets
+                self.store.chat_delete_done(url, &peer)?;
+            }
+        }
         let mut tried = std::collections::HashSet::new();
         loop {
             let batch: Vec<String> = self
@@ -1496,6 +1655,49 @@ impl Engine {
                     }
                 }
                 tried.insert(id);
+            }
+        }
+    }
+
+    /// An owed "Delete chat" on a hub with lazy history: every message of
+    /// the chat it received before the delete, page by page (a later
+    /// message stays, as B2 requires). Where it has got to is kept, so a
+    /// broken connection goes on from there.
+    async fn send_chat_delete(
+        &self,
+        client: &HubClient,
+        url: &str,
+        peer: &str,
+        mut before: String,
+    ) -> Result<()> {
+        loop {
+            let at = match before.parse::<i64>() {
+                Ok(ms) => crate::hub_v2::Before::Time(ms),
+                Err(_) => crate::hub_v2::Before::Cursor(before.clone()),
+            };
+            let page = match client.history(&self.me, peer, &at, 200).await {
+                Ok(p) => p,
+                Err(e) => match drain_outcome(&e) {
+                    Drain::Drop => return self.store.chat_delete_done(url, peer),
+                    Drain::Later => return Ok(()),
+                    Drain::Stop => return Err(e),
+                },
+            };
+            for m in &page.messages {
+                if let Err(e) = client.delete_message(&self.me, &m.env.id).await {
+                    match drain_outcome(&e) {
+                        Drain::Drop => {}
+                        Drain::Later => return Ok(()),
+                        Drain::Stop => return Err(e),
+                    }
+                }
+            }
+            match page.before {
+                Some(next) => {
+                    self.store.set_chat_delete(url, peer, &next)?;
+                    before = next;
+                }
+                None => return self.store.chat_delete_done(url, peer),
             }
         }
     }

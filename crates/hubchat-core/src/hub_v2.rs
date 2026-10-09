@@ -92,6 +92,16 @@ pub enum Before {
     Cursor(String),
 }
 
+/// One chat in the hub's chat list (`/api/conversations`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct Conversation {
+    pub with: String,
+    #[serde(default)]
+    pub unread: i64,
+    #[serde(default)]
+    pub last: Option<SyncedMessage>,
+}
+
 /// One page of a conversation, newest first.
 #[derive(Debug, Clone, Deserialize)]
 pub struct HistoryPage {
@@ -181,6 +191,24 @@ impl HubClient {
             .send()
             .await?;
         Ok(check(resp).await?.json().await?)
+    }
+
+    /// Our chats on this hub, newest first (at most 1000), each with its
+    /// newest message and how many of its messages we haven't read.
+    pub async fn conversations(&self, me: &Identity) -> Result<Vec<Conversation>> {
+        #[derive(Deserialize)]
+        struct R {
+            #[serde(default)]
+            conversations: Vec<Conversation>,
+        }
+        let resp = self
+            .http
+            .get(self.address().join("/api/conversations"))
+            .header("X-Org-Auth", me.auth_header())
+            .timeout(Duration::from_secs(60))
+            .send()
+            .await?;
+        Ok(check(resp).await?.json::<R>().await?.conversations)
     }
 
     /// This device is in use (true; it counts for 90 s, so repeat it about

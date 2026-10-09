@@ -130,6 +130,18 @@ CREATE TABLE IF NOT EXISTS history_marks (
   before    TEXT,                       -- the hub's cursor for the next older page
   oldest_ms INTEGER,                    -- hub clock: the oldest message loaded so far
   done      INTEGER NOT NULL DEFAULT 0, -- the chat's start is reached
+  -- unread on the hub (its chat list) and not loaded here yet
+  old_unread INTEGER NOT NULL DEFAULT 0,
+  listed_id  TEXT,                      -- the chat list's newest message (stored at once)
+  PRIMARY KEY (hub, peer)
+);
+CREATE INDEX IF NOT EXISTS messages_by_reply_to ON messages(reply_to) WHERE reply_to IS NOT NULL;
+-- a "Delete chat" a hub that was down still owes for messages this device
+-- never loaded: on a hub with lazy history, its history before the delete
+CREATE TABLE IF NOT EXISTS pending_chat_deletes (
+  hub    TEXT NOT NULL REFERENCES hubs(url) ON DELETE CASCADE,
+  peer   TEXT NOT NULL,
+  before TEXT NOT NULL,                 -- unix ms on the hub's clock, then its cursor
   PRIMARY KEY (hub, peer)
 );
 "#,
@@ -192,6 +204,11 @@ pub struct HistoryMark {
     pub oldest_ms: Option<i64>,
     /// The chat's start on this hub is reached.
     pub done: bool,
+    /// Unread on the hub but not loaded here yet (they count as unread).
+    pub old_unread: i64,
+    /// The newest message from the hub's chat list, stored with it (so
+    /// not among `old_unread`).
+    pub listed_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -587,6 +604,8 @@ impl Store {
                 "UPDATE messages SET seen=1, read_at=COALESCE(read_at, ?) WHERE peer=? AND outgoing=0 AND seen=0",
                 [now, peer],
             )?;
+            // what the hubs' chat lists counted but isn't loaded: seen too
+            tx.execute("UPDATE history_marks SET old_unread=0 WHERE peer=? AND old_unread<>0", [peer])?;
             tx.commit()?;
             Ok(ids)
         })
@@ -597,7 +616,8 @@ impl Store {
     pub fn unread(&self, peer: &str) -> Result<u64> {
         self.with(|c| {
             c.query_row(
-                "SELECT COUNT(*) FROM messages WHERE peer=? AND outgoing=0 AND seen=0",
+                "SELECT (SELECT COUNT(*) FROM messages WHERE peer=?1 AND outgoing=0 AND seen=0)
+                   + (SELECT COALESCE(SUM(old_unread), 0) FROM history_marks WHERE peer=?1)",
                 [peer],
                 |r| r.get(0),
             )
@@ -608,6 +628,7 @@ impl Store {
         let peers: Vec<(String, String, u64)> = self.with(|c| {
             let mut st = c.prepare(
                 "SELECT peer, MAX(created_at) AS last, SUM(CASE WHEN outgoing=0 AND seen=0 THEN 1 ELSE 0 END)
+                   + (SELECT COALESCE(SUM(h.old_unread), 0) FROM history_marks h WHERE h.peer=messages.peer)
                  FROM messages GROUP BY peer ORDER BY last DESC",
             )?;
             let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? as u64)))?;
@@ -653,7 +674,15 @@ impl Store {
     /// our devices) or theirs, with its receipts as they stand now. Returns
     /// whether this is a new incoming message nobody has read yet.
     pub fn upsert_synced(&self, hub: &str, me: &str, m: &SyncedMessage) -> Result<bool> {
+        self.upsert_synced_at(hub, me, m, 0)
+    }
+
+    /// `upsert_synced` with the hub's clock offset (its clock minus ours,
+    /// ms): a message sorts by when the hub received it, on our clock, and
+    /// one held on several hubs by the earliest of those times.
+    pub fn upsert_synced_at(&self, hub: &str, me: &str, m: &SyncedMessage, offset_ms: i64) -> Result<bool> {
         let env = &m.env;
+        let at = shift_ms(&env.received_at, -offset_ms).unwrap_or_else(|| env.received_at.clone());
         let outgoing = env.from == me;
         let peer = if outgoing {
             env.to.as_str()
@@ -705,8 +734,8 @@ impl Store {
                             env.reply_to,
                             env.sent_at,
                             env.received_at,
-                            // history sorts by the hub's clock
-                            env.received_at,
+                            // history sorts by the hub's clock, made ours
+                            at,
                             hub_state,
                             m.fetched_at,
                             m.delivered_at,
@@ -724,6 +753,7 @@ impl Store {
                     // message_hubs keeps every hub that holds it
                     tx.execute(
                         "UPDATE messages SET hub=COALESCE(hub, ?), received_at=COALESCE(received_at, ?),
+                           created_at=MIN(created_at, ?),
                            fetched_at=COALESCE(?, fetched_at), delivered_at=COALESCE(?, delivered_at),
                            read_at=COALESCE(?, read_at), state=?, error=CASE WHEN ?='failed' THEN error ELSE NULL END,
                            seen = seen OR ?
@@ -731,6 +761,7 @@ impl Store {
                         params![
                             hub,
                             env.received_at,
+                            at,
                             m.fetched_at,
                             m.delivered_at,
                             m.read_at,
@@ -743,6 +774,7 @@ impl Store {
                 }
             }
             held_by(&tx, &env.id, hub)?;
+            after_its_parent(&tx, &env.id)?;
             // attachment ids are per hub: ids of a hub that no longer holds
             // the message (it started over, or was removed) become this one's
             for (i, a) in env.attachments.iter().enumerate() {
@@ -881,6 +913,54 @@ impl Store {
 
     // ------------------------------------------------------- lazy history
 
+    /// A hub's chat list says `n` of the chat's messages, not loaded here,
+    /// are unread; `listed_id` is its newest message, stored with the list.
+    pub fn set_old_unread(&self, hub: &str, peer: &str, n: i64, listed_id: Option<&str>) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO history_marks(hub, peer, old_unread, listed_id) VALUES(?,?,?,?)
+                 ON CONFLICT(hub, peer) DO UPDATE SET old_unread=excluded.old_unread, listed_id=excluded.listed_id",
+                params![hub, peer, n.max(0), listed_id],
+            )
+            .map(|_| ())
+        })
+    }
+
+    /// `hub` owes the chat with `peer` a delete of what it received before
+    /// `before` (unix ms, the hub's clock). A later one replaces it.
+    pub fn queue_chat_delete(&self, hub: &str, peer: &str, before: i64) -> Result<()> {
+        self.set_chat_delete(hub, peer, &before.to_string())
+    }
+
+    /// Where a hub's owed chat delete has got to (`before`: a time or the
+    /// hub's history cursor).
+    pub fn set_chat_delete(&self, hub: &str, peer: &str, before: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute(
+                "INSERT INTO pending_chat_deletes(hub, peer, before) VALUES(?,?,?)
+                 ON CONFLICT(hub, peer) DO UPDATE SET before=excluded.before",
+                [hub, peer, before],
+            )
+            .map(|_| ())
+        })
+    }
+
+    /// The chat deletes `hub` owes: (peer, before).
+    pub fn chat_deletes(&self, hub: &str) -> Result<Vec<(String, String)>> {
+        self.with(|c| {
+            let mut st = c.prepare("SELECT peer, before FROM pending_chat_deletes WHERE hub=? LIMIT 100")?;
+            let rows = st.query_map([hub], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.collect()
+        })
+    }
+
+    pub fn chat_delete_done(&self, hub: &str, peer: &str) -> Result<()> {
+        self.with(|c| {
+            c.execute("DELETE FROM pending_chat_deletes WHERE hub=? AND peer=?", [hub, peer])
+                .map(|_| ())
+        })
+    }
+
     /// The hub starts this device over: page every chat again.
     pub fn clear_history_marks(&self, hub: &str) -> Result<()> {
         self.with(|c| c.execute("DELETE FROM history_marks WHERE hub=?", [hub]).map(|_| ()))
@@ -890,13 +970,15 @@ impl Store {
     pub fn history_mark(&self, hub: &str, peer: &str) -> Result<Option<HistoryMark>> {
         self.with(|c| {
             c.query_row(
-                "SELECT before, oldest_ms, done FROM history_marks WHERE hub=? AND peer=?",
+                "SELECT before, oldest_ms, done, old_unread, listed_id FROM history_marks WHERE hub=? AND peer=?",
                 [hub, peer],
                 |r| {
                     Ok(HistoryMark {
                         before: r.get(0)?,
                         oldest_ms: r.get(1)?,
                         done: r.get(2)?,
+                        old_unread: r.get(3)?,
+                        listed_id: r.get(4)?,
                     })
                 },
             )
@@ -907,10 +989,11 @@ impl Store {
     pub fn set_history_mark(&self, hub: &str, peer: &str, m: &HistoryMark) -> Result<()> {
         self.with(|c| {
             c.execute(
-                "INSERT INTO history_marks(hub, peer, before, oldest_ms, done) VALUES(?,?,?,?,?)
-                 ON CONFLICT(hub, peer) DO UPDATE SET before=excluded.before,
-                   oldest_ms=excluded.oldest_ms, done=excluded.done",
-                params![hub, peer, m.before, m.oldest_ms, m.done],
+                "INSERT INTO history_marks(hub, peer, before, oldest_ms, done, old_unread, listed_id)
+                 VALUES(?,?,?,?,?,?,?)
+                 ON CONFLICT(hub, peer) DO UPDATE SET before=excluded.before, oldest_ms=excluded.oldest_ms,
+                   done=excluded.done, old_unread=excluded.old_unread, listed_id=excluded.listed_id",
+                params![hub, peer, m.before, m.oldest_ms, m.done, m.old_unread, m.listed_id],
             )
             .map(|_| ())
         })
@@ -1129,6 +1212,46 @@ fn relabel(tx: &rusqlite::Transaction, hub: &str) -> rusqlite::Result<usize> {
 }
 
 /// Record that `hub` holds a copy of message `id`.
+/// A reply never sorts above the message it answers (hubs' clocks differ):
+/// it goes 1 ms after its parent, and replies to it after it.
+fn after_its_parent(tx: &rusqlite::Transaction, id: &str) -> rusqlite::Result<()> {
+    let Some((mut at, reply_to)) = tx
+        .query_row(
+            "SELECT created_at, reply_to FROM messages WHERE id=?",
+            [id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+        )
+        .optional()?
+    else {
+        return Ok(());
+    };
+    if let Some(parent) = reply_to {
+        let p: Option<String> = tx
+            .query_row("SELECT created_at FROM messages WHERE id=?", [&parent], |r| r.get(0))
+            .optional()?;
+        if let Some(next) = p.filter(|p| *p >= at).and_then(|p| shift_ms(&p, 1)) {
+            tx.execute("UPDATE messages SET created_at=? WHERE id=?", [&next, id])?;
+            at = next;
+        }
+    }
+    if let Some(next) = shift_ms(&at, 1) {
+        tx.execute(
+            "UPDATE messages SET created_at=? WHERE reply_to=? AND created_at<=?",
+            [&next, id, &at],
+        )?;
+    }
+    Ok(())
+}
+
+/// An RFC 3339 time `ms` milliseconds later (earlier when negative), in
+/// the form the store keeps (`now()`'s).
+pub(crate) fn shift_ms(t: &str, ms: i64) -> Option<String> {
+    let st = humantime::parse_rfc3339_weak(t).ok()?;
+    let d = std::time::Duration::from_millis(ms.unsigned_abs());
+    let st = if ms >= 0 { st.checked_add(d)? } else { st.checked_sub(d)? };
+    Some(humantime::format_rfc3339_millis(st).to_string())
+}
+
 fn held_by(tx: &rusqlite::Transaction, id: &str, hub: &str) -> rusqlite::Result<usize> {
     tx.execute(
         "INSERT OR IGNORE INTO message_hubs(id, hub) VALUES(?,?)",
@@ -1554,6 +1677,8 @@ mod tests {
             before: Some("1760000000123-7".into()),
             oldest_ms: Some(1760000000123),
             done: false,
+            old_unread: 0,
+            listed_id: None,
         };
         s.set_history_mark(a, "pat", &m).unwrap();
         s.set_history_mark(b, "pat", &HistoryMark { done: true, ..Default::default() })
@@ -1566,6 +1691,86 @@ mod tests {
         assert!(s.history_mark(b, "pat").unwrap().unwrap().done);
         s.remove_hub(b).unwrap();
         assert_eq!(s.history_mark(b, "pat").unwrap(), None);
+    }
+
+    fn synced_at(id: &str, received_at: &str, reply_to: Option<&str>) -> SyncedMessage {
+        let mut m = synced(id);
+        m.env.received_at = received_at.into();
+        m.env.reply_to = reply_to.map(Into::into);
+        m.env.attachments.clear();
+        m
+    }
+
+    fn created(s: &Store, id: &str) -> String {
+        s.message(id).unwrap().unwrap().created_at
+    }
+
+    /// Lazy history ordering: hub times on our clock, a message on two hubs
+    /// at the earliest of its times, a reply never above its parent.
+    #[test]
+    fn messages_sort_by_corrected_hub_time_earliest_copy_and_after_their_parent() {
+        let s = Store::open_in_memory().unwrap();
+        let (a, b) = ("http://a:7370", "http://b:7370");
+        for h in [a, b] {
+            s.add_hub(h, "t0").unwrap();
+        }
+        let me = "me.000000";
+        // hub A runs 5 s fast: its 10:00:05 is our 10:00:00
+        s.upsert_synced_at(a, me, &synced_at("m1", "2026-10-08T10:00:05.000Z", None), 5000)
+            .unwrap();
+        assert_eq!(created(&s, "m1"), "2026-10-08T10:00:00.000Z");
+        // the same message from hub B (on time) a second later: the earliest stays
+        s.upsert_synced_at(b, me, &synced_at("m1", "2026-10-08T10:00:01.000Z", None), 0)
+            .unwrap();
+        assert_eq!(created(&s, "m1"), "2026-10-08T10:00:00.000Z");
+        // and earlier through hub B: that is the time now
+        s.upsert_synced_at(b, me, &synced_at("m1", "2026-10-08T09:59:59.500Z", None), 0)
+            .unwrap();
+        assert_eq!(created(&s, "m1"), "2026-10-08T09:59:59.500Z");
+        // a reply whose hub's clock puts it before its parent goes after it
+        s.upsert_synced_at(b, me, &synced_at("r1", "2026-10-08T09:59:58.000Z", Some("m1")), 0)
+            .unwrap();
+        assert_eq!(created(&s, "r1"), "2026-10-08T09:59:59.501Z");
+        // a reply stored before its parent moves when the parent comes
+        s.upsert_synced_at(a, me, &synced_at("r2", "2026-10-08T08:00:00.000Z", Some("p2")), 0)
+            .unwrap();
+        s.upsert_synced_at(a, me, &synced_at("p2", "2026-10-08T08:00:00.000Z", None), 0)
+            .unwrap();
+        assert_eq!(created(&s, "r2"), "2026-10-08T08:00:00.001Z");
+        // equal times: by id
+        s.upsert_synced_at(a, me, &synced_at("t-b", "2026-10-08T07:00:00.000Z", None), 0)
+            .unwrap();
+        s.upsert_synced_at(a, me, &synced_at("t-a", "2026-10-08T07:00:00.000Z", None), 0)
+            .unwrap();
+        let ids: Vec<String> = s
+            .chat("maya.111111", None, None, 10)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(ids, ["t-a", "t-b", "p2", "r2", "m1", "r1"]);
+    }
+
+    /// A hub's chat list counts unread messages not loaded here: they count
+    /// as unread until loaded or the chat is read.
+    #[test]
+    fn unread_counts_what_a_hub_lists_but_isnt_loaded() {
+        let s = Store::open_in_memory().unwrap();
+        let (a, b) = ("http://a:7370", "http://b:7370");
+        for h in [a, b] {
+            s.add_hub(h, "t0").unwrap();
+        }
+        let peer = "maya.111111";
+        assert!(s.upsert_synced(a, "me.000000", &synced_at("n1", "2026-10-08T10:00:00.000Z", None)).unwrap());
+        s.set_old_unread(a, peer, 4, Some("n1")).unwrap();
+        // each hub's own (a message both hold counts twice until loaded)
+        s.set_old_unread(b, peer, 3, None).unwrap();
+        assert_eq!(s.unread(peer).unwrap(), 8);
+        assert_eq!(s.chats().unwrap()[0].unread, 8);
+        // setting the count keeps the paging mark
+        assert_eq!(s.history_mark(a, peer).unwrap().unwrap().old_unread, 4);
+        s.mark_seen(peer, "t9").unwrap();
+        assert_eq!(s.unread(peer).unwrap(), 0);
     }
 
     #[test]
