@@ -473,3 +473,6 @@
 .side-sub .icon-btn { margin-bottom: 4px; }
 .rail-ver { padding: 8px 0 10px; border-top: 1px solid var(--line-soft); align-self: stretch; text-align: center; }
 .rail-ver .ver { font: 400 11px/1 var(--font); color: var(--faint); }
+/* with the transfers chip showing, the five header controls overran the panel by 10px */
+.side-head:has(.tb-xfer) { gap: 2px; padding-right: 6px; }
+.side-head .tb-xfer { margin-right: 0; }
