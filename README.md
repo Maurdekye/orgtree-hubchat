@@ -17,7 +17,7 @@ Windows and Android.
   Windows, and offers updates when they come out.
 
 Linking devices and syncing between them need a hub running mail hub v2.0:
-the standalone hub, or the one built into Orgtree 4.0.2 and later.
+the standalone hub, or the one built into Orgtree 4.1.0 and later.
 
 ## Download
 
