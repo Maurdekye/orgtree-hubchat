@@ -159,10 +159,8 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
         <PeerAvatar address={peer} c={c} hubs={hubs} size={72} withPres={false} />
         <b>{name}</b>
         <div className="mono" style={{ fontSize: 12.5, overflowWrap: "anywhere" }}>@net:{peer}</div>
-        <NoteCard icon={c ? k.icon : "search"}>
-          {c ? <><b>{k.label}.</b> {k.what}{kind !== "person" ? " Replies can take a minute: an agent has to pick your message up first." : ""}{via ? <> Messages go through hub <b>{via.name}</b>.</> : null}</>
-            : <><b>Not on your mail hubs.</b> None of the hubs you're connected to lists this address, so a message can't reach it.</>}
-        </NoteCard>
+        {/* one plain line (user 2026-10-09 07:26Z) */}
+        <NoteCard icon={c ? k.icon : "search"}>{c ? k.intro : "Not on any mail hub you're connected to."}</NoteCard>
       </div>,
     );
   }

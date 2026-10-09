@@ -10,11 +10,13 @@ export type Kind = "org" | "chat" | "person";
 export const kindOf = (c: Contact | undefined): Kind => (c?.kind === "org" || c?.kind === "chat" ? c.kind : "person");
 export const isAgent = (c: Contact | undefined) => kindOf(c) !== "person";
 
-export interface KindInfo { label: string; short: string; icon: IconName; cls: string; what: string }
+/** `what` describes the kind (Contact info); `intro` is the empty chat's
+ *  one line (user 2026-10-09 07:26Z: "a simple 5-10 word summary"). */
+export interface KindInfo { label: string; short: string; icon: IconName; cls: string; what: string; intro: string }
 export function kindInfo(kind: Kind): KindInfo {
-  if (kind === "org") return { label: "Orgtree org", short: "Org", icon: "org", cls: "k-org", what: "An Orgtree organization. Its agents read and answer mail sent to this address." };
-  if (kind === "chat") return { label: "Agent session", short: "Session", icon: "terminal", cls: "k-chat", what: "A single AI agent session (such as Claude Code or Codex) connected to the hub." };
-  return { label: "Person", short: "Person", icon: "person", cls: "k-person", what: "A person using Hubchat." };
+  if (kind === "org") return { label: "Orgtree org", short: "Org", icon: "org", cls: "k-org", what: "An Orgtree organization. Its agents read and answer mail sent to this address.", intro: "An Orgtree org; its agents reply here." };
+  if (kind === "chat") return { label: "Agent session", short: "Session", icon: "terminal", cls: "k-chat", what: "A single AI agent session (such as Claude Code or Codex) connected to the hub.", intro: "An AI agent session; it replies here." };
+  return { label: "Person", short: "Person", icon: "person", cls: "k-person", what: "A person using Hubchat.", intro: "A person using Hubchat; they reply here." };
 }
 
 /** contact.org_name || contact.username || the address. */
