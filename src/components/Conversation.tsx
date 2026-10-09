@@ -7,13 +7,13 @@ import { Icon } from "../lib/icons";
 import { useFileDrop } from "../lib/drop";
 import { bytes, dayLabel, dayStart, MAX_FILES } from "../lib/format";
 import { copyText, errText } from "../lib/native";
-import { displayName, hubStatusText, kindInfo, kindOf, limitFor, msgTime, peerHubs, presence, viaHub } from "../lib/peers";
+import { displayName, hubStatusText, kindInfo, kindOf, limitFor, msgTime, peerHubs, presence, preview, viaHub } from "../lib/peers";
 import { refreshChats, useMessages, useSnap } from "../lib/store";
 import { toast } from "../lib/toast";
 import { Composer, type ComposerApi } from "./Composer";
 import { HubHelpLink } from "./HubHelp";
 import { MessageView } from "./MessageView";
-import { Addr, KindChip, KindGlyph, NoteCard, PeerAvatar, PresText, useNow, usePlatform } from "./ui";
+import { Addr, KindChip, KindGlyph, NoteCard, PeerAvatar, PresText, pressKeys, useNow, usePlatform } from "./ui";
 
 const GROUP_GAP = 5 * 60000;
 const CHIP_KINDS = new Set(["question", "request", "decision", "status"]);
@@ -160,6 +160,14 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   }, []);
   const leaveHl = () => { growFrom.current = null; setHl(null); };
   const backToBox = () => { leaveHl(); comp.current?.focus(); };
+  // the right-click menu of the highlighted message, from the keyboard (Menu key, Shift+F10)
+  const menuOnHl = () => {
+    const bub = hlRef.current ? document.querySelector<HTMLElement>("#m-" + hlRef.current + " .bubble") : null;
+    const view = tl.current?.getBoundingClientRect();
+    if (!bub || !view) return;
+    const r = bub.getBoundingClientRect();
+    bub.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: Math.round(r.left + 24), clientY: Math.round(Math.min(Math.max(r.top, view.top) + 24, view.bottom - 8)) }));
+  };
   const keys = (e: React.KeyboardEvent) => {
     if (platform !== "desktop") return;
     if (e.nativeEvent.isComposing || e.ctrlKey || e.altKey || e.metaKey) return;
@@ -186,6 +194,8 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
         else if (more) { growFrom.current = msgs[0].id; older(); }
       } else if (i < msgs.length - 1) show(msgs[i + 1].id);
       else backToBox();
+    } else if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
+      e.preventDefault(); menuOnHl();
     } else if (e.key === "Escape") {
       // only the highlight goes, not the info panel behind it
       e.preventDefault(); e.stopPropagation(); backToBox();
@@ -194,6 +204,26 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
       reply(msgs[i]); backToBox();
     }
   };
+  // screen readers: what the highlight is on, and the newest incoming message
+  // of the open chat (not for history, not in the background, one every 4 s)
+  const [said, setSaid] = useState("");
+  const lastIn = useRef<string | null | undefined>(undefined);
+  const saidAt = useRef(0);
+  useEffect(() => { lastIn.current = undefined; }, [peer]);
+  useEffect(() => {
+    if (!loaded) return;
+    const inc = [...msgs].reverse().find((m) => !m.outgoing);
+    if (lastIn.current === undefined) { lastIn.current = inc?.id ?? null; return; }
+    if (!inc || inc.id === lastIn.current) return;
+    lastIn.current = inc.id;
+    if (document.visibilityState !== "visible" || Date.now() - saidAt.current < 4000) return;
+    saidAt.current = Date.now();
+    setSaid(displayName(c, peer) + ": " + preview(inc).slice(0, 200));
+  }, [msgs, loaded]);
+  useEffect(() => {
+    const m = hl ? msgs.find((x) => x.id === hl) : null;
+    if (m) setSaid((m.outgoing ? "You" : displayName(c, peer)) + ": " + preview(m).slice(0, 200));
+  }, [hl]);
   useEffect(() => {
     const from = growFrom.current;
     if (!from || !hlRef.current || msgs[0]?.id === from) return;
@@ -299,7 +329,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   if (platform === "android") {
     const selMsg = sel ? byId.get(sel) : undefined;
     return (
-      <div className="scr">
+      <div className="scr" role="main">
         {selMsg ? (
           <div className="appbar select">
             <button className="icon-btn" onClick={() => setSel(null)} aria-label="Cancel"><Icon name="close" /></button>
@@ -311,7 +341,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
         ) : (
           <div className="appbar">
             <button className="icon-btn" onClick={onBack} aria-label="Back"><Icon name="back" /></button>
-            <div className="who" onClick={onContact} role="button" aria-label={"Contact info: " + name}>
+            <div className="who" onClick={onContact} role="button" tabIndex={0} title="Contact info" onKeyDown={onContact ? pressKeys(onContact) : undefined}>
               <PeerAvatar address={peer} c={c} hubs={hubs} size={40} />
               <div className="t">
                 <span className="n"><span className="ell">{name}</span> <KindGlyph kind={kind} /></span>
@@ -335,7 +365,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   }
 
   return (
-    <section className="conv" ref={conv} onKeyDown={keys}>
+    <section className="conv" role="main" ref={conv} onKeyDown={keys}>
       <div className="conv-head">
         <span className="conv-av" onClick={onContact}><PeerAvatar address={peer} c={c} hubs={hubs} size={40} /></span>
         <div className="who" onClick={onContact} title="Contact info">
@@ -351,13 +381,15 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
         <button className={"icon-btn" + (infoOn ? " on" : "")} onClick={onContact} title="Contact info (Ctrl+I)" aria-label="Contact info" aria-pressed={!!infoOn}><Icon name="info" /></button>
       </div>
       <div className="tl-wrap">
-        <div className="timeline scroll" ref={tl} onScroll={onScroll} tabIndex={platform === "desktop" ? -1 : undefined}
+        <div className="timeline scroll" ref={tl} onScroll={onScroll} tabIndex={platform === "desktop" ? -1 : undefined} role="region" aria-label={"Messages with " + name}
+          onContextMenu={(e) => { if (hlRef.current && e.target === e.currentTarget) { e.preventDefault(); menuOnHl(); } }}
           onMouseDown={() => { if (hlRef.current) leaveHl(); }}
           onBlur={(e) => { if (hlRef.current && document.hasFocus() && !e.currentTarget.contains(e.relatedTarget as Node | null)) leaveHl(); }}><div className="tl-inner">{rows}</div></div>
         {jumpBtn}
         {dragging ? <DropZone lim={limitFor(c, hubs)} /> : null}
       </div>
       {composer}
+      <div className="sr" role="status" aria-live="polite">{said}</div>
     </section>
   );
 }

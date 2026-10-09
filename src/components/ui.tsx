@@ -1,5 +1,5 @@
 // Small shared pieces: platform context, avatar, address, chips, dialogs.
-import { createContext, useContext, useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyEvent, type ReactNode } from "react";
 import QRCode from "qrcode";
 import type { Contact, HubStatus, Message } from "../api";
 import { Icon, type IconName } from "../lib/icons";
@@ -53,7 +53,7 @@ export function KindGlyph({ kind }: { kind: Kind }) {
 
 export function Tick({ m }: { m: Message }) {
   const t = tickInfo(m);
-  return <span className={"tick " + t.cls} title={t.label}><Icon name={t.ic} /></span>;
+  return <span className={"tick " + t.cls} title={t.label} role="img" aria-label={t.label}><Icon name={t.ic} /></span>;
 }
 
 export function Switch({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label: string }) {
@@ -71,19 +71,62 @@ export function QR({ text, size }: { text: string; size: number }) {
   return <span className="qrbox">{src ? <img src={src} width={size} height={size} alt={"QR code for " + text} /> : <span style={{ display: "block", width: size, height: size }} />}</span>;
 }
 
+/** onKeyDown for a div that acts as a button: Enter and Space press it (not
+ *  when the key came from a control inside it). */
+export const pressKeys = (fn: () => void) => (e: ReactKeyEvent<HTMLElement>) => {
+  if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+  e.preventDefault();
+  fn();
+};
+
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** A dialog's keyboard manners: focus goes in when it opens (unless a field
+ *  inside already took it), Tab and Shift+Tab stay inside it, and closing it
+ *  puts the focus back where it was. */
+export function useDialogFocus(): { ref: React.RefObject<HTMLDivElement | null>; onKeyDown: (e: ReactKeyEvent<HTMLElement>) => void } {
+  const ref = useRef<HTMLDivElement>(null);
+  const [from] = useState(() => document.activeElement as HTMLElement | null);
+  useEffect(() => {
+    const box = ref.current;
+    if (box && !box.contains(document.activeElement)) box.focus({ preventScroll: true });
+    return () => { if (from && from !== document.body && document.contains(from)) from.focus({ preventScroll: true }); };
+  }, [from]);
+  const onKeyDown = (e: ReactKeyEvent<HTMLElement>) => {
+    if (e.key !== "Tab" || e.defaultPrevented) return;
+    const box = ref.current;
+    if (!box) return;
+    const all = [...box.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((x) => x.offsetParent !== null || x === document.activeElement);
+    if (!all.length) { e.preventDefault(); box.focus(); return; }
+    const first = all[0], last = all[all.length - 1], at = document.activeElement;
+    if (e.shiftKey && (at === first || at === box)) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && at === last) { e.preventDefault(); first.focus(); }
+    else if (!box.contains(at)) { e.preventDefault(); first.focus(); }
+  };
+  return { ref, onKeyDown };
+}
+
+/** The id its ModalHead title carries, which names the dialog. */
+const ModalTitle = createContext<string | undefined>(undefined);
+
 /** Desktop modal with scrim (Esc and scrim click close it). */
 export function Modal({ onClose, className, children }: { onClose: () => void; className?: string; children: ReactNode }) {
+  const id = useId();
+  const dlg = useDialogFocus();
   return (
     <div className="scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className={"modal" + (className ? " " + className : "")} role="dialog" aria-modal="true">{children}</div>
+      <ModalTitle.Provider value={id}>
+        <div className={"modal" + (className ? " " + className : "")} role="dialog" aria-modal="true" aria-labelledby={id} tabIndex={-1} ref={dlg.ref} onKeyDown={dlg.onKeyDown}>{children}</div>
+      </ModalTitle.Provider>
     </div>
   );
 }
 
 export function ModalHead({ title, onClose, children }: { title: ReactNode; onClose?: () => void; children?: ReactNode }) {
+  const id = useContext(ModalTitle);
   return (
     <div className="modal-h">
-      <h3>{title}</h3>
+      <h3 id={id} aria-level={2}>{title}</h3>
       {children}
       {onClose ? <button className="icon-btn" onClick={onClose} title="Close (Esc)" aria-label="Close"><Icon name="close" /></button> : null}
     </div>
@@ -102,8 +145,8 @@ export function Confirm({ title, children, okLabel, danger, onOk, onCancel, busy
     return (
       <>
         <div className="sheet-scrim" onClick={onCancel} />
-        <div className="dialog" role="dialog" aria-modal="true">
-          <h4>{title}</h4>
+        <div className="dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+          <h4 id="confirm-title">{title}</h4>
           {children}
           <div className="acts">
             <button className="btn ghost" onClick={onCancel}>Cancel</button>
@@ -128,8 +171,9 @@ export function Confirm({ title, children, okLabel, danger, onOk, onCancel, busy
 export function Toasts() {
   const list = useToasts();
   const platform = usePlatform();
-  if (platform === "android") return list.length ? <div className="snack">{list[list.length - 1].text}</div> : null;
-  return <div className="toasts">{list.map((t) => <div className="toast" key={t.id}>{t.text}</div>)}</div>;
+  // the container stays in the page so a screen reader announces what lands in it
+  if (platform === "android") return <div role="status" aria-live="polite">{list.length ? <div className="snack">{list[list.length - 1].text}</div> : null}</div>;
+  return <div className="toasts" role="status" aria-live="polite">{list.map((t) => <div className="toast" key={t.id}>{t.text}</div>)}</div>;
 }
 
 export function NoteCard({ icon, warn, children, style }: { icon: IconName; warn?: boolean; children: ReactNode; style?: CSSProperties }) {

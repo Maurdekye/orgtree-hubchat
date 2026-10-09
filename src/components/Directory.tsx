@@ -9,7 +9,7 @@ import { displayName, kindOf, presence, type Kind } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { HubHelpLink } from "./HubHelp";
 import { chatMenu } from "./ChatList";
-import { Addr, Avatar, KindGlyph, Modal, ModalHead, PeerAvatar, usePlatform } from "./ui";
+import { Addr, Avatar, KindGlyph, Modal, ModalHead, PeerAvatar, pressKeys, usePlatform } from "./ui";
 
 type KindF = "all" | Kind;
 
@@ -53,7 +53,7 @@ export function Directory({ onOpen, onClose, onBack, onInfo }: { onOpen: (addres
     const via = c.hubs.map((u) => { const h = hubN(u); return h ? <span key={u} className={"chip hubchip" + (h.state === "connected" ? "" : " stale")} title={"Reachable through " + h.name + (h.state === "connected" ? "" : " (not connected)")}>{h.name}</span> : null; });
     const started = snap.chats.some((x) => x.peer === c.address);
     return (
-      <div className="nc-row dir-row" key={c.address} onClick={() => onOpen(c.address)} role="button"
+      <div className="nc-row dir-row" key={c.address} onClick={() => onOpen(c.address)} role="button" tabIndex={0} onKeyDown={pressKeys(() => onOpen(c.address))}
         onContextMenu={platform === "desktop" ? (e) => chatMenu(e, c.address, onOpen, onInfo, "Message") : undefined}>
         <PeerAvatar address={c.address} c={c} hubs={hubs} size={platform === "android" ? 44 : 40} />
         <div className="t">

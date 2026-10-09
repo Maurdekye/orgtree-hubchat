@@ -30,10 +30,10 @@ export function TitleBar() {
   }, []);
   const w = inTauri ? getCurrentWindow() : null;
   return (
-    <div className="titlebar" data-tauri-drag-region>
+    <div className="titlebar" role="banner" data-tauri-drag-region>
       <div className="tb-brand" data-tauri-drag-region>
         <Logo size={16} />
-        <span data-tauri-drag-region>Hubchat</span>
+        <span role="heading" aria-level={1} data-tauri-drag-region>Hubchat</span>
       </div>
       <div className="tb-fill" data-tauri-drag-region />
       <div className="window-controls" role="group" aria-label="Window controls">

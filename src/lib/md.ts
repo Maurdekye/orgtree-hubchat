@@ -40,7 +40,7 @@ function codeBlock(text: string, lang: string): string {
 
 const link = (href: string, inner: string) => {
   const u = safeUrl(href);
-  return u ? '<a class="md-a" data-href="' + esc(u) + '" title="' + esc(u) + '">' + inner + "</a>" : inner;
+  return u ? '<a class="md-a" data-href="' + esc(u) + '" title="' + esc(u) + '" tabindex="0" role="link">' + inner + "</a>" : inner;
 };
 
 const marked = new Marked({
@@ -65,7 +65,7 @@ const marked = new Marked({
       const m = /^@net:([a-z0-9][a-z0-9._-]*[a-z0-9])/.exec(src);
       return m ? { type: "addr", raw: m[0], slug: m[1] } : undefined;
     },
-    renderer: (t: Tokens.Generic) => '<a class="addr" data-slug="' + esc(t.slug) + '">@net:' + esc(t.slug) + "</a>",
+    renderer: (t: Tokens.Generic) => '<a class="addr" data-slug="' + esc(t.slug) + '" tabindex="0" role="link">@net:' + esc(t.slug) + "</a>",
   }],
   renderer: {
     html: ({ text, block }) => {
@@ -97,7 +97,7 @@ const PURIFY = {
     "ul", "ol", "li", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6",
     "table", "thead", "tbody", "tr", "th", "td", "svg", "path",
   ],
-  ALLOWED_ATTR: ["class", "title", "data-href", "data-slug", "data-act", "start", "viewBox", "d", "aria-hidden"],
+  ALLOWED_ATTR: ["class", "title", "data-href", "data-slug", "data-act", "start", "viewBox", "d", "aria-hidden", "tabindex", "role", "dir"],
   ALLOW_DATA_ATTR: false,
   ALLOW_ARIA_ATTR: false,
   ALLOW_UNKNOWN_PROTOCOLS: false,
@@ -107,6 +107,13 @@ DOMPurify.addHook("afterSanitizeAttributes", (n) => {
   if (n.hasAttribute("data-href") && !safeUrl(n.getAttribute("data-href"))) n.removeAttribute("data-href");
   if (n.nodeName === "A" && n.classList.contains("md-a") && !n.hasAttribute("data-href")) n.removeAttribute("class");
   if (n.hasAttribute("data-act") && n.getAttribute("data-act") !== "copy-code") n.removeAttribute("data-act");
+  // keyboard reach for links and addresses (they carry no href): only tabindex 0 and role link, only on them
+  const linky = n.nodeName === "A" && (n.hasAttribute("data-href") || n.hasAttribute("data-slug"));
+  if (n.hasAttribute("tabindex") && !(linky && n.getAttribute("tabindex") === "0")) n.removeAttribute("tabindex");
+  if (n.hasAttribute("role") && !(linky && n.getAttribute("role") === "link")) n.removeAttribute("role");
+  // each block takes its own direction (Arabic, Hebrew), without mirroring the layout
+  if (/^(P|LI|H[1-6]|BLOCKQUOTE|TD|TH)$/.test(n.nodeName)) n.setAttribute("dir", "auto");
+  else if (n.hasAttribute("dir")) n.removeAttribute("dir");
 });
 
 /** The second wall, on its own: only the allow-listed tags and attributes survive. */

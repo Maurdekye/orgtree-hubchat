@@ -12,7 +12,7 @@ import { errText, openAttachment, openFile } from "../lib/native";
 import { attView } from "../lib/peers";
 import { useTransfer } from "../lib/store";
 import { toast } from "../lib/toast";
-import { usePlatform } from "./ui";
+import { pressKeys, usePlatform } from "./ui";
 import "../styles/images.css";
 
 export function AttImage({ a, m, fallback }: { a: Attachment; m: Message; fallback: ReactNode }) {
@@ -22,7 +22,8 @@ export function AttImage({ a, m, fallback }: { a: Attachment; m: Message; fallba
   if (failed) return <>{fallback}</>;
   const moving = v.st === "busy" || v.st === "bad";
   return (
-    <div className={"att-img" + (moving ? " xfer" : "") + (url ? "" : " wait")} data-att={a.local_id} role="button" title={a.name} aria-label={"Image " + a.name}
+    <div className={"att-img" + (moving ? " xfer" : "") + (url ? "" : " wait")} data-att={a.local_id} role="button" tabIndex={0} title={a.name} aria-label={"Image " + a.name}
+      onKeyDown={pressKeys(() => { if (url) openImage(m, a); })}
       onClick={(e) => { e.stopPropagation(); if (url) openImage(m, a); }}>
       {url ? <img src={url} alt={a.name} draggable={false} /> : <span className="att-ph"><Icon name="image" /></span>}
       {moving ? (

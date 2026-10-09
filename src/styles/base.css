@@ -264,3 +264,7 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .bubble .mbody.clamp { max-height: 15.5em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 65%, transparent); mask-image: linear-gradient(#000 65%, transparent); }
 .bubble .more { display: block; border: 0; background: none; padding: 4px 0 0; color: var(--accent-text); font: 600 13px var(--font); cursor: pointer; }
 .bubble .more:hover { text-decoration: underline; }
+.modal:focus, .modal:focus-visible, .dialog:focus { outline: none; }
+/* read by screen readers only (a message's sender, the live announcements) */
+.sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+.crow-prev .you { flex: none; }

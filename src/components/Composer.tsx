@@ -149,7 +149,7 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref, o
       {replyTo ? (
         <div className="replybar">
           {platform === "desktop" ? <Icon name="reply" className="lead" /> : null}
-          <div className="rb-t"><span className="rb-who">{platform === "android" ? <Icon name="reply" style={{ width: 16, height: 16 }} /> : null}Replying to {who}</span><span className="rb-txt">{preview(replyTo)}</span></div>
+          <div className="rb-t"><span className="rb-who">{platform === "android" ? <Icon name="reply" style={{ width: 16, height: 16 }} /> : null}Replying to {who}</span><span className="rb-txt" dir="auto">{preview(replyTo)}</span></div>
           <button className="icon-btn" onClick={onCancelReply} title="Cancel reply (Esc)" aria-label="Cancel reply"><Icon name="close" /></button>
         </div>
       ) : null}
@@ -174,7 +174,7 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref, o
     <div className="comp-row">
       <div className="comp-box">
         <button className="icon-btn" onClick={attach} title="Attach files" aria-label="Attach files"><Icon name="attach" /></button>
-        <textarea ref={ta} rows={1} value={text} spellCheck placeholder={"Message " + displayName(c, peer)}
+        <textarea ref={ta} rows={1} value={text} spellCheck dir="auto" aria-label={"Message " + displayName(c, peer)} placeholder={"Message " + displayName(c, peer)}
           onChange={(e) => change(e.target.value)}
           onPaste={(e) => { const imgs = pastedImages(e.clipboardData); if (imgs.length) { e.preventDefault(); void paste(imgs); } }}
           onKeyDown={(e) => {

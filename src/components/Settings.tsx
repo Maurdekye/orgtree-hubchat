@@ -17,7 +17,7 @@ import { formatCode, LinkDeviceModal, type LinkTab } from "./LinkDevice";
 import { copyWords, downloadWords } from "../lib/recovery";
 import { HubAdder } from "./HubAdder";
 import { HubHelpLink } from "./HubHelp";
-import { Addr, Avatar, Confirm, NoteCard, QR, Switch, useNow, usePlatform } from "./ui";
+import { Addr, Avatar, Confirm, NoteCard, QR, Switch, pressKeys, useDialogFocus, useNow, usePlatform } from "./ui";
 
 export type SetTab = "profile" | "hubs" | "devices" | "notifications" | "recovery" | "privacy" | "appearance" | "general" | "about";
 /** Every section (Android titles its screens from this too; General is desktop only). */
@@ -27,7 +27,7 @@ export const TABS: [SetTab, string, IconName][] = [["profile", "Profile", "perso
 function Row({ icon, t1, t2, right, onClick }: { icon?: IconName; t1: ReactNode; t2?: ReactNode; right?: ReactNode; onClick?: () => void }) {
   const platform = usePlatform();
   return (
-    <div className={platform === "android" ? "li" : "set-row"} onClick={onClick} role={onClick ? "button" : undefined}>
+    <div className={platform === "android" ? "li" : "set-row"} onClick={onClick} role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined} onKeyDown={onClick ? pressKeys(onClick) : undefined}>
       {icon ? <Icon name={icon} /> : null}
       <div className="t"><div className="t1">{t1}</div>{t2 ? <div className="t2">{t2}</div> : null}</div>
       {right}
@@ -37,7 +37,7 @@ function Row({ icon, t1, t2, right, onClick }: { icon?: IconName; t1: ReactNode;
 function Sec({ title, children, first }: { title?: ReactNode; children: ReactNode; first?: boolean }) {
   const platform = usePlatform();
   if (platform === "android") return <>{title ? <div className="sec-h">{title}</div> : null}{children}</>;
-  return <div className="set-sec" style={first ? { marginTop: 6 } : undefined}>{title ? <h4>{title}</h4> : null}{children}</div>;
+  return <div className="set-sec" style={first ? { marginTop: 6 } : undefined}>{title ? <h4 aria-level={3}>{title}</h4> : null}{children}</div>;
 }
 function Card({ children }: { children: ReactNode }) {
   return usePlatform() === "android" ? <>{children}</> : <div className="set-card">{children}</div>;
@@ -69,7 +69,7 @@ function Profile() {
       <Sec>
         <div className="field" style={platform === "android" ? { marginTop: 8 } : undefined}>
           <label htmlFor="pf-name">Display name</label>
-          <label className="input"><input id="pf-name" value={name} maxLength={48} onChange={(e) => setName(e.target.value)} /></label>
+          <label className="input"><input id="pf-name" aria-label="Your name" value={name} maxLength={48} onChange={(e) => setName(e.target.value)} /></label>
           <div className="help">Shown to people and agents beside your address. Up to 48 characters.</div>
         </div>
         <div className="field">
@@ -82,7 +82,7 @@ function Profile() {
         </div>
         <div className="field">
           <label>Id</label>
-          <label className="input" style={{ opacity: 0.75 }}><Icon name="lock" /><input value={me.id} disabled /></label>
+          <label className="input" style={{ opacity: 0.75 }}><Icon name="lock" /><input value={me.id} disabled aria-label="Your id" /></label>
           <div className="help">Part of your address; it can't change.</div>
         </div>
       </Sec>
@@ -480,11 +480,12 @@ export function SettingsSection({ tab, onLink, goTab }: { tab: SetTab; onLink?: 
 export function SettingsModal({ tab, setTab, onClose }: { tab: SetTab; setTab: (t: SetTab) => void; onClose: () => void }) {
   const snap = useSnap();
   const hubBad = snap.state?.hubs.some((h) => h.state === "disconnected" || h.state === "refused");
+  const dlg = useDialogFocus();
   return (
     <div className="scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="modal settings" role="dialog" aria-modal="true">
+      <div className="modal settings" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabIndex={-1} ref={dlg.ref} onKeyDown={dlg.onKeyDown}>
         <nav className="set-nav">
-          <h3>Settings</h3>
+          <h3 id="settings-title" aria-level={2}>Settings</h3>
           {TABS.map(([k, label, ic]) => (
             <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>
               <Icon name={ic} />{label}

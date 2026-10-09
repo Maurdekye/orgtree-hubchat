@@ -7,7 +7,7 @@ import { displayName, isAgent, kindOf, msgTime, preview } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { openMenu } from "../lib/ctxmenu";
 import { copyText } from "../lib/native";
-import { Addr, KindGlyph, PeerAvatar, Tick, usePlatform } from "./ui";
+import { Addr, KindGlyph, PeerAvatar, Tick, pressKeys, usePlatform } from "./ui";
 
 export type ChatFilter = "all" | "agents" | "people";
 
@@ -51,14 +51,14 @@ export function ChatRows({ rows, selected, onOpen, onInfo }: { rows: ReturnType<
         const m = c.last;
         const draft = c.peer !== selected ? snap.drafts[c.peer] : "";
         let prev;
-        if (draft) prev = <><span className="q" style={{ color: "var(--accent-text)" }}>Draft:</span> <span className="t">{draft}</span></>;
+        if (draft) prev = <><span className="q" style={{ color: "var(--accent-text)" }}>Draft:</span> <span className="t" dir="auto">{draft}</span></>;
         else if (!m) prev = <span className="t">No messages yet</span>;
-        else if (m.outgoing) prev = <><Tick m={m} /><span className="t">You: {preview(m)}</span></>;
-        else prev = <>{m.kind === "question" ? <span className="q">Question ·</span> : null}{m.kind === "question" ? " " : null}<span className="t">{preview(m)}</span></>;
+        else if (m.outgoing) prev = <><Tick m={m} /><span className="you">You:</span><span className="t" dir="auto">{preview(m)}</span></>;
+        else prev = <>{m.kind === "question" ? <span className="q">Question ·</span> : null}{m.kind === "question" ? " " : null}<span className="t" dir="auto">{preview(m)}</span></>;
         return (
           <div key={c.peer} className={"crow" + (selected === c.peer ? " sel" : "") + (c.unread ? " unread" : "")} onClick={() => onOpen(c.peer)} role="button" tabIndex={0}
             onContextMenu={platform === "desktop" ? (e) => chatMenu(e, c.peer, onOpen, onInfo) : undefined}
-            onKeyDown={(e) => { if (e.key === "Enter") onOpen(c.peer); }}>
+            onKeyDown={pressKeys(() => onOpen(c.peer))}>
             <PeerAvatar address={c.peer} c={ct} hubs={hubs} size={platform === "android" ? 52 : 44} />
             <div className="crow-main">
               <div className="crow-l1"><span className="crow-name">{displayName(ct, c.peer)}</span><KindGlyph kind={kindOf(ct)} /><span className="crow-time">{m ? shortWhen(msgTime(m)) : ""}</span></div>

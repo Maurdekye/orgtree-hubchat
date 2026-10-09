@@ -88,19 +88,19 @@ export function ContactInfo({ peer, onClose }: { peer: string; onClose: () => vo
           <div style={{ marginTop: 4 }}><PresText c={c} hubs={hubs} /></div>
         </div>
         <div className="info-sec">
-          <h4>Address</h4>
+          <h4 aria-level={2}>Address</h4>
           <div className="addrbox"><span title={"@net:" + peer}><Addr a={peer} net /></span><button className="icon-btn" onClick={copy} title="Copy" aria-label="Copy address"><Icon name="copy" /></button></div>
           {tag ? <div className="help" style={{ marginTop: 6 }}>The last part, <span className="mono">{tag}</span>, comes from their key. Two people can share an id; the tag tells them apart.</div> : null}
         </div>
-        {blurb ? <div className="info-sec"><h4>About</h4><div style={{ fontSize: 13, overflowWrap: "anywhere" }}>{blurb}</div></div> : null}
+        {blurb ? <div className="info-sec"><h4 aria-level={2}>About</h4><div style={{ fontSize: 13, overflowWrap: "anywhere" }}>{blurb}</div></div> : null}
         {c ? (
           <div className="info-sec">
-            <h4>What this is</h4>
+            <h4 aria-level={2}>What this is</h4>
             <div style={{ fontSize: 13, color: "var(--ink)" }}>{k.what}{kind === "org" ? <> <span className="dim">{ONLINE_NOTE}</span></> : null}</div>
           </div>
         ) : null}
         <div className="info-sec">
-          <h4>Reachable through</h4>
+          <h4 aria-level={2}>Reachable through</h4>
           {ph.length ? ph.map((h) => (
             <div className="hubline" key={h.url}>
               <Icon name="dns" />
@@ -110,7 +110,7 @@ export function ContactInfo({ peer, onClose }: { peer: string; onClose: () => vo
           )) : <div className="dim" style={{ fontSize: 13 }}>None of your hubs</div>}
         </div>
         <div className="info-sec">
-          <h4>Files</h4>
+          <h4 aria-level={2}>Files</h4>
           {!loaded ? null : files.length ? files.map(({ a, m }) => (
             <div className="filerow" key={a.local_id} title={a.name}>
               <span className="att-ic"><Icon name={fileIcon(a.name)} /></span>

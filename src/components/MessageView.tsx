@@ -1,6 +1,6 @@
 // One message: kind chip, reply quote, file cards, markdown body with the
 // time and ticks, the failed line, and (desktop) the hover actions.
-import { memo, useState, type MouseEvent } from "react";
+import { memo, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { api, type Attachment, type Message } from "../api";
 import { Icon, iconHTML } from "../lib/icons";
 import { isLong, num, time } from "../lib/format";
@@ -12,13 +12,13 @@ import { openMenu, selectionIn, type MenuEntry } from "../lib/ctxmenu";
 import { useTransfer } from "../lib/store";
 import { toast } from "../lib/toast";
 import { AttImage } from "./AttImage";
-import { usePlatform } from "./ui";
+import { pressKeys, usePlatform } from "./ui";
 
 const KCHIP: Record<string, [string, string]> = { question: ["Question", "kc-q"], request: ["Request", "kc-q"], decision: ["Decision", "kc-d"], status: ["Status", "kc-s"] };
 
 function metaHTML(m: Message): string {
   let h = '<span class="meta"><span class="mt">' + time(msgTime(m)) + "</span>";
-  if (m.outgoing) { const t = tickInfo(m); h += '<span class="tick ' + t.cls + '" title="' + esc(t.label) + '">' + iconHTML(t.ic) + "</span>"; }
+  if (m.outgoing) { const t = tickInfo(m); h += '<span class="tick ' + t.cls + '" title="' + esc(t.label) + '" role="img" aria-label="' + esc(t.label) + '">' + iconHTML(t.ic) + "</span>"; }
   return h + "</span>";
 }
 
@@ -41,7 +41,7 @@ function FileCard({ a, m }: { a: Attachment; m: Message }) {
     else if (m.outgoing && a.source && v.st === "local" && !a.source.startsWith("content://")) openFile(a.source).catch(() => {});
   };
   return (
-    <div className={"att-file " + v.st} data-att={a.local_id} onClick={click} title={a.name} role="button">
+    <div className={"att-file " + v.st} data-att={a.local_id} onClick={click} title={a.name} role="button" tabIndex={0} onKeyDown={pressKeys(click)}>
       <span className="att-ic"><Icon name={v.ic} /></span>
       <span className="att-t">
         <span className="att-n">{a.name}</span>
@@ -111,6 +111,14 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
     if (addr) { e.preventDefault(); onOpenAddr(addr.dataset.slug || ""); }
   };
 
+  // a link or address (no href: it is opened by us) by keyboard
+  const keyOpen = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const t = e.target as HTMLElement;
+    if (t.matches("a.md-a")) { e.preventDefault(); void openLink(t.dataset.href || ""); }
+    else if (t.matches("a.addr")) { e.preventDefault(); onOpenAddr(t.dataset.slug || ""); }
+  };
+
   const k = m.kind ? KCHIP[m.kind] : undefined;
   let quote = null;
   if (m.reply_to) {
@@ -120,7 +128,7 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
       quote = (
         <div className={"quote " + kc} onClick={(e) => { e.stopPropagation(); onJump(quoted.id); }} title="Show the original message">
           <span className="q-who">{quoted.outgoing ? "You" : peerName}</span>
-          <span className="q-txt">{preview(quoted).slice(0, 140)}</span>
+          <span className="q-txt" dir="auto">{preview(quoted).slice(0, 140)}</span>
         </div>
       );
     }
@@ -130,7 +138,7 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
   if (m.body && long) {
     body = (
       <>
-        <div className={"mbody" + (open ? "" : " clamp")} dangerouslySetInnerHTML={{ __html: md(m.body) }} />
+        <div className={"mbody" + (open ? "" : " clamp")} dir="auto" dangerouslySetInnerHTML={{ __html: md(m.body) }} />
         <button className="more" onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>{open ? "Show less" : "Show more · " + num(m.body.length) + " characters"}</button>
         <div className="meta-line" dangerouslySetInnerHTML={{ __html: meta }} />
       </>
@@ -138,7 +146,7 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
   } else if (m.body) {
     let h = md(m.body);
     h = /<\/p>$/.test(h) ? h.slice(0, -4) + meta + "</p>" : h + '<div class="meta-line">' + meta + "</div>";
-    body = <div className="mtext" dangerouslySetInnerHTML={{ __html: h }} />;
+    body = <div className="mtext" dir="auto" dangerouslySetInnerHTML={{ __html: h }} />;
   } else {
     body = <div className="meta-line" dangerouslySetInnerHTML={{ __html: meta }} />;
   }
@@ -177,7 +185,8 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
     <div className={"msg " + (m.outgoing ? "out" : "in") + (first ? " first" : "") + (selected ? " sel" : "") + (highlighted ? " hl" : "")} id={"m-" + m.id} data-id={m.id}>
       {platform === "android" ? <span className="swipe-ic"><Icon name="reply" /></span> : null}
       <div className="row">
-        <div className={"bubble" + (m.attachments.length && !m.body ? " only-att" : "") + (m.reply_to ? " has-quote" : "")} onClick={delegate} onContextMenu={menu}>
+        <div className={"bubble" + (m.attachments.length && !m.body ? " only-att" : "") + (m.reply_to ? " has-quote" : "")} onClick={delegate} onKeyDown={keyOpen} onContextMenu={menu}>
+          <span className="sr">{(m.outgoing ? "You" : peerName) + (k ? ", " + k[0] : "") + ": "}</span>
           {k ? <div className={"kchip " + k[1]}>{k[0]}</div> : null}
           {quote}
           {m.attachments.length ? <div className="atts">{m.attachments.map((a) => <AttCard key={a.local_id} a={a} m={m} />)}</div> : null}

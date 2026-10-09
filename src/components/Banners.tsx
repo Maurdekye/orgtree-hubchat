@@ -31,10 +31,10 @@ export function HubBanner() {
     ? <><b>Hub {p.hub.name} refused the connection</b>{p.hub.error ? ": " + p.hub.error : ""}</>
     : <><b>Can't reach hub {p.hub.name}</b>{p.secs != null ? " · retrying in " + p.secs + " s" : ""}{p.more ? " · " + p.more + " more hub" + (p.more > 1 ? "s" : "") + " down" : ""}</>;
   if (platform === "android") {
-    return <div className={"strip warn" + (p.refused ? " bad" : "")}><Icon name={p.refused ? "error" : "warning"} /><span>{text}</span>{p.refused ? null : <HubHelpLink />}<button className="link" onClick={retry}>Retry</button></div>;
+    return <div className={"strip warn" + (p.refused ? " bad" : "")} role="region" aria-label="Hub notice"><Icon name={p.refused ? "error" : "warning"} /><span>{text}</span>{p.refused ? null : <HubHelpLink />}<button className="link" onClick={retry}>Retry</button></div>;
   }
   return (
-    <div className={"banner warn" + (p.refused ? " bad" : "")}>
+    <div className={"banner warn" + (p.refused ? " bad" : "")} role="region" aria-label="Hub notice">
       <Icon name={p.refused ? "error" : "warning"} /><span>{text}</span>
       {p.refused ? null : <HubHelpLink className="btn ghost" icon />}
       <button className="btn" onClick={retry}><Icon name="refresh" />Retry now</button>
@@ -51,14 +51,14 @@ export function RecoveryBanner({ onShow }: { onShow: () => void }) {
   const dismiss = () => { sessionStorage.setItem(KEY, "1"); setGone(true); };
   if (platform === "android") {
     return (
-      <div className="strip"><Icon name="key" /><span><b>Save your recovery words.</b> They are the only way back to your address.</span>
+      <div className="strip" role="region" aria-label="Recovery notice"><Icon name="key" /><span><b>Save your recovery words.</b> They are the only way back to your address.</span>
         <button className="link" onClick={onShow}>Show</button>
         <button className="icon-btn" style={{ width: 32, height: 32 }} onClick={dismiss} aria-label="Dismiss"><Icon name="close" /></button>
       </div>
     );
   }
   return (
-    <div className="banner">
+    <div className="banner" role="region" aria-label="Recovery notice">
       <Icon name="key" />
       <span><b>Save your recovery words.</b> If you lose this device, they are the only way to get your address back.</span>
       <button className="btn" onClick={onShow}>Show them</button>
@@ -78,7 +78,7 @@ export function UpdateBanner() {
     try { await avail.install(); } catch (e) { toast("Couldn't update: " + errText(e)); setBusy(false); }
   };
   return (
-    <div className="banner upd">
+    <div className="banner upd" role="region" aria-label="Update">
       <Icon name="restart" />
       <span><b>Hubchat {avail.version} is available.</b>{busy ? " Downloading…" : " It installs when Hubchat restarts."}</span>
       <button className="btn primary" onClick={go} disabled={busy}>{busy ? "Updating…" : "Restart to update"}</button>

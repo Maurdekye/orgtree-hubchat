@@ -15,7 +15,7 @@ export function MessageInfoBody({ m }: { m: Message }) {
   const agent = isAgent(c);
   const hub = hubName(hubs, m.hub);
   const when = (s: string | null) => { const t = ms(s); return t ? timeSec(t) + " · " + dayLabel(t) : null; };
-  const H = ({ t }: { t: string }) => (platform === "android" ? <div className="sec-h">{t}</div> : <h4>{t}</h4>);
+  const H = ({ t }: { t: string }) => (platform === "android" ? <div className="sec-h">{t}</div> : <h4 aria-level={2}>{t}</h4>);
 
   if (!m.outgoing) {
     const kv = (k: string, v: string) => <div className="kv" key={k}><span className="k">{k}</span><span className="v">{v}</span></div>;

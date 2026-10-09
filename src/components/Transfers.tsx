@@ -8,6 +8,7 @@ import { errText } from "../lib/native";
 import { displayName } from "../lib/peers";
 import { cancelTransfer, useActiveTransfers, useSnap, type Active } from "../lib/store";
 import { toast } from "../lib/toast";
+import { pressKeys } from "./ui";
 
 const pct = (done: number, total: number) => Math.floor((100 * done) / Math.max(1, total));
 
@@ -63,7 +64,7 @@ export function TransfersChip({ onOpen }: { onOpen: (peer: string) => void }) {
   const p = overall(list);
   return (
     <>
-      <button ref={btn} className={"tb-xfer" + (open ? " on" : "")} onClick={() => setOpen((o) => !o)} title={"Transfers: " + list.length + " in progress"} aria-label="Transfers">
+      <button ref={btn} className={"tb-xfer" + (open ? " on" : "")} onClick={() => setOpen((o) => !o)} title={"Transfers: " + list.length + " in progress"} aria-label={p + "% " + list.length + " transfers in progress"}>
         <Icon name="transfers" /><span>{p}%</span><span className="n">{list.length}</span>
         <i className="tb-bar"><b style={{ width: p + "%" }} /></i>
       </button>
@@ -89,7 +90,7 @@ export function TransfersStrip({ onOpen }: { onOpen: (peer: string) => void }) {
   const what = ups === list.length ? "Uploading" : ups === 0 ? "Downloading" : "Transferring";
   return (
     <div className="xstrip">
-      <div className="strip" onClick={() => setOpen((o) => !o)} role="button" aria-expanded={open}>
+      <div className="strip" onClick={() => setOpen((o) => !o)} role="button" tabIndex={0} onKeyDown={pressKeys(() => setOpen((o) => !o))} aria-expanded={open}>
         <Icon name="transfers" />
         <span><b>{what} {list.length === 1 ? (list[0].name || "a file") : list.length + " files"}</b> · {p}%</span>
         <Icon name={open ? "expand_less" : "expand_more"} className="xchev" />

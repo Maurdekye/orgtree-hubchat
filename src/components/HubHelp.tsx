@@ -167,7 +167,7 @@ export function HubHelpDialog({ onClose }: { onClose: () => void }) {
         <div className="sheet-scrim" onClick={close} />
         <div className="sheet hubhelp-sheet" role="dialog" aria-modal="true" aria-label={TITLE}>
           <div className="grip" />
-          <div className="hubhelp-sh"><h4>{TITLE}</h4><button className="icon-btn" onClick={close} aria-label="Close"><Icon name="close" /></button></div>
+          <div className="hubhelp-sh"><h4 aria-level={2}>{TITLE}</h4><button className="icon-btn" onClick={close} aria-label="Close"><Icon name="close" /></button></div>
           <HubHelpBody />
         </div>
       </>

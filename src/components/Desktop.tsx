@@ -220,7 +220,7 @@ export function Desktop() {
         </aside>
         )}
         {chat ? <Conversation key={chat} peer={chat} onInfo={onInfo} onOpenAddr={open} onContact={toggleContact} infoOn={!!info && (info.k === "contact" || info.peer === chat)} /> : (
-          <section className="conv">
+          <section className="conv" role="main">
             <div className="conv-empty">
               <Logo size={64} />
               <h2>{total ? "Pick a chat" : "Welcome to Hubchat"}</h2>
