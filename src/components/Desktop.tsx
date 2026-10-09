@@ -1,7 +1,7 @@
 // Windows layout: sidebar (chats) + conversation, overlays as modals, the
 // info panel on the right (Contact info, or one message's info). The window
 // frame is native.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message } from "../api";
 import { Icon, Logo } from "../lib/icons";
 import { copyText, errText } from "../lib/native";
@@ -104,9 +104,31 @@ export function Desktop() {
   const join = useJoin();
   useEffect(() => { if (join) setOv(null); }, [join]);
 
+  // Alt+Up / Alt+Down (user 2026-10-09 08:35Z): the chat above or below the
+  // open one in the list as it shows now (sorted, filtered); the new chat's
+  // message box takes the focus once it has mounted
+  const rowsRef = useRef<{ peer: string }[]>([]);
+  const focusBox = useRef(false);
+  useEffect(() => {
+    if (!chat || !focusBox.current) return;
+    focusBox.current = false;
+    document.querySelector<HTMLTextAreaElement>(".conv .composer textarea")?.focus();
+    document.querySelector(".clist .crow.sel")?.scrollIntoView({ block: "nearest" });
+  }, [chat]);
+
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "n") { e.preventDefault(); setOv({ k: "newchat", q: "" }); }
+      if (e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        // under a modal, the picture viewer or a join the list isn't in play
+        if (ov || join || document.querySelector(".scrim, .imgview")) return;
+        e.preventDefault();
+        const rs = rowsRef.current, down = e.key === "ArrowDown";
+        const i = rs.findIndex((r) => r.peer === chat);
+        // no chat open, or the open one filtered out: Down starts at the top, Up has nowhere to go
+        const to = i < 0 ? (down ? rs[0] : undefined) : rs[i + (down ? 1 : -1)];
+        if (to) { focusBox.current = true; open(to.peer); }
+      }
+      else if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "n") { e.preventDefault(); setOv({ k: "newchat", q: "" }); }
       else if (e.ctrlKey && e.key === ",") { e.preventDefault(); setOv({ k: "settings", tab: "profile" }); }
       else if (e.ctrlKey && e.key.toLowerCase() === "k") { e.preventDefault(); document.getElementById("chat-q")?.focus(); }
       else if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "i") {
@@ -120,9 +142,10 @@ export function Desktop() {
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [ov, info, chat, toggleContact]);
+  }, [ov, join, info, chat, open, toggleContact]);
 
   const { rows, counts, total } = useFilteredChats(filter, q, chat);
+  rowsRef.current = rows;
   const hs = hubSummary(hubs);
   const fchip = (k: ChatFilter, label: string) => (
     <button className={"fchip" + (filter === k ? " on" : "")} onClick={() => setFilter(k)}>{label}{counts[k] ? <span className="n">{counts[k]}</span> : null}</button>
