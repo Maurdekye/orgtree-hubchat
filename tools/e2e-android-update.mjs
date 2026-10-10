@@ -11,12 +11,14 @@
 //      whether Android asks to confirm this first in-app update is shown;
 //   5. N+1 -> N+2 installs the same way, and on Android 12+ without a tap:
 //      Hubchat is now the app's installer and may update it without asking.
+// UPDATE_VIA=about runs every step through Settings › About instead of the
+// banner (user 2026-10-10 06:40Z: About offered no way to the permission).
 // Hubchat Test's data is cleared at the start; the real Hubchat is never
 // touched. Every adb call names its device (ANDROID_SERIAL).
 //
 //   needs: MAILHUB_DIR (the v1 hub's folder, run with python), ANDROID_SERIAL,
 //   adb on PATH or in ADB
-//   node tools/e2e-android-update.mjs <apk-dir> <N+1> <N+2> <shots-dir>
+//   [UPDATE_VIA=about] node tools/e2e-android-update.mjs <apk-dir> <N+1> <N+2> <shots-dir>
 //   (<apk-dir> holds Hubchat_<v>_arm64.apk and its .sig for both versions)
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -122,6 +124,27 @@ const waitFor = async (expr, ms = 15000) => { const t = Date.now(); while (Date.
 const banner = () => b.eval(`(document.querySelector('.banner.upd') || {}).innerText || ''`).catch(() => '');
 const bannerHas = (text, ms) => waitFor(`(document.querySelector('.banner.upd') || {}).innerText?.includes(${J(text)})`, ms);
 const tapBanner = () => b.eval(`(() => { const x = document.querySelector('.banner.upd button.btn'); if (!x) return false; x.click(); return true; })()`);
+// where the update is driven from: the banner, or Settings › About (UPDATE_VIA=about)
+const VIA = process.env.UPDATE_VIA === 'about' ? 'about' : 'banner';
+const W = VIA === 'about' ? 'Settings › About' : 'the banner';
+const aboutText = () => b.eval(`(document.querySelector('.about-upd .help') || {}).innerText || ''`).catch(() => '');
+const aboutHas = (text, ms) => waitFor(`(document.querySelector('.about-upd .help') || {}).innerText?.includes(${J(text)})`, ms);
+const toAbout = async () => {
+  if (VIA !== 'about') return;
+  await b.eval(`document.querySelector('button[aria-label="Settings"]').click(), true`);
+  await sleep(1000);
+  await b.eval(`(() => { const e = [...document.querySelectorAll('.row, [role=button], button, .li')].find((e) => /^About/.test(e.innerText.trim())); if (e) e.click(); return !!e; })()`);
+  await sleep(1500);
+};
+const offerShown = (v, ms) => (VIA === 'about' ? aboutHas(`Hubchat ${v} is available.`, ms) : bannerHas(`Hubchat ${v} is ready`, ms));
+const says = (text, ms) => (VIA === 'about' ? aboutHas(text, ms) : bannerHas(text, ms));
+const shown = () => (VIA === 'about' ? aboutText() : banner());
+const tapUpdate = () => (VIA === 'about'
+  ? b.eval(`(() => { const x = document.querySelector('.about-upd button'); if (!x) return false; x.click(); return true; })()`)
+  : tapBanner());
+const buttonLabel = () => b.eval(VIA === 'about'
+  ? `(document.querySelector('.about-upd button') || {}).innerText?.trim() || ''`
+  : `(document.querySelector('.banner.upd button.btn') || {}).innerText?.trim() || ''`).catch(() => '');
 const inv = (cmd, args = {}) => b.eval(`window.__TAURI_INTERNALS__.invoke(${J(cmd)}, ${J(args)})`);
 const state = () => b.eval(`(async () => {
   const s = await window.__TAURI_INTERNALS__.invoke('hc_state');
@@ -143,12 +166,12 @@ const keptAfter = async (v, before) => {
   check(`${v}: the settings are kept (theme, the test feed, a marker)`, s.kept === 'yes' && s.theme === 'light' && s.feed === FEED + '/latest.json', J({ kept: s.kept, theme: s.theme, feed: s.feed }));
 };
 
-// Update in the banner, then wait for the install. Android shows its own
+// Update in the banner (or About), then wait for the install. Android shows its own
 // confirmation unless Hubchat may update itself without one; a confirmation is
 // tapped when it appears, and whether one appeared is returned.
 const SDK = Number(adb('shell', 'getprop', 'ro.build.version.sdk').trim());
 const installOffered = async (v, confirmShot) => {
-  await tapBanner();
+  await tapUpdate();
   let tapped = false;
   const done = await until(async () => {
     if (pkgInfo().version === v) return true;
@@ -185,12 +208,15 @@ try {
   const before = await state();
 
   // 1. the offer, and the permission the first time
-  check(`1. the banner offers ${V1}`, await bannerHas(`Hubchat ${V1} is ready`, 30000), await banner());
+  info('driven from', W);
+  await toAbout();
+  check(`1. ${W} offers ${V1}`, await offerShown(V1, 30000), await shown());
   shot('upd-1-offer.png');
-  await tapBanner();
-  check('1. the first Update asks for the permission', await bannerHas('Allow Hubchat to install its updates', 15000), await banner());
+  await tapUpdate();
+  check('1. the first Update asks for the permission', await says('Allow Hubchat to install its updates', 15000), await shown());
+  check('1. its button now reads Allow', (await buttonLabel()) === 'Allow', await buttonLabel());
   shot('upd-2-permission.png');
-  await tapBanner();
+  await tapUpdate();
   // the switch's label differs by maker: "Allow from this source" (AOSP), "Allow permission" (Samsung)
   const allow = await findNode((n) => /^(allow from this source|allow permission)$/i.test(n.text), 15000);
   check("1. Allow opens Android's Install unknown apps setting for Hubchat Test", !!allow);
@@ -203,23 +229,25 @@ try {
   await sleep(1500);
   await attachApp();
   check('2. back in Hubchat, the update carries on by itself and the tampered APK is refused',
-    await bannerHas("The update didn't install. The download isn't signed by Hubchat's update key.", 90000), await banner());
+    await says("The update didn't install. The download isn't signed by Hubchat's update key.", 90000), await shown());
   shot('upd-4-tampered.png');
   check('2. nothing changed', pkgInfo().version === N.version, J(pkgInfo()));
 
   // 3. N+1's signed APK announced as N+2
   offer(V2, `/Hubchat_${V1}_arm64.apk`, sig(V1));
   await reload();
-  check(`3. the banner offers ${V2}`, await bannerHas(`Hubchat ${V2} is ready`, 30000), await banner());
-  await tapBanner();
-  check(`3. ${V1}'s APK announced as ${V2} is refused`, await bannerHas(`The update didn't install. The download isn't signed as Hubchat ${V2}.`, 90000), await banner());
+  await toAbout();
+  check(`3. ${W} offers ${V2}`, await offerShown(V2, 30000), await shown());
+  await tapUpdate();
+  check(`3. ${V1}'s APK announced as ${V2} is refused`, await says(`The update didn't install. The download isn't signed as Hubchat ${V2}.`, 90000), await shown());
   shot('upd-5-wrong-version.png');
   check('3. nothing changed', pkgInfo().version === N.version, J(pkgInfo()));
 
   // 4. N+1
   offer(V1, `/Hubchat_${V1}_arm64.apk`, sig(V1));
   await reload();
-  check(`4. the banner offers ${V1}`, await bannerHas(`Hubchat ${V1} is ready`, 30000), await banner());
+  await toAbout();
+  check(`4. ${W} offers ${V1}`, await offerShown(V1, 30000), await shown());
   const first = await installOffered(V1, 'upd-6-confirm.png');
   const firstAt = Date.now();
   check(`4. ${V1} is installed`, first.done, J(pkgInfo()));
@@ -233,7 +261,8 @@ try {
 
   // 5. N+1 -> N+2. Android lets an installer update the same app without asking
   // at most once every 30 seconds (SilentUpdatePolicy); real updates are days apart.
-  check(`5. the banner offers ${V2}`, await bannerHas(`Hubchat ${V2} is ready`, 30000), await banner());
+  await toAbout();
+  check(`5. ${W} offers ${V2}`, await offerShown(V2, 30000), await shown());
   await sleep(Math.max(0, firstAt + 35000 - Date.now()));
   const second = await installOffered(V2, 'upd-8-second-confirm.png');
   check(`5. ${V2} is installed`, second.done, J(pkgInfo()));

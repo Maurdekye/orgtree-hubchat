@@ -19,7 +19,7 @@ public class Vpn extends VpnService {
     }
     if (tun == null) {
       try {
-        tun = new Builder().setSession("Hubchat test VPN").addAddress("100.90.1.2", 32).addRoute("100.64.0.0", 10).establish();
+        tun = new Builder().setSession("Tailscale stand-in (Hubchat tests)").addAddress("100.90.1.2", 32).addRoute("100.64.0.0", 10).establish();
       } catch (Exception e) {
         stopSelf();
       }

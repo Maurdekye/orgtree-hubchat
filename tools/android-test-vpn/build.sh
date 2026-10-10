@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# The test VPN app (README.md), built with the Android SDK's own tools (no
+# The Tailscale stand-in for emulator tests (README.md), built with the Android SDK's own tools (no
 # Gradle). A throwaway signing key is made in the output folder on the first
 # build; it signs nothing else.
 #   source <toolchain env.sh>; bash tools/android-test-vpn/build.sh <out dir>
-# Output: <out dir>/hubchat-test-vpn.apk
+# Output: <out dir>/hubchat-test-vpn.apk (package com.tailscale.ipn)
 set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="$1"
@@ -24,6 +24,6 @@ with zipfile.ZipFile(out + "/unsigned.apk", "a", zipfile.ZIP_DEFLATED) as z:
 EOF
 "$BT/zipalign.exe" -f -p 4 "$OUT/unsigned.apk" "$OUT/aligned.apk"
 [ -f "$OUT/test.keystore" ] || keytool -genkeypair -keystore "$OUT/test.keystore" -storepass testvpn -keypass testvpn \
-  -alias testvpn -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=Hubchat test VPN" >/dev/null
+  -alias testvpn -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=Hubchat tests stand-in" >/dev/null
 "$BT/apksigner.bat" sign --ks "$OUT/test.keystore" --ks-pass pass:testvpn --out "$OUT/hubchat-test-vpn.apk" "$OUT/aligned.apk"
 ls -la "$OUT/hubchat-test-vpn.apk"

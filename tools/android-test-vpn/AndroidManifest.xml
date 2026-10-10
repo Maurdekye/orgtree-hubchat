@@ -1,13 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- A VPN for the emulator tests of the Tailscale-off notice: like
-     Tailscale's, it routes only 100.64.0.0/10 (README.md). -->
+<!-- A Tailscale stand-in for the emulator tests of the Tailscale-off notice
+     and Scan setup code (README.md): it takes Tailscale's package name, so
+     Hubchat finds "Tailscale" installed and Open Tailscale opens it, and
+     like Tailscale it is a VPN that routes only 100.64.0.0/10. Emulator
+     only: never install it on a real phone. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="dev.orgtree.hubchat.vpntest" android:versionCode="1" android:versionName="1">
+    package="com.tailscale.ipn" android:versionCode="1" android:versionName="test stand-in">
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35" />
-    <application android:label="Hubchat test VPN">
-        <activity android:name=".Main" android:exported="true"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
-        <service android:name=".Vpn" android:exported="false"
+    <application android:label="Tailscale stand-in (Hubchat tests)">
+        <activity android:name="dev.orgtree.hubchat.vpntest.Main" android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <!-- opening it, as Open Tailscale does, turns its VPN on -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <service android:name="dev.orgtree.hubchat.vpntest.Vpn" android:exported="false"
             android:permission="android.permission.BIND_VPN_SERVICE">
             <intent-filter><action android:name="android.net.VpnService" /></intent-filter>
         </service>

@@ -5,9 +5,9 @@ import android.content.Intent;
 import android.net.VpnService;
 import android.os.Bundle;
 
-/** Turns the test VPN on or off, then closes:
- *  am start -n dev.orgtree.hubchat.vpntest/.Main --es cmd on|off
- *  (Android asks once to allow a VPN; `appops set <pkg> ACTIVATE_VPN allow` skips that). */
+/** Turns the stand-in's VPN on (when opened, or with cmd on) or off, then closes:
+ *  am start -n com.tailscale.ipn/dev.orgtree.hubchat.vpntest.Main --es cmd on|off
+ *  (Android asks once to allow a VPN; `appops set com.tailscale.ipn ACTIVATE_VPN allow` skips that). */
 public class Main extends Activity {
   @Override
   protected void onCreate(Bundle state) {
