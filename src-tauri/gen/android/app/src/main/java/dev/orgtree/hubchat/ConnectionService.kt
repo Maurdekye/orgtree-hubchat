@@ -252,16 +252,18 @@ class ConnectionService : Service() {
     }
 
     /** Called from Rust (the hub notice, user 2026-10-10 06:44Z: Tailscale
-     *  turned itself off): "1" while Hubchat's traffic goes through a VPN
-     *  (Tailscale is one), "0" when it doesn't, "" when that can't be told
-     *  (no network at all). */
+     *  turned itself off): "1" while a VPN is up (Tailscale is one), "0" when
+     *  none is, "" when that can't be told (no network at all). Any VPN
+     *  network counts, not only the default one: Tailscale routes only its
+     *  own addresses. */
     @JvmStatic
+    @Suppress("DEPRECATION") // allNetworks: still the way to list them all
     fun vpnActive(): String {
       val ctx = appContext ?: return ""
       return try {
         val cm = ctx.getSystemService(ConnectivityManager::class.java) ?: return ""
-        val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) } ?: return ""
-        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) "1" else "0"
+        val vpn = cm.allNetworks.any { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true }
+        if (vpn) "1" else if (cm.activeNetwork == null) "" else "0"
       } catch (e: Exception) {
         ""
       }
