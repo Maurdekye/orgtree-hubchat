@@ -1,0 +1,1 @@
+On Samsung phones, Hubchat now explains how to hide only its background connection notification, so message notifications can stay on.
