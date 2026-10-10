@@ -1095,13 +1095,7 @@ impl Engine {
 
     /// A hub's `now` against our clock around the request: the offset is
     /// the hub's clock minus ours at the round trip's midpoint.
-    fn clock_reading(
-        &self,
-        url: &str,
-        hub_now: Option<i64>,
-        asked: u64,
-        answered: u64,
-    ) -> Result<()> {
+    fn clock_reading(&self, url: &str, hub_now: Option<i64>, asked: u64, answered: u64) -> Result<()> {
         let Some(hub_now) = hub_now else {
             return Ok(());
         };
@@ -1151,11 +1145,13 @@ impl Engine {
                 .last
                 .as_ref()
                 .is_some_and(|m| listed.is_some() && m.env.from != me && m.read_at.is_none());
-            self.store
-                .set_old_unread(url, &c.with, c.unread - i64::from(listed_unread), listed)?;
-            self.host.event(Event::Chat {
-                peer: c.with.clone(),
-            });
+            self.store.set_old_unread(
+                url,
+                &c.with,
+                c.unread - i64::from(listed_unread),
+                listed,
+            )?;
+            self.host.event(Event::Chat { peer: c.with.clone() });
         }
         self.store.delete_meta(&chats_key(url))
     }
@@ -2109,13 +2105,8 @@ impl Engine {
             Err(e) => {
                 let _ = tokio::fs::remove_file(&part).await;
                 if let Error::Hub { status: 410, .. } = &e {
-                    self.store.set_attachment(
-                        local_id,
-                        "expired",
-                        None,
-                        None,
-                        Some(&e.to_string()),
-                    )?;
+                    self.store
+                        .set_attachment(local_id, "expired", None, None, Some(&e.to_string()))?;
                     self.host.event(Event::Chat { peer: m.peer });
                 }
                 Err(e)
@@ -2252,10 +2243,7 @@ mod tests {
     /// Review finding 4: what a queued delete's failure means.
     #[test]
     fn a_failed_delete_is_kept_dropped_or_ends_the_session() {
-        let hub = |status| Error::Hub {
-            status,
-            detail: String::new(),
-        };
+        let hub = |status| Error::Hub { status, detail: String::new() };
         for s in [408, 429, 500, 502, 503] {
             assert_eq!(drain_outcome(&hub(s)), Drain::Later, "{s}");
         }

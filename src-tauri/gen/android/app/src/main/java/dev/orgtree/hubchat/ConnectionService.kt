@@ -67,6 +67,8 @@ class ConnectionService : Service() {
     @JvmStatic external fun pushModeChanged()
     @JvmStatic external fun pushForeground(on: String)
 
+    @JvmStatic fun isPushActive(): String =
+      if (appContext?.let { PushController.cachedActive(it) } == true) "1" else "0"
     @JvmStatic fun pushState(): String = appContext?.let { PushController.state(it) } ?: "{}"
     @JvmStatic fun setPush(on: String, distributor: String): String =
       appContext?.let { PushController.set(it, on == "1", distributor) } ?: "Hubchat is still starting."
@@ -417,7 +419,9 @@ class ConnectionService : Service() {
       val i = Intent(ctx, ConnectionService::class.java)
       if (PushController.active(ctx)) {
         WorkManager.getInstance(ctx).cancelUniqueWork(WORK)
-        ctx.stopService(i)
+        // A pending startForegroundService must reach onCreate and promote
+        // itself before it can stop. onCreate rechecks the latest mode.
+        if (running) ctx.stopService(i)
         attach(ctx)
       } else if (stayConnected(ctx)) {
         WorkManager.getInstance(ctx).cancelUniqueWork(WORK)
@@ -433,7 +437,9 @@ class ConnectionService : Service() {
           schedule(ctx)
         }
       } else {
-        ctx.stopService(i)
+        // A pending startForegroundService must reach onCreate and promote
+        // itself before it can stop. onCreate rechecks the latest mode.
+        if (running) ctx.stopService(i)
         attach(ctx)
         schedule(ctx)
       }
@@ -471,17 +477,21 @@ class ConnectionService : Service() {
 
   override fun onCreate() {
     super.onCreate()
-    if (PushController.active(this)) {
-      attach(this)
-      stopSelf()
-      return
-    }
     appContext = applicationContext
     channels(this)
     val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING else 0
     ServiceCompat.startForeground(this, ONGOING_ID, ongoing(this, lastStatus ?: "Connecting…"), type)
     running = true
     startCore(filesDir.absolutePath)
+    stopIfUnneeded()
+  }
+
+  private fun stopIfUnneeded(): Boolean {
+    if (!PushController.active(this) && stayConnected(this)) return false
+    // onCreate has fulfilled Android's foreground-service contract first.
+    stopForeground(STOP_FOREGROUND_REMOVE)
+    stopSelf()
+    return true
   }
 
   override fun onDestroy() {
@@ -490,7 +500,7 @@ class ConnectionService : Service() {
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int =
-    if (PushController.active(this)) START_NOT_STICKY else START_STICKY
+    if (stopIfUnneeded()) START_NOT_STICKY else START_STICKY
 
   override fun onBind(intent: Intent?): IBinder? = null
 }

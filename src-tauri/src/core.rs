@@ -72,6 +72,8 @@ pub trait Platform: Send + Sync + 'static {
         Err("only Android has this setting".into())
     }
     fn push_state(&self) -> Option<PushState> { None }
+    /// Cheap lifecycle read; no distributor enumeration.
+    fn push_active(&self) -> bool { false }
     fn set_push(&self, _on: bool, _distributor: &str) -> Result<(), String> {
         Err("only Android has this setting".into())
     }
@@ -352,7 +354,7 @@ impl Core {
     /// check restores suspension, unless the UI became visible meanwhile.
     pub fn reconcile_background(&self) {
         let checks = self.background_checks.lock().unwrap();
-        let push_active = self.platform().push_state().is_some_and(|s| s.active);
+        let push_active = self.platform().push_active();
         if let Ok(e) = self.engine() {
             e.set_suspended(push_active && !self.host.foreground.load(Ordering::Relaxed) && *checks == 0);
         }
@@ -481,6 +483,14 @@ impl Core {
         }
     }
 
+    /// Push cleanup must never prevent leaving or discarding an identity.
+    fn forget_push(&self) {
+        #[cfg(target_os = "android")]
+        if self.platform().set_push(false, "").is_err() {
+            keylog::note(&self.dir, "push cleanup failed while discarding the identity; continuing");
+        }
+    }
+
     /// The lost-key screen's Start over: this device's local data and any
     /// trace of the old key go; the address keeps working on other devices.
     pub fn start_over(&self) -> Result<(), String> {
@@ -490,9 +500,7 @@ impl Core {
         // The missing identity key prevents a signed hub unregister. Stop the
         // distributor locally; endpoint rejection or device revocation cleans
         // the hub registration when this device can no longer authenticate.
-        if self.platform().push_state().is_some() {
-            self.platform().set_push(false, "")?;
-        }
+        self.forget_push();
         crate::secrets::forget_identity(&self.dir)?;
         self.store.wipe().map_err(|e| e.to_string())?;
         *self.key_lost.lock().unwrap() = None;
@@ -506,9 +514,7 @@ impl Core {
     /// data forgotten. The address itself stays registered for its other
     /// devices.
     pub async fn leave_identity(&self) -> Result<(), String> {
-        if self.platform().push_state().is_some() {
-            self.platform().set_push(false, "")?;
-        }
+        self.forget_push();
         let Some(e) = self.engine.lock().unwrap().take() else {
             return Ok(());
         };
@@ -535,9 +541,7 @@ impl Core {
         }
         let owner = self.store.meta("identity.address").ok().flatten();
         if must_wipe(owner.as_deref(), self.had_identity(), &me.address(), brand_new) {
-            if self.platform().push_state().is_some() {
-                self.platform().set_push(false, "")?;
-            }
+            self.forget_push();
             self.store.wipe().map_err(|e| e.to_string())?;
             keylog::note(&self.dir, "another identity's local data was removed before taking this one");
         }
@@ -546,7 +550,9 @@ impl Core {
         }
         crate::secrets::save_identity(&self.dir, &me)?;
         keylog::note(&self.dir, if brand_new { "key saved: a new identity" } else { "key saved: an identity brought to this device" });
-        self.start_with(me)
+        self.start_with(me)?;
+        self.platform().refresh_push();
+        Ok(())
     }
 
     fn start_engine(&self, me: Identity) -> Result<(), String> {
@@ -570,7 +576,7 @@ impl Core {
         engine.set_device(&device_id, &self.device_name());
         let read = self.store.meta("settings.read_receipts").ok().flatten();
         engine.set_read_receipts(read.as_deref() != Some("off"));
-        engine.set_suspended(self.platform().push_state().is_some_and(|s| s.active)
+        engine.set_suspended(self.platform().push_active()
             && !self.host.foreground.load(Ordering::Relaxed));
         {
             // start() spawns its tasks onto the core runtime.
@@ -581,7 +587,6 @@ impl Core {
             .platform
             .status(&format!("Connected as {}", engine.me().address()));
         *self.engine.lock().unwrap() = Some(engine);
-        self.platform().refresh_push();
         Ok(())
     }
 }

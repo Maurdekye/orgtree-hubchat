@@ -391,7 +391,7 @@ function Notifications() {
               </select>} /> : <Row t1="Install a distributor" t2="UnifiedPush needs a distributor app on this phone. ntfy supports public and self-hosted servers." right={<button className="btn" onClick={() => void openLink("https://ntfy.sh/docs/subscribe/phone/")}>Get ntfy</button>} />}
               {push.enabled ? <Row t1={push.active ? "Push is on" : "Push is not ready"} t2={push.active ? "Hubchat fetches on wake, without its persistent connection notification." : push.status} right={!push.active && distributor ? <button className="btn" disabled={busy} onClick={() => void setPush(true)}>Retry</button> : null} /> : null}
             </Card>
-            <div className="pad"><NoteCard icon="info">Your hub sends a content-free wake-up directly to the distributor. Messages stay on your normal hub connection. A tailnet-only hub works if it can reach the distributor’s server; private distributor addresses need the hub operator’s allowlist.</NoteCard></div>
+            <div className="pad"><NoteCard icon="info">Your hub sends only a wake-up signal, with no message content, to the distributor's server. Hubchat then gets your messages from your hub as usual. If your hub is private (for example only reachable over Tailscale), it must still be able to reach the distributor's server.</NoteCard></div>
           </> : null}
           {!push?.active ? <>
           <Card>

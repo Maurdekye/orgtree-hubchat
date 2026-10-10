@@ -205,6 +205,10 @@ impl crate::core::Platform for AndroidPlatform {
         let j = JNI.get()?;
         serde_json::from_str(&call(&j.service, "pushState", &[], true)?).ok()
     }
+    fn push_active(&self) -> bool {
+        JNI.get().and_then(|j| call(&j.service, "isPushActive", &[], true))
+            .is_some_and(|value| value == "1")
+    }
     fn set_push(&self, on: bool, distributor: &str) -> Result<(), String> {
         let j = JNI.get().ok_or("Hubchat is still starting")?;
         match call(&j.service, "setPush", &[if on { "1" } else { "0" }, distributor], true) {

@@ -30,6 +30,23 @@ VAPID is not supported by this version; choose one such as ntfy that works
 without VAPID. If Android prevents restarting Hubchat's foreground service while
 the app is hidden, periodic checks remain scheduled until you open the app.
 
+
+## Restarts and temporary distributor outages
+
+A normal process restart preserves the saved push mode. Opening Hubchat
+re-registers the endpoint without switching back to the persistent connection.
+Changing the identity or hub set invalidates the registration proof until all
+configured hubs accept it again. Local push cleanup is best effort when leaving
+or discarding an identity; a bridge failure cannot prevent those actions.
+
+A temporary distributor outage keeps the sealed capability and hub registrations,
+while falling back to the saved background connection setting. The
+[Android protocol](https://unifiedpush.org/developers/spec/android/) requires a
+new endpoint callback when the distributor recovers. That callback, or a valid
+received wake, resumes synchronization and checks registration before returning
+to push mode. A permanent removal clears the capability and unregisters it.
+
+
 ## Tailnets and self-hosted distributors
 
 A tailnet-only hub works if it can reach the distributor's server. The phone

@@ -32,10 +32,20 @@ object PushController {
   private val workLock = Any()
   private fun prefs(ctx: Context) = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-  fun active(ctx: Context): Boolean {
+  /** Hot lifecycle path: preferences only, no PackageManager query. */
+  fun cachedActive(ctx: Context): Boolean {
     val p = prefs(ctx)
-    return p.getBoolean("enabled", false) && p.getBoolean("active", false) &&
-      UnifiedPush.getDistributors(ctx).contains(p.getString("distributor", ""))
+    return p.getBoolean("enabled", false) && p.getBoolean("active", false)
+  }
+
+  fun active(ctx: Context): Boolean {
+    if (!cachedActive(ctx)) return false
+    val p = prefs(ctx)
+    if (UnifiedPush.getDistributors(ctx).contains(p.getString("distributor", ""))) return true
+    // Keep the cheap native lifecycle read consistent with this discovery.
+    unavailable(ctx, p.getString("instance", "") ?: "",
+      "The selected distributor is not installed. Install ntfy or select another distributor.")
+    return false
   }
 
   fun state(ctx: Context): String {
@@ -54,7 +64,7 @@ object PushController {
     synchronized(this) {
       val p = prefs(ctx)
       oldInstance = p.getString("instance", "") ?: ""
-      p.edit().putBoolean("enabled", on).putBoolean("active", false)
+      p.edit().putBoolean("enabled", on).putBoolean("active", false).putBoolean("temporary", false)
         .putString("instance", instance).putString("distributor", distributor)
         .putString("generation", UUID.randomUUID().toString()).remove("capability")
         .putString("status", if (on) "Waiting for the distributor…" else "Off")
@@ -84,7 +94,7 @@ object PushController {
     }
     UnifiedPush.saveDistributor(ctx, distributor)
     UnifiedPush.register(ctx, instance = instance, messageForDistributor = "Hubchat message notifications")
-    if (p.contains("capability")) enqueue(ctx, "sync")
+    if (p.contains("capability") && !p.getBoolean("temporary", false)) enqueue(ctx, "sync")
   }
 
   /** Adding/removing a hub invalidates the all-hubs registration proof. */
@@ -117,7 +127,7 @@ object PushController {
       // Keep an already working registration active on an identical callback.
       val previous = p.getString("capability", "")?.let { SecretBox.open(it) }
       val changed = previous != SecretBox.open(sealed)
-      p.edit().putString("capability", sealed)
+      p.edit().putString("capability", sealed).putBoolean("temporary", false)
         .putString("generation", UUID.randomUUID().toString())
         .putBoolean("active", p.getBoolean("active", false) && !changed)
         .putString("status", "Registering with your hubs…").commit()
@@ -130,7 +140,7 @@ object PushController {
     synchronized(this) {
       val p = prefs(ctx)
       if (!p.getBoolean("enabled", false) || p.getString("instance", "") != instance) return
-      p.edit().putBoolean("active", false).remove("capability")
+      p.edit().putBoolean("active", false).putBoolean("temporary", false).remove("capability")
         .putString("generation", UUID.randomUUID().toString()).putString("status", message)
         .putBoolean("cleanup", true).commit()
     }
@@ -138,11 +148,32 @@ object PushController {
     modeChanged(ctx)
   }
 
+  fun temporarilyUnavailable(ctx: Context, instance: String) {
+    synchronized(this) {
+      val p = prefs(ctx)
+      if (!p.getBoolean("enabled", false) || p.getString("instance", "") != instance) return
+      // TEMP_UNAVAILABLE preserves the subscription. AND_3.1 requires a new
+      // endpoint event when the distributor recovers; that resumes sync.
+      p.edit().putBoolean("active", false).putBoolean("temporary", true)
+        .putString("generation", UUID.randomUUID().toString())
+        .putString("status", "The distributor is temporarily unavailable. Using the background connection until it recovers.").commit()
+    }
+    // The generation rejects an in-flight result; queued work observes temporary.
+    // Do not cancel here: a concurrent recovery may already have enqueued its sync.
+    modeChanged(ctx)
+  }
+
   fun wake(ctx: Context, message: PushMessage, instance: String) {
     val p = prefs(ctx)
     if (!p.getBoolean("enabled", false) || p.getString("instance", "") != instance) return
-    if (message.decrypted && message.content.contentEquals("wake".toByteArray(Charsets.UTF_8)))
+    if (message.decrypted && message.content.contentEquals("wake".toByteArray(Charsets.UTF_8))) {
+      // A valid delivered wake also proves the distributor has recovered.
+      synchronized(this) {
+        if (!p.getBoolean("enabled", false) || p.getString("instance", "") != instance) return
+        p.edit().putBoolean("temporary", false).commit()
+      }
       enqueue(ctx, "wake")
+    }
   }
 
   private fun enqueue(ctx: Context, action: String) {
@@ -174,6 +205,7 @@ object PushController {
     val action: String
     synchronized(this) {
       val p = prefs(ctx)
+      if (p.getBoolean("enabled", false) && p.getBoolean("temporary", false)) return true
       generation = p.getString("generation", "") ?: ""
       val sealed = p.getString("capability", "") ?: ""
       capability = if (sealed.isEmpty()) "" else SecretBox.open(sealed)
@@ -218,5 +250,5 @@ class HubchatPushService : PushService() {
       else -> "The distributor could not register Hubchat. Open it to check its settings."
     })
   override fun onTempUnavailable(instance: String) =
-    PushController.unavailable(this, instance, "The distributor is temporarily unavailable. Open Hubchat to retry.")
+    PushController.temporarilyUnavailable(this, instance)
 }
