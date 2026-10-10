@@ -487,6 +487,12 @@ impl Core {
         if self.has_identity() {
             return Err("this device already has an identity".into());
         }
+        // The missing identity key prevents a signed hub unregister. Stop the
+        // distributor locally; endpoint rejection or device revocation cleans
+        // the hub registration when this device can no longer authenticate.
+        if self.platform().push_state().is_some() {
+            self.platform().set_push(false, "")?;
+        }
         crate::secrets::forget_identity(&self.dir)?;
         self.store.wipe().map_err(|e| e.to_string())?;
         *self.key_lost.lock().unwrap() = None;
@@ -529,6 +535,9 @@ impl Core {
         }
         let owner = self.store.meta("identity.address").ok().flatten();
         if must_wipe(owner.as_deref(), self.had_identity(), &me.address(), brand_new) {
+            if self.platform().push_state().is_some() {
+                self.platform().set_push(false, "")?;
+            }
             self.store.wipe().map_err(|e| e.to_string())?;
             keylog::note(&self.dir, "another identity's local data was removed before taking this one");
         }
