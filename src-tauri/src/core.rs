@@ -71,6 +71,12 @@ pub trait Platform: Send + Sync + 'static {
     fn set_stay_connected(&self, _on: bool) -> Result<(), String> {
         Err("only Android has this setting".into())
     }
+    fn push_state(&self) -> Option<PushState> { None }
+    fn set_push(&self, _on: bool, _distributor: &str) -> Result<(), String> {
+        Err("only Android has this setting".into())
+    }
+    /// Reconcile registrations after hubs or identity change.
+    fn refresh_push(&self) {}
     /// Take back a chat's message notification: everything in it was read
     /// (here, or on another device; user 23:50Z). Where shown notifications
     /// can't be withdrawn, nothing.
@@ -135,6 +141,7 @@ pub struct Core {
     pub dir: PathBuf,
     pub store: Arc<Store>,
     engine: Mutex<Option<Arc<Engine>>>,
+    background_checks: Mutex<usize>,
     pub rt: tokio::runtime::Handle,
     host: Arc<ShellHost>,
     /// Set while this device had an identity but its key can't be found.
@@ -182,6 +189,26 @@ pub struct NotifySettings {
     pub enabled: bool,
     pub preview: bool,
     pub sound: bool,
+}
+
+/// Public Android settings only. Push capabilities never cross the webview bridge.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct PushState {
+    pub enabled: bool,
+    pub active: bool,
+    pub distributor: String,
+    pub distributors: Vec<String>,
+    pub status: String,
+}
+
+#[cfg(target_os = "android")]
+pub struct BackgroundCheck(&'static Core);
+#[cfg(target_os = "android")]
+impl Drop for BackgroundCheck {
+    fn drop(&mut self) {
+        *self.0.background_checks.lock().unwrap() -= 1;
+        self.0.reconcile_background();
+    }
 }
 
 impl Host for ShellHost {
@@ -267,6 +294,7 @@ pub fn init(dir: PathBuf, platform: Arc<dyn Platform>) -> Result<&'static Core, 
         dir,
         store,
         engine: Mutex::new(None),
+        background_checks: Mutex::new(0),
         rt,
         host,
         key_lost: Mutex::new(None),
@@ -316,7 +344,33 @@ impl Core {
     pub fn set_ui_state(&self, foreground: bool, chat: Option<String>) -> bool {
         let was = self.host.foreground.swap(foreground, Ordering::Relaxed);
         *self.host.open_chat.lock().unwrap() = chat;
+        self.reconcile_background();
         foreground && !was
+    }
+
+    /// Serialize lifecycle decisions with overlapping wake checks. The last
+    /// check restores suspension, unless the UI became visible meanwhile.
+    pub fn reconcile_background(&self) {
+        let checks = self.background_checks.lock().unwrap();
+        let push_active = self.platform().push_state().is_some_and(|s| s.active);
+        if let Ok(e) = self.engine() {
+            e.set_suspended(push_active && !self.host.foreground.load(Ordering::Relaxed) && *checks == 0);
+        }
+    }
+
+    #[cfg(target_os = "android")]
+    pub fn background_check(&'static self) -> BackgroundCheck {
+        *self.background_checks.lock().unwrap() += 1;
+        self.reconcile_background();
+        BackgroundCheck(self)
+    }
+
+    /// Native Android lifecycle also drives this: JavaScript can be frozen
+    /// before its visibility event runs when an activity goes into background.
+    #[cfg(target_os = "android")]
+    pub fn set_app_visible(&self, visible: bool) {
+        self.host.foreground.store(visible, Ordering::Relaxed);
+        self.reconcile_background();
     }
 
     pub fn engine(&self) -> Result<Arc<Engine>, String> {
@@ -438,6 +492,9 @@ impl Core {
     /// data forgotten. The address itself stays registered for its other
     /// devices.
     pub async fn leave_identity(&self) -> Result<(), String> {
+        if self.platform().push_state().is_some() {
+            self.platform().set_push(false, "")?;
+        }
         let Some(e) = self.engine.lock().unwrap().take() else {
             return Ok(());
         };
@@ -496,6 +553,8 @@ impl Core {
         engine.set_device(&device_id, &self.device_name());
         let read = self.store.meta("settings.read_receipts").ok().flatten();
         engine.set_read_receipts(read.as_deref() != Some("off"));
+        engine.set_suspended(self.platform().push_state().is_some_and(|s| s.active)
+            && !self.host.foreground.load(Ordering::Relaxed));
         {
             // start() spawns its tasks onto the core runtime.
             let _guard = self.rt.enter();
@@ -505,6 +564,7 @@ impl Core {
             .platform
             .status(&format!("Connected as {}", engine.me().address()));
         *self.engine.lock().unwrap() = Some(engine);
+        self.platform().refresh_push();
         Ok(())
     }
 }

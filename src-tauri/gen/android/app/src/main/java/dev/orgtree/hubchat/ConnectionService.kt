@@ -63,6 +63,14 @@ class ConnectionService : Service() {
 
     /** Rust entry: one check (design D6); blocks, so never on the main thread. */
     @JvmStatic external fun checkNow(timeoutSecs: Int): Boolean
+    @JvmStatic external fun pushWork(action: String, capability: String): String
+    @JvmStatic external fun pushModeChanged()
+    @JvmStatic external fun pushForeground(on: String)
+
+    @JvmStatic fun pushState(): String = appContext?.let { PushController.state(it) } ?: "{}"
+    @JvmStatic fun setPush(on: String, distributor: String): String =
+      appContext?.let { PushController.set(it, on == "1", distributor) } ?: "Hubchat is still starting."
+    @JvmStatic fun refreshPush() { appContext?.let { PushController.refresh(it) } }
 
     /** What the core needs before it runs without the service. */
     fun attach(ctx: Context) {
@@ -407,9 +415,23 @@ class ConnectionService : Service() {
      *  the core without it and the periodic check. */
     fun start(ctx: Context) {
       val i = Intent(ctx, ConnectionService::class.java)
-      if (stayConnected(ctx)) {
+      if (PushController.active(ctx)) {
         WorkManager.getInstance(ctx).cancelUniqueWork(WORK)
-        if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
+        ctx.stopService(i)
+        attach(ctx)
+      } else if (stayConnected(ctx)) {
+        WorkManager.getInstance(ctx).cancelUniqueWork(WORK)
+        try {
+          if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
+        } catch (e: IllegalStateException) {
+          // A distributor can disappear while Android forbids starting a
+          // foreground service. Keep checks scheduled until the app opens.
+          attach(ctx)
+          schedule(ctx)
+        } catch (e: SecurityException) {
+          attach(ctx)
+          schedule(ctx)
+        }
       } else {
         ctx.stopService(i)
         attach(ctx)
@@ -449,6 +471,11 @@ class ConnectionService : Service() {
 
   override fun onCreate() {
     super.onCreate()
+    if (PushController.active(this)) {
+      attach(this)
+      stopSelf()
+      return
+    }
     appContext = applicationContext
     channels(this)
     val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING else 0
@@ -462,7 +489,8 @@ class ConnectionService : Service() {
     super.onDestroy()
   }
 
-  override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+  override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int =
+    if (PushController.active(this)) START_NOT_STICKY else START_STICKY
 
   override fun onBind(intent: Intent?): IBinder? = null
 }

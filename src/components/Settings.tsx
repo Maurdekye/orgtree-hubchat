@@ -6,7 +6,7 @@ import { api, type Devices, type HubStatus } from "../api";
 import { chatLink, chatLinkTarget } from "../lib/chatlink";
 import { Icon, Logo, type IconName } from "../lib/icons";
 import { bytes } from "../lib/format";
-import { appVersion, autostart, copyText, errText, scanQr } from "../lib/native";
+import { appVersion, autostart, copyText, errText, openLink, scanQr } from "../lib/native";
 import { routeLink, startJoin } from "../lib/join";
 import { hubCls, hubStatusText, hubSummary, hubVersion } from "../lib/peers";
 import { refreshDirectory, refreshState, useSnap } from "../lib/store";
@@ -348,11 +348,25 @@ function Notifications() {
   const platform = usePlatform();
   const n = snap.state?.notifications ?? { enabled: true, preview: true, sound: false };
   const stay = snap.state?.stay_connected;
+  const push = snap.state?.push;
+  const [chosen, setChosen] = useState("");
+  const distributor = chosen || push?.distributor || (push?.distributors.length === 1 ? push.distributors[0] : "");
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (platform !== "android") return;
+    const timer = window.setInterval(() => void refreshState(), 2000);
+    return () => window.clearInterval(timer);
+  }, [platform]);
   const set = async (p: Partial<typeof n>) => { try { await api.setNotifications({ ...n, ...p }); await refreshState(); } catch (e) { toast(errText(e)); } };
   const setStay = async (v: boolean) => {
     setBusy(true);
     try { await api.setStayConnected(v); await refreshState(); } catch (e) { toast(errText(e)); }
+    setBusy(false);
+  };
+  const setPush = async (on: boolean, selected = distributor) => {
+    if (on && !selected) { toast("Select a UnifiedPush distributor first."); return; }
+    setBusy(true);
+    try { await api.setPush(on, selected); await refreshState(); } catch (e) { toast(errText(e)); }
     setBusy(false);
   };
   return (
@@ -366,11 +380,26 @@ function Notifications() {
       </Sec>
       {platform === "android" && stay != null ? (
         <Sec title="Background">
+          {push ? <>
+            <Card>
+              <Row icon="bell" t1="Use UnifiedPush" t2="Receive a wake-up through your chosen distributor, then fetch messages from your hubs." right={<Switch on={push.enabled} onChange={(v) => { if (!busy) void setPush(v); }} label="Use UnifiedPush" />} />
+              {push.distributors.length ? <Row t1="Distributor" right={<select aria-label="UnifiedPush distributor" disabled={busy} value={distributor} onChange={(e) => {
+                const next = e.target.value; setChosen(next); if (push.enabled) void setPush(true, next);
+              }}>
+                <option value="" disabled>Select a distributor</option>
+                {push.distributors.map((d) => <option key={d} value={d}>{d === "io.heckel.ntfy" ? "ntfy" : d}</option>)}
+              </select>} /> : <Row t1="Install a distributor" t2="UnifiedPush needs a distributor app on this phone. ntfy supports public and self-hosted servers." right={<button className="btn" onClick={() => void openLink("https://ntfy.sh/docs/subscribe/phone/")}>Get ntfy</button>} />}
+              {push.enabled ? <Row t1={push.active ? "Push is on" : "Push is not ready"} t2={push.active ? "Hubchat fetches on wake, without its persistent connection notification." : push.status} right={!push.active && distributor ? <button className="btn" disabled={busy} onClick={() => void setPush(true)}>Retry</button> : null} /> : null}
+            </Card>
+            <div className="pad"><NoteCard icon="info">Your hub sends a content-free wake-up directly to the distributor. Messages stay on your normal hub connection. A tailnet-only hub works if it can reach the distributor’s server; private distributor addresses need the hub operator’s allowlist.</NoteCard></div>
+          </> : null}
+          {!push?.active ? <>
           <Card>
             <Row icon="sync" t1="Stay connected" t2="Messages arrive instantly. Android requires a quiet ongoing notification (“Hubchat is connected”) while Hubchat waits for mail." right={<Switch on={stay} onChange={(v) => { if (!busy) void setStay(v); }} label="Stay connected" />} />
           </Card>
-          <div className="pad"><NoteCard icon="info">{stay ? <><b>On:</b> instant messages, a little more battery.</> : <><b>Off:</b> Hubchat checks about every 15 minutes, so messages and receipts can arrive late. Your status shows offline in between.</>} There is no Google push service: the hub is the only server.</NoteCard></div>
-          {stay && (snap.state?.device_maker ?? "").toLowerCase() === "samsung" ? <SamsungHide /> : null}
+          <div className="pad"><NoteCard icon="info">{stay ? <><b>On:</b> instant messages, a little more battery.</> : <><b>Off:</b> Hubchat checks about every 15 minutes, so messages and receipts can arrive late. Your status shows offline in between.</>} This setting is used when UnifiedPush is off or still being set up.</NoteCard></div>
+          {stay && !push?.active && (snap.state?.device_maker ?? "").toLowerCase() === "samsung" ? <SamsungHide /> : null}
+          </> : null}
         </Sec>
       ) : null}
     </>
@@ -573,7 +602,7 @@ export function SettingsList({ onOpen, onBack }: { onOpen: (t: SetTab) => void; 
         </div>
         <Row icon="dns" t1="Hubs" t2={hs.text} right={<>{snap.state!.hubs.some((h) => h.state !== "connected") ? warn : null}{chev}</>} onClick={() => onOpen("hubs")} />
         <Row icon="phone" t1="Devices" t2="Link a device · key file" right={chev} onClick={() => onOpen("devices")} />
-        <Row icon="bell" t1="Notifications" t2={snap.state!.stay_connected === false ? "Checks every 15 minutes" : "Connected in the background"} right={chev} onClick={() => onOpen("notifications")} />
+        <Row icon="bell" t1="Notifications" t2={snap.state!.push?.active ? "UnifiedPush" : snap.state!.stay_connected === false ? "Checks every 15 minutes" : "Connected in the background"} right={chev} onClick={() => onOpen("notifications")} />
         <Row icon="key" t1="Recovery words" t2={snap.state!.recovery_saved ? "Saved" : <span style={{ color: "var(--warn)" }}>Not saved yet</span>} right={<>{snap.state!.recovery_saved ? null : warn}{chev}</>} onClick={() => onOpen("recovery")} />
         <Row icon="privacy" t1="Privacy" t2="Read receipts · who can reach you" right={chev} onClick={() => onOpen("privacy")} />
         <Row icon="palette" t1="Appearance" t2={pref === "system" ? "Follow system" : pref === "light" ? "Light" : "Dark"} right={chev} onClick={() => onOpen("appearance")} />

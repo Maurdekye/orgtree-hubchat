@@ -369,6 +369,7 @@ pub fn run() {
             commands::hc_set_active,
             commands::hc_set_notifications,
             commands::hc_set_stay_connected,
+            commands::hc_set_push,
             commands::hc_probe_hub,
             commands::hc_probe_link_hubs,
             commands::hc_add_hub,

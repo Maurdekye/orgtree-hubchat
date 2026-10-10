@@ -201,6 +201,21 @@ impl crate::core::Platform for AndroidPlatform {
             .map(|_| ())
             .ok_or_else(|| "Android refused the change".to_string())
     }
+    fn push_state(&self) -> Option<crate::core::PushState> {
+        let j = JNI.get()?;
+        serde_json::from_str(&call(&j.service, "pushState", &[], true)?).ok()
+    }
+    fn set_push(&self, on: bool, distributor: &str) -> Result<(), String> {
+        let j = JNI.get().ok_or("Hubchat is still starting")?;
+        match call(&j.service, "setPush", &[if on { "1" } else { "0" }, distributor], true) {
+            Some(e) if e.is_empty() => Ok(()),
+            Some(e) => Err(e),
+            None => Err("Android could not change push settings".into()),
+        }
+    }
+    fn refresh_push(&self) {
+        if let Some(j) = JNI.get() { call(&j.service, "refreshPush", &[], false); }
+    }
     fn clear_notification(&self, peer: &str) {
         if let Some(j) = JNI.get() {
             let _ = call(&j.service, "clearMessage", &[peer], false);
@@ -250,7 +265,84 @@ fn check_now(timeout_secs: i32) -> bool {
         return true; // no identity yet: nothing to check
     };
     let t = std::time::Duration::from_secs(timeout_secs.clamp(5, 600) as u64);
+    let _check = c.background_check();
     c.rt.block_on(async move { e.check_now(t).await })
+}
+
+#[derive(serde::Deserialize)]
+struct PushCapability {
+    endpoint: String,
+    p256dh: String,
+    auth: String,
+}
+
+/// Runs only on a WorkManager thread; all network work has an overall deadline.
+fn push_work(action: &str, capability: &str) -> String {
+    let Ok(c) = crate::core::get() else { return "Hubchat is still starting.".into() };
+    let Ok(e) = c.engine() else {
+        return if action == "remove" { String::new() } else { "Connect an identity before enabling push.".into() };
+    };
+    let _check = c.background_check();
+    c.rt.block_on(async {
+        let task = async {
+            match action {
+                "remove" => e.unregister_push().await.map_err(|e| e.to_string()),
+                "sync" => {
+                    let cap: PushCapability = serde_json::from_str(capability)
+                        .map_err(|_| "Push registration is unavailable.".to_string())?;
+                    if !e.check_now(std::time::Duration::from_secs(45)).await {
+                        return Err("A hub is unreachable; push setup will retry.".into());
+                    }
+                    e.register_push(&cap.endpoint, &cap.p256dh, &cap.auth).await.map_err(|e| e.to_string())
+                }
+                "wake" => if e.check_now(std::time::Duration::from_secs(60)).await {
+                    Ok(())
+                } else { Err("A hub is unreachable; the message check will retry.".into()) },
+                _ => Err("Unknown push operation.".into()),
+            }
+        };
+        match tokio::time::timeout(std::time::Duration::from_secs(100), task).await {
+            Ok(Ok(())) => String::new(),
+            Ok(Err(e)) => e,
+            Err(_) => "The hub did not answer in time; push setup will retry.".into(),
+        }
+    })
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_orgtree_hubchat_ConnectionService_pushWork(
+    env: JNIEnv, _class: JClass, action: JString, capability: JString,
+) -> jni::sys::jstring {
+    push_work_jni(env, action, capability)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_orgtree_hubchat_ConnectionService_00024Companion_pushWork(
+    env: JNIEnv, _this: JObject, action: JString, capability: JString,
+) -> jni::sys::jstring {
+    push_work_jni(env, action, capability)
+}
+
+fn push_work_jni(
+    mut env: JNIEnv, action: JString, capability: JString,
+) -> jni::sys::jstring {
+    let action = env.get_string(&action).map(String::from).unwrap_or_default();
+    let capability = env.get_string(&capability).map(String::from).unwrap_or_default();
+    env.new_string(push_work(&action, &capability)).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_orgtree_hubchat_ConnectionService_pushModeChanged(
+    _env: JNIEnv, _class: JClass,
+) {
+    if let Ok(c) = crate::core::get() { c.reconcile_background(); }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_orgtree_hubchat_ConnectionService_00024Companion_pushModeChanged(
+    _env: JNIEnv, _this: JObject,
+) {
+    if let Ok(c) = crate::core::get() { c.reconcile_background(); }
 }
 
 #[no_mangle]
@@ -270,6 +362,21 @@ pub extern "system" fn Java_dev_orgtree_hubchat_ConnectionService_checkNow(
 ) -> jni::sys::jboolean {
     check_now(timeout_secs) as jni::sys::jboolean
 }
+
+fn push_foreground(mut env: JNIEnv, on: JString) {
+    let visible = env.get_string(&on).map(String::from).unwrap_or_default() == "1";
+    if let Ok(c) = crate::core::get() { c.set_app_visible(visible); }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_orgtree_hubchat_ConnectionService_pushForeground(
+    env: JNIEnv, _class: JClass, on: JString,
+) { push_foreground(env, on); }
+
+#[no_mangle]
+pub extern "system" fn Java_dev_orgtree_hubchat_ConnectionService_00024Companion_pushForeground(
+    env: JNIEnv, _this: JObject, on: JString,
+) { push_foreground(env, on); }
 
 fn start_core(mut env: JNIEnv, data_dir: JString) {
     let Ok(dir) = env.get_string(&data_dir).map(String::from) else {

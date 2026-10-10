@@ -18,6 +18,7 @@
          hides other apps unless they are named here) -->
     <queries>
         <package android:name="com.tailscale.ipn" />
+        <intent><action android:name="org.unifiedpush.android.distributor.REGISTER" /></intent>
     </queries>
 
     <!-- AndroidTV support -->
@@ -59,6 +60,12 @@
           android:name=".ConnectionService"
           android:exported="false"
           android:foregroundServiceType="remoteMessaging" />
+
+        <service android:name=".HubchatPushService" android:exported="false">
+          <intent-filter>
+            <action android:name="org.unifiedpush.android.connector.PUSH_EVENT" />
+          </intent-filter>
+        </service>
 
         <!-- Stay connected: the background connection starts after a phone
              restart or an app update (user 23:05Z) -->

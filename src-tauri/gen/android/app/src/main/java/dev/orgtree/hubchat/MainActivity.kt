@@ -32,6 +32,7 @@ class MainActivity : TauriActivity() {
       ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
     }
     ConnectionService.start(this)
+    PushController.startup(this)
     takePeer(intent)
   }
 
@@ -61,6 +62,7 @@ class MainActivity : TauriActivity() {
   override fun onResume() {
     super.onResume()
     inFront = true
+    ConnectionService.pushForeground("1")
     // an update that finished downloading while Hubchat was in the
     // background: Android's confirmation opens now (InstallReceiver)
     ConnectionService.pendingConfirm?.let {
@@ -71,6 +73,7 @@ class MainActivity : TauriActivity() {
 
   override fun onPause() {
     inFront = false
+    ConnectionService.pushForeground("0")
     super.onPause()
   }
 

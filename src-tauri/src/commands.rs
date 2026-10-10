@@ -50,6 +50,7 @@ pub struct State {
     /// Android (design D6): stay connected (true) or check about every 15
     /// minutes (false); null on desktop.
     stay_connected: Option<bool>,
+    push: Option<core::PushState>,
     hubs: Vec<HubStatus>,
     platform: &'static str,
     /// What other devices see this one called (linking uses it as is).
@@ -82,6 +83,7 @@ pub fn hc_state() -> R<State> {
         read_receipts: meta(c, "settings.read_receipts") != "off",
         notifications: c.notify_settings(),
         stay_connected: c.platform().stay_connected(),
+        push: c.platform().push_state(),
         device_name: c.device_name(),
         device_maker: c.platform().device_maker(),
         hubs: engine.map(|e| e.hub_statuses()).unwrap_or_default(),
@@ -209,6 +211,11 @@ pub fn hc_set_stay_connected(on: bool) -> R<()> {
             .status(&format!("Connected as {}", e.me().address()));
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn hc_set_push(on: bool, distributor: String) -> R<()> {
+    core::get()?.platform().set_push(on, &distributor)
 }
 
 /// Whether this device is in use (focused or on screen, touched in the last
@@ -399,13 +406,17 @@ pub fn hc_add_hub(input: String) -> R<String> {
     let c = core::get()?;
     let e = c.engine()?;
     let _g = c.rt.enter();
-    e.add_hub(&input).map(|a| a.to_string()).map_err(s)
+    let address = e.add_hub(&input).map(|a| a.to_string()).map_err(s)?;
+    c.platform().refresh_push();
+    Ok(address)
 }
 
 #[tauri::command]
 pub async fn hc_remove_hub(url: String, unregister: bool) -> R<()> {
     let e = engine()?;
-    on_core(async move { e.remove_hub(&url, unregister).await.map_err(s) }).await
+    on_core(async move { e.remove_hub(&url, unregister).await.map_err(s) }).await?;
+    core::get()?.platform().refresh_push();
+    Ok(())
 }
 
 #[tauri::command]

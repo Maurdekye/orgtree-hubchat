@@ -65,6 +65,7 @@ const st: State = {
   read_receipts: true,
   notifications: { enabled: true, preview: true, sound: false },
   stay_connected: new URLSearchParams(location.search).get("platform") === "android" ? true : null,
+  push: params.get("platform") === "android" ? { enabled: false, active: false, distributor: "", distributors: params.get("distributor") === "ntfy" ? ["io.heckel.ntfy"] : [], status: "Off" } : null,
   device_name: new URLSearchParams(location.search).get("platform") === "android" ? "Pixel 8" : "Home-PC",
   // ?maker=samsung: a Samsung phone (Settings › Notifications explains its categories)
   device_maker: params.get("platform") === "android" ? params.get("maker") ?? "Google" : "",
@@ -575,6 +576,10 @@ export const mockApi: Api = {
   setReadReceipts: async (on) => { st.read_receipts = on; },
   setNotifications: async (n) => { st.notifications = { ...n }; },
   setStayConnected: async (on) => { await sleep(300); st.stay_connected = on; },
+  setPush: async (on, distributor) => {
+    await sleep(300);
+    if (st.push) st.push = { ...st.push, enabled: on, active: on, distributor, status: on ? "Push is on" : "Off" };
+  },
   setActive: async () => {},
   setDeviceName: async (name) => {
     await sleep(200);

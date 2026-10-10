@@ -12,8 +12,10 @@ import android.content.Intent
 class BootReceiver : BroadcastReceiver() {
   override fun onReceive(ctx: Context, intent: Intent) {
     when (intent.action) {
-      Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED ->
-        if (ConnectionService.stayConnected(ctx)) ConnectionService.start(ctx)
+      Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> {
+        PushController.startup(ctx)
+        if (ConnectionService.stayConnected(ctx) || PushController.active(ctx)) ConnectionService.start(ctx)
+      }
     }
   }
 }

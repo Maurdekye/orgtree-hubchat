@@ -60,6 +60,14 @@ export interface NotifySettings {
   sound: boolean;
 }
 
+export interface PushState {
+  enabled: boolean;
+  active: boolean;
+  distributor: string;
+  distributors: string[];
+  status: string;
+}
+
 export interface State {
   me: Me | null;
   recovery_saved: boolean;
@@ -67,6 +75,7 @@ export interface State {
   notifications: NotifySettings;
   /** Android (design D6): stay connected (true) or check about every 15 minutes; null on desktop. */
   stay_connected: boolean | null;
+  push: PushState | null;
   /** What other devices see this one called: its own name, or the one set in Settings › Devices. */
   device_name: string;
   /** The phone's maker on Android ("samsung", "Google"); empty elsewhere. */
@@ -320,6 +329,7 @@ export const tauriApi = {
   setReadReceipts: (on: boolean) => invoke<void>("hc_set_read_receipts", { on }),
   setNotifications: (n: NotifySettings) => invoke<void>("hc_set_notifications", { enabled: n.enabled, preview: n.preview, sound: n.sound }),
   setStayConnected: (on: boolean) => invoke<void>("hc_set_stay_connected", { on }),
+  setPush: (on: boolean, distributor: string) => invoke<void>("hc_set_push", { on, distributor }),
   /** This device is in use (user 23:50Z): our other devices don't notify meanwhile. */
   setActive: (on: boolean) => invoke<void>("hc_set_active", { on }),
   /** Settings › Devices: rename this device (empty: its own name again); the name it now has. */
