@@ -10,6 +10,7 @@ import { chatLinkTarget } from "../lib/chatlink";
 import { installKeyboardImages } from "../lib/keyboardImages";
 import { startTake, useActive, useForeground, useLastChat, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { HubBanner, RecoveryBanner, UpdateBanner } from "./Banners";
+import { startTailnetWatch } from "../lib/tailnet";
 import { startUpdateChecks } from "../lib/updates";
 import { isSetupLink, startSetup, useSetupChat } from "../lib/setup";
 import { ChatRows, EmptyChats, useFilteredChats, type ChatFilter } from "./ChatList";
@@ -142,6 +143,7 @@ export function Android() {
   useActive(fg);
   useReadTracking(top.s === "conv" ? top.p : null, fg);
   useEffect(() => { startUpdateChecks("android"); }, []);
+  useEffect(() => { startTailnetWatch(); }, []);
   // pictures from the keyboard go into the message box
   useEffect(() => { installKeyboardImages(); }, []);
 

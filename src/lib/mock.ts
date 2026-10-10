@@ -15,6 +15,8 @@
 // fails that check; ?setupreply=expired|none (the org's answer; default
 // linked, after 2.5 s). ?dooroff=1: Link a device's code says phone access
 // is off on this PC. ?seen=ADDRESS:S: that contact went offline S seconds ago.
+// Tailscale (Android): ?vpn=off: Android reports no VPN (tests flip
+// window.__hcVpn); ?labts=1: the lab hub's address is a Tailscale name.
 // Linking: a waiting device shows up on the third lookup; a device joining a
 // code is approved after 45 s and reviews LINK_HUBS (a signed-in device
 // joining one: after 2 s the link turns out to be another identity,
@@ -45,7 +47,7 @@ function at(days: number, hm: string): number {
 }
 
 const OFFICE = "http://hub.office.lan:7370";
-const LAB = "http://10.0.0.7:7370";
+const LAB = params.get("labts") === "1" ? "http://lab-pc.tail5c2e.ts.net:7370" : "http://10.0.0.7:7370";
 const onboarding = params.get("onboarding") === "1";
 
 const st: State = {
@@ -283,7 +285,7 @@ setInterval(() => {
 function reconnect(h: HubStatus) {
   h.state = "connecting"; h.retry_at_ms = null; hubEv(h.url);
   setTimeout(() => {
-    if (/10\.0\.0\.7|unreach|10\.0\.9\./.test(h.url) && !(h.url === LAB && now() >= labUpAt)) { h.state = "disconnected"; h.error = "connection refused (os error 10061)"; h.retry_at_ms = now() + 16000; }
+    if ((h.url === LAB || /10\.0\.0\.7|unreach|10\.0\.9\./.test(h.url)) && !(h.url === LAB && now() >= labUpAt)) { h.state = "disconnected"; h.error = "connection refused (os error 10061)"; h.retry_at_ms = now() + 16000; }
     else { h.state = "connected"; h.error = null; }
     hubEv(h.url);
   }, 1100);
@@ -827,6 +829,7 @@ export const mockApi: Api = {
   },
   appInstalled: async () => (st.platform === "android" ? setupFail !== "no-ts" : null),
   openApp: async (what) => { toast("[Opens " + (what === "get_tailscale" ? "Tailscale in Google Play" : what === "open_tailscale" ? "the Tailscale app" : "Android's Wi-Fi settings") + "]"); return true; },
+  vpnActive: async () => (st.platform !== "android" ? null : (window as unknown as { __hcVpn?: boolean }).__hcVpn ?? params.get("vpn") !== "off"),
   setupStart: async (input, name) => {
     const l = parseSetupLink(input).link;
     if (!l) throw "not a setup code";

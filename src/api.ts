@@ -392,6 +392,8 @@ export const tauriApi = {
   appInstalled: (pkg: string) => invoke<boolean | null>("hc_app_installed", { package: pkg }),
   /** Android: open "get_tailscale" (its store page), "open_tailscale" or "wifi_settings". */
   openApp: (what: "get_tailscale" | "open_tailscale" | "wifi_settings") => invoke<boolean>("hc_open_app", { what }),
+  /** Android: whether this device's traffic goes through a VPN now; null where it can't be told. */
+  vpnActive: () => invoke<boolean | null>("hc_vpn_active"),
   /** Join the setup link's hub and send its org the code; returns the chat to open. */
   setupStart: (input: string, name: string) => invoke<string>("hc_setup_start", { input, name }),
   setupStatus: (org: string) => invoke<SetupState | null>("hc_setup_status", { org }),

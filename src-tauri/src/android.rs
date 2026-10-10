@@ -129,6 +129,14 @@ impl crate::core::Platform for AndroidPlatform {
             .and_then(|j| call(&j.service, "openApp", &[what], true))
             .is_some_and(|r| r == "1")
     }
+    fn vpn_active(&self) -> Option<bool> {
+        let j = JNI.get()?;
+        match call(&j.service, "vpnActive", &[], true)?.as_str() {
+            "1" => Some(true),
+            "0" => Some(false),
+            _ => None,
+        }
+    }
     /// The sound follows Android's own settings for the Messages channel
     /// (the design has no sound switch on Android).
     fn notify(&self, title: &str, body: &str, peer: &str, _sound: bool) {

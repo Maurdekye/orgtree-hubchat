@@ -9,6 +9,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.os.Build
@@ -246,6 +248,22 @@ class ConnectionService : Service() {
         "1"
       } catch (e: Exception) {
         "0"
+      }
+    }
+
+    /** Called from Rust (the hub notice, user 2026-10-10 06:44Z: Tailscale
+     *  turned itself off): "1" while Hubchat's traffic goes through a VPN
+     *  (Tailscale is one), "0" when it doesn't, "" when that can't be told
+     *  (no network at all). */
+    @JvmStatic
+    fun vpnActive(): String {
+      val ctx = appContext ?: return ""
+      return try {
+        val cm = ctx.getSystemService(ConnectivityManager::class.java) ?: return ""
+        val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) } ?: return ""
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) "1" else "0"
+      } catch (e: Exception) {
+        ""
       }
     }
 

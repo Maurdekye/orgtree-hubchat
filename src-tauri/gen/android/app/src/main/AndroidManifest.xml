@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- the hub notice tells when Tailscale (a VPN) is off (user 2026-10-10 06:44Z) -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- in-app updates from Hubchat's GitHub releases (user 2026-10-09 08:29Z) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- without it Android 12+ ignores USER_ACTION_NOT_REQUIRED and asks for a tap on

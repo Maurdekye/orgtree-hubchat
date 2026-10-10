@@ -28,6 +28,7 @@
 .strip.warn .ic { color: var(--warn); }
 .strip b { color: var(--ink-strong); font-weight: 600; }
 .strip .link { margin-left: auto; font-size: 13px; }
+.strip .link.nowrap { white-space: nowrap; }
 
 /* chats */
 .fchips { display: flex; gap: 8px; padding: 6px 16px 8px; background: var(--side); }

@@ -29,6 +29,8 @@ function set(p: Partial<Snap>) { snap = { ...snap, ...p }; subs.forEach((f) => f
 const subscribe = (f: () => void) => { subs.add(f); return () => { subs.delete(f); }; };
 
 export const getSnap = () => snap;
+/** Every change, outside React (lib/tailnet.ts watches the hubs). */
+export const subscribeSnap = subscribe;
 export function useSnap(): Snap { return useSyncExternalStore(subscribe, getSnap); }
 
 // ------------------------------------------------------------------ loads

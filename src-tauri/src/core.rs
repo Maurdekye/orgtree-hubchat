@@ -53,6 +53,11 @@ pub trait Platform: Send + Sync + 'static {
     fn open_app(&self, _what: &str) -> bool {
         false
     }
+    /// Whether this device's traffic goes through a VPN now (Android: the
+    /// hub notice says when Tailscale is off). None where it can't be told.
+    fn vpn_active(&self) -> Option<bool> {
+        None
+    }
     /// Android (design D6): stay connected with the ongoing notification
     /// (true, the default) or check about every 15 minutes (false). None
     /// where there is no such choice.

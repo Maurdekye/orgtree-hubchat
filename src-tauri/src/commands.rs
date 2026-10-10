@@ -779,6 +779,13 @@ pub fn hc_open_app(what: String) -> R<bool> {
     Ok(core::get()?.platform().open_app(&what))
 }
 
+/// Whether this device's traffic goes through a VPN now (Android); None
+/// where it can't be told.
+#[tauri::command]
+pub fn hc_vpn_active() -> R<Option<bool>> {
+    Ok(core::get()?.platform().vpn_active())
+}
+
 /// Join the setup link's hub and send the org our code (the identity
 /// exists by now). Returns the chat to open.
 #[tauri::command]

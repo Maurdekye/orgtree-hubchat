@@ -1,5 +1,6 @@
 // Calm app-level banners: a hub that can't be reached (with its retry
-// countdown, Retry now and Help on running and reaching a hub), the
+// countdown, Retry now and Help on running and reaching a hub; on Android,
+// when Tailscale is off and the hub needs it, that instead), the
 // recovery-words reminder, and an available update (desktop installs it on
 // restart; Android walks through its own installer).
 import { useState } from "react";
@@ -7,6 +8,7 @@ import { api } from "../api";
 import { Icon } from "../lib/icons";
 import { errText } from "../lib/native";
 import { useSnap } from "../lib/store";
+import { openTailscale, useTailscaleOff } from "../lib/tailnet";
 import { toast } from "../lib/toast";
 import { ALLOW_TEXT, allowInstalls, useInstallStep, useUpdate, type Available } from "../lib/updates";
 import { HubHelpLink } from "./HubHelp";
@@ -26,8 +28,20 @@ export function useHubProblem() {
 export function HubBanner() {
   const p = useHubProblem();
   const platform = usePlatform();
+  const tsOff = useTailscaleOff();
   if (!p) return null;
   const retry = () => api.retryNow().catch(() => {});
+  // the likely cause, and what fixes it (user 2026-10-10 06:44Z: Tailscale
+  // turned itself off). No Retry: with Tailscale back on, this turns into the
+  // usual notice, Retry and all; it goes once the hub is back.
+  if (platform === "android" && tsOff && !p.refused) {
+    return (
+      <div className="strip warn" role="region" aria-label="Hub notice" data-why="tailscale"><Icon name="warning" />
+        <span><b>Tailscale seems to be off.</b> Your hub is only reachable through it.</span>
+        <button className="link nowrap" onClick={() => void openTailscale()}>Open Tailscale</button>
+      </div>
+    );
+  }
   const text = p.refused
     ? <><b>Hub {p.hub.name} refused the connection</b>{p.hub.error ? ": " + p.hub.error : ""}</>
     : <><b>Can't reach hub {p.hub.name}</b>{p.secs != null ? " · retrying in " + p.secs + " s" : ""}{p.more ? " · " + p.more + " more hub" + (p.more > 1 ? "s" : "") + " down" : ""}</>;
