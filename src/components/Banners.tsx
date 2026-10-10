@@ -2,13 +2,13 @@
 // countdown, Retry now and Help on running and reaching a hub), the
 // recovery-words reminder, and an available update (desktop installs it on
 // restart; Android walks through its own installer).
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api } from "../api";
 import { Icon } from "../lib/icons";
 import { errText } from "../lib/native";
 import { useSnap } from "../lib/store";
 import { toast } from "../lib/toast";
-import { useInstallStep, useUpdate, type Available } from "../lib/updates";
+import { ALLOW_TEXT, allowInstalls, useInstallStep, useUpdate, type Available } from "../lib/updates";
 import { HubHelpLink } from "./HubHelp";
 import { useNow, usePlatform } from "./ui";
 
@@ -92,22 +92,17 @@ export function UpdateBanner() {
 
 /** Android (user 2026-10-09 08:29Z): Update downloads the release's APK and
  *  hands it to Android's installer. The first time, Android must allow
- *  Hubchat to install apps; back from that setting, the update carries on. */
+ *  Hubchat to install apps; back from that setting, the update carries on
+ *  (lib/updates.ts, for Settings › About too). */
 function AndroidUpdate({ avail, onHide }: { avail: Available; onHide: () => void }) {
   const step = useInstallStep();
   const go = () => void avail.install();
-  useEffect(() => {
-    if (step.k !== "permission") return;
-    const back = () => { if (document.visibilityState === "visible") go(); };
-    document.addEventListener("visibilitychange", back);
-    return () => document.removeEventListener("visibilitychange", back);
-  });
   let text: React.ReactNode;
   let action: React.ReactNode = null;
   switch (step.k) {
     case "permission":
-      text = <><b>Allow Hubchat to install its updates.</b> Android asks once. Hubchat only installs updates signed with its own key.</>;
-      action = <button className="btn primary" onClick={() => void api.appUpdateAllow()}>Allow</button>;
+      text = <><b>{ALLOW_TEXT[0]}</b> {ALLOW_TEXT[1]}</>;
+      action = <button className="btn primary" onClick={allowInstalls}>Allow</button>;
       break;
     case "downloading":
       text = <><b>Downloading Hubchat {avail.version}…</b> {step.pct}%</>;

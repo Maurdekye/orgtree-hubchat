@@ -12,7 +12,7 @@ import { hubCls, hubStatusText, hubSummary, hubVersion } from "../lib/peers";
 import { refreshDirectory, refreshState, useSnap } from "../lib/store";
 import { setThemePref, useThemePref, type ThemePref } from "../lib/theme";
 import { toast } from "../lib/toast";
-import { checkForUpdate, setAutoChecks, useAutoChecks, useInstallStep, useUpdate } from "../lib/updates";
+import { ALLOW_TEXT, allowInstalls, checkForUpdate, setAutoChecks, useAutoChecks, useInstallStep, useUpdate } from "../lib/updates";
 import { formatCode, LinkDeviceModal, type LinkTab } from "./LinkDevice";
 import { copyWords, downloadWords } from "../lib/recovery";
 import { HubAdder } from "./HubAdder";
@@ -437,7 +437,7 @@ function UpdateCheck() {
     try { await avail.install(); } catch (e) { setSt({ k: "error", msg: errText(e) }); }
   };
   const android = platform === "android" && avail && step.k !== "idle"
-    ? step.k === "permission" ? "Allow Hubchat to install its updates in Android's settings, then come back."
+    ? step.k === "permission" ? ALLOW_TEXT.join(" ")
       : step.k === "downloading" ? "Downloading the update… " + step.pct + "%"
       : step.k === "failed" ? "The update didn't install. " + step.msg
       : "Installing. Android may ask you to confirm."
@@ -451,7 +451,11 @@ function UpdateCheck() {
       {/* the button first and the status under it, so the button never moves
           as the status changes (user 2026-10-09 22:58Z) */}
       <div className={platform === "android" ? "about-upd pad" : "about-upd"}>
-        {avail
+        {/* Android hasn't let Hubchat install apps yet: Allow opens that setting,
+            like the banner's (user 2026-10-10 06:40Z: Update only said so) */}
+        {platform === "android" && avail && step.k === "permission"
+          ? <button className="btn primary block" onClick={allowInstalls}><Icon name="settings" />Allow</button>
+          : avail
           ? <button className={platform === "android" ? "btn primary block" : "btn primary"} onClick={install} disabled={busy}><Icon name="restart" />{platform === "android" ? "Update" : "Restart to update"}</button>
           : <button className={platform === "android" ? "btn block" : "btn"} onClick={check} disabled={st.k === "checking"}><Icon name="refresh" />Check for updates</button>}
         <span className={"help" + (st.k === "error" || step.k === "failed" ? " bad" : "")}>{text}</span>

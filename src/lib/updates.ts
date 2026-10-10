@@ -49,6 +49,19 @@ export function setAutoChecks(on: boolean): void {
   emit();
 }
 
+/** What the banner and Settings › About say beside their Allow buttons (the
+ *  banner bolds the first sentence). */
+export const ALLOW_TEXT = ["Allow Hubchat to install its updates.", "Android asks once. Hubchat only installs updates signed with its own key."] as const;
+
+/** The Allow buttons: Android's "Install unknown apps" page for Hubchat. */
+export const allowInstalls = (): void => { api.appUpdateAllow().catch(() => {}); };
+
+// Back from that page the update carries on by itself, whichever screen asked
+// for the permission (user 2026-10-10 06:40Z: About offered no way there).
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && step.k === "permission" && avail) void avail.install();
+});
+
 /** "it was cancelled" -> "It was cancelled.", for "The update didn't install. …" */
 const sentence = (s: string) => s && s[0].toUpperCase() + s.slice(1) + (/[.!?…]$/.test(s) ? "" : ".");
 

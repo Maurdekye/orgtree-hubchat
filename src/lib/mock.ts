@@ -707,7 +707,8 @@ export const mockApi: Api = {
     return img.slice().buffer as ArrayBuffer;
   },
   // Android's in-app update, acted out: ?update=1 offers 0.2.0; the first
-  // Update asks for Android's permission, then it downloads and Android's
+  // Update asks for Android's permission (Allow "opens" Android's page, and
+  // Hubchat is back in front 0.8 s later), then it downloads and Android's
   // window "opens"; ?update=bad fails the signature check; ?update=down fails
   // the check itself
   appUpdateCheck: async () => {
@@ -723,7 +724,10 @@ export const mockApi: Api = {
     updateState = "confirm";
     return "installing";
   },
-  appUpdateAllow: async () => { updateAllowed = true; },
+  appUpdateAllow: async () => {
+    updateAllowed = true;
+    setTimeout(() => document.dispatchEvent(new Event("visibilitychange")), 800);
+  },
   appUpdateState: async () => updateState,
   onAppUpdateProgress: async (f) => { updateProgress.add(f); return () => { updateProgress.delete(f); }; },
   filePreview: async (source, name) => {
