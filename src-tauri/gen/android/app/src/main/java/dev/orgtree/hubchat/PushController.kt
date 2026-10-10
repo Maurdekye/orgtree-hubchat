@@ -1,12 +1,14 @@
 package dev.orgtree.hubchat
 
 import android.content.Context
+import android.os.Build
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
@@ -144,10 +146,15 @@ object PushController {
   }
 
   private fun enqueue(ctx: Context, action: String) {
-    val request = OneTimeWorkRequestBuilder<PushWorker>()
+    val builder = OneTimeWorkRequestBuilder<PushWorker>()
       .setInputData(Data.Builder().putString("action", action).build())
       .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-      .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.SECONDS).build()
+      .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.SECONDS)
+    // Android 12+ can expedite a short wake check without a foreground
+    // notification. Older versions use the normal scheduler: WorkManager's
+    // expedited compatibility path would require another foreground service.
+    if (Build.VERSION.SDK_INT >= 31) builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+    val request = builder.build()
     // Replace rather than KEEP: a late wake needs another fetch, and turning
     // push off must not sit behind an offline registration's retry backoff.
     WorkManager.getInstance(ctx).enqueueUniqueWork(WORK, ExistingWorkPolicy.REPLACE, request)
