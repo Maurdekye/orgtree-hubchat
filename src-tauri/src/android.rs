@@ -213,6 +213,12 @@ impl crate::core::Platform for AndroidPlatform {
             .filter(|n| !n.is_empty())
             .unwrap_or_else(|| "Android phone".into())
     }
+    fn device_maker(&self) -> String {
+        JNI.get()
+            .and_then(|j| call(&j.service, "maker", &[], true))
+            .map(|m| m.trim().to_owned())
+            .unwrap_or_default()
+    }
 }
 
 #[no_mangle]

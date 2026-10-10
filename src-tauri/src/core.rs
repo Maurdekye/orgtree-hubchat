@@ -52,8 +52,8 @@ pub trait Platform: Send + Sync + 'static {
         None
     }
     /// Open another app or a settings page for Scan setup code
-    /// ("get_tailscale", "open_tailscale", "wifi_settings"). False when
-    /// nothing opened.
+    /// ("get_tailscale", "open_tailscale", "wifi_settings"), or (Settings ›
+    /// Notifications) "connection_notification". False when nothing opened.
     fn open_app(&self, _what: &str) -> bool {
         false
     }
@@ -79,6 +79,11 @@ pub trait Platform: Send + Sync + 'static {
     /// computer's name here, the phone's on Android.
     fn device_name(&self) -> String {
         computer_name()
+    }
+    /// The phone's maker as Android reports it ("samsung", "Google"), for
+    /// help only some phones need; empty elsewhere.
+    fn device_maker(&self) -> String {
+        String::new()
     }
 }
 

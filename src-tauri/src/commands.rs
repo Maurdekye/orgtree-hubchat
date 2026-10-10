@@ -54,6 +54,9 @@ pub struct State {
     platform: &'static str,
     /// What other devices see this one called (linking uses it as is).
     device_name: String,
+    /// The phone's maker on Android ("samsung": Settings › Notifications
+    /// explains how to hide only the background notification); empty elsewhere.
+    device_maker: String,
     /// This device had an identity but its key is gone (the lost-key screen).
     key_lost: Option<core::KeyLost>,
     /// The key was restored from Hubchat's backup; say so once.
@@ -80,6 +83,7 @@ pub fn hc_state() -> R<State> {
         notifications: c.notify_settings(),
         stay_connected: c.platform().stay_connected(),
         device_name: c.device_name(),
+        device_maker: c.platform().device_maker(),
         hubs: engine.map(|e| e.hub_statuses()).unwrap_or_default(),
         key_lost: c.key_lost(),
         key_restored: meta(c, "key.restored") == "yes",

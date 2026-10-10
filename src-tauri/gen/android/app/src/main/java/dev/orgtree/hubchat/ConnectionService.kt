@@ -238,6 +238,12 @@ class ConnectionService : Service() {
       return if (Build.MODEL.startsWith(Build.MANUFACTURER, ignoreCase = true)) Build.MODEL else "$maker ${Build.MODEL}"
     }
 
+    /** Called from Rust: the phone's maker as Android reports it ("samsung",
+     *  "Google"), for help that only some phones need (user 2026-10-10
+     *  12:01Z: Samsung hides notification categories). */
+    @JvmStatic
+    fun maker(): String = Build.MANUFACTURER ?: ""
+
     /** Called from Rust (Scan setup code): "1" when the package is
      *  installed. Visible only for packages named in the manifest's <queries>. */
     @JvmStatic
@@ -270,7 +276,8 @@ class ConnectionService : Service() {
     }
 
     /** Called from Rust (Scan setup code): open Tailscale's store page, the
-     *  Tailscale app, or the Wi-Fi settings. "1" when something opened. */
+     *  Tailscale app, or the Wi-Fi settings; (Settings › Notifications) the
+     *  Background connection category's settings. "1" when something opened. */
     @JvmStatic
     fun openApp(what: String): String {
       val ctx = appContext ?: return ""
@@ -282,6 +289,16 @@ class ConnectionService : Service() {
         )
         "open_tailscale" -> listOfNotNull(ctx.packageManager.getLaunchIntentForPackage(ts))
         "wifi_settings" -> listOf(Intent(android.provider.Settings.ACTION_WIFI_SETTINGS))
+        // the Background connection category itself, else Hubchat's
+        // notification page, else its app page (no categories before 8.0)
+        "connection_notification" -> listOf(
+          Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+            .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, CHANNEL_CONNECTION),
+          Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, ctx.packageName),
+          Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + ctx.packageName)),
+        )
         else -> emptyList()
       }
       for (i in tries) {
