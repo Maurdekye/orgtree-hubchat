@@ -19,9 +19,13 @@ while the app is visible. It also keeps its check about every 15 minutes as a
 backup: if the distributor stops delivering wakes (Android paused it, it was
 uninstalled, or its server is down), messages arrive at the next check instead
 of only when you open Hubchat. Turning push off restores the saved **Stay connected**
-choice. If setup is incomplete, Hubchat uses that choice too. Android can
-delay background work; keep the distributor working and allow it the battery
-access its own setup instructions recommend.
+choice. If setup is incomplete, Hubchat uses that choice too.
+
+Let the distributor run in the background. Android may pause it to save
+battery, and then its wakes stop. In Android's app settings
+for the distributor, set battery use to **Unrestricted** (battery optimization
+off); ntfy offers this on its own main screen. While push is on, Settings shows
+this as a reminder.
 
 The hub defers wakes while this device reports itself in use. Going into the
 background clears that signal. If the app crashes before clearing it, pending
