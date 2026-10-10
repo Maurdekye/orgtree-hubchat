@@ -13,6 +13,11 @@
 //! (its name and address count); an advertised door that doesn't answer
 //! falls back to looking (Docker publishes 7371 as 7378, a router or tunnel
 //! changes it too).
+//!
+//! Mail hub v2.0.2 adds `door.advertise`, the outside address its operator
+//! typed for a hub in Docker or behind a tunnel, which the hub can't see for
+//! itself (agreed with mailhub-opus 2026-10-09 23:15Z). It goes first in a
+//! QR once it answered as the same hub; a mistyped or stale one is skipped.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
@@ -83,28 +88,86 @@ pub async fn find_door(hub: &str, ips: &[IpAddr], ports: &[u16], limit: Duration
 /// (Tailscale's first, as phone access binds the door there), `hostname` on
 /// the door's port if it answers there too, then `hub` itself for a second
 /// app on this device. Otherwise the hub's aliases as they are.
+/// An advertised door that answers as the same hub goes before all of them.
 pub async fn qr_hubs(hub: &str, hostname: Option<&str>, ips: &[IpAddr], door: &Door, limit: Duration) -> Vec<String> {
-    let Door::Found { port, on } = door else {
-        return crate::link::hub_aliases(hub, hostname, ips, None);
-    };
+    qr_hubs_with(hub, hostname, ips, door, limit, false).await
+}
+
+/// qr_hubs; `loopback`: an advertised loopback address counts too (the
+/// tests' fake hubs listen only there).
+async fn qr_hubs_with(
+    hub: &str,
+    hostname: Option<&str>,
+    ips: &[IpAddr],
+    door: &Door,
+    limit: Duration,
+    loopback: bool,
+) -> Vec<String> {
     let Ok(addr) = HubAddress::parse(hub) else {
         return vec![hub.to_string()];
+    };
+    // no door runs, so there is no outside address to look up
+    let me = match door {
+        Door::Off => None,
+        _ => match tokio::time::timeout(limit, HubClient::new(addr.clone()).healthz()).await {
+            Ok(Ok(me)) => Some(me),
+            _ => None,
+        },
+    };
+    let mut out = guessed(&addr, hostname, ips, door, me.as_ref(), limit).await;
+    let told = me.as_ref().and_then(|me| Some((me, me.door.as_ref()?.advertise.as_deref()?)));
+    if let Some((me, a)) = told.and_then(|(me, t)| Some((me, advertised(t)?))) {
+        // no other device can use a loopback address
+        if (loopback || !crate::link::is_loopback_hub(a.as_str())) && same_hub(me, a.clone(), limit).await {
+            out.retain(|h| h != a.as_str());
+            out.insert(0, a.to_string());
+        }
+    }
+    out
+}
+
+/// The QR's addresses as worked out on this device, without the advertised
+/// door; `me`: the hub's /healthz, when it answered.
+async fn guessed(
+    addr: &HubAddress,
+    hostname: Option<&str>,
+    ips: &[IpAddr],
+    door: &Door,
+    me: Option<&Health>,
+    limit: Duration,
+) -> Vec<String> {
+    let hub = addr.as_str();
+    let Door::Found { port, on } = door else {
+        return crate::link::hub_aliases(hub, hostname, ips, None);
     };
     let mut on: Vec<IpAddr> = on.iter().copied().filter(|ip| !ip.is_loopback()).collect();
     on.sort_by_key(|ip| !is_tailnet(ip)); // stable: otherwise as found
     let mut out = crate::link::hub_aliases(hub, None, &on, Some(*port));
     let host = hostname.map(|h| h.trim().to_ascii_lowercase()).filter(|h| !h.is_empty());
     if let Some(h) = host.and_then(|h| HubAddress::parse(&format!("http://{h}:{port}")).ok()) {
-        if !crate::link::is_loopback_hub(h.as_str()) {
-            let me = tokio::time::timeout(limit, HubClient::new(addr).healthz()).await;
-            if let Ok(Ok(me)) = me {
-                if same_hub(&me, h.clone(), limit).await && !out.contains(&h.to_string()) {
-                    out.insert(out.len().saturating_sub(1), h.to_string());
-                }
+        if let Some(me) = me.filter(|_| !crate::link::is_loopback_hub(h.as_str())) {
+            if same_hub(me, h.clone(), limit).await && !out.contains(&h.to_string()) {
+                out.insert(out.len().saturating_sub(1), h.to_string());
             }
         }
     }
     out
+}
+
+/// The address in a hub's `door.advertise`: `host:port` (as http) or an
+/// http(s) URL, trimmed; None for anything else.
+fn advertised(text: &str) -> Option<HubAddress> {
+    let t = text.trim();
+    let url = t.starts_with("http://") || t.starts_with("https://");
+    if !url {
+        // host:port and nothing more (a bare host would be guessed as :7370)
+        let (host, port) = t.rsplit_once(':')?;
+        let ok = |c: char| c.is_ascii_alphanumeric() || "-.[]:".contains(c);
+        if host.is_empty() || !host.chars().all(ok) || port.parse::<u16>().ok()? == 0 {
+            return None;
+        }
+    }
+    HubAddress::parse(t).ok()
 }
 
 /// 100.64.0.0/10, where Tailscale gives out addresses.
@@ -191,6 +254,13 @@ mod tests {
         v.to_string()
     }
 
+    /// /healthz of a v2.0.2 hub whose door is advertised as `advertise`.
+    fn told(name: &str, door: u16, advertise: &str) -> String {
+        let mut v: serde_json::Value = serde_json::from_str(&health(name, &["door"], Some((door, "0.0.0.0")))).unwrap();
+        v["door"]["advertise"] = advertise.into();
+        v.to_string()
+    }
+
     const T: Duration = Duration::from_secs(2);
     const LO: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
@@ -260,6 +330,60 @@ mod tests {
             qr_hubs(&hub, Some("home-pc"), &[lan], &Door::Unknown, short).await,
             crate::link::hub_aliases(&hub, Some("home-pc"), &[lan], None)
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_advertised_door_that_answers_goes_first() {
+        // Docker: the door is published at an address the hub can't see
+        let outside = fake(health("home-pc", &["door"], None)).await;
+        let lan: IpAddr = "192.0.2.7".parse().unwrap();
+        let short = Duration::from_millis(500);
+        for (typed, want) in [
+            (format!("127.0.0.1:{outside}"), format!("http://127.0.0.1:{outside}")),
+            (format!("  http://127.0.0.1:{outside}/ "), format!("http://127.0.0.1:{outside}")),
+        ] {
+            let hub = format!("http://localhost:{}", fake(told("home-pc", 7371, &typed)).await);
+            // the door was found on this PC too: it follows
+            let d = Door::Found { port: 7371, on: vec![LO, lan] };
+            let got = qr_hubs_with(&hub, None, &[lan], &d, short, true).await;
+            assert_eq!(got, vec![want.clone(), "http://192.0.2.7:7371".into(), hub.clone()], "{typed}");
+            // a tunnel: nothing found here, so the hub's aliases follow
+            let got = qr_hubs_with(&hub, Some("home-pc"), &[lan], &Door::Unknown, short, true).await;
+            let mut aliases = crate::link::hub_aliases(&hub, Some("home-pc"), &[lan], None);
+            aliases.insert(0, want.clone());
+            assert_eq!(got, aliases, "{typed}");
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_advertised_door_that_doesnt_answer_as_the_hub_is_skipped() {
+        let stranger = fake(health("other-hub", &["door"], None)).await;
+        let lan: IpAddr = "192.0.2.7".parse().unwrap();
+        let short = Duration::from_millis(500);
+        let d = Door::Found { port: 7371, on: vec![LO, lan] };
+        for typed in [format!("127.0.0.1:{stranger}"), "127.0.0.1:1".into(), "home pc".into(), "ftp://x:1".into()] {
+            let hub = format!("http://localhost:{}", fake(told("home-pc", 7371, &typed)).await);
+            let got = qr_hubs_with(&hub, None, &[lan], &d, short, true).await;
+            assert_eq!(got, vec!["http://192.0.2.7:7371".to_string(), hub.clone()], "{typed}");
+        }
+        // a loopback address is no use to another device, even when it answers
+        let me = fake(health("home-pc", &["door"], None)).await;
+        let hub = format!("http://localhost:{}", fake(told("home-pc", 7371, &format!("localhost:{me}"))).await);
+        assert_eq!(qr_hubs(&hub, None, &[lan], &d, short).await, vec!["http://192.0.2.7:7371".to_string(), hub.clone()]);
+    }
+
+    #[test]
+    fn what_counts_as_an_advertised_address() {
+        let a = |t: &str| advertised(t).map(|a| a.to_string());
+        assert_eq!(a("100.73.28.42:7378").as_deref(), Some("http://100.73.28.42:7378"));
+        assert_eq!(a(" home-pc.tail1234.ts.net:7378 ").as_deref(), Some("http://home-pc.tail1234.ts.net:7378"));
+        assert_eq!(a("https://hub.example.com").as_deref(), Some("https://hub.example.com"));
+        assert_eq!(a("https://hub.example.com/door/").as_deref(), Some("https://hub.example.com/door"));
+        assert_eq!(a("http://192.0.2.7").as_deref(), Some("http://192.0.2.7:7370"));
+        assert_eq!(a("[2001:db8::1]:7378").as_deref(), Some("http://[2001:db8::1]:7378"));
+        for bad in ["", "  ", "home-pc", "home-pc:", "home-pc:0", "home-pc:99999", "ftp://home-pc:21", "home pc:7378", "home-pc:7378/x", "user@home-pc:7378"] {
+            assert_eq!(a(bad), None, "{bad:?}");
+        }
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

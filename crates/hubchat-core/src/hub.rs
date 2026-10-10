@@ -135,6 +135,10 @@ pub struct Health {
 pub struct DoorAt {
     pub port: u16,
     pub bind: String,
+    /// Mail hub v2.0.2: the door's outside address as its operator typed it
+    /// (HUB_PUBLIC_ADVERTISE: `host:port` or a URL), unchecked by the hub.
+    #[serde(default)]
+    pub advertise: Option<String>,
 }
 
 impl Health {
