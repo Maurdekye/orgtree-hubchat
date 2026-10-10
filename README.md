@@ -13,10 +13,10 @@ Windows and Android, and there are first prototype builds for macOS and Linux.
   both get every message.
 - Recovery words bring your identity back if you lose a device.
 - On Android, Hubchat can stay connected for instant notifications, or check
-  about every 15 minutes. Optional [UnifiedPush](docs/unifiedpush.md) receives
-  wake-ups through a distributor such as ntfy, without Hubchat's ongoing
-  connection notification. On Windows it sits in the tray, can start with
-  Windows, and offers updates when they come out.
+  about every 15 minutes. Optional [UnifiedPush](docs/unifiedpush.md), with
+  mail hub 2.1.0 or later, receives wake-ups through a distributor such as
+  ntfy, without Hubchat's ongoing connection notification. On Windows it sits
+  in the tray, can start with Windows, and offers updates when they come out.
 
 Linking devices and syncing between them need a hub running mail hub v2.0:
 the standalone hub, or the one built into Orgtree 4.1.0 and later.

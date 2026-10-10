@@ -11,8 +11,8 @@ Hubchat relay or project-operated push server.
 2. Open **Settings → Notifications**, select the distributor, and turn on
    **Use UnifiedPush**.
 3. Wait for **Push is on**. Every configured hub must support the
-   `unifiedpush` feature and accept this phone's registration before Hubchat
-   drops its ongoing connection notification.
+   `unifiedpush` feature (mail hub 2.1.0 or later) and accept this phone's
+   registration before Hubchat drops its ongoing connection notification.
 
 While push is active, Hubchat fetches messages when woken and connects normally
 while the app is visible. It also keeps its check about every 15 minutes as a
