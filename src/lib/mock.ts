@@ -15,6 +15,10 @@
 // fails that check; ?setupreply=expired|none (the org's answer; default
 // linked, after 2.5 s). ?dooroff=1: Link a device's code says phone access
 // is off on this PC. ?seen=ADDRESS:S: that contact went offline S seconds ago.
+// The key (user 2026-10-10): ?lostkey=1 (gone; this device was Alex's),
+// =unknown (gone; whose wasn't noted), =unreadable (the key store doesn't
+// answer; ?keyback=S: it does after S seconds); ?keyrestored=1 (restored
+// from Hubchat's backup at start).
 // Tailscale (Android): ?vpn=off: Android reports no VPN (tests flip
 // window.__hcVpn); ?labts=1: the lab hub's address is a Tailscale name.
 // Linking: a waiting device shows up on the third lookup; a device joining a
@@ -49,22 +53,31 @@ function at(days: number, hm: string): number {
 const OFFICE = "http://hub.office.lan:7370";
 const LAB = params.get("labts") === "1" ? "http://lab-pc.tail5c2e.ts.net:7370" : "http://10.0.0.7:7370";
 const onboarding = params.get("onboarding") === "1";
+const lostKey = params.get("lostkey");
+const ALEX = { id: "alex", address: "alex.3be2c9", name: "Alex Rivera", about: "Platform team" };
+const keyBackAt = now() + (Number(params.get("keyback")) || Infinity) * 1000;
 
 const st: State = {
-  me: onboarding ? null : { id: "alex", address: "alex.3be2c9", name: "Alex Rivera", about: "Platform team" },
+  me: onboarding || lostKey ? null : { ...ALEX },
+  key_lost: lostKey ? { address: lostKey === "unknown" ? null : ALEX.address, unreadable: lostKey === "unreadable" } : null,
+  key_restored: params.get("keyrestored") === "1",
   recovery_saved: false,
   read_receipts: true,
   notifications: { enabled: true, preview: true, sound: false },
   stay_connected: new URLSearchParams(location.search).get("platform") === "android" ? true : null,
   device_name: new URLSearchParams(location.search).get("platform") === "android" ? "Pixel 8" : "Home-PC",
   platform: params.get("platform") === "android" ? "android" : "desktop",
-  hubs: onboarding ? [] : [
+  hubs: onboarding || lostKey ? [] : seedHubs(),
+};
+
+function seedHubs(): HubStatus[] {
+  return [
     { url: OFFICE, name: "office", state: "connected", error: null, retry_at_ms: null, max_attachment_bytes: GB, features: ["v2"], version: "1.4.0" },
     params.get("lab") === "up"
       ? { url: LAB, name: "lab", state: "connected", error: null, retry_at_ms: null, max_attachment_bytes: 25 * 1048576, features: [] }
       : { url: LAB, name: "lab", state: "disconnected", error: "connection refused (os error 10061)", retry_at_ms: now() + 14000, max_attachment_bytes: 25 * 1048576, features: [] },
-  ],
-};
+  ];
+}
 
 function contact(address: string, kind: string, name: { org?: string; user?: string }, blurb: string, online: boolean, seen: number | null, hubs: string[]): Contact {
   return { address, kind, org_name: name.org || "", username: name.user || "", blurb, online, last_seen: seen ? iso(seen) : null, hubs };
@@ -517,7 +530,14 @@ const setups = new Map<string, SetupState>();
 const setupFail = params.get("setupfail");
 
 export const mockApi: Api = {
-  state: async () => clone(st),
+  // an identity arrived (any way): nothing is lost any more
+  state: async () => { if (st.me) st.key_lost = null; return clone(st); },
+  retryKey: async () => {
+    await sleep(300);
+    if (st.key_lost?.unreadable && now() >= keyBackAt) { st.me = { ...ALEX }; st.key_lost = null; st.hubs = seedHubs(); }
+  },
+  startOver: async () => { await sleep(300); st.key_lost = null; st.me = null; st.hubs = []; },
+  keyRestoredSeen: async () => { st.key_restored = false; },
   uiState: async () => {},
 
   checkId: async (id) => {
@@ -543,6 +563,8 @@ export const mockApi: Api = {
     if (bad) throw "\"" + bad + "\" is not on the word list";
     st.me = { id: "alex", address: "alex.3be2c9", name: "Alex Rivera", about: "" };
     st.recovery_saved = true;
+    // this device was Alex's and lost the key: the hubs were still here
+    if (st.key_lost?.address === st.me.address) st.hubs = seedHubs();
     return st.me.address;
   },
   recoveryWords: async () => [...WORDS],

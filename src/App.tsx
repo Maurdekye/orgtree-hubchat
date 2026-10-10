@@ -1,10 +1,10 @@
 // Router: onboarding until an identity exists (and its last step is done),
 // then the platform's layout.
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { Android } from "./components/Android";
 import { CtxMenu } from "./components/CtxMenu";
 import { Desktop } from "./components/Desktop";
-import { Onboarding } from "./components/Onboarding";
+import { LostKey, Onboarding } from "./components/Onboarding";
 import { SetupFlow } from "./components/SetupFlow";
 import { PlatformCtx, Toasts } from "./components/ui";
 import { TitleBar } from "./components/TitleBar";
@@ -16,6 +16,8 @@ import { startStore, useSnap } from "./lib/store";
 export default function App() {
   const snap = useSnap();
   const setup = useSetup();
+  // the lost-key screen's choice: linking or recovery words (Back returns to it)
+  const [lostPick, setLostPick] = useState<"method" | "restore" | null>(null);
   useEffect(() => { void startStore(); }, []);
   const platform = snap.state?.platform ?? "desktop";
   // desktop: Hubchat's own right-click menus, never the WebView's (user
@@ -39,7 +41,9 @@ export default function App() {
     );
   }
   let body;
-  if (snap.onboarding || !snap.state.me) body = <><Onboarding /><Toasts /></>;
+  const lost = snap.state.me ? null : snap.state.key_lost;
+  if (lost && !lostPick) body = <><LostKey lost={lost} onPick={setLostPick} /><Toasts /></>;
+  else if (snap.onboarding || !snap.state.me) body = <><Onboarding key={lostPick ?? "new"} start={lost ? lostPick ?? undefined : undefined} home={lost ? () => setLostPick(null) : undefined} /><Toasts /></>;
   // keyed by address: after switching identity the layout starts afresh
   else body = platform === "android" ? <Android key={snap.state.me.address} /> : <Desktop key={snap.state.me.address} />;
   // Scan setup code: a screen over everything on Android, a modal on desktop

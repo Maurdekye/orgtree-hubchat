@@ -13,7 +13,7 @@ import { useActive, useForeground, useLastChat, useMessage, usePendingLink, useR
 import { isSetupLink, startSetup, useSetupChat } from "../lib/setup";
 import { chatLinkTarget } from "../lib/chatlink";
 import { startUpdateChecks } from "../lib/updates";
-import { HubBanner, RecoveryBanner, UpdateBanner } from "./Banners";
+import { HubBanner, KeyRestoredBanner, RecoveryBanner, UpdateBanner } from "./Banners";
 import { ChatRows, EmptyChats, RailRows, useFilteredChats, type ChatFilter } from "./ChatList";
 import { ContactInfo } from "./ContactInfo";
 import { Conversation } from "./Conversation";
@@ -175,6 +175,7 @@ export function Desktop() {
 
   return (
     <div className="app">
+      <KeyRestoredBanner />
       <UpdateBanner />
       <HubBanner />
       <RecoveryBanner onShow={() => settings("recovery")} />

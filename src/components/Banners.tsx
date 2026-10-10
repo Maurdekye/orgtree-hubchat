@@ -7,7 +7,7 @@ import { useState } from "react";
 import { api } from "../api";
 import { Icon } from "../lib/icons";
 import { errText } from "../lib/native";
-import { useSnap } from "../lib/store";
+import { refreshState, useSnap } from "../lib/store";
 import { openTailscale, useTailscaleOff } from "../lib/tailnet";
 import { toast } from "../lib/toast";
 import { ALLOW_TEXT, allowInstalls, useInstallStep, useUpdate, type Available } from "../lib/updates";
@@ -53,6 +53,21 @@ export function HubBanner() {
       <Icon name={p.refused ? "error" : "warning"} /><span>{text}</span>
       {p.refused ? null : <HubHelpLink className="btn ghost" icon />}
       <button className="btn" onClick={retry}><Icon name="refresh" />Retry now</button>
+    </div>
+  );
+}
+
+/** The key came back from Hubchat's own backup at start: Windows had lost
+ *  it (user 2026-10-10 08:13Z: keep a backup, and say so once). */
+export function KeyRestoredBanner() {
+  const snap = useSnap();
+  if (!snap.state?.key_restored) return null;
+  const ok = () => { api.keyRestoredSeen().then(refreshState, () => {}); };
+  return (
+    <div className="banner" role="region" aria-label="Key notice">
+      <Icon name="key" />
+      <span><b>Windows had lost Hubchat's saved key.</b> Hubchat put it back from its own backup on this PC, so nothing changed.</span>
+      <button className="btn" onClick={ok}>OK</button>
     </div>
   );
 }

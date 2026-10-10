@@ -9,7 +9,7 @@
 // to the add-hubs step.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { copyWords, downloadWords } from "../lib/recovery";
-import { api, type LinkEvent, type LinkStart, type Probe } from "../api";
+import { api, type KeyLost, type LinkEvent, type LinkStart, type Probe } from "../api";
 import { Icon, Logo, type IconName } from "../lib/icons";
 import { baseName, errText, pickKeyFile, scanQr } from "../lib/native";
 import { getSnap, refreshAll, refreshState, setOnboarding, useSnap } from "../lib/store";
@@ -84,6 +84,75 @@ const ObAddr = ({ a }: { a: string }) => { const [h, t] = splitAddr(a); return <
 function Feat({ ic, t, s }: { ic: IconName; t: string; s: string }) {
   return <div className="ob-feat"><span className="fi"><Icon name={ic} /></span><div><b>{t}</b><span>{s}</span></div></div>;
 }
+/** This device had an identity, but its key is gone (user 2026-10-10: Windows
+ *  lost every saved sign-in after a crash, and Hubchat started over as if
+ *  new, without a word): say so, and bring the key back. The chats stay. */
+export function LostKey({ lost, onPick }: { lost: KeyLost; onPick: (s: "method" | "restore") => void }) {
+  const platform = usePlatform();
+  const device = platform === "android" ? "phone" : "PC";
+  const windows = platform === "desktop" && /Windows/.test(navigator.userAgent);
+  const [confirm, setConfirm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [tries, setTries] = useState(0);
+  const who = lost.address ? <b className="mono inl">{lost.address}</b> : "your identity";
+  // a key store that doesn't answer may only be slow (just after signing
+  // in): ask again every 5 s for a minute, and on Try again
+  const retrying = lost.unreadable && tries < 12;
+  const retry = async () => {
+    try { await api.retryKey(); } catch { /* still not answering */ }
+    setTries((n) => n + 1);
+    await refreshAll();
+  };
+  useEffect(() => {
+    if (!retrying) return;
+    const t = setTimeout(() => void retry(), 5000);
+    return () => clearTimeout(t);
+  }, [retrying, tries]);
+  const startOver = async () => {
+    setBusy(true);
+    try { await api.startOver(); await refreshAll(); } catch (e) { toast(errText(e)); setBusy(false); }
+  };
+  if (confirm) {
+    return (
+      <Frame step="welcome" flow="new" actions={[]}>
+        <h2>Start over with a new identity?</h2>
+        <p className="lead">This removes this {device}'s chats, hubs and settings for {who}. Your address keeps working on your other devices, and you can bring it back here later by linking.</p>
+        <div className="lk-acts">
+          <button className="btn primary" onClick={() => void startOver()} disabled={busy}>{busy ? "Removing…" : "Start over"}</button>
+          <button className="btn ghost" onClick={() => setConfirm(false)} disabled={busy}>Keep them</button>
+        </div>
+      </Frame>
+    );
+  }
+  const keeper = windows ? "Windows" : platform === "android" ? "Android" : "This computer's keychain";
+  return (
+    <Frame step="welcome" flow="new" actions={[]}>
+      <div className="lk">
+        <Icon name="key" />
+        {lost.unreadable ? <>
+          <h2>Hubchat can't read its key yet</h2>
+          <p className="lead">{windows ? "Windows' Credential Manager" : platform === "android" ? "Android" : "The keychain"} isn't answering, so Hubchat can't open the key for {who} yet. This can happen just after you sign in. Your chats are still on this {device}.</p>
+          <div className={"probe-card" + (retrying ? " busy" : "")}>
+            {retrying ? <span className="spin" /> : <Icon name="error_outline" />}
+            <div>{retrying ? "Trying again…" : "It still isn't answering."}</div>
+            <button className="btn sm" onClick={() => void retry()}>Try again</button>
+          </div>
+          <div className="ob-sub">If it doesn't come back</div>
+        </> : <>
+          <h2>Hubchat lost its key on this {device}</h2>
+          <p className="lead">{keeper} no longer has the key Hubchat saved for {who}.{windows ? " This can happen when Windows resets its saved sign-ins, for example after it crashes." : ""} Your chats are still on this {device}.</p>
+          <div className="ob-sub">Bring your key back</div>
+        </>}
+        <div className="methods">
+          <Opt cls="method" ic="link" t="Link from your other device" s={"Your phone, or another device with your identity, approves this " + device + ". Your key comes back, and your chats stay."} onClick={() => onPick("method")} />
+          <Opt cls="method" ic="key" t="Recovery words" s="Type the 24 words you saved when you made your identity." onClick={() => onPick("restore")} />
+          {retrying ? null : <Opt cls="method" ic="add" t="Start over with a new identity" s={"This " + device + "'s chats, hubs and settings are removed. Your address keeps working on your other devices."} onClick={() => setConfirm(true)} />}
+        </div>
+      </div>
+    </Frame>
+  );
+}
+
 function Opt({ cls, ic, t, s, tag, onClick }: { cls: string; ic: IconName; t: string; s: string; tag?: ReactNode; onClick?: () => void }) {
   return (
     <button className={cls} onClick={onClick}>
@@ -278,12 +347,14 @@ function LinkWait({ hub, hubName, name, code, aliases, other, onDone, onCancel, 
   );
 }
 
-export function Onboarding() {
+/** `start`: open at that step (the lost-key screen's choices); `home`: Back
+ *  from the first steps returns there instead of to the welcome screen. */
+export function Onboarding({ start, home }: { start?: "method" | "restore"; home?: () => void } = {}) {
   const snap = useSnap();
   const platform = usePlatform();
   const device = platform === "android" ? "phone" : "PC";
-  const [step, setStep] = useState<Step>("welcome");
-  const [flow, setFlow] = useState<Flow>("new");
+  const [step, setStep] = useState<Step>(start ?? "welcome");
+  const [flow, setFlow] = useState<Flow>(start ? "words" : "new");
   const [id, setId] = useState("");
   const [name, setName] = useState("");
   // The id follows the display name until the user edits it (user 18:24Z).
@@ -319,6 +390,7 @@ export function Onboarding() {
 
   const go = (s: Step) => { setErr(null); setBusy(false); setStep(s); };
   const pick = (f: Flow, s: Step) => { setFlow(f); go(s); };
+  const toWelcome = () => (home ? home() : go("welcome"));
   /** An identity arrived (link, QR, key file): into the app if it brought hubs, else add some. */
   const arrived = async (a: string) => {
     setAddress(a);
@@ -409,7 +481,7 @@ export function Onboarding() {
       finally { setBusy(false); }
     };
     return (
-      <Frame step={step} flow={flow} back={() => go("welcome")} actions={[{ label: busy ? "Creating…" : "Continue", primary: true, disabled: !idCheck.ok || busy, onClick: create }]}>
+      <Frame step={step} flow={flow} back={toWelcome} actions={[{ label: busy ? "Creating…" : "Continue", primary: true, disabled: !idCheck.ok || busy, onClick: create }]}>
         <h2>Who are you?</h2>
         <p className="lead">People and agents reach you by your address. Your id becomes part of it and can't change later; your display name can.</p>
         <div className="field">
@@ -510,7 +582,7 @@ export function Onboarding() {
   if (step === "method") {
     if (platform === "android") {
       return (
-        <Frame step={step} flow={flow} back={() => go("welcome")} wide actions={[]}>
+        <Frame step={step} flow={flow} back={toWelcome} wide actions={[]}>
           <h2>Bring your identity to this phone</h2>
           <p className="lead">Your identity is a key, and your address comes with it: there is no id to choose. The easiest way: your PC shows a QR code, this phone scans it.</p>
           <div className="methods">
@@ -528,7 +600,7 @@ export function Onboarding() {
       );
     }
     return (
-      <Frame step={step} flow={flow} back={() => go("welcome")} wide actions={[]}>
+      <Frame step={step} flow={flow} back={toWelcome} wide actions={[]}>
         <h2>Bring your identity to this {device}</h2>
         <p className="lead">Your identity is a key, and your address comes with it: there is no id to choose. How should this {device} get it?</p>
         <div className="methods">
@@ -702,7 +774,8 @@ export function Onboarding() {
   const n = restore.toLowerCase().split(/[^a-z]+/).filter(Boolean).length;
   const doRestore = async () => {
     setBusy(true); setErr(null);
-    try { const a = await api.restoreWords(restore); setAddress(a); await refreshState(); go("hub"); }
+    // the words of the identity whose key this device lost: its hubs are still here
+    try { const a = await api.restoreWords(restore); await arrived(a); }
     catch (e) { setErr(errText(e)); }
     finally { setBusy(false); }
   };

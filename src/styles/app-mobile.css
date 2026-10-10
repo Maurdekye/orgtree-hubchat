@@ -82,3 +82,9 @@
 .hero .ptext { display: inline; }
 .hero .ptext:not(.p-disconnected)::before { display: inline-block; margin-right: 6px; vertical-align: 1px; }
 .hero .ptext .ic { display: inline-block; vertical-align: -3px; margin-right: 6px; }
+/* the lost-key screen (Onboarding.tsx LostKey, user 2026-10-10) */
+.lk > .ic { display: block; width: 32px; height: 32px; margin: 12px 24px 4px; color: var(--accent-text); }
+.lk .probe-card { align-items: center; }
+.lk .probe-card .btn { margin-left: auto; }
+.lk-acts { display: flex; flex-direction: column; gap: 10px; margin: 8px 20px 0; }
+.lk-acts .btn { width: 100%; justify-content: center; }

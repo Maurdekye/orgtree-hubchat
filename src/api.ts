@@ -71,6 +71,18 @@ export interface State {
   device_name: string;
   hubs: HubStatus[];
   platform: "desktop" | "android";
+  /** This device had an identity but its key is gone (the lost-key screen). */
+  key_lost: KeyLost | null;
+  /** The key was restored from Hubchat's backup (Windows); say so once. */
+  key_restored: boolean;
+}
+
+/** Why the lost-key screen shows (user 2026-10-10: Windows lost every saved sign-in). */
+export interface KeyLost {
+  /** Whose data is on this device, when Hubchat noted it. */
+  address: string | null;
+  /** The key store didn't answer: it may still have the key. */
+  unreadable: boolean;
 }
 
 /** Outgoing: queued | sending | sent | fetched | delivered | read | failed. Incoming: received. */
@@ -294,6 +306,12 @@ export const tauriApi = {
   checkId: (id: string) => invoke<{ ok: boolean; error: string | null; max_len: number }>("hc_check_id", { id }),
   createIdentity: (id: string, name: string) => invoke<string>("hc_create_identity", { id, name }),
   restoreWords: (words: string) => invoke<string>("hc_restore_words", { words }),
+  /** The lost-key screen: ask the key store again. */
+  retryKey: () => invoke<void>("hc_retry_key"),
+  /** The lost-key screen: remove this device's local data and start afresh. */
+  startOver: () => invoke<void>("hc_start_over"),
+  /** The "restored from Hubchat's backup" notice was seen. */
+  keyRestoredSeen: () => invoke<void>("hc_key_restored_seen"),
   recoveryWords: () => invoke<string[]>("hc_recovery_words"),
   recoverySaved: () => invoke<void>("hc_recovery_saved"),
   setProfile: (name: string, about: string) => invoke<void>("hc_set_profile", { name, about }),

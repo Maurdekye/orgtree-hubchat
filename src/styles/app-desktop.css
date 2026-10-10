@@ -89,3 +89,9 @@
    Their room is kept, so they never cover text and nothing moves on hover. */
 .msg .row > .msg-actions { position: static; display: flex; visibility: hidden; align-self: flex-start; flex: none; }
 .msg:hover .row > .msg-actions { visibility: visible; }
+/* the lost-key screen (Onboarding.tsx LostKey, user 2026-10-10) */
+.lk > .ic { display: block; width: 30px; height: 30px; margin-bottom: 10px; color: var(--accent-text); }
+.lk .ob-sub { margin: 18px 0 10px; font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); }
+.lk .probe-card { align-items: center; }
+.lk .probe-card .btn { margin-left: auto; }
+.lk-acts { display: flex; gap: 8px; margin-top: 18px; }
