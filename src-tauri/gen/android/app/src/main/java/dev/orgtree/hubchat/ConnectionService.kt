@@ -428,18 +428,13 @@ class ConnectionService : Service() {
         // instead of only when Hubchat is opened.
         schedule(ctx)
       } else if (stayConnected(ctx)) {
-        WorkManager.getInstance(ctx).cancelUniqueWork(WORK)
-        try {
-          if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
-        } catch (e: IllegalStateException) {
+        startOrKeepChecks(
+          start = { if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i) },
+          cancelChecks = { WorkManager.getInstance(ctx).cancelUniqueWork(WORK) },
           // A distributor can disappear while Android forbids starting a
           // foreground service. Keep checks scheduled until the app opens.
-          attach(ctx)
-          schedule(ctx)
-        } catch (e: SecurityException) {
-          attach(ctx)
-          schedule(ctx)
-        }
+          keepChecks = { attach(ctx); schedule(ctx) },
+        )
       } else {
         // A pending startForegroundService must reach onCreate and promote
         // itself before it can stop. onCreate rechecks the latest mode.
@@ -507,4 +502,26 @@ class ConnectionService : Service() {
     if (stopIfUnneeded()) START_NOT_STICKY else START_STICKY
 
   override fun onBind(intent: Intent?): IBinder? = null
+}
+
+/**
+ * Stay connected: the service replaces the periodic check, but only once
+ * Android has taken it. While Hubchat is hidden, Android 12 and later refuse
+ * a foreground service (IllegalStateException), and a missing permission is
+ * a SecurityException; then the check stays as it is. Before, the check was
+ * cancelled first and scheduled anew, which stopped the very check that
+ * found a removed push app and ran another at once (push recheck, 2026-10-10).
+ * Outside the class, so a JVM test runs it without the native library.
+ */
+internal fun startOrKeepChecks(start: () -> Unit, cancelChecks: () -> Unit, keepChecks: () -> Unit) {
+  try {
+    start()
+  } catch (e: IllegalStateException) {
+    keepChecks()
+    return
+  } catch (e: SecurityException) {
+    keepChecks()
+    return
+  }
+  cancelChecks()
 }
