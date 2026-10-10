@@ -185,6 +185,8 @@ pub struct Engine {
     /// This device is in use (focused, recently touched): our other devices
     /// keep quiet while it is (user 23:50Z).
     active: std::sync::atomic::AtomicBool,
+    /// Android push mode parks hub loops between foreground use and wake checks.
+    suspended: tokio::sync::watch::Sender<bool>,
 }
 
 fn unix_ms() -> u64 {
@@ -212,6 +214,7 @@ impl Engine {
             transfers: Mutex::new(HashMap::new()),
             read_receipts: std::sync::atomic::AtomicBool::new(true),
             active: std::sync::atomic::AtomicBool::new(false),
+            suspended: tokio::sync::watch::channel(false).0,
             device: Mutex::new((
                 format!("hc-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]),
                 "Hubchat".into(),
@@ -244,7 +247,7 @@ impl Engine {
                 if me.stopped.load(std::sync::atomic::Ordering::Relaxed) {
                     return;
                 }
-                if me.active.load(std::sync::atomic::Ordering::Relaxed) {
+                if !*me.suspended.borrow() && me.active.load(std::sync::atomic::Ordering::Relaxed) {
                     me.report_active(true).await;
                 }
             }
@@ -286,6 +289,76 @@ impl Engine {
 
     pub fn device(&self) -> (String, String) {
         self.device.lock().unwrap().clone()
+    }
+
+    /// Suspend ongoing hub requests while Android relies on push. Changing
+    /// this wakes existing loops; a newly added hub sees the current value.
+    pub fn set_suspended(&self, on: bool) {
+        self.suspended.send_if_modified(|current| {
+            if *current == on {
+                false
+            } else {
+                *current = on;
+                true
+            }
+        });
+        self.queue_changed.notify_one();
+    }
+
+    /// Register a capability on every configured hub. The caller must keep
+    /// the normal background connection until this succeeds everywhere.
+    /// Errors deliberately contain no endpoint or upstream response body.
+    pub async fn register_push(&self, endpoint: &str, p256dh: &str, auth: &str) -> Result<()> {
+        let clients: Vec<HubClient> = self
+            .hubs
+            .lock()
+            .unwrap()
+            .values()
+            .map(|h| h.client.clone())
+            .collect();
+        if clients.is_empty() {
+            return Err(Error::Invalid(
+                "Connect to a hub before enabling push.".into(),
+            ));
+        }
+        let (device_id, _) = self.device();
+        for client in clients {
+            let health = client.healthz().await.map_err(|_| {
+                Error::Invalid(
+                    "A hub is unreachable; background connection remains enabled.".into(),
+                )
+            })?;
+            if !health.supports("unifiedpush") {
+                return Err(Error::Invalid(
+                    "A hub needs an update before it can send UnifiedPush notifications.".into(),
+                ));
+            }
+            client.register_push(&self.me, &device_id, endpoint, p256dh, auth).await
+                .map_err(|_| Error::Invalid("A hub could not register push. Check its endpoint policy and device registration.".into()))?;
+        }
+        Ok(())
+    }
+
+    pub async fn unregister_push(&self) -> Result<()> {
+        let clients: Vec<HubClient> = self
+            .hubs
+            .lock()
+            .unwrap()
+            .values()
+            .map(|h| h.client.clone())
+            .collect();
+        let (device_id, _) = self.device();
+        let mut failed = false;
+        for client in clients {
+            failed |= client.unregister_push(&self.me, &device_id).await.is_err();
+        }
+        if failed {
+            Err(Error::Invalid(
+                "A hub is unreachable; push removal will be retried.".into(),
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     pub fn set_read_receipts(&self, on: bool) {
@@ -352,6 +425,10 @@ impl Engine {
         if let Some(rt) = rt {
             rt.stop.cancel();
             rt.retry_now.notify_one();
+            rt.kick.notify_one();
+            if rt.status.features.iter().any(|f| f == "unifiedpush") {
+                let _ = rt.client.unregister_push(&self.me, &self.device().0).await;
+            }
             // deletes it still owes go now or never (best effort)
             if rt.status.state == HubState::Connected {
                 let _ = self
@@ -538,6 +615,7 @@ impl Engine {
         for (_, rt) in self.hubs.lock().unwrap().drain() {
             rt.stop.cancel();
             rt.retry_now.notify_one();
+            rt.kick.notify_one();
         }
         for c in self.transfers.lock().unwrap().values() {
             c.cancel();
@@ -648,9 +726,19 @@ impl Engine {
     ) {
         let url = client.address().to_string();
         let mut failures = 0usize;
+        let mut suspended = self.suspended.subscribe();
         while !stop.is_cancelled() {
+            if *suspended.borrow_and_update() {
+                self.mark(&url, |s| s.waiting_since_ms = None);
+                tokio::select! {
+                    _ = suspended.changed() => {},
+                    _ = kick.notified() => {},
+                }
+                continue;
+            }
             let outcome = tokio::select! {
                 r = self.session(&client, &url, &stop) => Some(r),
+                _ = suspended.changed() => None,
                 // a check: start over now (after a freeze the parked request
                 // may be on a connection that is long gone)
                 _ = kick.notified() => None,
@@ -683,6 +771,7 @@ impl Engine {
                         _ = tokio::time::sleep(Duration::from_secs(wait)) => {}
                         _ = retry.notified() => { failures = 0; }
                         _ = kick.notified() => { failures = 0; }
+                        _ = suspended.changed() => { failures = 0; }
                     }
                     self.set_status(&url, |s| {
                         s.state = HubState::Connecting;
@@ -1006,7 +1095,13 @@ impl Engine {
 
     /// A hub's `now` against our clock around the request: the offset is
     /// the hub's clock minus ours at the round trip's midpoint.
-    fn clock_reading(&self, url: &str, hub_now: Option<i64>, asked: u64, answered: u64) -> Result<()> {
+    fn clock_reading(
+        &self,
+        url: &str,
+        hub_now: Option<i64>,
+        asked: u64,
+        answered: u64,
+    ) -> Result<()> {
         let Some(hub_now) = hub_now else {
             return Ok(());
         };
@@ -1056,13 +1151,11 @@ impl Engine {
                 .last
                 .as_ref()
                 .is_some_and(|m| listed.is_some() && m.env.from != me && m.read_at.is_none());
-            self.store.set_old_unread(
-                url,
-                &c.with,
-                c.unread - i64::from(listed_unread),
-                listed,
-            )?;
-            self.host.event(Event::Chat { peer: c.with.clone() });
+            self.store
+                .set_old_unread(url, &c.with, c.unread - i64::from(listed_unread), listed)?;
+            self.host.event(Event::Chat {
+                peer: c.with.clone(),
+            });
         }
         self.store.delete_meta(&chats_key(url))
     }
@@ -1367,10 +1460,21 @@ impl Engine {
     }
 
     async fn sender_loop(self: Arc<Self>) {
+        let mut suspended = self.suspended.subscribe();
         while !self.stopped.load(std::sync::atomic::Ordering::Relaxed) {
+            if *suspended.borrow_and_update() {
+                tokio::select! {
+                    _ = suspended.changed() => {},
+                    _ = self.queue_changed.notified() => {},
+                }
+                continue;
+            }
             let mut progressed = false;
             if let Ok(queue) = self.store.queued() {
                 for m in queue {
+                    if *self.suspended.borrow() {
+                        break;
+                    }
                     match self.send_one(&m.id).await {
                         Ok(true) => progressed = true,
                         Ok(false) => {}
@@ -2005,8 +2109,13 @@ impl Engine {
             Err(e) => {
                 let _ = tokio::fs::remove_file(&part).await;
                 if let Error::Hub { status: 410, .. } = &e {
-                    self.store
-                        .set_attachment(local_id, "expired", None, None, Some(&e.to_string()))?;
+                    self.store.set_attachment(
+                        local_id,
+                        "expired",
+                        None,
+                        None,
+                        Some(&e.to_string()),
+                    )?;
                     self.host.event(Event::Chat { peer: m.peer });
                 }
                 Err(e)
@@ -2143,7 +2252,10 @@ mod tests {
     /// Review finding 4: what a queued delete's failure means.
     #[test]
     fn a_failed_delete_is_kept_dropped_or_ends_the_session() {
-        let hub = |status| Error::Hub { status, detail: String::new() };
+        let hub = |status| Error::Hub {
+            status,
+            detail: String::new(),
+        };
         for s in [408, 429, 500, 502, 503] {
             assert_eq!(drain_outcome(&hub(s)), Drain::Later, "{s}");
         }

@@ -335,6 +335,50 @@ impl HubClient {
         }
     }
 
+    /// Register this device's UnifiedPush capability. Endpoint and auth are
+    /// secrets: keep them out of debug output and shell state.
+    pub async fn register_push(
+        &self,
+        me: &Identity,
+        device_id: &str,
+        endpoint: &str,
+        p256dh: &str,
+        auth: &str,
+    ) -> Result<()> {
+        let _: serde_json::Value = self
+            .post_json(
+                me,
+                "/api/push",
+                &serde_json::json!({
+                    "device_id": device_id, "endpoint": endpoint,
+                    "p256dh": p256dh, "auth": auth,
+                }),
+                Duration::from_secs(15),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Idempotently remove this device's push capability from a hub.
+    pub async fn unregister_push(&self, me: &Identity, device_id: &str) -> Result<()> {
+        let response = self
+            .http
+            .delete(
+                self.address()
+                    .join(&format!("/api/push?device_id={}", urlencode(device_id))),
+            )
+            .header("X-Org-Auth", me.auth_header())
+            .timeout(Duration::from_secs(15))
+            .send()
+            .await?;
+        match check(response).await {
+            Ok(_) => Ok(()),
+            // Older hubs have no registration to remove.
+            Err(e) if e.status() == Some(404) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
     // ---------------------------------------------------- resumable uploads
 
     pub async fn open_upload(&self, me: &Identity, name: &str, bytes: u64) -> Result<UploadState> {
