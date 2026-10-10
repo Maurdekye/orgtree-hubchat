@@ -56,6 +56,9 @@
 .empty .addr { margin-top: 18px; font-size: 13px; }
 
 /* conversation */
+/* the jump button sits at the timeline's foot, so the reply bar, attachments
+   or a growing message never slide under it (user 2026-10-10 09:53Z) */
+.tl-wrap { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
 .timeline { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 4px 12px 14px; position: relative; -webkit-user-select: none; user-select: none; }
 .bubble { font-size: 15px; line-height: 1.42; max-width: 84%; }
 .msg .row { width: 100%; touch-action: pan-y; }
@@ -98,7 +101,7 @@
 .comp-meta { font-size: 12px; color: var(--faint); padding: 4px 14px 0; display: flex; gap: 8px; align-items: center; }
 .comp-meta .count { margin-left: auto; }
 .comp-meta .count.warn { color: var(--warn); } .comp-meta .count.bad { color: var(--bad); font-weight: 600; }
-.jump { position: absolute; right: 14px; bottom: 96px; width: 40px; height: 40px; border-radius: 50%; border: 0; background: var(--panel); color: var(--ink); display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); z-index: 4; }
+.jump { position: absolute; right: 14px; bottom: 26px; width: 40px; height: 40px; border-radius: 50%; border: 0; background: var(--panel); color: var(--ink); display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); z-index: 4; }
 .chat-start { text-align: center; padding: 26px 14px 8px; color: var(--dim); font-size: 13.5px; }
 .chat-start .av { margin-bottom: 10px; }
 .chat-start b { display: block; color: var(--ink-strong); font-size: 17px; margin-bottom: 4px; }

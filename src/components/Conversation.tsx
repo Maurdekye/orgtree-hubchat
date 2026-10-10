@@ -397,8 +397,10 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
             {down.state === "disconnected" ? <HubHelpLink /> : null}{down.state !== "connecting" ? <button className="link" onClick={() => api.retryNow()}>Retry</button> : null}
           </div>
         ) : null}
-        <div className="timeline" ref={tl} onScroll={onScroll} {...touch}><div>{rows}</div></div>
-        {jumpBtn}
+        <div className="tl-wrap">
+          <div className="timeline" ref={tl} onScroll={onScroll} {...touch}><div>{rows}</div></div>
+          {jumpBtn}
+        </div>
         {composer}
       </div>
     );
