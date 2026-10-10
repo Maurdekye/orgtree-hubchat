@@ -8,7 +8,7 @@ import { displayName, kindInfo, kindOf, presence, viaHub } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { isLinkWaiting, listed } from "./Directory";
 import { scanSetup } from "../lib/setup";
-import { Addr, KindGlyph, PeerAvatar, pressKeys, usePlatform } from "./ui";
+import { Addr, KindGlyph, PeerAvatar, pressKeys, usePlatform, useSeenTick } from "./ui";
 
 export function useResolve(q: string): Resolved | null {
   const [r, setR] = useState<Resolved | null>(null);
@@ -45,6 +45,7 @@ export function NewChatResults({ q, r, onOpen, onDirectory }: { q: string; r: Re
   // the Directory's own list and counts (no waiting link addresses, not you)
   const everyone = listed(snap.directory, snap.state?.me?.address);
   const onlineN = everyone.filter((c) => presence(c, hubs).state === "online").length;
+  useSeenTick(everyone.some((c) => presence(c, hubs).state === "offline"));
 
   const row = (c: Contact) => {
     const p = presence(c, hubs);

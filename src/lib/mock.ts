@@ -14,7 +14,7 @@
 // Scan setup code: ?setupfail=update|damaged|no-ts|unreach|unreach-wifi|join
 // fails that check; ?setupreply=expired|none (the org's answer; default
 // linked, after 2.5 s). ?dooroff=1: Link a device's code says phone access
-// is off on this PC.
+// is off on this PC. ?seen=ADDRESS:S: that contact went offline S seconds ago.
 // Linking: a waiting device shows up on the third lookup; a device joining a
 // code is approved after 45 s and reviews LINK_HUBS (a signed-in device
 // joining one: after 2 s the link turns out to be another identity,
@@ -84,6 +84,13 @@ const SEED_DIR: Contact[] = [
   contact("link.c40e17", "person", { user: "Lincoln Kerr" }, "Goes by Link · hardware lab", false, now() - 4 * 864e5, [LAB]),
 ];
 let dir: Contact[] = onboarding ? [] : clone(SEED_DIR);
+// ?seen=ADDRESS:S: that contact went offline S seconds ago (to watch "last
+// seen" keep counting)
+for (const s of params.getAll("seen")) {
+  const [a, secs] = s.split(":");
+  const c = dir.find((x) => x.address === a);
+  if (c) { c.online = false; c.last_seen = iso(now() - Number(secs) * 1000); }
+}
 
 const msgs: Message[] = [];
 const drafts: Record<string, string> = {};

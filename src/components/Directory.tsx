@@ -9,7 +9,7 @@ import { displayName, kindOf, presence, type Kind } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { HubHelpLink } from "./HubHelp";
 import { chatMenu } from "./ChatList";
-import { Addr, KindGlyph, Modal, ModalHead, PeerAvatar, pressKeys, usePlatform } from "./ui";
+import { Addr, KindGlyph, Modal, ModalHead, PeerAvatar, pressKeys, usePlatform, useSeenTick } from "./ui";
 
 type KindF = "all" | Kind;
 
@@ -43,6 +43,7 @@ export function Directory({ onOpen, onClose, onBack, onInfo }: { onOpen: (addres
   const byName = (a: Contact, b: Contact) => displayName(a, a.address).localeCompare(displayName(b, b.address));
   const online = shown.filter((c) => live(c) === "online").sort(byName);
   const rest = shown.filter((c) => live(c) !== "online");
+  useSeenTick(rest.some((c) => live(c) === "offline"));
   const recent = rest.filter((c) => ms(c.last_seen) >= week).sort((a, b) => ms(b.last_seen) - ms(a.last_seen));
   const quiet = rest.filter((c) => ms(c.last_seen) < week).sort((a, b) => ms(b.last_seen) - ms(a.last_seen) || byName(a, b));
   const onlineCount = all.filter((c) => live(c) === "online").length;

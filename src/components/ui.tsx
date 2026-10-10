@@ -36,6 +36,7 @@ export function Addr({ a, net }: { a: string; net?: boolean }) {
 
 export function PresText({ c, hubs }: { c: Contact | undefined; hubs: HubStatus[] }) {
   const p = presence(c, hubs);
+  useSeenTick(p.state === "offline");
   return <span className={"ptext p-" + p.state}>{p.state === "disconnected" ? <Icon name="cloud_off" /> : null}{p.text}</span>;
 }
 
@@ -204,3 +205,7 @@ export function useNow(on: boolean, ms = 1000): number {
   }, [on, ms]);
   return n;
 }
+
+/** "last seen 3 min ago" is worked out when it is drawn: while one is on
+ *  screen, draw it again every 30 s so it keeps counting. */
+export const useSeenTick = (on: boolean): number => useNow(on, 30_000);

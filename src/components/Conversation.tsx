@@ -15,7 +15,7 @@ import { Composer, type ComposerApi } from "./Composer";
 import { HubHelpLink } from "./HubHelp";
 import { HubChip, routeLabel, routeVia } from "./HubPicker";
 import { MessageView } from "./MessageView";
-import { Addr, KindChip, KindGlyph, NoteCard, PeerAvatar, PresText, pressKeys, useNow, usePlatform } from "./ui";
+import { Addr, KindChip, KindGlyph, NoteCard, PeerAvatar, PresText, pressKeys, useNow, usePlatform, useSeenTick } from "./ui";
 
 const GROUP_GAP = 5 * 60000;
 const CHIP_KINDS = new Set(["question", "request", "decision", "status"]);
@@ -300,6 +300,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   }
   if (setup && (!setup.outcome || !msgs.some((m) => m.id === setup.reply_id))) rows.push(setupNote(setup, platform));
   const p = presence(c, hubs);
+  useSeenTick(p.state === "offline");
   if (p.state === "offline" && msgs.some((m) => m.outgoing && m.state === "sent")) {
     rows.push(<div className="sysnote" key="pend"><Icon name="schedule" />{name} is offline ({p.short}). Your message waits on hub {via?.name} and is delivered when they reconnect.</div>);
   }
