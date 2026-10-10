@@ -1,0 +1,1 @@
+Hubchat now gets through Windows losing its saved sign-ins, never starts over without a word, and on Android the jump-to-newest button stays clear of the reply bar.
