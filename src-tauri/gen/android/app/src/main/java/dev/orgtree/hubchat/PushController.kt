@@ -175,7 +175,12 @@ object PushController {
     synchronized(this) {
       val p = prefs(ctx)
       generation = p.getString("generation", "") ?: ""
-      capability = p.getString("capability", "")?.let { SecretBox.open(it) } ?: ""
+      val sealed = p.getString("capability", "") ?: ""
+      capability = if (sealed.isEmpty()) "" else SecretBox.open(sealed)
+      if (sealed.isNotEmpty() && capability.isEmpty()) {
+        p.edit().putBoolean("active", false).remove("capability").putBoolean("cleanup", true)
+          .putString("status", "Android could not open the saved push registration. Retry to register again.").commit()
+      }
       action = if (!p.getBoolean("enabled", false) || capability.isEmpty()) "remove"
         else if (requested == "wake" && p.getBoolean("active", false)) "wake" else "sync"
     }
@@ -184,7 +189,7 @@ object PushController {
       val p = prefs(ctx)
       if (generation != p.getString("generation", "")) return true // newer work follows
       if (action == "sync") p.edit()
-        .putBoolean("active", error.isEmpty() || p.getBoolean("active", false))
+        .putBoolean("active", error.isEmpty())
         .putString("status", if (error.isEmpty()) "Push is on" else error).commit()
       if (action == "remove" && error.isEmpty()) p.edit().putBoolean("cleanup", false).commit()
     }

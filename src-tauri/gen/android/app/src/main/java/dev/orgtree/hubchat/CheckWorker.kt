@@ -12,7 +12,8 @@ import androidx.work.WorkerParameters
  */
 class CheckWorker(ctx: Context, params: WorkerParameters) : Worker(ctx, params) {
   override fun doWork(): Result {
-    // switched back to "stay connected": the service does the work
+    // Push replaces periodic checks. Otherwise this also covers Android
+    // refusing to restart the foreground service while the app was hidden.
     if (PushController.active(applicationContext)) return Result.success()
     ConnectionService.attach(applicationContext)
     ConnectionService.checkNow(45)
