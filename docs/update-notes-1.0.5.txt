@@ -1,0 +1,1 @@
+On Android, Hubchat can now be woken through UnifiedPush, for example with ntfy, instead of keeping its own connection and notification.
