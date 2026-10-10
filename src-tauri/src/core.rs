@@ -11,7 +11,11 @@ use hubchat_core::engine::{Engine, Event, Host};
 use hubchat_core::hub::Profile;
 use hubchat_core::store::Store;
 use hubchat_core::Identity;
+use serde::Serialize;
 use tauri::{AppHandle, Emitter};
+
+use crate::keylog;
+use crate::secrets::Loaded;
 
 /// What only the platform can do.
 pub trait Platform: Send + Sync + 'static {
@@ -128,6 +132,27 @@ pub struct Core {
     engine: Mutex<Option<Arc<Engine>>>,
     pub rt: tokio::runtime::Handle,
     host: Arc<ShellHost>,
+    /// Set while this device had an identity but its key can't be found.
+    key_lost: Mutex<Option<KeyLost>>,
+}
+
+/// This device had an identity, but its key is gone (user 2026-10-10: Windows
+/// lost every saved sign-in after a crash, and Hubchat started over as if new,
+/// without a word). The UI offers linking, recovery words or starting over.
+#[derive(Clone, Serialize)]
+pub struct KeyLost {
+    /// Whose data this is, when known (Hubchat notes it from 1.0.3 on).
+    address: Option<String>,
+    /// The key store didn't answer: it may still have the key (try again).
+    unreadable: bool,
+}
+
+/// Whether adopting `new` must first remove this device's local data: never
+/// when there is none; when it belongs to another known identity; and, when
+/// its owner is unknown (kept before Hubchat noted it), only for a brand-new
+/// identity, which can't be the old one.
+fn must_wipe(owner: Option<&str>, has_data: bool, new: &str, brand_new: bool) -> bool {
+    has_data && owner.map_or(brand_new, |o| o != new)
 }
 
 struct ShellHost {
@@ -239,16 +264,13 @@ pub fn init(dir: PathBuf, platform: Arc<dyn Platform>) -> Result<&'static Core, 
         engine: Mutex::new(None),
         rt,
         host,
+        key_lost: Mutex::new(None),
     };
     let core = match CORE.set(core) {
         Ok(()) => CORE.get().unwrap(),
         Err(_) => return Ok(CORE.get().unwrap()), // lost a race: use the winner
     };
-    if let Some(me) = crate::secrets::load_identity(&core.dir) {
-        core.start_engine(me)?;
-    } else {
-        core.host.platform.status("Set up Hubchat to connect");
-    }
+    core.load_key()?;
     Ok(core)
 }
 
@@ -343,6 +365,68 @@ impl Core {
         }
     }
 
+    /// Read the key and start (start-up, and Try again on the lost-key
+    /// screen); without one, note whether this device had an identity.
+    pub fn load_key(&self) -> Result<(), String> {
+        if self.has_identity() {
+            return Ok(());
+        }
+        let unreadable = match crate::secrets::load_identity(&self.dir) {
+            Loaded::Found(me) => return self.start_with(me),
+            Loaded::Restored(me) => {
+                // the UI says so once (dismissed: key_restored_seen)
+                self.store.set_meta("key.restored", "yes").map_err(|e| e.to_string())?;
+                return self.start_with(me);
+            }
+            Loaded::Missing => false,
+            Loaded::Unreadable => true,
+        };
+        *self.key_lost.lock().unwrap() = self.had_identity().then(|| KeyLost {
+            address: self.store.meta("identity.address").ok().flatten(),
+            unreadable,
+        });
+        self.host.platform.status("Set up Hubchat to connect");
+        Ok(())
+    }
+
+    fn start_with(&self, me: Identity) -> Result<(), String> {
+        self.note_owner(&me);
+        *self.key_lost.lock().unwrap() = None;
+        self.start_engine(me)
+    }
+
+    pub fn key_lost(&self) -> Option<KeyLost> {
+        self.key_lost.lock().unwrap().clone()
+    }
+
+    /// The local data belongs to an identity: it ran here (device.id is made
+    /// at its first start) or Hubchat noted whose it is.
+    fn had_identity(&self) -> bool {
+        let has = |k: &str| self.store.meta(k).ok().flatten().is_some_and(|v| !v.is_empty());
+        has("device.id") || has("identity.address")
+    }
+
+    /// Note whose the local data is (lost-key screen; nothing inherits it).
+    fn note_owner(&self, me: &Identity) {
+        let a = me.address();
+        if self.store.meta("identity.address").ok().flatten().as_deref() != Some(a.as_str()) {
+            let _ = self.store.set_meta("identity.address", &a);
+        }
+    }
+
+    /// The lost-key screen's Start over: this device's local data and any
+    /// trace of the old key go; the address keeps working on other devices.
+    pub fn start_over(&self) -> Result<(), String> {
+        if self.has_identity() {
+            return Err("this device already has an identity".into());
+        }
+        crate::secrets::forget_identity(&self.dir)?;
+        self.store.wipe().map_err(|e| e.to_string())?;
+        *self.key_lost.lock().unwrap() = None;
+        keylog::note(&self.dir, "started over: the local data of the lost identity was removed");
+        Ok(())
+    }
+
     /// Save a new or restored identity and start talking to the hubs.
     /// Leave the current identity on this device (switching to another):
     /// off the device lists of v2 hubs, connections stopped, key and local
@@ -360,16 +444,30 @@ impl Core {
         e.shutdown();
         crate::secrets::forget_identity(&self.dir)?;
         self.store.wipe().map_err(|e| e.to_string())?;
+        keylog::note(&self.dir, "left this identity: key and local data forgotten");
         self.host.platform.status("Switching identity");
         Ok(())
     }
 
-    pub fn adopt_identity(&self, me: Identity) -> Result<(), String> {
+    /// Take an identity on this device (new, recovery words, a link, a key
+    /// QR or file) with the `meta` it brings (profile and the like). Local
+    /// data that belongs to another identity goes first (user 2026-10-10:
+    /// a new identity must never inherit the old one's chats and hubs).
+    pub fn adopt_identity(&self, me: Identity, brand_new: bool, meta: &[(&str, &str)]) -> Result<(), String> {
         if self.has_identity() {
             return Err("this device already has an identity".into());
         }
+        let owner = self.store.meta("identity.address").ok().flatten();
+        if must_wipe(owner.as_deref(), self.had_identity(), &me.address(), brand_new) {
+            self.store.wipe().map_err(|e| e.to_string())?;
+            keylog::note(&self.dir, "another identity's local data was removed before taking this one");
+        }
+        for (k, v) in meta {
+            self.store.set_meta(k, v).map_err(|e| e.to_string())?;
+        }
         crate::secrets::save_identity(&self.dir, &me)?;
-        self.start_engine(me)
+        keylog::note(&self.dir, if brand_new { "key saved: a new identity" } else { "key saved: an identity brought to this device" });
+        self.start_with(me)
     }
 
     fn start_engine(&self, me: Identity) -> Result<(), String> {
@@ -419,3 +517,24 @@ fn rand_u16() -> u16 {
 }
 
 
+
+#[cfg(test)]
+mod key_tests {
+    use super::must_wipe;
+
+    #[test]
+    fn a_new_identity_never_inherits_another_identitys_local_data() {
+        // nothing here yet: nothing to remove
+        assert!(!must_wipe(None, false, "alex.111111", true));
+        assert!(!must_wipe(None, false, "alex.111111", false));
+        // the same identity coming back (relinked, recovery words): kept
+        assert!(!must_wipe(Some("alex.111111"), true, "alex.111111", false));
+        // another identity: removed, however it arrives
+        assert!(must_wipe(Some("alex.111111"), true, "pat.222222", false));
+        assert!(must_wipe(Some("alex.111111"), true, "pat.222222", true));
+        // data whose owner wasn't noted (before 1.0.3): a brand-new identity
+        // can't be its owner; one brought here may be, so it is kept
+        assert!(must_wipe(None, true, "pat.222222", true));
+        assert!(!must_wipe(None, true, "alex.111111", false));
+    }
+}

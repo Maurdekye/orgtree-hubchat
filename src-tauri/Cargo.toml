@@ -60,6 +60,8 @@ keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 winreg = "0.56"
 # message toasts whose click opens the chat (the version the notification plugin uses)
 windows = { version = "0.62", features = ["Data_Xml_Dom", "UI_Notifications", "Foundation_Collections"] }
+# the identity key's backup copy, sealed with DPAPI (secrets.rs)
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-barcode-scanner = "2"

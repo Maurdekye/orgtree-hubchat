@@ -89,14 +89,11 @@ fn adopt(bundle: Bundle, hubs: Vec<String>) -> R<String> {
     let c = core::get()?;
     let me = bundle.identity().map_err(s)?;
     let address = me.address();
-    c.store.set_meta("profile.name", &bundle.name).map_err(s)?;
-    c.store
-        .set_meta("profile.about", &bundle.about)
-        .map_err(s)?;
+    let mut meta = vec![("profile.name", bundle.name.as_str()), ("profile.about", bundle.about.as_str())];
     if bundle.recovery_saved {
-        c.store.set_meta("recovery.saved", "yes").map_err(s)?;
+        meta.push(("recovery.saved", "yes"));
     }
-    c.adopt_identity(me)?;
+    c.adopt_identity(me, false, &meta)?;
     let e = c.engine()?;
     let _g = c.rt.enter();
     for h in hubs {

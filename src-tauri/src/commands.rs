@@ -54,6 +54,10 @@ pub struct State {
     platform: &'static str,
     /// What other devices see this one called (linking uses it as is).
     device_name: String,
+    /// This device had an identity but its key is gone (the lost-key screen).
+    key_lost: Option<core::KeyLost>,
+    /// The key was restored from Hubchat's backup; say so once.
+    key_restored: bool,
 }
 
 fn meta(c: &Core, k: &str) -> String {
@@ -77,6 +81,8 @@ pub fn hc_state() -> R<State> {
         stay_connected: c.platform().stay_connected(),
         device_name: c.device_name(),
         hubs: engine.map(|e| e.hub_statuses()).unwrap_or_default(),
+        key_lost: c.key_lost(),
+        key_restored: meta(c, "key.restored") == "yes",
         platform: if cfg!(target_os = "android") {
             "android"
         } else {
@@ -125,8 +131,7 @@ pub fn hc_create_identity(id: String, name: String) -> R<String> {
     let c = core::get()?;
     let me = Identity::generate(&id).map_err(s)?;
     let address = me.address();
-    c.store.set_meta("profile.name", name.trim()).map_err(s)?;
-    c.adopt_identity(me)?;
+    c.adopt_identity(me, true, &[("profile.name", name.trim())])?;
     Ok(address)
 }
 
@@ -135,9 +140,26 @@ pub fn hc_restore_words(words: String) -> R<String> {
     let c = core::get()?;
     let me = recovery::from_words(&words).map_err(s)?;
     let address = me.address();
-    c.store.set_meta("recovery.saved", "yes").map_err(s)?;
-    c.adopt_identity(me)?;
+    c.adopt_identity(me, false, &[("recovery.saved", "yes")])?;
     Ok(address)
+}
+
+/// The lost-key screen: try the key store again (it may not have answered).
+#[tauri::command]
+pub fn hc_retry_key() -> R<()> {
+    core::get()?.load_key()
+}
+
+/// The lost-key screen: remove this device's local data and start afresh.
+#[tauri::command]
+pub fn hc_start_over() -> R<()> {
+    core::get()?.start_over()
+}
+
+/// The notice that the key was restored from Hubchat's backup was seen.
+#[tauri::command]
+pub fn hc_key_restored_seen() -> R<()> {
+    core::get()?.store.set_meta("key.restored", "seen").map_err(s)
 }
 
 #[tauri::command]

@@ -4,6 +4,7 @@ mod appupdate;
 mod clip;
 mod commands;
 mod core;
+mod keylog;
 mod link;
 mod media;
 mod secrets;
@@ -357,6 +358,9 @@ pub fn run() {
             commands::hc_check_id,
             commands::hc_create_identity,
             commands::hc_restore_words,
+            commands::hc_retry_key,
+            commands::hc_start_over,
+            commands::hc_key_restored_seen,
             commands::hc_recovery_words,
             commands::hc_recovery_saved,
             commands::hc_set_profile,
