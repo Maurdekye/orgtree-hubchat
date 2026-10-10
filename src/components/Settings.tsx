@@ -396,8 +396,9 @@ function Notifications() {
             </Card>
             <div className="pad">
               {/* Android pauses a push app that saves battery, and its wake-ups
-                  stop (device test 2026-10-10; user 17:42Z: tell people). */}
-              {push.enabled && installed ? <NoteCard icon="battery"><b>Let {pushApp(distributor)} run in the background.</b> Android may pause it to save battery. Then messages wait for Hubchat's backup check, about every 15 minutes. In Android's app settings for {pushApp(distributor)}, set battery use to Unrestricted (battery optimization off).</NoteCard> : null}
+                  stop (device test 2026-10-10; user 17:42Z: tell people). Its
+                  own ongoing notification then stands where Hubchat's was. */}
+              {push.enabled && installed ? <NoteCard icon="battery"><b>Let {pushApp(distributor)} run in the background.</b> Android may pause it to save battery. Then messages wait for Hubchat's backup check, about every 15 minutes. In Android's app settings for {pushApp(distributor)}, set battery use to <b>Unrestricted</b> (battery optimization off). {pushApp(distributor)} may show its own quiet notification while it waits for wake-ups. {distributor === "io.heckel.ntfy" ? <>To hide it, turn off ntfy's <b>Background service</b> notifications in Android's settings.</> : <>You can hide it in Android's notification settings for {pushApp(distributor)}.</>}</NoteCard> : null}
               <NoteCard icon="info">Your hub sends only a wake-up signal, with no message content, to the distributor's server. Hubchat then gets your messages from your hub as usual. If your hub is private (for example only reachable over Tailscale), it must still be able to reach the distributor's server.</NoteCard>
             </div>
           </> : null}

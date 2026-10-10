@@ -27,6 +27,10 @@ for the distributor, set battery use to **Unrestricted** (battery optimization
 off); ntfy offers this on its own main screen. While push is on, Settings shows
 this as a reminder.
 
+While it waits for wakes, the distributor may show its own quiet notification
+in place of Hubchat's. To hide ntfy's, turn off its **Background service**
+notifications in Android's settings.
+
 The hub defers wakes while this device reports itself in use. Going into the
 background clears that signal. If the app crashes before clearing it, pending
 wakes resume when the signal expires, within 90 seconds.
