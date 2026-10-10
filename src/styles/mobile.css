@@ -154,6 +154,10 @@
 .spin { width: 20px; height: 20px; border-radius: 50%; border: 2.5px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; flex: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .note-card { margin: 4px 20px 12px; font-size: 13.5px; }
+/* Samsung's notification steps: close under the note above, the button as
+   wide as the notes */
+.pad.samsung-hide { padding-top: 0; }
+.samsung-hide .btn.block { margin: 0 20px; width: calc(100% - 40px); }
 .nc-card { display: flex; gap: 14px; align-items: center; padding: 14px; border-radius: 16px; border: 1px solid var(--accent); background: var(--accent-soft); margin: 8px 16px; --ring: var(--panel); }
 .nc-card .t { flex: 1; min-width: 0; }
 .nc-card .t1 { font-weight: 600; font-size: 16px; color: var(--ink-strong); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }

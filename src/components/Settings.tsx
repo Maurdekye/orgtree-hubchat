@@ -370,9 +370,32 @@ function Notifications() {
             <Row icon="sync" t1="Stay connected" t2="Messages arrive instantly. Android requires a quiet ongoing notification (“Hubchat is connected”) while Hubchat waits for mail." right={<Switch on={stay} onChange={(v) => { if (!busy) void setStay(v); }} label="Stay connected" />} />
           </Card>
           <div className="pad"><NoteCard icon="info">{stay ? <><b>On:</b> instant messages, a little more battery.</> : <><b>Off:</b> Hubchat checks about every 15 minutes, so messages and receipts can arrive late. Your status shows offline in between.</>} There is no Google push service: the hub is the only server.</NoteCard></div>
+          {stay && (snap.state?.device_maker ?? "").toLowerCase() === "samsung" ? <SamsungHide /> : null}
         </Sec>
       ) : null}
     </>
+  );
+}
+
+/** Samsung (One UI 6 and later) shows one switch for all of an app's
+ *  notifications until its categories are turned on, so hiding only the
+ *  ongoing notification takes these steps (user 2026-10-10 12:01Z). */
+function SamsungHide() {
+  const open = async () => {
+    if (!(await api.openApp("connection_notification").catch(() => false))) toast("Android didn't open its settings. Find them in Settings › Apps › Hubchat › Notifications.");
+  };
+  return (
+    <div className="pad samsung-hide">
+      <NoteCard icon="bell">
+        <b>Hide only the connection notification.</b> On a Samsung phone, Android first shows one switch for all of Hubchat's notifications. To turn off just this one and keep message notifications:
+        <ol>
+          <li>In your phone's <b>Settings › Notifications › Advanced settings</b>, turn on <b>Manage notification categories for each app</b>.</li>
+          <li>In Hubchat's notification settings, turn off <b>Background connection</b> and keep <b>Messages</b> on.</li>
+        </ol>
+        Or long-press the Hubchat notification and tap the gear.
+      </NoteCard>
+      <button className="btn block" onClick={() => void open()}><Icon name="settings" />Open notification settings</button>
+    </div>
   );
 }
 

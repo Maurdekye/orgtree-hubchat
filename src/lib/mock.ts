@@ -66,6 +66,8 @@ const st: State = {
   notifications: { enabled: true, preview: true, sound: false },
   stay_connected: new URLSearchParams(location.search).get("platform") === "android" ? true : null,
   device_name: new URLSearchParams(location.search).get("platform") === "android" ? "Pixel 8" : "Home-PC",
+  // ?maker=samsung: a Samsung phone (Settings › Notifications explains its categories)
+  device_maker: params.get("platform") === "android" ? params.get("maker") ?? "Google" : "",
   platform: params.get("platform") === "android" ? "android" : "desktop",
   hubs: onboarding || lostKey ? [] : seedHubs(),
 };
@@ -850,7 +852,7 @@ export const mockApi: Api = {
     return { reachable: true, name: hubLabel(hub), error: null };
   },
   appInstalled: async () => (st.platform === "android" ? setupFail !== "no-ts" : null),
-  openApp: async (what) => { toast("[Opens " + (what === "get_tailscale" ? "Tailscale in Google Play" : what === "open_tailscale" ? "the Tailscale app" : "Android's Wi-Fi settings") + "]"); return true; },
+  openApp: async (what) => { toast("[Opens " + (what === "get_tailscale" ? "Tailscale in Google Play" : what === "open_tailscale" ? "the Tailscale app" : what === "connection_notification" ? "Android's settings for Hubchat's Background connection notifications" : "Android's Wi-Fi settings") + "]"); return true; },
   vpnActive: async () => (st.platform !== "android" ? null : (window as unknown as { __hcVpn?: boolean }).__hcVpn ?? params.get("vpn") !== "off"),
   setupStart: async (input, name) => {
     const l = parseSetupLink(input).link;

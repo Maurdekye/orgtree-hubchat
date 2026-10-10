@@ -69,6 +69,8 @@ export interface State {
   stay_connected: boolean | null;
   /** What other devices see this one called: its own name, or the one set in Settings › Devices. */
   device_name: string;
+  /** The phone's maker on Android ("samsung", "Google"); empty elsewhere. */
+  device_maker: string;
   hubs: HubStatus[];
   platform: "desktop" | "android";
   /** This device had an identity but its key is gone (the lost-key screen). */
@@ -409,7 +411,7 @@ export const tauriApi = {
   /** Android: whether a package is installed; null where it can't be told. */
   appInstalled: (pkg: string) => invoke<boolean | null>("hc_app_installed", { package: pkg }),
   /** Android: open "get_tailscale" (its store page), "open_tailscale" or "wifi_settings". */
-  openApp: (what: "get_tailscale" | "open_tailscale" | "wifi_settings") => invoke<boolean>("hc_open_app", { what }),
+  openApp: (what: "get_tailscale" | "open_tailscale" | "wifi_settings" | "connection_notification") => invoke<boolean>("hc_open_app", { what }),
   /** Android: whether this device's traffic goes through a VPN now; null where it can't be told. */
   vpnActive: () => invoke<boolean | null>("hc_vpn_active"),
   /** Join the setup link's hub and send its org the code; returns the chat to open. */
