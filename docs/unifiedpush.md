@@ -20,6 +20,10 @@ choice. If setup is incomplete, Hubchat uses that choice too. Android can
 delay background work; keep the distributor working and allow it the battery
 access its own setup instructions recommend.
 
+The hub defers wakes while this device reports itself in use. Going into the
+background clears that signal. If the app crashes before clearing it, pending
+wakes resume when the signal expires, within 90 seconds.
+
 If the distributor disappears or rejects registration, Settings explains what
 needs attention. Open Hubchat and retry after fixing it. A distributor requiring
 VAPID is not supported by this version; choose one such as ntfy that works

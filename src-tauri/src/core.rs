@@ -370,6 +370,14 @@ impl Core {
     #[cfg(target_os = "android")]
     pub fn set_app_visible(&self, visible: bool) {
         self.host.foreground.store(visible, Ordering::Relaxed);
+        if !visible {
+            // JavaScript may freeze before reporting inactive. Tell the hub
+            // natively so its active lease does not defer the next push.
+            if let Ok(e) = self.engine() {
+                let _guard = self.rt.enter();
+                e.set_active(false);
+            }
+        }
         self.reconcile_background();
     }
 
