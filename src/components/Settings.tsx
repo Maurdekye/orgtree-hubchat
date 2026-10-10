@@ -351,6 +351,9 @@ function Notifications() {
   const push = snap.state?.push;
   const [chosen, setChosen] = useState("");
   const distributor = chosen || push?.distributor || (push?.distributors.length === 1 ? push.distributors[0] : "");
+  // A distributor that was uninstalled stays saved, but can't be retried.
+  const installed = !!push?.distributors.includes(distributor);
+  const pushApp = (d: string) => d === "io.heckel.ntfy" ? "ntfy" : d;
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (platform !== "android") return;
@@ -387,9 +390,9 @@ function Notifications() {
                 const next = e.target.value; setChosen(next); if (push.enabled) void setPush(true, next);
               }}>
                 <option value="" disabled>Select a distributor</option>
-                {push.distributors.map((d) => <option key={d} value={d}>{d === "io.heckel.ntfy" ? "ntfy" : d}</option>)}
+                {push.distributors.map((d) => <option key={d} value={d}>{pushApp(d)}</option>)}
               </select>} /> : <Row t1="Install a distributor" t2="UnifiedPush needs a distributor app on this phone. ntfy supports public and self-hosted servers." right={<button className="btn" onClick={() => void openLink("https://ntfy.sh/docs/subscribe/phone/")}>Get ntfy</button>} />}
-              {push.enabled ? <Row t1={push.active ? "Push is on" : "Push is not ready"} t2={push.active ? "Hubchat fetches on wake, without its persistent connection notification." : push.status} right={!push.active && distributor ? <button className="btn" disabled={busy} onClick={() => void setPush(true)}>Retry</button> : null} /> : null}
+              {push.enabled ? <Row t1={push.active ? "Push is on" : "Push is not ready"} t2={push.active ? "Hubchat fetches on wake, without its persistent connection notification." : push.status} right={!push.active && installed ? <button className="btn" disabled={busy} onClick={() => void setPush(true)}>Retry</button> : null} /> : null}
             </Card>
             <div className="pad"><NoteCard icon="info">Your hub sends only a wake-up signal, with no message content, to the distributor's server. Hubchat then gets your messages from your hub as usual. If your hub is private (for example only reachable over Tailscale), it must still be able to reach the distributor's server.</NoteCard></div>
           </> : null}

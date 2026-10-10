@@ -65,7 +65,10 @@ const st: State = {
   read_receipts: true,
   notifications: { enabled: true, preview: true, sound: false },
   stay_connected: new URLSearchParams(location.search).get("platform") === "android" ? true : null,
-  push: params.get("platform") === "android" ? { enabled: false, active: false, distributor: "", distributors: params.get("distributor") === "ntfy" ? ["io.heckel.ntfy"] : [], status: "Off" } : null,
+  // ?distributor=ntfy: ntfy is installed; ?push=missing: push was on with ntfy, then ntfy was uninstalled
+  push: params.get("platform") !== "android" ? null : params.get("push") === "missing"
+    ? { enabled: true, active: false, distributor: "io.heckel.ntfy", distributors: [], status: "The selected distributor is not installed. Install ntfy or select another distributor." }
+    : { enabled: false, active: false, distributor: "", distributors: params.get("distributor") === "ntfy" ? ["io.heckel.ntfy"] : [], status: "Off" },
   device_name: new URLSearchParams(location.search).get("platform") === "android" ? "Pixel 8" : "Home-PC",
   // ?maker=samsung: a Samsung phone (Settings › Notifications explains its categories)
   device_maker: params.get("platform") === "android" ? params.get("maker") ?? "Google" : "",
