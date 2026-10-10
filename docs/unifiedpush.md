@@ -15,7 +15,10 @@ Hubchat relay or project-operated push server.
    drops its ongoing connection notification.
 
 While push is active, Hubchat fetches messages when woken and connects normally
-while the app is visible. Turning push off restores the saved **Stay connected**
+while the app is visible. It also keeps its check about every 15 minutes as a
+backup: if the distributor stops delivering wakes (Android paused it, it was
+uninstalled, or its server is down), messages arrive at the next check instead
+of only when you open Hubchat. Turning push off restores the saved **Stay connected**
 choice. If setup is incomplete, Hubchat uses that choice too. Android can
 delay background work; keep the distributor working and allow it the battery
 access its own setup instructions recommend.
@@ -25,7 +28,9 @@ background clears that signal. If the app crashes before clearing it, pending
 wakes resume when the signal expires, within 90 seconds.
 
 If the distributor disappears or rejects registration, Settings explains what
-needs attention. Open Hubchat and retry after fixing it. A distributor requiring
+needs attention. Hubchat notices an uninstalled distributor at its next check,
+phone restart or app start, and falls back to the saved connection setting.
+Open Hubchat and retry after fixing it. A distributor requiring
 VAPID is not supported by this version; choose one such as ntfy that works
 without VAPID. If Android prevents restarting Hubchat's foreground service while
 the app is hidden, periodic checks remain scheduled until you open the app.

@@ -31,7 +31,8 @@ import java.util.concurrent.TimeUnit
  * lifetime and posts notifications on the core's behalf. It starts the core
  * itself, so a START_STICKY restart without any activity still reconnects.
  * With "Stay connected" off there is no service: CheckWorker runs a check
- * about every 15 minutes instead.
+ * about every 15 minutes instead. With push on there is none either: push
+ * wakes the core, and the same check runs as a backup.
  */
 class ConnectionService : Service() {
   companion object {
@@ -418,11 +419,14 @@ class ConnectionService : Service() {
     fun start(ctx: Context) {
       val i = Intent(ctx, ConnectionService::class.java)
       if (PushController.active(ctx)) {
-        WorkManager.getInstance(ctx).cancelUniqueWork(WORK)
         // A pending startForegroundService must reach onCreate and promote
         // itself before it can stop. onCreate rechecks the latest mode.
         if (running) ctx.stopService(i)
         attach(ctx)
+        // The periodic check stays as a backup (user 2026-10-10 17:42Z): if
+        // the push app stops delivering, messages come about 15 minutes late
+        // instead of only when Hubchat is opened.
+        schedule(ctx)
       } else if (stayConnected(ctx)) {
         WorkManager.getInstance(ctx).cancelUniqueWork(WORK)
         try {
