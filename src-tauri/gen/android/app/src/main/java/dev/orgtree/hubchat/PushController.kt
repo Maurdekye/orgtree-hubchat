@@ -27,6 +27,8 @@ import java.util.concurrent.TimeUnit
 object PushController {
   private const val PREFS = "hubchat-push"
   private const val WORK = "hubchat-push-work"
+  private const val NOT_INSTALLED =
+    "The selected distributor is not installed. Install ntfy or select another distributor."
   // A cancelled WorkManager worker can still be inside native code. Keep
   // remote registration/removal ordered, and read settings after acquiring.
   private val workLock = Any()
@@ -43,8 +45,7 @@ object PushController {
     val p = prefs(ctx)
     if (UnifiedPush.getDistributors(ctx).contains(p.getString("distributor", ""))) return true
     // Keep the cheap native lifecycle read consistent with this discovery.
-    unavailable(ctx, p.getString("instance", "") ?: "",
-      "The selected distributor is not installed. Install ntfy or select another distributor.")
+    unavailable(ctx, p.getString("instance", "") ?: "", NOT_INSTALLED)
     return false
   }
 
@@ -89,7 +90,7 @@ object PushController {
     val distributor = p.getString("distributor", "") ?: ""
     val instance = p.getString("instance", "") ?: ""
     if (instance.isEmpty() || !UnifiedPush.getDistributors(ctx).contains(distributor)) {
-      unavailable(ctx, instance, "The selected distributor is not installed. Install ntfy or select another distributor.")
+      unavailable(ctx, instance, NOT_INSTALLED)
       return
     }
     UnifiedPush.saveDistributor(ctx, distributor)
@@ -99,11 +100,23 @@ object PushController {
 
   /** Adding/removing a hub invalidates the all-hubs registration proof. */
   fun refresh(ctx: Context) {
+    val p = prefs(ctx)
+    if (!p.getBoolean("enabled", false)) return
+    // A missing distributor keeps explaining itself (device test 2026-10-10:
+    // "Registering with your hubs…" replaced the reason and stayed).
+    if (!UnifiedPush.getDistributors(ctx).contains(p.getString("distributor", ""))) {
+      unavailable(ctx, p.getString("instance", "") ?: "", NOT_INSTALLED)
+      return
+    }
     synchronized(this) {
-      val p = prefs(ctx)
       if (!p.getBoolean("enabled", false)) return
-      p.edit().putBoolean("active", false).putString("generation", UUID.randomUUID().toString())
-        .putString("status", "Registering with your hubs…").commit()
+      val edit = p.edit().putBoolean("active", false).putString("generation", UUID.randomUUID().toString())
+      // Only a usable registration is synced now. A pending one registers
+      // with every hub once its endpoint arrives; a failed or temporarily
+      // unavailable one keeps the reason it shows.
+      if (p.contains("capability") && !p.getBoolean("temporary", false))
+        edit.putString("status", "Registering with your hubs…")
+      edit.commit()
     }
     enqueue(ctx, "sync")
     modeChanged(ctx)
