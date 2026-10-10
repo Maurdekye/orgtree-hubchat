@@ -1,0 +1,1 @@
+On Android, Hubchat now says when Tailscale is off and how to keep it on, Settings › About can allow updates, and "last seen" keeps counting.
