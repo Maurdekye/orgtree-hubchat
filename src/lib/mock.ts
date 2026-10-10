@@ -27,7 +27,7 @@
 // maya.e71f2b, or with a code starting "SAME" this device's own); nothing is
 // adopted before linkConfirm. A key file opens with any passphrase but
 // "wrong". Hubs on 127.0.0.1 / localhost can't be reached from the "phone".
-import type { Api, SetupLink, SetupState, Attachment, ChatSummary, SendRoute, Contact, HcEvent, HubRow, HubStatus, LinkEvent, LinkLookup, LinkRole, Message, NewOutgoing, OlderPage, ParsedLink, Probe, Resolved, State } from "../api";
+import type { Api, SetupLink, SetupState, Attachment, ChatSummary, SendRoute, Contact, HcEvent, HubRow, HubStatus, LinkEvent, LinkLookup, LinkRole, Message, NewOutgoing, OlderPage, ParsedLink, Probe, PushState, Resolved, State } from "../api";
 import { toast } from "./toast";
 
 const params = new URLSearchParams(location.search);
@@ -57,6 +57,14 @@ const lostKey = params.get("lostkey");
 const ALEX = { id: "alex", address: "alex.3be2c9", name: "Alex Rivera", about: "Platform team" };
 const keyBackAt = now() + (Number(params.get("keyback")) || Infinity) * 1000;
 
+// Android push: ?distributor=ntfy: ntfy is installed. ?push=missing: push was
+// on with ntfy, then ntfy was uninstalled. ?push=failed: ntfy couldn't register.
+const NTFY = "io.heckel.ntfy";
+const pushStates: Record<string, PushState> = {
+  missing: { enabled: true, active: false, distributor: NTFY, distributors: [], status: "The selected distributor is not installed. Install ntfy or select another distributor." },
+  failed: { enabled: true, active: false, distributor: NTFY, distributors: [NTFY], status: "The distributor is unreachable. Open Hubchat to retry." },
+};
+
 const st: State = {
   me: onboarding || lostKey ? null : { ...ALEX },
   key_lost: lostKey ? { address: lostKey === "unknown" ? null : ALEX.address, unreadable: lostKey === "unreadable" } : null,
@@ -65,10 +73,8 @@ const st: State = {
   read_receipts: true,
   notifications: { enabled: true, preview: true, sound: false },
   stay_connected: new URLSearchParams(location.search).get("platform") === "android" ? true : null,
-  // ?distributor=ntfy: ntfy is installed; ?push=missing: push was on with ntfy, then ntfy was uninstalled
-  push: params.get("platform") !== "android" ? null : params.get("push") === "missing"
-    ? { enabled: true, active: false, distributor: "io.heckel.ntfy", distributors: [], status: "The selected distributor is not installed. Install ntfy or select another distributor." }
-    : { enabled: false, active: false, distributor: "", distributors: params.get("distributor") === "ntfy" ? ["io.heckel.ntfy"] : [], status: "Off" },
+  push: params.get("platform") !== "android" ? null : pushStates[params.get("push") ?? ""]
+    ?? { enabled: false, active: false, distributor: "", distributors: params.get("distributor") === "ntfy" ? [NTFY] : [], status: "Off" },
   device_name: new URLSearchParams(location.search).get("platform") === "android" ? "Pixel 8" : "Home-PC",
   // ?maker=samsung: a Samsung phone (Settings › Notifications explains its categories)
   device_maker: params.get("platform") === "android" ? params.get("maker") ?? "Google" : "",
