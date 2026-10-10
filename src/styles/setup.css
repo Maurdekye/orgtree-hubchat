@@ -12,6 +12,8 @@
 .setup-instead { margin: 14px 0 0; font-size: 13.5px; }
 [data-platform="android"] .setup-instead { margin: 16px 20px; font-size: 14.5px; }
 .setup-instead .link { text-align: left; }
+.setup-tip { margin: 14px 20px 0; font-size: 13.5px; line-height: 1.5; color: var(--dim); }
+.setup-tip b { color: var(--ink); font-weight: 600; }
 
 /* "No code?" under Scan setup code */
 .nocode { margin: 14px 0 0; font-size: 13px; line-height: 1.5; color: var(--dim); text-align: left; }

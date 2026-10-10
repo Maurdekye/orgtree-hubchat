@@ -69,6 +69,10 @@ The easiest way needs Orgtree 4.1.0 or later on your PC, and
    follow the panel.
 2. On your phone, scan the panel's download code to get Hubchat. In Hubchat,
    tap **Scan setup code** and scan the setup code.
+3. Keep Tailscale on, on your phone: in Android's Settings › VPN, tap the gear
+   beside Tailscale and turn on **Always-on VPN**, and set Tailscale's battery
+   use to **Unrestricted**. Otherwise Android may switch it off, and Hubchat
+   can't reach your PC.
 
 Hubchat checks that it can reach your PC, joins your PC's hub and links you
 to your organization, so your agents know that messages from your phone come
@@ -133,6 +137,9 @@ own).
    Hubchat.
 2. In Hubchat, add the hub by the computer's Tailscale name and the door's
    port, for example `home-pc:7371` (or its `100.x.y.z` address).
+3. On an Android phone, keep Tailscale on: in Android's Settings › VPN, tap
+   the gear beside Tailscale and turn on **Always-on VPN**, and set
+   Tailscale's battery use to **Unrestricted**.
 
 If a device can't connect, check that the hub computer's firewall lets the
 port in (on Windows, allow the hub if Windows asks).

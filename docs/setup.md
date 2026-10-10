@@ -23,8 +23,9 @@ This is the easy way: about three clicks on your PC and four taps on your phone.
 **On your phone:**
 
 1. Install **Tailscale** from Google Play and sign in with the **same account** as your PC.
-2. Install **Hubchat**: scan the download code in Orgtree's panel with your camera.
-3. In Orgtree, click **I have Hubchat on my phone › Next**. In Hubchat, tap **Scan setup code** and scan the code. It works once, for 10 minutes. If it runs out, click **New code** on your PC.
+2. **Keep Tailscale on.** Android can switch it off by itself, after a restart or to save battery. In Android's Settings › VPN (search Settings for "VPN"), tap the gear beside Tailscale and turn on **Always-on VPN**. Then set Tailscale's battery use to **Unrestricted** (Settings › Apps › Tailscale › Battery).
+3. Install **Hubchat**: scan the download code in Orgtree's panel with your camera.
+4. In Orgtree, click **I have Hubchat on my phone › Next**. In Hubchat, tap **Scan setup code** and scan the code. It works once, for 10 minutes. If it runs out, click **New code** on your PC.
 
 <!-- screenshots -->
 <p>
@@ -93,7 +94,7 @@ If you do it anyway, forward only the relay-only door (7371 for Orgtree, 7378 fo
 
 Each person has one identity: your address, made from your key. To use it on another device, **link** the device instead of making a new identity.
 
-1. Install Tailscale on the new device (if you use it) and Hubchat.
+1. Install Tailscale on the new device (if you use it) and Hubchat. On a phone, keep Tailscale on as in section 1: **Always-on VPN**, and battery use **Unrestricted**.
 2. On the new device, choose **I already use Hubchat › Scan the QR code from your other device**. On a PC, choose **Link through a hub**.
 3. On a device that already has your identity, open **Settings › Devices › Link a device** and show the code. On a PC, you can also click the QR button at the bottom of the chat list.
 4. Approve the new device when asked, then confirm its hubs on the new device.
@@ -112,7 +113,7 @@ Don't scan Orgtree's setup code with a second phone: it would make a second iden
 
 ## 7. When it stops working
 
-- **Tailscale is off, or signed in to another account.** Open Tailscale on the phone, switch it on, and check that it uses the same account as your PC.
+- **Tailscale is off, or signed in to another account.** Hubchat then says **Tailscale seems to be off**; tap **Open Tailscale**, switch it on, and check that it uses the same account as your PC. So that it stays on, turn on **Always-on VPN** for it and set its battery use to **Unrestricted** (section 1).
 - **The PC is asleep or off.** Your phone can't reach a sleeping PC. Your messages wait on the phone and go out when the PC is back. In Windows Settings › System › Power, let the PC stay awake while it's plugged in.
 - **Tailscale's key expired.** Tailscale signs each device out after 180 days by default, and the phone then loses the PC without warning. In Tailscale's admin console, open **Machines**, then your PC's **…** menu, and choose **Disable key expiry**.
 - **Android's one-VPN limit.** Another VPN app (a work VPN, an ad blocker) switches Tailscale off. For Tailscale to come back by itself after a restart, turn on **Always-on VPN** for it in Android Settings › VPN.

@@ -120,6 +120,11 @@ export function SetupFlow({ req }: { req: SetupReq }) {
     <button className={"btn" + (primary ? " primary" : "")} onClick={onClick}>{label}</button>
   );
 
+  // the last screen, for a setup through Tailscale (user 2026-10-10 06:45Z:
+  // it turned itself off on their phone)
+  const keepOn = android && link?.net === "tailscale"
+    ? <p className="setup-tip">Keep Tailscale on: turn on <b>Always-on VPN</b> for it in Android's Settings › VPN, and set its battery use to <b>Unrestricted</b>.</p>
+    : null;
   let title: ReactNode = link ? <>Chat with {org}</> : "Scan setup code";
   let body: ReactNode;
   let foot: ReactNode = null;
@@ -134,16 +139,20 @@ export function SetupFlow({ req }: { req: SetupReq }) {
             onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && ok) void join(); }} /></label>
         </div>
         <p className="setup-instead"><button className="link" onClick={() => { endSetup(); wantLinkInstead(); }}>Already use Hubchat on another device? Link this phone instead.</button></p>
+        {keepOn}
       </>
     );
     foot = <button className={"btn primary" + blk} disabled={!ok} onClick={() => void join()}>Continue</button>;
   } else if (st.k === "add" && link) {
     title = <>Add {pc} and chat with {org}?</>;
     body = (
-      <div className="found">
-        <Avatar kind="org" name={org} size={48} />
-        <span className="t"><b>{org}</b><span className="mono obaddr"><Addr a={link.org} /></span><span>through {pc}</span></span>
-      </div>
+      <>
+        <div className="found">
+          <Avatar kind="org" name={org} size={48} />
+          <span className="t"><b>{org}</b><span className="mono obaddr"><Addr a={link.org} /></span><span>through {pc}</span></span>
+        </div>
+        {keepOn}
+      </>
     );
     foot = <>{android ? null : <button className="btn ghost" onClick={close}>Not now</button>}<button className={"btn primary" + blk} onClick={() => void join()}>Add</button>{android ? <button className="btn ghost block" onClick={close}>Not now</button> : null}</>;
   } else {

@@ -54,6 +54,7 @@ export function HubHelpBody() {
       <ol>
         <li>Install <Ext href={TAILSCALE}>Tailscale</Ext> on the hub's computer and on each phone or PC that runs Hubchat.</li>
         <li>In Hubchat, add the hub by the computer's Tailscale name and the door's port, for example <M>home-pc:7371</M> (or its <M>100.x.y.z</M> address).</li>
+        <li>On an Android phone, keep Tailscale on: in Android's Settings › VPN, tap the gear beside Tailscale and turn on <b>Always-on VPN</b>, and set Tailscale's battery use to <b>Unrestricted</b>.</li>
       </ol>
       <p>If a device can't connect, check that the hub computer's firewall lets the port in (on Windows, allow the hub if Windows asks).</p>
       <h5>The open internet: only the relay-only door</h5>
