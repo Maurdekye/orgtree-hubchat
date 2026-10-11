@@ -46,5 +46,14 @@ try {
   await sleep(150);
   await b.shot(join(out,'viewer-'+theme+'.png')); 
  }
+ await b.size(390,844);
+ await b.eval(`(async()=>{const {openImage}=await import('/src/lib/images.ts');const m=window.picture;const {api}=await import('/src/api.ts');api.attachmentPreview=async()=>new Uint8Array(await (await fetch('/docs/screenshots/phone-chat.jpg')).arrayBuffer());const a={...m.attachments[0],local_id:'portrait-layout-proof',state:'remote',download:null};m.attachments=[a];openImage(m,a);})()`);
+ await sleep(200);
+ await b.eval(`(async()=>{const v=document.querySelector('.imgview');v.style.paddingBottom='50px';const img=v.querySelector('img');await img.decode();})()`);
+ for(const theme of ['light','dark']){
+  await b.eval(`(async()=>{const t=await import('/src/lib/theme.ts');t.setThemePref('${theme}');})()`);await sleep(100);
+  check('tall portrait Download clears phone gesture area '+theme,await b.eval(`(()=>{const v=document.querySelector('.imgview'),a=v.querySelector('.iv-acts'),img=v.querySelector('img');const r=a.getBoundingClientRect(),ir=img.getBoundingClientRect();return a.textContent==='Download'&&img.naturalHeight>img.naturalWidth*2&&r.bottom<=innerHeight-50&&ir.top>=56&&ir.bottom<=r.top&&v.scrollHeight<=v.clientHeight;})()`));
+  await b.shot(join(out,'portrait-'+theme+'.png'));
+ }
  writeFileSync(join(out,'result.json'),JSON.stringify({checks},null,2));
 }finally{await b.close();await server.close();}

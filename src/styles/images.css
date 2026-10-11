@@ -21,10 +21,10 @@
 [data-platform=desktop] .imgview { top: 32px; } /* under the title bar */
 [data-platform=desktop] .imgview img { max-width: 86vw; max-height: calc(100vh - 140px); }
 [data-platform=android] .imgview { padding: calc(env(safe-area-inset-top) + 56px) 0 calc(env(safe-area-inset-bottom) + 16px); }
-[data-platform=android] .imgview img { max-height: calc(100% - 40px); }
+[data-platform=android] .imgview img { min-height: 0; flex: 0 1 auto; max-height: 100%; }
 [data-platform=android] .imgview .iv-close { top: calc(env(safe-area-inset-top) + 6px); left: 8px; right: auto; width: 44px; height: 44px; color: #eee; }
 [data-platform=android] .imgview .iv-close .ic { width: 24px; height: 24px; }
-[data-platform=android] .imgview .iv-cap { font-size: 13.5px; padding: 0 16px; flex-wrap: wrap; }
+[data-platform=android] .imgview .iv-cap { flex-shrink: 0; font-size: 13.5px; padding: 0 16px; flex-wrap: wrap; }
 
 .imgview .iv-progress { white-space: normal; overflow-wrap: anywhere; font-size: 13px; color: #bbb; }
 [data-platform=android] .imgview .iv-acts { flex-basis: 100%; min-width: 0; margin: 8px 0 0; }
