@@ -2026,3 +2026,5 @@ mod body_store;
 
 #[path = "close_dm.rs"]
 mod close_dm;
+#[path = "store_notification_reply.rs"]
+mod store_notification_reply;
