@@ -526,6 +526,11 @@ pub async fn hc_send(msg: NewOutgoing) -> R<()> {
 }
 
 #[tauri::command]
+pub async fn hc_remove_attachment(message_id:String,local_id:String) -> R<()> {
+    engine()?.remove_attachment(&message_id,&local_id).await.map_err(s)
+}
+
+#[tauri::command]
 pub fn hc_retry(id: String) -> R<()> {
     engine()?.retry(&id).map_err(s)
 }

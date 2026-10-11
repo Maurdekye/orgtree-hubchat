@@ -383,6 +383,7 @@ pub fn run() {
             commands::hc_message,
             commands::hc_send,
             commands::hc_retry,
+            commands::hc_remove_attachment,
             commands::hc_cancel_transfer,
             commands::hc_download,
             commands::hc_transfers,
