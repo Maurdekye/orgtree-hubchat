@@ -59,7 +59,7 @@ impl Store {
         self.with(|c| {
             let tx=c.transaction()?;
             tx.execute("INSERT OR IGNORE INTO download_jobs(local_id,partial,destination) VALUES(?,?,?)",params![id,partial,dest])?;
-            tx.execute("UPDATE download_jobs SET attempt=attempt+1,state=CASE WHEN state IN ('publishing','done') THEN state ELSE 'running' END,error=NULL WHERE local_id=?",[id])?;
+            tx.execute("UPDATE download_jobs SET attempt=attempt+1,state=CASE WHEN state IN ('publishing','exporting','done') THEN state ELSE 'running' END,error=NULL WHERE local_id=?",[id])?;
             tx.execute("UPDATE attachments SET state='downloading',error=NULL WHERE local_id=? AND EXISTS(SELECT 1 FROM download_jobs WHERE local_id=? AND state!='done')",[id,id])?;
             let job=tx.query_row(&format!("SELECT {COLUMNS} FROM download_jobs WHERE local_id=?"),[id],row)?;
             tx.commit()?;Ok(job)
@@ -105,9 +105,9 @@ impl Store {
     pub(crate) fn download_exported(&self, id: &str, from: &str, to: &str) -> Result<()> {
         let n = self.with(|c| {
             let tx = c.transaction()?;
-            let n = tx.execute("UPDATE download_jobs SET destination=?,exported=1 WHERE local_id=? AND destination=? AND state='done'", params![to,id,from])?;
+            let n = tx.execute("UPDATE download_jobs SET destination=?,exported=1,state='done',error=NULL WHERE local_id=? AND destination=? AND state IN ('exporting','done')", params![to,id,from])?;
             if n > 0 {
-                tx.execute("UPDATE attachments SET local_path=? WHERE local_id=?", params![to,id])?;
+                tx.execute("UPDATE attachments SET local_path=?,state='done',error=NULL WHERE local_id=?", params![to,id])?;
             }
             tx.commit()?;
             Ok(n)
@@ -138,8 +138,8 @@ impl Store {
     pub(crate) fn download_done(&self, id: &str, attempt: i64, path: &str) -> Result<()> {
         let n=self.with(|c|{
             let tx=c.transaction()?;
-            let n=tx.execute("UPDATE download_jobs SET state='done',error=NULL WHERE local_id=? AND attempt=? AND state='publishing'",params![id,attempt])?;
-            if n>0 {tx.execute("UPDATE attachments SET state='done',local_path=?,error=NULL WHERE local_id=?",params![path,id])?;}
+            let n=tx.execute("UPDATE download_jobs SET state='exporting',error=NULL WHERE local_id=? AND attempt=? AND destination=? AND state='publishing'",params![id,attempt,path])?;
+            if n>0 {tx.execute("UPDATE attachments SET state='downloading',error=NULL WHERE local_id=?",[id])?;}
             tx.commit()?;Ok(n)
         })?;
         if n == 0 {
@@ -158,7 +158,7 @@ impl Store {
         self.with(|c|{
             let tx=c.transaction()?;
             // User cancellation and publication win against stale worker errors.
-            let n=tx.execute("UPDATE download_jobs SET state=CASE WHEN state='publishing' THEN state ELSE ?1 END,error=?2 WHERE local_id=?3 AND attempt=?4 AND (state='running' OR (state='publishing' AND ?1!='paused'))",params![state,error,id,attempt])?;
+            let n=tx.execute("UPDATE download_jobs SET state=CASE WHEN state IN ('publishing','exporting') THEN state ELSE ?1 END,error=?2 WHERE local_id=?3 AND attempt=?4 AND (state='running' OR (state IN ('publishing','exporting') AND ?1!='paused'))",params![state,error,id,attempt])?;
             if n>0 {tx.execute("UPDATE attachments SET state=?,error=? WHERE local_id=?",params![state,error,id])?;}
             tx.commit()
         })
@@ -175,7 +175,7 @@ impl Store {
                 )
                 .optional()?;
             let Some(state) = state else { return Ok(None) };
-            if matches!(state.as_str(), "publishing" | "done") {
+            if matches!(state.as_str(), "publishing" | "exporting" | "done") {
                 return Ok(Some(false));
             }
             tx.execute(

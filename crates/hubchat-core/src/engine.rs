@@ -129,6 +129,13 @@ pub trait Host: Send + Sync + 'static {
     fn open_source(&self, source: &str) -> std::io::Result<std::fs::File>;
     /// Folder for downloaded attachments.
     fn download_dir(&self) -> PathBuf;
+    /// Idempotent platform publication, called on a blocking worker. `key` is
+    /// stable across retries/restarts. Keep the source until this returns and
+    /// the core commits the destination. A repeated key must return the same
+    /// published file (or retry its incomplete copy), never create a duplicate.
+    /// None means this platform already uses the final Downloads directory.
+    fn publish_download(&self, _key: &str, _path: &std::path::Path, _name: &str)
+        -> std::io::Result<Option<String>> { Ok(None) }
     /// Private, persistent storage. Shells override this with their app-data folder.
     fn staging_dir(&self) -> PathBuf {
         self.download_dir().join(".hubchat-outbox")

@@ -204,7 +204,7 @@ impl Engine {
                 if reserved.is_some()
                     && !matches!(
                         previous.state.as_str(),
-                        "queued" | "running" | "publishing" | "paused"
+                        "queued" | "running" | "publishing" | "exporting" | "paused"
                     )
                 {
                     return Err(Error::Cancelled);
@@ -241,6 +241,9 @@ impl Engine {
                         .await?
                 }
             };
+            if job.state == "exporting" {
+                return self.export_download(&job, &a.name).await;
+            }
             if job.state != "publishing" {
                 // Reserve the partial while holding the same lock as directory
                 // removal. A concurrent completion cannot remove a new writer's
@@ -299,7 +302,12 @@ impl Engine {
                     )
                     .await?;
             }
-            self.finish_download(&job, a.bytes, &dir, &a.name).await
+            self.finish_download(&job, a.bytes, &dir, &a.name).await?;
+            let publication = self
+                .store
+                .download_job(local_id)?
+                .ok_or_else(|| Error::Invalid("attachment was deleted".into()))?;
+            self.export_download(&publication, &a.name).await
         }
         .await;
         if let Err(ref e) = result {
@@ -315,6 +323,28 @@ impl Engine {
         }
         self.host.event(Event::Chat { peer: m.peer });
         result
+    }
+
+    async fn export_download(&self, job: &DownloadJob, name: &str) -> Result<PathBuf> {
+        let host = self.host.clone();
+        let source = PathBuf::from(&job.destination);
+        let path = source.clone();
+        let name = name.to_owned();
+        let key = format!("{}-{}", job.local_id, job.digest.as_deref().unwrap_or(""));
+        // The scheduler owns this future through shutdown: a UI command does
+        // not own the copy, and a blocking platform call never owns a DB lease.
+        let exported =
+            tokio::task::spawn_blocking(move || host.publish_download(&key, &path, &name))
+                .await
+                .map_err(std::io::Error::other)??;
+        let destination = exported.unwrap_or_else(|| job.destination.clone());
+        self.store
+            .download_exported(&job.local_id, &job.destination, &destination)?;
+        if destination != job.destination {
+            // Only our private completed download, never the original picked file.
+            let _ = tokio::fs::remove_file(source).await;
+        }
+        Ok(destination.into())
     }
 
     async fn finish_download(
@@ -760,6 +790,101 @@ mod tests {
             s.await.unwrap();
         }
     }
+    #[tokio::test]
+    async fn queued_export_recovers_lost_platform_reply_without_network_or_duplicate() {
+        struct ExportHost(PathBuf);
+        impl Host for ExportHost {
+            fn event(&self, _: Event) {}
+            fn download_dir(&self) -> PathBuf {
+                self.0.clone()
+            }
+            fn open_source(&self, source: &str) -> std::io::Result<std::fs::File> {
+                if source == "content://proof/export" {
+                    std::fs::File::open(self.0.join("shared.bin"))
+                } else {
+                    std::fs::File::open(source)
+                }
+            }
+            fn publish_download(
+                &self,
+                key: &str,
+                path: &std::path::Path,
+                _: &str,
+            ) -> std::io::Result<Option<String>> {
+                let receipt = self.0.join("receipt");
+                if receipt.exists() {
+                    assert_eq!(std::fs::read_to_string(receipt)?, key);
+                    return Ok(Some("content://proof/export".into()));
+                }
+                std::fs::copy(path, self.0.join("shared.bin"))?;
+                std::fs::write(receipt, key)?;
+                Err(std::io::Error::other("injected lost platform reply"))
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("store.db");
+        let url = "http://127.0.0.1:9";
+        let private = dir.path().join("private.bin");
+        std::fs::write(&private, b"abc").unwrap();
+        let store = Arc::new(Store::open(&db).unwrap());
+        let lid = attach(&store, url, 3);
+        store.set_state("message", "sent", None).unwrap();
+        let j = store
+            .begin_download(&lid, "part", &private.to_string_lossy())
+            .unwrap();
+        let hash = digest(&private, 3).await.unwrap();
+        store
+            .download_publishing(&lid, j.attempt, &hash, &private.to_string_lossy())
+            .unwrap();
+        store
+            .download_done(&lid, j.attempt, &private.to_string_lossy())
+            .unwrap();
+        let e = fixture_host(store.clone(), url, Arc::new(ExportHost(dir.path().into())));
+        assert!(e
+            .download("message", &lid)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("lost platform"));
+        assert!(
+            private.exists(),
+            "private bytes remain until pointer committed"
+        );
+        let j = store.download_job(&lid).unwrap().unwrap();
+        assert_eq!(j.state, "exporting");
+        assert!(j.error.is_some());
+        assert!(
+            store.queued_downloads("", u64::MAX / 2).unwrap().is_empty(),
+            "permanent export failure waits for Retry"
+        );
+        drop(e);
+        drop(store);
+        // The user changed the completed public file after the lost response.
+        // Recovery must preserve it, not copy private bytes over it.
+        std::fs::write(dir.path().join("shared.bin"), b"user-edited").unwrap();
+        let store = Arc::new(Store::open(&db).unwrap());
+        let e = fixture_host(store.clone(), url, Arc::new(ExportHost(dir.path().into())));
+        e.queue_download("message", &lid).unwrap();
+        let runner = tokio::spawn(e.clone().sender_loop());
+        until(|| store.download_job(&lid).unwrap().unwrap().state == "done").await;
+        let a = &store.message("message").unwrap().unwrap().attachments[0];
+        assert_eq!(a.local_path.as_deref(), Some("content://proof/export"));
+        assert_eq!(
+            std::fs::read(dir.path().join("shared.bin")).unwrap(),
+            b"user-edited"
+        );
+        assert!(!private.exists());
+        until(|| !e.transfers.lock().unwrap().contains_key(&lid)).await;
+        let attempt = store.download_job(&lid).unwrap().unwrap().attempt;
+        assert_eq!(
+            e.download("message", &lid).await.unwrap().to_string_lossy(),
+            "content://proof/export"
+        );
+        assert_eq!(store.download_job(&lid).unwrap().unwrap().attempt, attempt);
+        e.shutdown();
+        runner.await.unwrap();
+    }
+
     #[tokio::test]
     async fn exported_location_survives_reopen_and_repeated_save_without_network() {
         struct UriHost {

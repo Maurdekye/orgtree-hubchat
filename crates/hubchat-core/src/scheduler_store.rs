@@ -41,7 +41,7 @@ impl Store {
     pub(crate) fn download_worker_failed(&self, id: &str) -> Result<()> {
         self.with(|c| {
             let tx=c.transaction()?;
-            let n=tx.execute("UPDATE download_jobs SET state=CASE WHEN state='publishing' THEN state ELSE 'failed' END,error='Transfer worker stopped unexpectedly; retry' WHERE local_id=? AND state NOT IN ('done','cancelled')",[id])?;
+            let n=tx.execute("UPDATE download_jobs SET state=CASE WHEN state IN ('publishing','exporting') THEN state ELSE 'failed' END,error='Transfer worker stopped unexpectedly; retry' WHERE local_id=? AND state NOT IN ('done','cancelled')",[id])?;
             if n>0 {tx.execute("UPDATE attachments SET state='failed',error='Transfer worker stopped unexpectedly; retry' WHERE local_id=?",[id])?;}
             tx.commit()
         })
@@ -58,7 +58,7 @@ impl Store {
         now: u64,
     ) -> Result<Vec<(String, String, String)>> {
         self.with(|c| {
-            let mut q=c.prepare("SELECT j.local_id,a.message_id,COALESCE(a.hub,m.hub) FROM download_jobs j JOIN attachments a ON a.local_id=j.local_id JOIN messages m ON m.id=a.message_id WHERE j.state IN ('queued','running','publishing','paused') AND j.retry_at<=?1 AND j.local_id>?2 ORDER BY j.local_id LIMIT 64")?;
+            let mut q=c.prepare("SELECT j.local_id,a.message_id,COALESCE(a.hub,m.hub) FROM download_jobs j JOIN attachments a ON a.local_id=j.local_id JOIN messages m ON m.id=a.message_id WHERE (j.state IN ('queued','running','publishing','paused') OR (j.state='exporting' AND j.error IS NULL)) AND j.retry_at<=?1 AND j.local_id>?2 ORDER BY j.local_id LIMIT 64")?;
             let rows=q.query_map(params![now,after],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?.collect();rows
         })
     }
@@ -67,6 +67,7 @@ impl Store {
             let tx=c.transaction()?;
             tx.execute("INSERT OR IGNORE INTO download_jobs(local_id,partial,destination) VALUES(?,?,?)",params![id,partial,dest])?;
             tx.execute("UPDATE download_jobs SET state='queued',retry_at=0,error=NULL WHERE local_id=? AND state IN ('failed','expired','cancelled','paused')",[id])?;
+            tx.execute("UPDATE download_jobs SET error=NULL,retry_at=0 WHERE local_id=? AND state='exporting'",[id])?;
             tx.commit()
         })
     }
