@@ -4,6 +4,8 @@ mod appupdate;
 mod clip;
 mod commands;
 mod core;
+#[cfg(desktop)]
+mod diagnostics;
 mod keylog;
 mod link;
 mod media;
