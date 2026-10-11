@@ -202,7 +202,8 @@ impl Engine {
                         .file_name()
                         .is_some_and(|n| n == ".hubchat-downloads")
                     {
-                        hide_partial_dir(parent)?;
+                        // Visibility is cosmetic; some network volumes refuse attributes.
+                        let _ = hide_partial_dir(parent);
                     }
                     let _ = tokio::fs::OpenOptions::new()
                         .create(true)
