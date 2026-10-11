@@ -38,6 +38,9 @@ fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<DownloadJob> {
 const COLUMNS: &str =
     "local_id,partial,destination,state,attempt,confirmed,validator,updated_ms,digest,error,exported";
 impl Store {
+    pub(crate) fn transfer_peer(&self, id: &str) -> Result<Option<String>> {
+        self.with(|c| c.query_row("SELECT m.peer FROM attachments a JOIN messages m ON m.id=a.message_id WHERE a.local_id=?", [id], |r| r.get(0)).optional())
+    }
     pub fn download_job(&self, id: &str) -> Result<Option<DownloadJob>> {
         self.with(|c| {
             c.query_row(
@@ -68,8 +71,8 @@ impl Store {
     pub(crate) fn restart_missing_download(&self, id: &str) -> Result<()> {
         self.with(|c| {
             let tx=c.transaction()?;
-            tx.execute("UPDATE download_jobs SET state='queued',confirmed=0,validator=NULL,digest=NULL,error=NULL,exported=0 WHERE local_id=? AND state='done'",[id])?;
-            tx.execute("UPDATE attachments SET local_path=NULL WHERE local_id=?",[id])?;
+            let n = tx.execute("UPDATE download_jobs SET state='queued',confirmed=0,validator=NULL,digest=NULL,error=NULL,exported=0 WHERE local_id=? AND state='done'",[id])?;
+            if n > 0 { tx.execute("UPDATE attachments SET local_path=NULL WHERE local_id=?",[id])?; }
             tx.commit()
         })
     }

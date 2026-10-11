@@ -196,8 +196,18 @@ pub struct Hub {
     pub last_ok_at: Option<String>,
 }
 
+/// Durable public download state; no private paths or validators.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct DownloadStatus {
+    pub state: String,
+    pub confirmed: u64,
+    pub retry_at: u64,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Attachment {
+    pub download: Option<DownloadStatus>,
     pub local_id: String,
     pub hub_id: Option<String>,
     /// The hub `hub_id` belongs to (each hub has its own ids).
@@ -1175,13 +1185,17 @@ impl Store {
                 })?
                 .collect::<rusqlite::Result<_>>()?;
             let mut st = c.prepare(
-                "SELECT local_id, hub_id, hub, name, bytes, source, local_path, state, error, source_sha256, staged_path FROM attachments
-                 WHERE message_id=? ORDER BY position",
+                "SELECT a.local_id, a.hub_id, a.hub, a.name, a.bytes, a.source, a.local_path, a.state, a.error, a.source_sha256, a.staged_path, j.state, j.confirmed, j.retry_at, j.error FROM attachments a LEFT JOIN download_jobs j ON j.local_id=a.local_id
+                 WHERE a.message_id=? ORDER BY a.position",
             )?;
             for m in &mut msgs {
                 m.attachments = st
                     .query_map([&m.id], |r| {
                         Ok(Attachment {
+                            download: match r.get::<_, Option<String>>(11)? {
+                                Some(state) => Some(DownloadStatus {state, confirmed:r.get(12)?, retry_at:r.get(13)?, error:r.get(14)?}),
+                                None => None,
+                            },
                             local_id: r.get(0)?,
                             hub_id: r.get(1)?,
                             hub: r.get(2)?,

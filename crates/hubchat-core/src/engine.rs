@@ -1504,6 +1504,10 @@ impl Engine {
         if let Some(c) = transfers.get(local_id) {
             c.cancel();
         }
+        drop(transfers);
+        if let Some(peer) = self.store.transfer_peer(local_id)? {
+            self.host.event(Event::Chat { peer });
+        }
         Ok(())
     }
 

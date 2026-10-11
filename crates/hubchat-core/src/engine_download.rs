@@ -138,6 +138,13 @@ impl Engine {
         if a.hub_id.is_none() || a.hub.as_ref().or(m.hub.as_ref()).is_none() {
             return Err(Error::Invalid("not on a hub".into()));
         }
+        // This synchronous admission runs on the shell's blocking pool. Check
+        // platform URIs as well as files before reusing a completed request.
+        if let Some(previous) = self.store.download_job(local_id)? {
+            if previous.state == "done" && self.host.open_source(&previous.destination).is_err() {
+                self.store.restart_missing_download(local_id)?;
+            }
+        }
         let dir = self.host.download_dir();
         let part = dir
             .join(".hubchat-downloads")
@@ -272,8 +279,12 @@ impl Engine {
                 let store = self.store.clone();
                 let lid = local_id.to_owned();
                 let attempt = job.attempt;
+                let checkpoint_host = self.host.clone();
+                let peer = m.peer.clone();
                 let save = Arc::new(move |cp: &DownloadCheckpoint| {
-                    store.download_checkpoint(&lid, attempt, cp)
+                    store.download_checkpoint(&lid, attempt, cp)?;
+                    checkpoint_host.event(Event::Chat { peer: peer.clone() });
+                    Ok(())
                 });
                 let host = self.host.clone();
                 let lid = local_id.to_owned();
@@ -303,6 +314,7 @@ impl Engine {
                     .await?;
             }
             self.finish_download(&job, a.bytes, &dir, &a.name).await?;
+            self.host.event(Event::Chat { peer: m.peer.clone() });
             let publication = self
                 .store
                 .download_job(local_id)?
@@ -495,6 +507,33 @@ mod tests {
             .unwrap();
         lid
     }
+    #[test]
+    fn queued_download_projection_survives_reopen_and_keeps_private_paths_hidden() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("store.db");
+        let store = Arc::new(Store::open(&db).unwrap());
+        let lid = attach(&store, "http://127.0.0.1:9", 9 * 1024 * 1024);
+        let e = fixture(store.clone(), dir.path(), "http://127.0.0.1:9");
+        let queued = e.queue_download("message", &lid).unwrap();
+        assert_eq!(queued.state, "queued");
+        assert!(!PathBuf::from(&queued.partial).exists());
+        let j = store.begin_download(&lid, &queued.partial, &queued.destination).unwrap();
+        store.download_checkpoint(&lid, j.attempt, &DownloadCheckpoint {
+            confirmed: 8 * 1024 * 1024, validator: Some("private-validator".into()), updated_ms: 1,
+        }).unwrap();
+        drop(e); drop(store);
+        let store = Store::open(&db).unwrap();
+        let m = store.message("message").unwrap().unwrap();
+        let d = m.attachments[0].download.as_ref().unwrap();
+        assert_eq!(d.state, "running");
+        assert_eq!(d.confirmed, 8 * 1024 * 1024);
+        let public = serde_json::to_string(&m).unwrap();
+        assert!(!public.contains("private-validator"));
+        assert!(!public.contains(".hubchat-downloads"));
+        store.cancel_download(&lid).unwrap();
+        assert_eq!(store.message("message").unwrap().unwrap().attachments[0].download.as_ref().unwrap().state, "cancelled");
+    }
+
     async fn headers(s: &mut tokio::net::TcpStream) -> String {
         let mut out = Vec::new();
         while !out.ends_with(b"\r\n\r\n") {
@@ -964,6 +1003,7 @@ mod tests {
                 PathBuf::from("content://downloads/proof")
             );
         }
+        assert_eq!(e.queue_download("message", &lid).unwrap().state, "done");
         let job = store.download_job(&lid).unwrap().unwrap();
         assert!(job.exported);
         assert_eq!(job.state, "done");
@@ -974,6 +1014,11 @@ mod tests {
                 .as_deref(),
             Some("content://downloads/proof")
         );
+        std::fs::remove_file(dir.path().join("public.bin")).unwrap();
+        let missing = e.queue_download("message", &lid).unwrap();
+        assert_eq!(missing.state, "queued");
+        assert_eq!(missing.checkpoint.confirmed, 0);
+        assert!(store.message("message").unwrap().unwrap().attachments[0].local_path.is_none());
     }
     #[tokio::test]
     async fn damaged_publication_restarts_from_zero_and_preserves_external_files() {
