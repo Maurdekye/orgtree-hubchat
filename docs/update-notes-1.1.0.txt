@@ -1,0 +1,1 @@
+Large files now get through reliably: uploads and downloads survive closing Hubchat, a lost connection or a hub restart, and continue where they stopped. Transfers only notify you when a file fails.
