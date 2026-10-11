@@ -626,14 +626,23 @@ impl HubClient {
                 out.flush().await?;
                 out.sync_data().await?;
                 drop(out);
-                tokio::fs::rename(&part, dest).await?;
                 Ok(done)
             })
             .await;
-        if matches!(result, Err(Error::Cancelled)) {
-            let _ = tokio::fs::remove_file(&part).await;
+        match result {
+            Ok(done) => {
+                // The complete flushed file now wins the cancellation race.
+                // Never publish it inside a future that can return Cancelled.
+                tokio::fs::rename(&part, dest).await?;
+                Ok(done)
+            }
+            Err(e) => {
+                if matches!(e, Error::Cancelled) {
+                    let _ = tokio::fs::remove_file(&part).await;
+                }
+                Err(e)
+            }
         }
-        result
     }
 
     pub(crate) async fn post_json<B: Serialize + ?Sized, R: serde::de::DeserializeOwned>(

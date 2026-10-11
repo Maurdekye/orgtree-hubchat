@@ -25,7 +25,18 @@ async fn request(s: &mut TcpStream) -> String {
         }
         assert!(buf.len() < 16384)
     }
-    String::from_utf8(buf).unwrap()
+    let headers = String::from_utf8(buf).unwrap();
+    let length = headers
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().unwrap())
+        })
+        .unwrap_or(0);
+    let mut body = vec![0; length];
+    s.read_exact(&mut body).await.unwrap();
+    headers
 }
 async fn response(s: &mut TcpStream, status: u16, value: serde_json::Value) {
     let body = value.to_string();
