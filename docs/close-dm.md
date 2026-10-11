@@ -41,6 +41,13 @@ does not restore a hidden DM. Existing draft unmount handling flushes typed text
 
 ## Verification
 
+Measured on 2026-10-11: the command below exited 0 with 31 store unit tests
+passing, including all six Close DM tests; compilation took 1m 58s and tests
+took 0.47s. The 97 other unit tests were filtered out. Integration-test binaries
+compiled but ran zero tests because of the `store::` filter; they are not pass
+claims. Typecheck exited 0, and the isolated browser proof passed all 22 checks
+with no browser errors. Both menu screenshots were inspected.
+
 `cargo test --locked -p hubchat-core store:: -j2` covers Close DM's retained
 history/files/drafts/custody, new incoming versus duplicate/history/receipt paths,
 read-on-another-device incoming, persistent restart, device isolation, identity
