@@ -114,6 +114,7 @@ export interface DownloadStatus {
   error: string | null;
 }
 export interface Attachment {
+  upload_confirmed?: number;
   download?: DownloadStatus | null;
   local_id: string;
   hub_id: string | null;

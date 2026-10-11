@@ -142,9 +142,11 @@ export function attView(a: Attachment, m: Message, prog?: { done: number; total:
   // sent from this device (its file is here); a message we sent from another
   // device of this identity has none, and downloads like a received one
   if (m.outgoing && a.source) {
+    const uploaded = a.state === "uploading" && prog ? prog.done : a.upload_confirmed ?? 0;
+    const uploadPct = a.bytes ? Math.min(100, Math.floor(100 * uploaded / a.bytes)) : 0;
     switch (a.state) {
-      case "uploading": return { st: "busy", ic: "upload", bar: pct, cancel: true, sub: prog ? "Uploading · " + bytes(prog.done) + " of " + bytes(prog.total || a.bytes) : "Uploading · " + size };
-      case "pending": return { st: "busy", ic: "upload", bar: 0, cancel: true, sub: "Waiting to upload · " + size };
+      case "uploading": return { st: "busy", ic: "upload", bar: uploadPct, cancel: true, sub: prog ? "Uploading · " + bytes(prog.done) + " of " + bytes(prog.total || a.bytes) : "Uploading · " + bytes(uploaded) + " of " + size };
+      case "pending": return { st: "busy", ic: "upload", bar: uploadPct, cancel: true, sub: "Waiting to upload · " + bytes(a.upload_confirmed ?? 0) + " of " + size };
       case "failed": return { st: "bad", ic: "error", retry: "send", sub: "Upload failed" + (a.error ? " (" + a.error + ")" : "") + " · " + size };
       case "cancelled": return { st: "bad", ic: "close", retry: "send", sub: "Upload cancelled · " + size };
       default: return { st: "local", ic: "file", sub: size };
