@@ -147,6 +147,9 @@ pub trait Host: Send + Sync + 'static {
     /// Best-effort removal of the platform's replay receipt, after the core
     /// committed the exported pointer. A failed cleanup must not fail a save.
     fn download_export_committed(&self, _key: &str) -> std::io::Result<()> { Ok(()) }
+    /// Remove only abandoned private platform work; never remove public bytes.
+    /// Desktop destinations are public, so the default deliberately does nothing.
+    fn download_export_abandoned(&self, _key:&str, _source:&str)->std::io::Result<()> { Ok(()) }
     /// Private, persistent storage. Shells override this with their app-data folder.
     fn staging_dir(&self) -> PathBuf {
         self.download_dir().join(".hubchat-outbox")

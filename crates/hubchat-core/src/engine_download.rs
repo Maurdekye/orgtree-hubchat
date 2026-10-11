@@ -1562,6 +1562,114 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn abandoned_exports_survive_reopen_skip_writers_and_retry_native_cleanup() {
+        struct AbandonedHost {
+            dir: PathBuf,
+            calls: std::sync::Mutex<Vec<String>>,
+            fail: std::sync::atomic::AtomicBool,
+        }
+        impl Host for AbandonedHost {
+            fn event(&self, _: Event) {}
+            fn download_dir(&self) -> PathBuf {
+                self.dir.clone()
+            }
+            fn open_source(&self, p: &str) -> std::io::Result<std::fs::File> {
+                std::fs::File::open(p)
+            }
+            fn download_export_abandoned(&self, key: &str, source: &str) -> std::io::Result<()> {
+                assert!(key.ends_with("-digest"));
+                self.calls.lock().unwrap().push(source.into());
+                if self.fail.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                    return Err(std::io::Error::other("native cleanup unavailable"));
+                }
+                if !source.is_empty() {
+                    std::fs::remove_file(source)?;
+                }
+                Ok(())
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("db");
+        let source = dir.path().join("private.bin");
+        std::fs::write(&source, b"abc").unwrap();
+        let store = Arc::new(Store::open(&db).unwrap());
+        let lid = attach(&store, "http://127.0.0.1:9", 3);
+        let j = store
+            .begin_download(&lid, "unused.part", &source.to_string_lossy())
+            .unwrap();
+        store
+            .download_publishing(&lid, j.attempt, "digest", &source.to_string_lossy())
+            .unwrap();
+        store
+            .download_done(&lid, j.attempt, &source.to_string_lossy())
+            .unwrap();
+        // Deletion while native copying has started must leave a durable intent.
+        store.delete_message("message").unwrap();
+        drop(store);
+        let store = Arc::new(Store::open(&db).unwrap());
+        let host = Arc::new(AbandonedHost {
+            dir: dir.path().into(),
+            calls: Default::default(),
+            fail: true.into(),
+        });
+        let e = fixture_host(store.clone(), "http://127.0.0.1:9", host.clone());
+        e.transfers
+            .lock()
+            .unwrap()
+            .insert(lid.clone(), CancelFlag::default());
+        e.clean_downloads(100).await;
+        assert!(host.calls.lock().unwrap().is_empty());
+        assert_eq!(store.abandoned_exports(30100).unwrap().len(), 1);
+        e.transfers.lock().unwrap().remove(&lid);
+        e.clean_downloads(30100).await;
+        assert!(source.exists());
+        assert!(store.abandoned_exports(30100).unwrap().is_empty());
+        e.clean_downloads(60100).await;
+        assert!(!source.exists());
+        assert!(store.abandoned_exports(90100).unwrap().is_empty());
+
+        // A damaged export reset abandons its receipt, but protects a destination
+        // still referenced by the retry. Reusing the same digest protects both.
+        let lid = attach(&store, "http://127.0.0.1:9", 3);
+        std::fs::write(&source, b"new").unwrap();
+        let j = store
+            .begin_download(&lid, "unused.part", &source.to_string_lossy())
+            .unwrap();
+        store
+            .download_publishing(&lid, j.attempt, "digest", &source.to_string_lossy())
+            .unwrap();
+        store
+            .download_done(&lid, j.attempt, &source.to_string_lossy())
+            .unwrap();
+        store.reset_damaged_download(&lid, j.attempt).unwrap();
+        assert_eq!(store.abandoned_exports(0).unwrap().len(), 1);
+        let j = store
+            .begin_download(&lid, "unused.part", &source.to_string_lossy())
+            .unwrap();
+        store
+            .download_publishing(&lid, j.attempt, "digest", &source.to_string_lossy())
+            .unwrap();
+        let calls = host.calls.lock().unwrap().len();
+        e.clean_downloads(100000).await;
+        assert_eq!(
+            host.calls.lock().unwrap().len(),
+            calls,
+            "same-key receipt still needed"
+        );
+        store
+            .download_done(&lid, j.attempt, &source.to_string_lossy())
+            .unwrap();
+        store.reset_damaged_download(&lid, j.attempt).unwrap();
+        e.clean_downloads(130000).await;
+        assert_eq!(
+            host.calls.lock().unwrap().last().unwrap(),
+            "",
+            "referenced source preserved"
+        );
+        assert_eq!(std::fs::read(&source).unwrap(), b"new");
+        assert!(store.abandoned_exports(160000).unwrap().is_empty());
+    }
+    #[tokio::test]
     async fn orphan_scan_pages_old_files_and_preserves_referenced_recent_and_unrelated_bytes() {
         let dir=tempfile::tempdir().unwrap();let root=dir.path().join(".hubchat-downloads");
         std::fs::create_dir(&root).unwrap();

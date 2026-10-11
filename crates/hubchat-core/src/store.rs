@@ -239,6 +239,24 @@ CREATE TABLE body_missing (
  id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
  hub TEXT NOT NULL,PRIMARY KEY(id,hub)
 );"#,
+    // 13: abandoning a platform publication must survive row deletion/crash.
+    r#"
+CREATE TABLE export_abandoned (
+ key TEXT NOT NULL,source TEXT NOT NULL,local_id TEXT NOT NULL,
+ retry_at INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(key,source)
+);
+CREATE INDEX export_abandoned_due ON export_abandoned(retry_at,key,source);
+CREATE TRIGGER abandon_export_delete BEFORE DELETE ON download_jobs
+WHEN OLD.digest IS NOT NULL AND OLD.state IN ('publishing','exporting') BEGIN
+ INSERT OR IGNORE INTO export_abandoned(key,source,local_id)
+ VALUES(OLD.local_id||'-'||OLD.digest,OLD.destination,OLD.local_id);
+END;
+CREATE TRIGGER abandon_export_digest AFTER UPDATE OF digest ON download_jobs
+WHEN OLD.digest IS NOT NULL AND OLD.digest IS NOT NEW.digest AND OLD.state IN ('publishing','exporting') BEGIN
+ INSERT OR IGNORE INTO export_abandoned(key,source,local_id)
+ VALUES(OLD.local_id||'-'||OLD.digest,OLD.destination,OLD.local_id);
+END;
+"#,
 ];
 
 pub struct Store {

@@ -110,6 +110,38 @@ impl Engine {
             .export_cleanup_finished(row, receipt && bytes, now);
     }
     pub(super) async fn clean_downloads(&self, now: u64) {
+        if let Ok(rows) = self.store.abandoned_exports(now) {
+            for row in rows {
+                // Advance skipped claims as well, so busy heads cannot starve later work.
+                let _ = self.store.abandoned_export_finished(&row, false, now);
+                let Some(_claim) = claim(self, &row.local_id) else {
+                    continue;
+                };
+                if self.store.export_still_needed(&row.key).unwrap_or(true) {
+                    continue;
+                }
+                let _publication = self.download_publication.lock().await;
+                let source = if self
+                    .store
+                    .download_destination_used(&row.source)
+                    .unwrap_or(true)
+                {
+                    String::new()
+                } else {
+                    row.source.clone()
+                };
+                let host = self.host.clone();
+                let key = row.key.clone();
+                let ok = matches!(
+                    tokio::task::spawn_blocking(
+                        move || host.download_export_abandoned(&key, &source)
+                    )
+                    .await,
+                    Ok(Ok(()))
+                );
+                let _ = self.store.abandoned_export_finished(&row, ok, now);
+            }
+        }
         if let Ok(rows) = self.store.export_cleanup_due(now, None) {
             for row in rows {
                 let Some(_claim) = claim(self, &row.local_id) else {

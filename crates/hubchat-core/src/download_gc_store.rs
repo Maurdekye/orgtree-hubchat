@@ -7,6 +7,45 @@ pub(crate) struct ExportCleanup {
 }
 
 impl Store {
+    pub(crate) fn abandoned_exports(&self, now: u64) -> Result<Vec<ExportCleanup>> {
+        self.with(|c| {
+            let mut q=c.prepare("SELECT key,source,local_id FROM export_abandoned WHERE retry_at<=? ORDER BY retry_at,key,source LIMIT 32")?;
+            let rows=q.query_map([now],|r|Ok(ExportCleanup{key:r.get(0)?,source:r.get(1)?,local_id:r.get(2)?}))?.collect(); rows
+        })
+    }
+    pub(crate) fn export_still_needed(&self, key: &str) -> Result<bool> {
+        self.with(|c|c.query_row("SELECT EXISTS(SELECT 1 FROM download_jobs WHERE local_id||'-'||digest=? AND state!='done')",[key],|r|r.get(0)))
+    }
+    pub(crate) fn download_destination_used(&self, path: &str) -> Result<bool> {
+        self.with(|c| {
+            c.query_row(
+                "SELECT EXISTS(SELECT 1 FROM download_jobs WHERE destination=?)",
+                [path],
+                |r| r.get(0),
+            )
+        })
+    }
+    pub(crate) fn abandoned_export_finished(
+        &self,
+        row: &ExportCleanup,
+        ok: bool,
+        now: u64,
+    ) -> Result<()> {
+        self.with(|c| {
+            if ok {
+                c.execute(
+                    "DELETE FROM export_abandoned WHERE key=? AND source=?",
+                    params![row.key, row.source],
+                )?;
+            } else {
+                c.execute(
+                    "UPDATE export_abandoned SET retry_at=? WHERE key=? AND source=?",
+                    params![now + 30000, row.key, row.source],
+                )?;
+            }
+            Ok(())
+        })
+    }
     pub(crate) fn export_cleanup_due(
         &self,
         now: u64,
