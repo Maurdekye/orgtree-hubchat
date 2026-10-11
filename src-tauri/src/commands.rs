@@ -536,11 +536,12 @@ pub fn hc_cancel_transfer(local_id: String) -> R<()> {
 }
 
 #[tauri::command]
-pub async fn hc_download(message_id: String, local_id: String) -> R<String> {
+pub async fn hc_download(message_id: String, local_id: String) -> R<()> {
     let e = engine()?;
-    let (mid, lid) = (message_id.clone(), local_id.clone());
-    let path = on_core(async move { e.download(&mid, &lid).await.map_err(s) }).await?;
-    Ok(path.to_string_lossy().into_owned())
+    // Admission only. A scheduler-owned worker finishes even if this command
+    // or its originating view disappears; no network await in the command.
+    tokio::task::spawn_blocking(move || e.queue_download(&message_id, &local_id).map(|_| ()).map_err(s))
+        .await.map_err(s)?
 }
 
 /// A hubchat:// link the system opened us with (Android), taken once.
