@@ -1666,8 +1666,8 @@ impl Engine {
             Ok(r) => {
                 if !self.store.mark_sent(id, &url, &r.received_at)? {
                     // deleted while it was on its way: the hub's copy goes too
-                    self.store.queue_deletes(&url, &[m.id.clone()], &now())?;
-                    self.send_deletes_now(&[url.clone()]).await;
+                    self.store.queue_deletes(&url, std::slice::from_ref(&m.id), &now())?;
+                    self.send_deletes_now(std::slice::from_ref(&url)).await;
                 }
                 self.host.event(Event::Chat { peer: m.peer });
                 Ok(true)
@@ -2225,7 +2225,7 @@ fn pick_hub(
         .iter()
         .find(|u| Some(**u) == last)
         .or(best.first())?;
-    get(*url).cloned()
+    get(url).cloned()
 }
 
 /// `name`, or `name (2)`, `name (3)`... so a download never overwrites.
