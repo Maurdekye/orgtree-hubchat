@@ -5,6 +5,8 @@ mod clip;
 mod commands;
 mod core;
 #[cfg(desktop)]
+mod crash;
+#[cfg(desktop)]
 mod diagnostics;
 mod keylog;
 mod link;
@@ -463,6 +465,11 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 use tauri::Manager;
+                // first, so a panic anywhere after this leaves a report
+                crash::install(
+                    &app.path().app_data_dir()?,
+                    &app.package_info().version.to_string(),
+                );
                 #[cfg(windows)]
                 if let Some(window) = app.get_webview_window("main") {
                     // Preserve the native resource mask for Task Manager.
