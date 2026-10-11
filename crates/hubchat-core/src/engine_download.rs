@@ -236,6 +236,10 @@ impl Engine {
             id: local_id.into(),
             attempt: job.attempt,
         };
+        self.host.event(Event::Transfer {
+            local_id: local_id.into(), message_id: message_id.into(), upload: false,
+            done: job.checkpoint.confirmed, total: a.bytes,
+        });
         self.host.event(Event::Chat {
             peer: m.peer.clone(),
         });
@@ -280,23 +284,15 @@ impl Engine {
                 let lid = local_id.to_owned();
                 let attempt = job.attempt;
                 let checkpoint_host = self.host.clone();
-                let peer = m.peer.clone();
+                let mid = message_id.to_owned();
+                let total = a.bytes;
                 let save = Arc::new(move |cp: &DownloadCheckpoint| {
                     store.download_checkpoint(&lid, attempt, cp)?;
-                    checkpoint_host.event(Event::Chat { peer: peer.clone() });
+                    checkpoint_host.event(Event::Transfer {
+                        local_id: lid.clone(), message_id: mid.clone(), upload: false,
+                        done: cp.confirmed, total,
+                    });
                     Ok(())
-                });
-                let host = self.host.clone();
-                let lid = local_id.to_owned();
-                let mid = message_id.to_owned();
-                let progress: crate::hub::Progress = Arc::new(move |done, total| {
-                    host.event(Event::Transfer {
-                        local_id: lid.clone(),
-                        message_id: mid.clone(),
-                        upload: false,
-                        done,
-                        total,
-                    })
                 });
                 client
                     .download_resumable(
@@ -308,7 +304,7 @@ impl Engine {
                             checkpoint: job.checkpoint.clone(),
                         },
                         save,
-                        Some(progress),
+                        None, // Confirmed checkpoint events above, not wire bytes.
                         cancel.clone(),
                     )
                     .await?;

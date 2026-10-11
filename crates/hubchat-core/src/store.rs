@@ -1893,3 +1893,7 @@ pub use download_store::DownloadJob;
 
 #[path = "scheduler_store.rs"]
 mod scheduler_store;
+
+#[path = "transfer_view.rs"]
+mod transfer_view;
+pub use transfer_view::{TransferView, TransferPage};
