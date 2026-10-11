@@ -31,7 +31,8 @@ the message and returns it unchanged, under `meta`, in every envelope it
 gives out (poll, sync, history), only when it was set. A repeated send with
 the same id keeps the first `meta`. The hub doesn't read it.
 
-Clients send `meta` only to hubs that list the feature. Everything in it is
+Hubchat sends `meta` only to hubs that list the feature. Orgtree sends it to
+every hub: a mail hub without the feature ignores the key. Everything in it is
 also written as plain text in the body (below), so a hub without `meta`, an
 older Hubchat (1.1.0 and earlier), Orgtree and any other client still read
 the question, its options and every answer.
