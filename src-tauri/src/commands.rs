@@ -521,8 +521,8 @@ pub fn hc_message(id: String) -> R<Option<Message>> {
 }
 
 #[tauri::command]
-pub fn hc_send(msg: NewOutgoing) -> R<()> {
-    engine()?.send(msg).map_err(s)
+pub async fn hc_send(msg: NewOutgoing) -> R<()> {
+    engine()?.send(msg).await.map_err(s)
 }
 
 #[tauri::command]

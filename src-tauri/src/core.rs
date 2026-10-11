@@ -170,6 +170,7 @@ fn must_wipe(owner: Option<&str>, has_data: bool, new: &str, brand_new: bool) ->
 }
 
 struct ShellHost {
+    staging: PathBuf,
     app: OnceLock<AppHandle>,
     platform: Arc<dyn Platform>,
     /// The UI is on screen and focused.
@@ -251,6 +252,7 @@ impl Host for ShellHost {
     fn download_dir(&self) -> PathBuf {
         self.platform.download_dir()
     }
+    fn staging_dir(&self) -> PathBuf { self.staging.clone() }
 }
 
 static CORE: OnceLock<Core> = OnceLock::new();
@@ -283,6 +285,7 @@ pub fn init(dir: PathBuf, platform: Arc<dyn Platform>) -> Result<&'static Core, 
     let rt = rx.recv().map_err(|e| e.to_string())?;
     let on = |k: &str| store.meta(k).ok().flatten().as_deref() != Some("off");
     let host = Arc::new(ShellHost {
+        staging: dir.join("outbox"),
         app: OnceLock::new(),
         platform,
         foreground: AtomicBool::new(false),
