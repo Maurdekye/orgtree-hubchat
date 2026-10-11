@@ -22,6 +22,9 @@ pub enum Error {
     /// A publication recovery read was temporarily refused by local storage.
     #[error("Cannot read the saved file yet; waiting to retry")]
     LocalBusy,
+    /// Android paused file work while ordinary message checks may still run.
+    #[error("File paused; open Hubchat to resume.")]
+    FilePaused,
     #[error("cancelled")]
     Cancelled,
     #[error("i/o: {0}")]

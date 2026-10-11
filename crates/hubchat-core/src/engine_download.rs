@@ -170,6 +170,7 @@ impl Engine {
         local_id: &str,
         reserved: Option<transfer_slots::Permit>,
     ) -> Result<PathBuf> {
+        if self.file_work_paused() { return Err(Error::FilePaused); }
         let m = self
             .store
             .message(message_id)?
@@ -247,8 +248,7 @@ impl Engine {
             let _slot = match reserved {
                 Some(slot) => slot,
                 None => {
-                    cancel
-                        .run(async { Ok(self.file_slots.acquire(&hub).await) })
+                    self.file_request(cancel.run(async { Ok(self.file_slots.acquire(&hub).await) }))
                         .await?
                 }
             };
@@ -294,7 +294,7 @@ impl Engine {
                     });
                     Ok(())
                 });
-                client
+                self.file_request(client
                     .download_resumable(
                         &self.me,
                         DownloadSpec {
@@ -306,7 +306,7 @@ impl Engine {
                         save,
                         None, // Confirmed checkpoint events above, not wire bytes.
                         cancel.clone(),
-                    )
+                    ))
                     .await?;
             }
             self.finish_download(&job, a.bytes, &dir, &a.name).await?;
@@ -319,7 +319,7 @@ impl Engine {
         }
         .await;
         if let Err(ref e) = result {
-            let state = if cancel.is_cancelled() || super::engine_scheduler::transient(e) {
+            let state = if matches!(e,Error::FilePaused) || cancel.is_cancelled() || super::engine_scheduler::transient(e) {
                 "paused"
             } else if e.status() == Some(410) {
                 "expired"
@@ -794,6 +794,7 @@ mod tests {
         let lid = attach(&store, &url, 3);
         let e = fixture(store.clone(), dir.path(), &url);
         let dest = dir.path().join("preview.png");
+        e.set_files_paused(true); // Pictures are independent of background file jobs.
         let file_one = e.file_slots.try_acquire(&url).unwrap();
         let file_two = e.file_slots.try_acquire("another-hub").unwrap();
         let first = e.preview_slots.try_acquire().unwrap();
@@ -875,6 +876,115 @@ mod tests {
         ));
         drop(reserved);
         assert_eq!(std::fs::read(&dest).unwrap(), b"abc");
+    }
+
+    #[tokio::test]
+    async fn background_mail_check_keeps_files_paused_then_resumes_saved_range() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        store.add_hub(&url, "now").unwrap();
+        let total = 9 * 1024 * 1024;
+        let lid = attach(&store, &url, total);
+        store.set_state("message", "sent", None).unwrap();
+        store
+            .queue_outgoing(
+                &NewOutgoing {
+                    id: "text".into(),
+                    peer: "other-text".into(),
+                    body: "ordinary mail".into(),
+                    kind: None,
+                    reply_to: None,
+                    attachments: vec![],
+                },
+                "now",
+            )
+            .unwrap();
+        let e = fixture(store.clone(), dir.path(), &url);
+        e.set_files_paused(true);
+        e.queue_download("message", &lid).unwrap();
+        let (closed, closed_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.unwrap();
+            let h = headers(&mut s).await;
+            assert!(
+                h.starts_with("POST /api/send "),
+                "file pause must still allow ordinary mail"
+            );
+            let length: usize = h
+                .lines()
+                .find_map(|l| {
+                    l.split_once(':')
+                        .filter(|(n, _)| n.eq_ignore_ascii_case("content-length"))
+                        .map(|(_, v)| v.trim().parse().unwrap())
+                })
+                .unwrap();
+            let mut posted = vec![0; length];
+            s.read_exact(&mut posted).await.unwrap();
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&posted).unwrap()["id"],
+                "text"
+            );
+            let body = r#"{"id":"text","received_at":"now"}"#;
+            s.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+            drop(s);
+            let (mut s, _) = listener.accept().await.unwrap();
+            let h = headers(&mut s).await;
+            assert!(
+                h.starts_with("GET /api/attachments/remote-file"),
+                "unexpected request: {}",
+                h.lines().next().unwrap_or("")
+            );
+            s.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {total}\r\nETag: \"fixed\"\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+            s.write_all(&vec![19; 8 * 1024 * 1024]).await.unwrap();
+            let mut b = [0];
+            assert_eq!(s.read(&mut b).await.unwrap(), 0);
+            closed.send(()).unwrap();
+            let (mut s, _) = listener.accept().await.unwrap();
+            let h = headers(&mut s).await.to_lowercase();
+            assert!(h.contains("range: bytes=8388608-"));
+            s.write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Length: 1048576\r\nContent-Range: bytes 8388608-9437183/9437184\r\nETag: \"fixed\"\r\nConnection: close\r\n\r\n").await.unwrap();
+            s.write_all(&vec![19; 1024 * 1024]).await.unwrap();
+        });
+        let scheduler = tokio::spawn(e.clone().sender_loop());
+        until(|| store.message("text").unwrap().unwrap().state == "sent").await;
+        assert_eq!(store.download_job(&lid).unwrap().unwrap().state, "queued");
+        assert_eq!(store.download_job(&lid).unwrap().unwrap().attempt, 0);
+        e.set_files_paused(false);
+        until(|| {
+            store
+                .download_job(&lid)
+                .unwrap()
+                .unwrap()
+                .checkpoint
+                .confirmed
+                == 8 * 1024 * 1024
+        })
+        .await;
+        e.set_files_paused(true);
+        closed_rx.await.unwrap();
+        until(|| e.transfers.lock().unwrap().is_empty()).await;
+        assert_eq!(store.download_job(&lid).unwrap().unwrap().state, "paused");
+        e.set_suspended(true);
+        e.set_suspended(false); // A push check resumes mail only.
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        assert_eq!(store.download_job(&lid).unwrap().unwrap().attempt, 1);
+        assert!(store
+            .pending_transfer_failures(u64::MAX / 2)
+            .unwrap()
+            .is_empty());
+        e.set_files_paused(false);
+        until(|| store.download_job(&lid).unwrap().unwrap().state == "done").await;
+        let job = store.download_job(&lid).unwrap().unwrap();
+        assert_eq!(job.attempt, 2);
+        assert_eq!(
+            std::fs::read(job.destination).unwrap(),
+            vec![19; total as usize]
+        );
+        e.shutdown();
+        scheduler.await.unwrap();
+        server.await.unwrap();
     }
 
     #[tokio::test]

@@ -676,7 +676,7 @@ async fn shutdown_of_upload_is_resumable_and_has_no_failure_notice() {
     let server=tokio::spawn(async move {let(mut socket,_)=listener.accept().await.unwrap();request(&mut socket).await;ready.send(()).unwrap();let mut rest=Vec::new();socket.read_to_end(&mut rest).await.unwrap();});
     let pause=async {wait.await.unwrap();e.shutdown();};
     let (result,())=tokio::time::timeout(Duration::from_secs(3),async{tokio::join!(e.send_one_on("m",(url,client,1024)),pause)}).await.unwrap();
-    assert!(!result.unwrap());let m=store.message("m").unwrap().unwrap();assert_eq!(m.state,"queued");assert_eq!(m.attachments[0].state,"pending");
+    assert!(matches!(result,Err(Error::FilePaused)));let m=store.message("m").unwrap().unwrap();assert_eq!(m.state,"queued");assert_eq!(m.attachments[0].state,"pending");
     assert!(store.pending_transfer_failures(u64::MAX/2).unwrap().is_empty());server.await.unwrap();
 }
 
@@ -957,4 +957,63 @@ async fn legacy_sender_starts_new_session_and_uploads_snapshot_after_source_chan
     assert_eq!(m.state, "queued");
     assert_eq!(m.attachments[0].hub_id.as_deref(), Some("fresh"));
     assert!(m.attachments[0].staged_path.is_some());
+}
+
+#[tokio::test]
+async fn lifecycle_pause_closes_upload_without_cancelling_or_notifying() {
+    for whole_engine in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("source");
+        std::fs::write(&file, b"abc").unwrap();
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store
+            .queue_outgoing(&outgoing("file", &[(&file, 3)]), "now")
+            .unwrap();
+        let e = staged_engine(
+            store.clone(),
+            StageHost {
+                dir: dir.path().into(),
+                gate: None,
+            },
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client =
+            HubClient::new(HubAddress::parse(&listener.local_addr().unwrap().to_string()).unwrap());
+        let url = client.address().to_string();
+        let (entered, wait) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            assert!(request(&mut socket)
+                .await
+                .starts_with("POST /api/attachments"));
+            entered.send(()).unwrap();
+            let mut b = [0];
+            assert_eq!(socket.read(&mut b).await.unwrap(), 0);
+        });
+        let pause = async {
+            wait.await.unwrap();
+            if whole_engine {
+                e.set_suspended(true);
+            } else {
+                e.set_files_paused(true);
+            }
+        };
+        let (result, ()) = tokio::time::timeout(Duration::from_secs(3), async {
+            tokio::join!(e.send_one_on("file", (url, client, 1024)), pause)
+        })
+        .await
+        .unwrap();
+        assert!(matches!(result, Err(Error::FilePaused)));
+        server.await.unwrap();
+        let m = store.message("file").unwrap().unwrap();
+        assert_eq!(m.state, "queued");
+        assert_eq!(m.attachments[0].state, "pending");
+        assert!(m.attachments[0].staged_path.is_some());
+        assert!(store
+            .pending_transfer_failures(u64::MAX / 2)
+            .unwrap()
+            .is_empty());
+        assert!(e.transfers.lock().unwrap().is_empty());
+        assert!(e.send_writers.lock().unwrap().is_empty());
+    }
 }

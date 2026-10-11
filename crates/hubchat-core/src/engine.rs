@@ -219,6 +219,7 @@ pub struct Engine {
     active: std::sync::atomic::AtomicBool,
     /// Android push mode parks hub loops between foreground use and wake checks.
     suspended: tokio::sync::watch::Sender<bool>,
+    files_paused: tokio::sync::watch::Sender<bool>,
 }
 
 struct SendWriter<'a> { writers:&'a Mutex<std::collections::HashSet<String>>, id:String }
@@ -257,6 +258,7 @@ impl Engine {
             read_receipts: std::sync::atomic::AtomicBool::new(true),
             active: std::sync::atomic::AtomicBool::new(false),
             suspended: tokio::sync::watch::channel(false).0,
+            files_paused: tokio::sync::watch::channel(false).0,
             device: Mutex::new((
                 format!("hc-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]),
                 "Hubchat".into(),
@@ -656,6 +658,7 @@ impl Engine {
     /// Stop every hub connection and the sender (switching identity). The
     /// engine is not usable afterwards.
     pub fn shutdown(&self) {
+        self.set_files_paused(true);
         self.stopped
             .store(true, std::sync::atomic::Ordering::Relaxed);
         for (_, rt) in self.hubs.lock().unwrap().drain() {
@@ -1554,6 +1557,12 @@ impl Engine {
             )?;
             return Ok(true);
         }
+        let needs_file = m.body.len() as u64 > BODY_INLINE_MAX
+            || m.attachments.iter().any(|a| a.state != "uploaded" || a.hub.as_deref() != Some(&url));
+        if needs_file && self.file_work_paused() {
+            self.store.requeue_send(id)?;
+            return Err(Error::FilePaused);
+        }
         let m = match self.snapshot_legacy(m, &url).await {
             Ok(message) => message,
             Err(error) => {
@@ -1563,9 +1572,9 @@ impl Engine {
                 return Err(error);
             }
         };
-        if self.stopped.load(std::sync::atomic::Ordering::Relaxed) || *self.suspended.borrow() {
+        if needs_file && self.file_work_paused() {
             self.store.requeue_send(id)?;
-            return Ok(false);
+            return Err(Error::FilePaused);
         }
         let mut hub_ids = Vec::new();
         for a in &m.attachments {
@@ -1623,20 +1632,28 @@ impl Engine {
                     .unwrap()
                     .get(&url)
                     .is_some_and(|h| h.status.features.iter().any(|f| f == "uploads"));
-            let r = if resumable {
+            let r = self.file_request(async {
+              if resumable {
                 self.upload_resumable(&client, &url, a, file, progress, cancel.clone())
                     .await
             } else {
                 client
                     .upload(&self.me, file, &a.name, Some(progress), cancel.clone())
                     .await
-            };
+              }
+            }).await;
             self.transfers.lock().unwrap().remove(&a.local_id);
             match r {
                 Ok(meta) => {
                     self.store
                         .complete_upload(&a.local_id, &meta.id, &url)?;
                     hub_ids.push(meta.id);
+                }
+                Err(Error::FilePaused) => {
+                    self.store.pause_upload(&a.local_id)?;
+                    self.store.requeue_send(id)?;
+                    self.host.event(Event::Chat { peer:m.peer.clone() });
+                    return Err(Error::FilePaused);
                 }
                 Err(_) if cancel.is_cancelled()
                     && (self.stopped.load(std::sync::atomic::Ordering::Relaxed) || *self.suspended.borrow()) =>
@@ -1700,10 +1717,11 @@ impl Engine {
             .get(&url)
             .is_some_and(|h| h.status.features.iter().any(|f| f == "long_messages"));
         if long_ok && body.len() as u64 > BODY_INLINE_MAX {
-            match client
-                .upload_body(&self.me, std::mem::take(&mut body))
-                .await
-            {
+            match self.file_request(client.upload_body(&self.me, std::mem::take(&mut body))).await {
+                Err(Error::FilePaused) => {
+                    self.store.requeue_send(id)?;
+                    return Err(Error::FilePaused);
+                }
                 Ok(part) => body_part = Some(part),
                 Err(e) if matches!(e.status(), Some(413) | Some(422)) => {
                     self.fail(&m.peer, id, &e.to_string())?;
@@ -2379,3 +2397,6 @@ mod engine_bodies;
 
 #[path = "engine_legacy.rs"]
 mod engine_legacy;
+
+#[path = "engine_lifecycle.rs"]
+mod engine_lifecycle;

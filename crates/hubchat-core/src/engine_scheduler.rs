@@ -71,6 +71,7 @@ impl Engine {
                                 || m.attachments.iter().any(|a| {
                                     a.state != "uploaded" || a.hub.as_deref() != Some(&route.0)
                                 });
+                            if files && self.file_work_paused() { continue; }
                             let permit = if files {
                                 let Some(p) = self.file_slots.try_acquire(&route.0) else {
                                     continue;
@@ -88,6 +89,7 @@ impl Engine {
                                     Ok(false) => {
                                         let _ = e.store.defer_send(&id, &hub, unix_ms());
                                     }
+                                    Err(Error::FilePaused) => {},
                                     Err(ref err) if transient(err) => {
                                         let _ = e.store.defer_send(&id, &hub, unix_ms());
                                     }
@@ -169,6 +171,7 @@ impl Engine {
         download_cursor: &mut String,
     ) -> bool {
         let mut more = false;
+        if self.file_work_paused() { return false; }
         if workers.len() < 3 {
             if let Ok(rows) = self.store.queued_downloads(download_cursor, unix_ms()) {
                 more |= rows.len() == 64;
