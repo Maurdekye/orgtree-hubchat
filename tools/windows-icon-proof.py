@@ -181,6 +181,7 @@ def main():
                     native.save(args.output / f"{label}-{size}-native.png")
                     roundtrip.save(args.output / f"{label}-{size}-roundtrip.png")
                     equal = native.tobytes() == roundtrip.tobytes()
+                    assert equal, f"alpha-aware drawing changed for {label} {size}px"
                     results.append({"source": label, "size": size, "native_equals_roundtrip": equal,
                                     "native_sha256": hashlib.sha256(native.tobytes()).hexdigest(),
                                     "roundtrip_sha256": hashlib.sha256(roundtrip.tobytes()).hexdigest()})
@@ -188,15 +189,18 @@ def main():
                     if size == 32:
                         for draw_size in [16, 20, 24]:
                             before, after = render(icon, draw_size), render(converted, draw_size)
+                            assert before.tobytes() == after.tobytes(), "alpha-aware scaling control failed"
                             results.append({"source": label, "size": size, "draw_size": draw_size,
                                             "scaled_native_equals_roundtrip": before.tobytes() == after.tobytes()})
                             rows.append((f"{label} 32->{draw_size}", before, after))
                         before, after = render(icon, size, 1), render(converted, size, 1)
+                        assert before.tobytes() != after.tobytes(), "malformed mask reproduction did not run"
                         rows.append((f"{label} AND mask", before, after))
                         results.append({"source": label, "size": size,
                                         "mask_native_equals_roundtrip": before.tobytes() == after.tobytes()})
                         for depth in [24, 32]:
                             before, after = render(icon, 16, list_depth=depth), render(converted, 16, list_depth=depth)
+                            assert (before.tobytes() == after.tobytes()) == (depth == 32), "image-list control failed"
                             before.save(args.output / f"{label}-list{depth}-native.png")
                             after.save(args.output / f"{label}-list{depth}-roundtrip.png")
                             rows.append((f"{label} list{depth}", before, after))
@@ -223,7 +227,13 @@ def main():
                             assert before.tobytes() != after.tobytes()
                             before.save(args.output / f"{label}-window-before.png")
                             after.save(args.output / f"{label}-window-after.png")
-                            rows.append((f"{label} window fix", before, after))
+                            window_sheet = Image.new("RGB", (220, 115), "white")
+                            window_draw = ImageDraw.Draw(window_sheet)
+                            window_draw.text((8, 5), "Converted handle", fill="black")
+                            window_draw.text((120, 5), "Native handle", fill="black")
+                            for x, img in [(20, before), (130, after)]:
+                                window_sheet.paste(img.resize((72, 72), Image.Resampling.NEAREST), (x, 30))
+                            window_sheet.save(args.output / f"{label}-window-comparison.png")
                             results.append({"source": label, "window_assignment_matches_native": True,
                                             "converted_window_differs": True})
                         finally:
@@ -247,6 +257,10 @@ def main():
             sheet.paste(img.resize((72, 72), Image.Resampling.NEAREST), (x, y))
     sheet.save(args.output / "comparison.png")
     (args.output / "result.json").write_text(json.dumps(results, indent=2) + "\n")
+    metadata = {"ico_sha256": hashlib.sha256(ico.read_bytes()).hexdigest(),
+                "executable_sha256": hashlib.sha256(args.exe.read_bytes()).hexdigest() if args.exe else None,
+                "cases": len(results)}
+    (args.output / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     print(json.dumps(results, indent=2))
 
 
