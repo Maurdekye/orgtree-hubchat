@@ -207,7 +207,7 @@ impl crate::core::Platform for AndroidPlatform {
     }
     fn transfer_abandoned(&self,key:&str,source:&str)->std::io::Result<()> {
         let j=JNI.get().ok_or_else(||std::io::Error::other("Android is not ready"))?;
-        match call(&j.service,"transferAbandoned",&[key,source],true) {
+        match call(&j.service,"transferAbandoned",&[key,source,&self.download_dir().to_string_lossy()],true) {
             Some(reply) if reply.is_empty()=>Ok(()),
             _=>Err(std::io::Error::other("Android could not clean up the download yet")),
         }
