@@ -10,7 +10,7 @@ import { errText } from "../lib/native";
 import { refreshState, useSnap } from "../lib/store";
 import { openTailscale, useTailscaleOff } from "../lib/tailnet";
 import { toast } from "../lib/toast";
-import { ALLOW_TEXT, allowInstalls, useInstallStep, useUpdate, type Available } from "../lib/updates";
+import { ALLOW_TEXT, allowInstalls, installUpdate, useCheckState, useInstallStep, useUpdate, type Available } from "../lib/updates";
 import { HubHelpLink } from "./HubHelp";
 import { useNow, usePlatform } from "./ui";
 
@@ -101,19 +101,19 @@ export function RecoveryBanner({ onShow }: { onShow: () => void }) {
 export function UpdateBanner() {
   const avail = useUpdate();
   const platform = usePlatform();
-  const [busy, setBusy] = useState(false);
+  // the same install as Settings › About's and the tray's (lib/updates.ts):
+  // whichever starts it, the banner shows it and starts no second one
+  const st = useCheckState();
   const [hidden, setHidden] = useState<string | null>(null);
   if (!avail || hidden === avail.version) return null;
   if (platform === "android") return <AndroidUpdate avail={avail} onHide={() => setHidden(avail.version)} />;
-  const go = async () => {
-    setBusy(true);
-    try { await avail.install(); } catch (e) { toast("Couldn't update: " + errText(e)); setBusy(false); }
-  };
+  const installing = st.k === "installing";
+  const go = () => { installUpdate().catch((e) => toast("Couldn't update: " + errText(e))); };
   return (
     <div className="banner upd" role="region" aria-label="Update">
       <Icon name="restart" />
-      <span><b>Hubchat {avail.version} is available.</b>{busy ? " Downloading…" : " It installs when Hubchat restarts."}</span>
-      <button className="btn primary" onClick={go} disabled={busy}>{busy ? "Updating…" : "Restart to update"}</button>
+      <span><b>Hubchat {avail.version} is available.</b>{installing ? " Downloading…" : " It installs when Hubchat restarts."}</span>
+      <button className="btn primary" onClick={go} disabled={installing || st.k === "checking"}>{installing ? "Updating…" : "Restart to update"}</button>
       <button className="icon-btn" style={{ width: 28, height: 28 }} onClick={() => setHidden(avail.version)} title="Not now" aria-label="Dismiss"><Icon name="close" /></button>
     </div>
   );

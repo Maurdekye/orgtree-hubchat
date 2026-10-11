@@ -113,7 +113,8 @@
   `hc_set_autostart` (Settings uses it, not the plugin directly),
   `hc_set_exit_on_close`, and the updater's `hc_tray_updates`. Tray writes reach
   the UI as `hc-settings`. Settings › About and the tray share one updater state
-  in `updates.ts`, and every desktop install goes through its `tracked()`. Exit
+  in `updates.ts`, and every desktop install goes through its `tracked()`:
+  never while a check runs, one at a time (a second request joins it). Exit
   on close is a device file, off by default. Restart frees the single-instance
   lock and passes only `--hidden`, never the old start link.
   [decided: user 2026-10-11, mappings approved by lead-astra; verified:

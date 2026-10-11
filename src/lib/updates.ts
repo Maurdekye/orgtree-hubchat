@@ -162,13 +162,24 @@ function updateSeam(): UpdateSeam {
   return (w.hcUpdateSeam ??= { checks: [], installs: [], started: 0 });
 }
 
-/** A desktop install, wherever it starts (the banner, Settings › About, the
- *  setup screen, the tray): each of them sees it under way, or failed. */
+let installing: Promise<void> | null = null;
+
+/** THE desktop install, wherever it starts (the banner, Settings › About, the
+ *  setup screen, the tray; lead-astra review 2026-10-11 23:26Z): one at a
+ *  time, and never while a check runs, because a check can replace the
+ *  update. A request while one runs gets that same install's outcome. Each
+ *  of them sees it under way, or failed. */
 function tracked(run: () => Promise<void>): () => Promise<void> {
-  return async () => {
-    if (check.k === "installing") return;
+  return () => {
+    if (installing) return installing;
+    if (check.k === "checking") return Promise.reject("Hubchat is checking for updates. Try again in a moment.");
     setCheck({ k: "installing" });
-    try { await run(); } catch (e) { setCheck({ k: "failed", msg: errText(e) }); throw e; }
+    installing = (async () => {
+      try { await run(); }
+      catch (e) { setCheck({ k: "failed", msg: errText(e) }); throw e; }
+      finally { installing = null; }
+    })();
+    return installing;
   };
 }
 
@@ -188,14 +199,16 @@ export function checkForUpdate(quiet = false): Promise<Available | null> {
   const before = check;
   setCheck({ k: "checking" });
   running = (async () => {
+    // only this check's own "checking" is replaced: nothing installs while a
+    // check runs (tracked), and an install's state is never overwritten
     try {
       const a = await checkRaw();
       avail = a;
-      setCheck(a ? { k: "idle" } : { k: "none" });
+      if (check.k === "checking") setCheck(a ? { k: "idle" } : { k: "none" }); else emit();
       return a;
     } catch (e) {
       const msg = errText(e);
-      setCheck(asked ? { k: "error", msg } : before);
+      if (check.k === "checking") setCheck(asked ? { k: "error", msg } : before);
       throw msg;
     } finally {
       running = null;
@@ -205,10 +218,11 @@ export function checkForUpdate(quiet = false): Promise<Available | null> {
   return running;
 }
 
-/** The tray's "Restart to update": install the update found, as the banner's
- *  button does. Throws the error text. */
+/** Desktop: install the update found. The banner, Settings › About, the
+ *  setup screen and the tray all come here (guarded by tracked()). Throws
+ *  the error text. */
 export async function installUpdate(): Promise<void> {
-  if (!avail || check.k === "checking") return;
+  if (!avail) return;
   try { await avail.install(); } catch (e) { throw errText(e); }
 }
 

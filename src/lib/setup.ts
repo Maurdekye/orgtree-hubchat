@@ -6,7 +6,7 @@
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { api } from "../api";
 import { errText, openLink, scanQr } from "./native";
-import { checkForUpdate, type Available } from "./updates";
+import { checkForUpdate, installUpdate, type Available } from "./updates";
 import { toast } from "./toast";
 import { startTake } from "./visibility";
 
@@ -81,9 +81,11 @@ export async function updateHubchat(platform: "desktop" | "android", known: Avai
     }
   }
   if (!a) { toast("No newer Hubchat is out yet."); return; }
-  // the app restarts once installed, and the code is scanned again then
+  // the app restarts once installed, and the code is scanned again then.
+  // Desktop: the one guarded install the banner, Settings and the tray use
   endSetup();
-  await a.install();
+  if (platform === "android") await a.install();
+  else await installUpdate();
 }
 
 /** Open Tailscale or the Wi-Fi settings (Android); false when nothing opened. */

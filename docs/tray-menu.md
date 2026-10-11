@@ -41,9 +41,12 @@ window. The code is `src-tauri/src/tray.rs` (the menu), `src-tauri/src/crash.rs`
 - The updater keeps one state for Settings › About and the tray: a check under
   way is joined rather than started twice; nothing is checked while an update
   installs; a failed background check stays silent, as before, while a failed
-  check someone asked for shows in both places. Every install (banner,
-  Settings, the setup screen, the tray) goes through the same function, so all
-  of them see "updating" and a failure.
+  check someone asked for shows in both places. Every desktop install
+  (banner, Settings, the setup screen, the tray) goes through the same guarded
+  function: none starts while a check runs (a check can replace the update),
+  a second request joins the running install and gets its outcome, and a
+  finishing check never overwrites an install's state. The banner shows that
+  shared state rather than its own (`tools/proof-update-races.mjs`).
 - The update rows that ask the UI for something stay greyed until the UI has
   reported; the UI starts its side at boot, so the tray works during
   onboarding too. Automatic checks still start only once the main screen is up.
