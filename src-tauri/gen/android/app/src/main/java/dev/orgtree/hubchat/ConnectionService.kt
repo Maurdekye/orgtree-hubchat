@@ -214,6 +214,16 @@ class ConnectionService : Service() {
      * it. Returns the new content:// URI, or "" to keep the private copy.
      */
     @JvmStatic
+    fun publishTransfer(key: String, path: String, name: String): String {
+      val ctx = appContext ?: return org.json.JSONObject().put("error", "Android is not ready to save the file").toString()
+      return try {
+        org.json.JSONObject().put("location", DownloadPublisher.publish(ctx, key, path, name)).toString()
+      } catch (e: Exception) {
+        org.json.JSONObject().put("error", "Could not save to Downloads: " + (e.message ?: "retry")).toString()
+      }
+    }
+
+    @JvmStatic
     fun publishDownload(path: String, name: String): String {
       val ctx = appContext ?: return ""
       if (Build.VERSION.SDK_INT < 29) return ""
