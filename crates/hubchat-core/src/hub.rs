@@ -3,7 +3,6 @@
 //! with `X-Org-Auth: <slug>:<secret>`.
 
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -87,9 +86,9 @@ impl HubAddress {
 fn has_port(addr: &str) -> bool {
     let rest = addr.split_once("://").map_or(addr, |(_, r)| r);
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    authority
-        .rsplit_once(':')
-        .is_some_and(|(h, p)| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) && !h.ends_with(':'))
+    authority.rsplit_once(':').is_some_and(|(h, p)| {
+        !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) && !h.ends_with(':')
+    })
 }
 
 impl std::fmt::Display for HubAddress {
@@ -286,15 +285,44 @@ pub struct SendResult {
 pub type Progress = Arc<dyn Fn(u64, u64) + Send + Sync>;
 
 /// Set to cancel an in-flight transfer.
-#[derive(Clone, Default)]
-pub struct CancelFlag(Arc<AtomicBool>);
+#[derive(Clone)]
+pub struct CancelFlag(Arc<tokio::sync::watch::Sender<bool>>);
+
+impl Default for CancelFlag {
+    fn default() -> Self {
+        Self(Arc::new(tokio::sync::watch::channel(false).0))
+    }
+}
 
 impl CancelFlag {
     pub fn cancel(&self) {
-        self.0.store(true, Ordering::SeqCst)
+        self.0.send_replace(true);
     }
     pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
+        *self.0.borrow()
+    }
+    async fn cancelled(&self) {
+        let mut changes = self.0.subscribe();
+        loop {
+            if *changes.borrow_and_update() {
+                return;
+            }
+            if changes.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+    /// Cancellation also interrupts waiting for headers, a stalled body or
+    /// a completion response, not just the arrival of the next data chunk.
+    pub(crate) async fn run<T>(
+        &self,
+        work: impl std::future::Future<Output = Result<T>>,
+    ) -> Result<T> {
+        tokio::select! {
+            biased;
+            _ = self.cancelled() => Err(Error::Cancelled),
+            result = work => result,
+        }
     }
 }
 
@@ -503,46 +531,55 @@ impl HubClient {
         progress: Option<Progress>,
         cancel: CancelFlag,
     ) -> Result<AttachmentMeta> {
-        let total = file.metadata().await?.len();
-        let mut done = 0u64;
-        let stream =
-            tokio_util::io::ReaderStream::with_capacity(file, 256 * 1024).map(move |chunk| {
-                if cancel.is_cancelled() {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Interrupted,
-                        "cancelled",
-                    ));
-                }
-                if let Ok(c) = &chunk {
-                    done += c.len() as u64;
-                    if let Some(p) = &progress {
-                        p(done, total);
+        let stop = cancel.clone();
+        stop.run(async move {
+            let total = file.metadata().await?.len();
+            let mut done = 0u64;
+            let stream =
+                tokio_util::io::ReaderStream::with_capacity(file, 256 * 1024).map(move |chunk| {
+                    if cancel.is_cancelled() {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::Interrupted,
+                            "cancelled",
+                        ));
                     }
-                }
-                chunk
-            });
-        #[derive(Deserialize)]
-        struct R {
-            id: String,
-            bytes: u64,
-        }
-        let mut url = Url::parse(&self.addr.join("/api/attachments"))
-            .map_err(|e| Error::Invalid(e.to_string()))?;
-        url.query_pairs_mut().append_pair("name", name);
-        let resp = self
-            .http
-            .post(url)
-            .header("X-Org-Auth", me.auth_header())
-            .header(reqwest::header::CONTENT_LENGTH, total)
-            .body(reqwest::Body::wrap_stream(stream))
-            .send()
-            .await?;
-        let r: R = check(resp).await?.json().await?;
-        Ok(AttachmentMeta {
-            id: r.id,
-            name: name.to_owned(),
-            bytes: r.bytes,
+                    if let Ok(c) = &chunk {
+                        done += c.len() as u64;
+                        if let Some(p) = &progress {
+                            p(done, total);
+                        }
+                    }
+                    chunk
+                });
+            #[derive(Deserialize)]
+            struct R {
+                id: String,
+                bytes: u64,
+            }
+            let mut url = Url::parse(&self.addr.join("/api/attachments"))
+                .map_err(|e| Error::Invalid(e.to_string()))?;
+            url.query_pairs_mut().append_pair("name", name);
+            let resp = self
+                .http
+                .post(url)
+                .header("X-Org-Auth", me.auth_header())
+                .header(reqwest::header::CONTENT_LENGTH, total)
+                .body(reqwest::Body::wrap_stream(stream))
+                .send()
+                .await?;
+            let r: R = check(resp).await?.json().await?;
+            if r.id.is_empty() || r.bytes != total {
+                return Err(Error::Invalid(
+                    "hub returned inconsistent upload completion".into(),
+                ));
+            }
+            Ok(AttachmentMeta {
+                id: r.id,
+                name: name.to_owned(),
+                bytes: r.bytes,
+            })
         })
+        .await
     }
 
     /// Download an attachment to `dest` (written to `dest.part`, renamed when
@@ -555,38 +592,48 @@ impl HubClient {
         progress: Option<Progress>,
         cancel: CancelFlag,
     ) -> Result<u64> {
-        let resp = self
-            .http
-            .get(self.addr.join(&format!("/api/attachments/{attachment_id}")))
-            .header("X-Org-Auth", me.auth_header())
-            .send()
-            .await?;
-        let resp = check(resp).await?;
-        let total = resp.content_length().unwrap_or(0);
         let part = dest.with_extension(match dest.extension() {
             Some(e) => format!("{}.part", e.to_string_lossy()),
             None => "part".into(),
         });
-        let mut out = tokio::fs::File::create(&part).await?;
-        let mut done = 0u64;
-        let mut body = resp.bytes_stream();
-        while let Some(chunk) = body.next().await {
-            if cancel.is_cancelled() {
+        let stop = cancel.clone();
+        let result = stop
+            .run(async {
+                let resp = self
+                    .http
+                    .get(self.addr.join(&format!("/api/attachments/{attachment_id}")))
+                    .header("X-Org-Auth", me.auth_header())
+                    .send()
+                    .await?;
+                let resp = check(resp).await?;
+                let total = resp.content_length().unwrap_or(0);
+                let mut out = tokio::fs::File::create(&part).await?;
+                let mut done = 0u64;
+                let mut body = resp.bytes_stream();
+                while let Some(chunk) = body.next().await {
+                    if cancel.is_cancelled() {
+                        drop(out);
+                        let _ = tokio::fs::remove_file(&part).await;
+                        return Err(Error::Cancelled);
+                    }
+                    let chunk = chunk?;
+                    out.write_all(&chunk).await?;
+                    done += chunk.len() as u64;
+                    if let Some(p) = &progress {
+                        p(done, total.max(done));
+                    }
+                }
+                out.flush().await?;
+                out.sync_data().await?;
                 drop(out);
-                let _ = tokio::fs::remove_file(&part).await;
-                return Err(Error::Cancelled);
-            }
-            let chunk = chunk?;
-            out.write_all(&chunk).await?;
-            done += chunk.len() as u64;
-            if let Some(p) = &progress {
-                p(done, total.max(done));
-            }
+                tokio::fs::rename(&part, dest).await?;
+                Ok(done)
+            })
+            .await;
+        if matches!(result, Err(Error::Cancelled)) {
+            let _ = tokio::fs::remove_file(&part).await;
         }
-        out.flush().await?;
-        drop(out);
-        tokio::fs::rename(&part, dest).await?;
-        Ok(done)
+        result
     }
 
     pub(crate) async fn post_json<B: Serialize + ?Sized, R: serde::de::DeserializeOwned>(
@@ -649,7 +696,11 @@ mod tests {
     #[test]
     fn a_bare_host_is_looked_for_on_the_known_ports() {
         let c = |s: &str| -> Vec<String> {
-            HubAddress::candidates(s).unwrap().iter().map(|a| a.as_str().to_owned()).collect()
+            HubAddress::candidates(s)
+                .unwrap()
+                .iter()
+                .map(|a| a.as_str().to_owned())
+                .collect()
         };
         assert_eq!(
             c("star-hub"),
@@ -665,7 +716,10 @@ mod tests {
         assert_eq!(c("star-hub:7378"), ["http://star-hub:7378"]);
         assert_eq!(c("star-hub:80"), ["http://star-hub"]);
         assert_eq!(c("http://star-hub"), ["http://star-hub:7370"]);
-        assert_eq!(c("https://xyz.trycloudflare.com"), ["https://xyz.trycloudflare.com"]);
+        assert_eq!(
+            c("https://xyz.trycloudflare.com"),
+            ["https://xyz.trycloudflare.com"]
+        );
         assert_eq!(c("[::1]:7371"), ["http://[::1]:7371"]);
         assert_eq!(c("star-hub/some/path"), ["http://star-hub:7370/some/path"]);
         assert!(HubAddress::candidates(" ").is_err());

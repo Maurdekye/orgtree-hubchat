@@ -1518,7 +1518,13 @@ impl Engine {
                     continue;
                 }
             }
-            let Some(source) = &a.source else { continue };
+            let Some(source) = &a.source else {
+                let why = "attachment source is missing; retry or explicitly remove the file";
+                self.store
+                    .set_attachment(&a.local_id, "failed", None, None, Some(why))?;
+                self.fail(&m.peer, id, why)?;
+                return Ok(true);
+            };
             let file = match self.host.open_source(source) {
                 Ok(f) => tokio::fs::File::from_std(f),
                 Err(e) => {
@@ -1576,7 +1582,7 @@ impl Engine {
                 Err(e)
                     if resumable
                         && !cancel.is_cancelled()
-                        && matches!(e, Error::Unreachable(_)) =>
+                        && (matches!(e, Error::Unreachable(_)) || e.status().is_some_and(|s| matches!(s,408|409|429|500..=599))) =>
                 {
                     // The connection dropped mid-file: the hub keeps what it
                     // got. Wait for the network and continue from there.
@@ -1707,27 +1713,53 @@ impl Engine {
         progress: crate::hub::Progress,
         cancel: CancelFlag,
     ) -> Result<crate::hub::AttachmentMeta> {
-        // a session on this hub only (the route may have changed)
-        let existing = a
-            .hub_id
-            .clone()
-            .filter(|_| a.state != "uploaded" && a.hub.as_deref() == Some(url));
-        let upload_id = match existing {
-            Some(id) if client.upload_state(&self.me, &id).await.is_ok() => id,
-            _ => {
-                let st = client.open_upload(&self.me, &a.name, a.bytes).await?;
-                self.store
-                    .set_upload(&a.local_id, "uploading", &st.id, url)?;
-                st.id
+        let stop = cancel.clone();
+        stop.run(async move {
+            // a session on this hub only (the route may have changed)
+            let existing = a
+                .hub_id
+                .clone()
+                .filter(|_| a.state != "uploaded" && a.hub.as_deref() == Some(url));
+            if file.metadata().await?.len() != a.bytes {
+                return Err(Error::Invalid(
+                    "attachment source changed size; select it again".into(),
+                ));
             }
-        };
-        let st = client
-            .resume_upload(&self.me, &upload_id, file, Some(progress), cancel)
-            .await?;
-        if !st.complete {
-            return Err(Error::Unreachable("upload stopped before the end".into()));
-        }
-        Ok(crate::hub_v2::upload_meta(&st, &a.name))
+            let existing = match existing {
+                Some(id) => match client.upload_state(&self.me, &id).await {
+                    Ok(_) => Some(id),
+                    Err(e) if matches!(e.status(), Some(404 | 410)) => None,
+                    Err(e) => return Err(e), // Preserve the session on transient/auth failures.
+                },
+                None => None,
+            };
+            let upload_id = match existing {
+                Some(id) => id,
+                None => {
+                    let st = client.open_upload(&self.me, &a.name, a.bytes).await?;
+                    if st.id.is_empty()
+                        || st.bytes != a.bytes
+                        || st.offset > a.bytes
+                        || (st.complete && st.offset != a.bytes)
+                    {
+                        return Err(Error::Invalid(
+                            "hub returned inconsistent new upload state".into(),
+                        ));
+                    }
+                    self.store
+                        .set_upload(&a.local_id, "uploading", &st.id, url)?;
+                    st.id
+                }
+            };
+            let st = client
+                .resume_upload(&self.me, &upload_id, file, Some(progress), cancel)
+                .await?;
+            if !st.complete {
+                return Err(Error::Unreachable("upload stopped before the end".into()));
+            }
+            Ok(crate::hub_v2::upload_meta(&st, &a.name))
+        })
+        .await
     }
 
     fn fail(&self, peer: &str, id: &str, why: &str) -> Result<()> {
@@ -2306,3 +2338,7 @@ mod quote_tests {
         assert_eq!(strip_quote("> only a quote"), "> only a quote");
     }
 }
+
+#[cfg(test)]
+#[path = "transfer_tests.rs"]
+mod transfer_tests;

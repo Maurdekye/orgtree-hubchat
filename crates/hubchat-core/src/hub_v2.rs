@@ -417,21 +417,25 @@ impl HubClient {
         progress: Option<Progress>,
         cancel: CancelFlag,
     ) -> Result<UploadState> {
-        let std_file = file.into_std().await;
-        let mut tries = 0;
-        loop {
-            let f = tokio::fs::File::from_std(std_file.try_clone()?);
-            match self
-                .resume_once(me, upload_id, f, progress.clone(), cancel.clone())
-                .await
-            {
-                Err(e) if e.status() == Some(409) && tries < 20 && !cancel.is_cancelled() => {
-                    tries += 1;
-                    tokio::time::sleep(Duration::from_millis(500)).await;
+        let stop = cancel.clone();
+        stop.run(async move {
+            let std_file = file.into_std().await;
+            let mut tries = 0;
+            loop {
+                let f = tokio::fs::File::from_std(std_file.try_clone()?);
+                match self
+                    .resume_once(me, upload_id, f, progress.clone(), cancel.clone())
+                    .await
+                {
+                    Err(e) if e.status() == Some(409) && tries < 20 && !cancel.is_cancelled() => {
+                        tries += 1;
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                    }
+                    r => return r,
                 }
-                r => return r,
             }
-        }
+        })
+        .await
     }
 
     async fn resume_once(
@@ -442,11 +446,12 @@ impl HubClient {
         progress: Option<Progress>,
         cancel: CancelFlag,
     ) -> Result<UploadState> {
+        let total = file.metadata().await?.len();
         let st = self.upload_state(me, upload_id).await?;
+        validate_upload(&st, upload_id, total)?;
         if st.complete {
             return Ok(st);
         }
-        let total = st.bytes;
         file.seek(std::io::SeekFrom::Start(st.offset)).await?;
         let mut done = st.offset;
         let reader = file.take(total - st.offset);
@@ -479,8 +484,25 @@ impl HubClient {
             .body(body)
             .send()
             .await?;
-        Ok(check(resp).await?.json().await?)
+        let result: UploadState = check(resp).await?.json().await?;
+        validate_upload(&result, upload_id, total)?;
+        if result.offset < st.offset {
+            return Err(Error::Invalid("hub upload offset moved backwards".into()));
+        }
+        Ok(result)
     }
+}
+
+/// Treat protocol metadata as untrusted: never seek beyond the local snapshot,
+/// underflow a remaining-byte count, or send a different attachment as ours.
+fn validate_upload(st: &UploadState, id: &str, bytes: u64) -> Result<()> {
+    if st.id != id || st.bytes != bytes || st.offset > bytes || (st.complete && st.offset != bytes)
+    {
+        return Err(Error::Invalid(
+            "hub returned inconsistent upload state".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Upload meta for a finished resumable upload (it is an ordinary attachment).
