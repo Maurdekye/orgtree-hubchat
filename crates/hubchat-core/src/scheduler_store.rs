@@ -35,7 +35,7 @@ impl Store {
             let tx=c.transaction()?;
             tx.execute("UPDATE attachments SET state='failed',error='Transfer worker stopped unexpectedly; retry' WHERE message_id=? AND state='uploading'",[id])?;
             let n=tx.execute("UPDATE messages SET state='failed',error='Transfer worker stopped unexpectedly; retry' WHERE id=? AND state IN ('queued','sending')",[id])?;
-            if n>0 {transfer_failures::queue(&tx,id,"Transfer worker stopped unexpectedly; retry")?;}
+            if n>0 {transfer_failures::queue(&tx,id,"Transfer worker stopped unexpectedly; retry",false)?;}
             tx.commit()
         })
     }
@@ -46,7 +46,7 @@ impl Store {
             if n>0 {
                 tx.execute("UPDATE attachments SET state='failed',error='Transfer worker stopped unexpectedly; retry' WHERE local_id=?",[id])?;
                 let mid:String=tx.query_row("SELECT message_id FROM attachments WHERE local_id=?",[id],|r|r.get(0))?;
-                transfer_failures::queue(&tx,&mid,"Transfer worker stopped unexpectedly; retry")?;
+                transfer_failures::queue(&tx,&mid,"Transfer worker stopped unexpectedly; retry",true)?;
             }
             tx.commit()
         })

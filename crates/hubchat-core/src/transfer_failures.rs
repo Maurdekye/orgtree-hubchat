@@ -8,6 +8,7 @@ pub struct TransferFailure {
     pub episode: i64,
     pub attempts: i64,
     pub error: String,
+    pub download: bool,
 }
 impl TransferFailure {
     /// Stable platform replacement key; replay cannot add a second notification.
@@ -20,9 +21,10 @@ pub(super) fn queue(
     tx: &rusqlite::Transaction<'_>,
     mid: &str,
     error: &str,
+    download: bool,
 ) -> rusqlite::Result<()> {
     tx.execute("INSERT OR IGNORE INTO transfer_failures(message_id) SELECT id FROM messages WHERE id=? AND EXISTS(SELECT 1 FROM attachments WHERE message_id=messages.id)",[mid])?;
-    tx.execute("UPDATE transfer_failures SET pending=1,error=COALESCE(error,?2) WHERE message_id=?1 AND delivered=0",params![mid,error])?;
+    tx.execute("UPDATE transfer_failures SET pending=1,download=CASE WHEN error IS NULL THEN ?3 ELSE download END,error=COALESCE(error,?2) WHERE message_id=?1 AND delivered=0 AND attempts<10",params![mid,error,download])?;
     Ok(())
 }
 pub(super) fn retry(tx: &rusqlite::Transaction<'_>, mid: &str) -> rusqlite::Result<()> {
@@ -32,13 +34,13 @@ pub(super) fn retry(tx: &rusqlite::Transaction<'_>, mid: &str) -> rusqlite::Resu
 impl Store {
     pub(crate) fn pending_transfer_failures(&self, now: u64) -> Result<Vec<TransferFailure>> {
         self.with(|c| {
-            let mut q=c.prepare("SELECT f.message_id,m.peer,f.episode,f.attempts,f.error FROM transfer_failures f JOIN messages m ON m.id=f.message_id WHERE f.pending=1 AND f.retry_at<=? ORDER BY f.retry_at,f.message_id LIMIT 16")?;
-            let rows=q.query_map([now],|r|Ok(TransferFailure{message_id:r.get(0)?,peer:r.get(1)?,episode:r.get(2)?,attempts:r.get(3)?,error:r.get(4)?}))?.collect();rows
+            let mut q=c.prepare("SELECT f.message_id,m.peer,f.episode,f.attempts,f.error,f.download FROM transfer_failures f JOIN messages m ON m.id=f.message_id WHERE f.pending=1 AND f.attempts<10 AND f.retry_at<=? ORDER BY f.retry_at,f.message_id LIMIT 16")?;
+            let rows=q.query_map([now],|r|Ok(TransferFailure{message_id:r.get(0)?,peer:r.get(1)?,episode:r.get(2)?,attempts:r.get(3)?,error:r.get(4)?,download:r.get(5)?}))?.collect();rows
         })
     }
     /// Reserve before calling the host, with no DB lease held during delivery.
     pub(crate) fn start_failure_notice(&self, n: &TransferFailure, now: u64) -> Result<bool> {
-        self.with(|c|c.execute("UPDATE transfer_failures SET attempts=attempts+1,retry_at=?1+30000 WHERE message_id=?2 AND episode=?3 AND pending=1 AND retry_at<=?1",params![now,n.message_id,n.episode]).map(|n|n>0))
+        self.with(|c|c.execute("UPDATE transfer_failures SET attempts=attempts+1,retry_at=?1+30000 WHERE message_id=?2 AND episode=?3 AND pending=1 AND attempts<10 AND retry_at<=?1",params![now,n.message_id,n.episode]).map(|n|n>0))
     }
     pub(crate) fn finish_failure_notice(&self, n: &TransferFailure) -> Result<()> {
         self.with(|c|c.execute("UPDATE transfer_failures SET pending=0,delivered=1 WHERE message_id=? AND episode=? AND pending=1",params![n.message_id,n.episode]).map(|_|()))
@@ -106,6 +108,7 @@ mod tests {
         let n = s.pending_transfer_failures(0).unwrap();
         assert_eq!(n.len(), 1);
         assert_eq!(n[0].error, "upload refused");
+        assert!(!n[0].download);
         let key = n[0].key();
         assert!(s.start_failure_notice(&n[0], 0).unwrap());
         assert!(s.pending_transfer_failures(29999).unwrap().is_empty());
@@ -129,6 +132,26 @@ mod tests {
         );
         s.delete_message("m").unwrap();
         assert!(s.pending_transfer_failures(0).unwrap().is_empty());
+    }
+    #[test]
+    fn broken_platform_stops_after_ten_attempts_and_retry_opens_a_new_episode() {
+        let s = Store::open_in_memory().unwrap();
+        message(&s, "m");
+        s.fail_send("m", "upload refused").unwrap();
+        let first = s.pending_transfer_failures(0).unwrap().remove(0);
+        for attempt in 0..10 {
+            let now = attempt * 30000;
+            let n = s.pending_transfer_failures(now).unwrap().remove(0);
+            assert_eq!(n.attempts, attempt as i64);
+            assert!(s.start_failure_notice(&n, now).unwrap());
+        }
+        assert!(s.pending_transfer_failures(300000).unwrap().is_empty());
+        assert!(!s.start_failure_notice(&first, 300000).unwrap());
+        s.retry_send("m").unwrap();
+        s.fail_send("m", "still refused").unwrap();
+        let next = s.pending_transfer_failures(300000).unwrap().remove(0);
+        assert_eq!(next.attempts, 0);
+        assert_ne!(next.key(), first.key());
     }
     #[test]
     fn user_cancel_success_and_temporary_download_are_silent() {
@@ -172,6 +195,7 @@ mod tests {
         let n = s.pending_transfer_failures(0).unwrap();
         assert_eq!(n.len(), 1);
         assert_eq!(n[0].episode, 1);
+        assert!(n[0].download, "downloads of our own sent files are still downloads");
         s.queue_download_job(&ids[0], "part", "dest").unwrap();
         assert!(s.download_job(&ids[0]).unwrap().unwrap().error.is_none());
         assert!(s.pending_transfer_failures(0).unwrap().is_empty());

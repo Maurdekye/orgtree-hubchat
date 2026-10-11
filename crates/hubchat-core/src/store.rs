@@ -197,6 +197,8 @@ CREATE TABLE transfer_failures (
 );
 CREATE INDEX transfer_failure_pending ON transfer_failures(pending,retry_at,message_id);
 "#,
+    // 7: wording follows the failed operation, including downloads of sent files.
+    r#"ALTER TABLE transfer_failures ADD COLUMN download INTEGER NOT NULL DEFAULT 0;"#,
 ];
 
 pub struct Store {

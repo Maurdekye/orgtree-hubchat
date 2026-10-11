@@ -5,7 +5,7 @@ impl Store {
         self.with(|c| {
             let tx=c.transaction()?;
             let n=tx.execute("UPDATE messages SET state='failed',error=? WHERE id=? AND state IN ('queued','sending')",params![why,id])?;
-            if n>0 {transfer_failures::queue(&tx,id,why)?;}
+            if n>0 {transfer_failures::queue(&tx,id,why,false)?;}
             tx.commit()
         })
     }

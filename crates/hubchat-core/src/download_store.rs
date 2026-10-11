@@ -166,7 +166,7 @@ impl Store {
                 tx.execute("UPDATE attachments SET state=?,error=? WHERE local_id=?",params![state,error,id])?;
                 if matches!(state,"failed"|"expired") {
                     let mid:String=tx.query_row("SELECT message_id FROM attachments WHERE local_id=?",[id],|r|r.get(0))?;
-                    transfer_failures::queue(&tx,&mid,error)?;
+                    transfer_failures::queue(&tx,&mid,error,true)?;
                 }
             }
             tx.commit()
