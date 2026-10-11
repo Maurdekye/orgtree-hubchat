@@ -1,7 +1,8 @@
 // Updates: check at startup and every 6 hours, unless turned off in Settings ›
 // About. A failed check is silent (there may be no release yet).
 // - Desktop, with the updater plugin: a calm banner, and "Restart to update"
-//   installs and relaunches.
+//   installs and relaunches. The tray's update rows show the same state and
+//   ask for the same check and install (lib/tray.ts).
 // - Android (user 2026-10-09 08:29Z): the shell reads the same release feed,
 //   downloads the APK, checks the updater key's signature and hands it to
 //   Android's installer; the banner shows each step (the first time, Android's
@@ -22,13 +23,30 @@ export type InstallStep =
   | { k: "confirm" }
   | { k: "failed"; msg: string };
 
+/** Checking and (desktop) installing, as Settings › About and the tray say
+ *  it: one state, so both say the same at the same time. */
+export type CheckState =
+  | { k: "idle" }
+  | { k: "checking" }
+  /** The last check found nothing newer. */
+  | { k: "none" }
+  /** A check someone asked for failed (background failures stay silent). */
+  | { k: "error"; msg: string }
+  | { k: "installing" }
+  /** Desktop: the install failed; the update can be tried again. */
+  | { k: "failed"; msg: string };
+
 let avail: Available | null = null;
 let step: InstallStep = { k: "idle" };
+let check: CheckState = { k: "idle" };
 let platform: "desktop" | "android" = "desktop";
 const subs = new Set<() => void>();
 const emit = () => subs.forEach((f) => f());
 const subscribe = (f: () => void) => { subs.add(f); return () => { subs.delete(f); }; };
 const setStep = (s: InstallStep) => { step = s; emit(); };
+const setCheck = (s: CheckState) => { check = s; emit(); };
+/** Every change, outside React (lib/tray.ts). */
+export const subscribeUpdates = subscribe;
 
 export function useUpdate(): Available | null {
   return useSyncExternalStore(subscribe, () => avail);
@@ -36,6 +54,10 @@ export function useUpdate(): Available | null {
 
 export function useInstallStep(): InstallStep {
   return useSyncExternalStore(subscribe, () => step);
+}
+
+export function useCheckState(): CheckState {
+  return useSyncExternalStore(subscribe, () => check);
 }
 
 const AUTO = "hubchat.updates.auto";
@@ -102,26 +124,71 @@ async function checkRaw(): Promise<Available | null> {
   // real app, so a test build never offers it
   const { getIdentifier } = await import("@tauri-apps/api/app");
   if ((await getIdentifier()).endsWith(".test")) return null;
-  const { check } = await import("@tauri-apps/plugin-updater");
-  const u = await check();
+  const updater = await import("@tauri-apps/plugin-updater");
+  const u = await updater.check();
   if (!u) return null;
   return {
     version: u.version,
+    // the banner, Settings › About, the setup screen and the tray all come
+    // here, so each of them sees an install under way or failed
     install: async () => {
-      await u.downloadAndInstall();
-      const { relaunch } = await import("@tauri-apps/plugin-process");
-      await relaunch();
+      if (check.k === "installing") return;
+      setCheck({ k: "installing" });
+      try {
+        await u.downloadAndInstall();
+        const { relaunch } = await import("@tauri-apps/plugin-process");
+        await relaunch();
+      } catch (e) {
+        setCheck({ k: "failed", msg: errText(e) });
+        throw e;
+      }
     },
   };
 }
 
-/** Check now. Returns the update, or null when up to date; throws the error text. */
-export async function checkForUpdate(): Promise<Available | null> {
-  try {
-    const a = await checkRaw();
-    avail = a; emit();
-    return a;
-  } catch (e) { throw errText(e); }
+let running: Promise<Available | null> | null = null;
+/** Someone, not just the background checks, waits for the running check. */
+let asked = false;
+
+/** Check now. Returns the update, or null when up to date; throws the error
+ *  text. A check already under way is joined. `quiet` (the background
+ *  checks): a failure leaves everything as it was, unless someone asked
+ *  meanwhile. Nothing is checked while an update installs: a check could
+ *  replace the update being installed. */
+export function checkForUpdate(quiet = false): Promise<Available | null> {
+  if (check.k === "installing") return Promise.resolve(avail);
+  if (!quiet) asked = true;
+  if (running) return running;
+  const before = check;
+  setCheck({ k: "checking" });
+  running = (async () => {
+    try {
+      const a = await checkRaw();
+      avail = a;
+      setCheck(a ? { k: "idle" } : { k: "none" });
+      return a;
+    } catch (e) {
+      const msg = errText(e);
+      setCheck(asked ? { k: "error", msg } : before);
+      throw msg;
+    } finally {
+      running = null;
+      asked = false;
+    }
+  })();
+  return running;
+}
+
+/** The tray's "Restart to update": install the update found, as the banner's
+ *  button does. Throws the error text. */
+export async function installUpdate(): Promise<void> {
+  if (!avail || check.k === "checking") return;
+  try { await avail.install(); } catch (e) { throw errText(e); }
+}
+
+/** What the tray shows (src-tauri/src/tray.rs Updates). */
+export function trayView(): { phase: CheckState["k"]; available: string | null; auto: boolean } {
+  return { phase: check.k, available: avail?.version ?? null, auto: autoOn() };
 }
 
 let started = false;
@@ -131,7 +198,7 @@ export function startUpdateChecks(p: "desktop" | "android" = "desktop"): void {
   if (started) return;
   started = true;
   platform = p;
-  const run = () => { if (autoOn()) checkForUpdate().catch(() => {}); };
+  const run = () => { if (autoOn()) checkForUpdate(true).catch(() => {}); };
   run();
   setInterval(run, 6 * 3600e3);
 }

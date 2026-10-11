@@ -55,6 +55,18 @@ export interface AppUpdate {
   signature: string;
 }
 
+/** The updater as the tray shows it (src/lib/updates.ts trayView). */
+export interface TrayUpdates {
+  phase: "idle" | "checking" | "none" | "error" | "installing" | "failed";
+  /** The newer version a check found. */
+  available: string | null;
+  /** Check when Hubchat starts and every 6 hours. */
+  auto: boolean;
+}
+
+/** What a click in the tray asks the updater for. */
+export type TrayAsk = { k: "check" } | { k: "install" } | { k: "auto"; on: boolean };
+
 /** Settings › Notifications. */
 export interface NotifySettings {
   /** Notify for chats that aren't on screen. */
@@ -419,6 +431,18 @@ export const tauriApi = {
   /** Android installer's last word: "", "confirm", "done" or "failed: …". */
   appUpdateState: () => invoke<string>("hc_app_update_state"),
   onAppUpdateProgress: (f: (done: number, total: number) => void): Promise<UnlistenFn> => listen<[number, number]>("app-update-progress", (e) => f(e.payload[0], e.payload[1])),
+  // the tray menu (desktop; src-tauri/src/tray.rs)
+  /** The updater's state, for the tray's update rows. */
+  trayUpdates: (updates: TrayUpdates) => invoke<void>("hc_tray_updates", { updates }),
+  /** Start with Windows on or off; the value now in effect. */
+  setAutostart: (on: boolean) => invoke<boolean>("hc_set_autostart", { on }),
+  /** Whether closing the window quits Hubchat (otherwise it stays in the tray). */
+  exitOnClose: () => invoke<boolean>("hc_exit_on_close"),
+  setExitOnClose: (on: boolean) => invoke<boolean>("hc_set_exit_on_close", { on }),
+  /** A click in the tray asks the updater for something (lib/tray.ts). */
+  onTray: (f: (a: TrayAsk) => void): Promise<UnlistenFn> => listen<TrayAsk>("hc-tray", (e) => f(e.payload)),
+  /** A setting was changed in the tray: read it again. */
+  onSettingsChanged: (f: () => void): Promise<UnlistenFn> => listen("hc-settings", () => f()),
   devices: () => invoke<Devices>("hc_devices"),
   saveRecovery: (dest: string | null) => invoke<string>("hc_save_recovery", { dest }),
 

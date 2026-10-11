@@ -841,6 +841,13 @@ export const mockApi: Api = {
   },
   appUpdateState: async () => updateState,
   onAppUpdateProgress: async (f) => { updateProgress.add(f); return () => { updateProgress.delete(f); }; },
+  // the browser has no tray
+  trayUpdates: async () => {},
+  setAutostart: async (on) => { localStorage.setItem("hubchat.mock.autostart", on ? "1" : "0"); return on; },
+  exitOnClose: async () => localStorage.getItem("hubchat.mock.exit_on_close") === "1",
+  setExitOnClose: async (on) => { localStorage.setItem("hubchat.mock.exit_on_close", on ? "1" : "0"); return on; },
+  onTray: async () => () => {},
+  onSettingsChanged: async () => () => {},
   filePreview: async (source, name) => {
     await sleep(80);
     if (/broken/i.test(name)) throw "unreadable";

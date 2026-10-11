@@ -6,13 +6,13 @@ import { api, type Devices, type HubStatus } from "../api";
 import { chatLink, chatLinkTarget } from "../lib/chatlink";
 import { Icon, Logo, type IconName } from "../lib/icons";
 import { bytes } from "../lib/format";
-import { appVersion, autostart, copyText, errText, openLink, scanQr } from "../lib/native";
+import { appVersion, autostart, copyText, errText, exitOnClose, openLink, scanQr } from "../lib/native";
 import { routeLink, startJoin } from "../lib/join";
 import { hubCls, hubStatusText, hubSummary, hubVersion } from "../lib/peers";
 import { refreshDirectory, refreshState, useSnap } from "../lib/store";
 import { setThemePref, useThemePref, type ThemePref } from "../lib/theme";
 import { toast } from "../lib/toast";
-import { ALLOW_TEXT, allowInstalls, checkForUpdate, setAutoChecks, useAutoChecks, useInstallStep, useUpdate } from "../lib/updates";
+import { ALLOW_TEXT, allowInstalls, checkForUpdate, installUpdate, setAutoChecks, useAutoChecks, useCheckState, useInstallStep, useUpdate } from "../lib/updates";
 import { formatCode, LinkDeviceModal, type LinkTab } from "./LinkDevice";
 import { copyWords, downloadWords } from "../lib/recovery";
 import { HubAdder } from "./HubAdder";
@@ -337,16 +337,33 @@ function Devices({ onLink, goTab }: { onLink?: (tab?: LinkTab, input?: string) =
 
 function General() {
   const [on, setOn] = useState<boolean | null>(null);
-  useEffect(() => { autostart.get().then(setOn, () => setOn(false)); }, []);
+  const [exit, setExit] = useState<boolean | null>(null);
+  useEffect(() => {
+    const read = () => {
+      autostart.get().then(setOn, () => setOn(false));
+      exitOnClose.get().then(setExit, () => setExit(false));
+    };
+    read();
+    // the tray's menu changes the same two settings
+    const off = api.onSettingsChanged(read);
+    return () => { void off.then((f) => f()); };
+  }, []);
   const set = async (v: boolean) => {
     setOn(v);
-    try { await autostart.set(v); } catch (e) { toast(errText(e)); setOn(!v); }
+    try { setOn(await autostart.set(v)); } catch (e) { toast(errText(e)); setOn(!v); }
+  };
+  const setExitOn = async (v: boolean) => {
+    setExit(v);
+    try { setExit(await exitOnClose.set(v)); } catch (e) { toast(errText(e)); setExit(!v); }
   };
   return (
     <Sec first>
       <Card>
         <Row icon="play" t1="Start with Windows" t2="Hubchat starts hidden in the tray when you sign in to Windows, so messages arrive before you open it." right={on == null ? null : <Switch on={on} onChange={set} label="Start with Windows" />} />
-        <Row icon="minimize" t1="Closing the window keeps Hubchat running in the tray." t2="To quit, right-click the Hubchat icon in the tray and choose Quit." />
+        <Row icon="minimize" t1="Exit on close"
+          t2={exit ? "Closing the window quits Hubchat. No notifications arrive until you open it again."
+            : "Closing the window keeps Hubchat running in the tray. To quit, right-click the Hubchat icon in the tray and choose Quit Hubchat."}
+          right={exit == null ? null : <Switch on={exit} onChange={setExitOn} label="Exit on close" />} />
       </Card>
     </Sec>
   );
@@ -496,17 +513,14 @@ function UpdateCheck() {
   const avail = useUpdate();
   const step = useInstallStep();
   const auto = useAutoChecks();
-  const [st, setSt] = useState<{ k: "idle" } | { k: "checking" } | { k: "none" } | { k: "error"; msg: string } | { k: "installing" }>({ k: "idle" });
-  const check = async () => {
-    setSt({ k: "checking" });
-    try { setSt((await checkForUpdate()) ? { k: "idle" } : { k: "none" }); } catch (e) { setSt({ k: "error", msg: errText(e) }); }
-  };
-  const install = async () => {
+  // shared with the tray, which can check and install too (lib/updates.ts)
+  const st = useCheckState();
+  const check = () => { checkForUpdate().catch(() => {}); };
+  const install = () => {
     if (!avail) return;
     // Android's steps show in the banner and here (useInstallStep)
     if (platform === "android") { void avail.install(); return; }
-    setSt({ k: "installing" });
-    try { await avail.install(); } catch (e) { setSt({ k: "error", msg: errText(e) }); }
+    installUpdate().catch(() => {});
   };
   const android = platform === "android" && avail && step.k !== "idle"
     ? step.k === "permission" ? ALLOW_TEXT.join(" ")
@@ -514,10 +528,11 @@ function UpdateCheck() {
       : step.k === "failed" ? "The update didn't install. " + step.msg
       : "Installing. Android may ask you to confirm."
     : null;
-  const text = android ?? (st.k === "checking" ? "Checking…" : st.k === "installing" ? "Downloading the update…" : avail ? "Hubchat " + avail.version + " is available."
-    : st.k === "none" ? "You have the latest version." : st.k === "error" ? "Couldn't check for updates: " + st.msg
+  const text = android ?? (st.k === "checking" ? "Checking…" : st.k === "installing" ? "Downloading the update…"
+    : st.k === "failed" ? "The update didn't install: " + st.msg : st.k === "error" ? "Couldn't check for updates: " + st.msg
+    : avail ? "Hubchat " + avail.version + " is available." : st.k === "none" ? "You have the latest version."
     : auto ? "Hubchat checks for updates when it starts and every 6 hours." : "Automatic checks are off.");
-  const busy = st.k === "installing" || step.k === "downloading" || step.k === "installing" || step.k === "confirm";
+  const busy = st.k === "installing" || st.k === "checking" || step.k === "downloading" || step.k === "installing" || step.k === "confirm";
   return (
     <>
       {/* the button first and the status under it, so the button never moves
@@ -530,7 +545,7 @@ function UpdateCheck() {
           : avail
           ? <button className={platform === "android" ? "btn primary block" : "btn primary"} onClick={install} disabled={busy}><Icon name="restart" />{platform === "android" ? "Update" : "Restart to update"}</button>
           : <button className={platform === "android" ? "btn block" : "btn"} onClick={check} disabled={st.k === "checking"}><Icon name="refresh" />Check for updates</button>}
-        <span className={"help" + (st.k === "error" || step.k === "failed" ? " bad" : "")}>{text}</span>
+        <span className={"help" + (st.k === "error" || st.k === "failed" || step.k === "failed" ? " bad" : "")}>{text}</span>
       </div>
       <Card>
         <Row icon="sync" t1="Check for updates automatically" t2="When Hubchat starts and every 6 hours. Updates never install on their own." right={<Switch on={auto} onChange={setAutoChecks} label="Check for updates automatically" />} />

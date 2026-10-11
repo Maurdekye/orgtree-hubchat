@@ -9,6 +9,7 @@ import mobileCss from "./styles/mobile.css?inline";
 import mobileApp from "./styles/app-mobile.css?inline";
 import { api, installApi, isTauri } from "./api";
 import { applyTheme } from "./lib/theme";
+import { startTray } from "./lib/tray";
 import App from "./App";
 
 /** The desktop and Android sheets share class names, so only one is loaded. */
@@ -29,6 +30,7 @@ async function boot() {
   let platform: "desktop" | "android" = "desktop";
   try { platform = (await api.state()).platform; } catch { /* App shows the error */ }
   platformStyles(platform);
+  if (isTauri && platform === "desktop") startTray();
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
       <App />

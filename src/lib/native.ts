@@ -86,11 +86,19 @@ export const autostart = {
     const { isEnabled } = await import("@tauri-apps/plugin-autostart");
     return await isEnabled();
   },
-  async set(on: boolean): Promise<void> {
-    if (!isTauri) { localStorage.setItem("hubchat.mock.autostart", on ? "1" : "0"); return; }
-    const a = await import("@tauri-apps/plugin-autostart");
-    await (on ? a.enable() : a.disable());
+  /** Through the shell, so the tray's tick follows; the value now in effect. */
+  async set(on: boolean): Promise<boolean> {
+    if (!isTauri) { localStorage.setItem("hubchat.mock.autostart", on ? "1" : "0"); return on; }
+    return await api.setAutostart(on);
   },
+};
+
+/** Exit on close (desktop): closing the window quits Hubchat instead of
+ *  keeping it in the tray. The tray has the same switch. */
+export const exitOnClose = {
+  get: (): Promise<boolean> => api.exitOnClose(),
+  /** The value now in effect. */
+  set: (on: boolean): Promise<boolean> => api.setExitOnClose(on),
 };
 
 /** Only http(s) links leave the app. */
