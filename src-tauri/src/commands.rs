@@ -532,8 +532,7 @@ pub fn hc_retry(id: String) -> R<()> {
 
 #[tauri::command]
 pub fn hc_cancel_transfer(local_id: String) -> R<()> {
-    engine()?.cancel_transfer(&local_id);
-    Ok(())
+    engine()?.cancel_transfer(&local_id).map_err(s)
 }
 
 #[tauri::command]
