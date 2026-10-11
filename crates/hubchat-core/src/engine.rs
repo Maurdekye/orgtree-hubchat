@@ -125,6 +125,11 @@ pub enum Event {
 /// The platform side: events, opening picked files, where downloads go.
 pub trait Host: Send + Sync + 'static {
     fn event(&self, ev: Event);
+    /// Deliver or replace this device's failure notice. Success means the OS
+    /// accepted it (or notifications were explicitly disabled). Replay uses the
+    /// stable key; no database lease is held during this call.
+    fn transfer_failed(&self, _notice: &crate::store::TransferFailure) -> std::io::Result<()> { Ok(()) }
+
     /// Open an attachment source: a path, or on Android a content:// URI.
     fn open_source(&self, source: &str) -> std::io::Result<std::fs::File>;
     /// Folder for downloaded attachments.
@@ -1491,14 +1496,7 @@ impl Engine {
                     "only failed outgoing messages can be retried".into(),
                 ));
             }
-            self.store.clear_send_retry(id)?;
-            for a in &m.attachments {
-                if a.state != "uploaded" {
-                    self.store
-                        .set_attachment(&a.local_id, "pending", None, None, None)?;
-                }
-            }
-            self.store.set_state(id,"queued",None)?;
+            self.store.retry_send(id)?;
             drop(writers);
             self.host.event(Event::Chat { peer: m.peer });
             self.queue_changed.notify_one();
@@ -1640,6 +1638,15 @@ impl Engine {
                     self.store
                         .complete_upload(&a.local_id, &meta.id, &url)?;
                     hub_ids.push(meta.id);
+                }
+                Err(_) if cancel.is_cancelled()
+                    && (self.stopped.load(std::sync::atomic::Ordering::Relaxed) || *self.suspended.borrow()) =>
+                {
+                    // Lifecycle suspension is resumable, not a failed user action.
+                    self.store.pause_upload(&a.local_id)?;
+                    self.store.requeue_send(id)?;
+                    self.host.event(Event::Chat { peer:m.peer.clone() });
+                    return Ok(false);
                 }
                 Err(e)
                     if resumable

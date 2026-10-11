@@ -319,7 +319,7 @@ impl Engine {
         }
         .await;
         if let Err(ref e) = result {
-            let state = if cancel.is_cancelled() {
+            let state = if cancel.is_cancelled() || super::engine_scheduler::transient(e) {
                 "paused"
             } else if e.status() == Some(410) {
                 "expired"

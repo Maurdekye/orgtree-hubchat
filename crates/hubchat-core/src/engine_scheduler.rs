@@ -1,7 +1,7 @@
 //! One bounded owner for queued sends and explicit download requests.
 use super::*;
 use std::collections::HashMap;
-fn transient(e: &Error) -> bool {
+pub(super) fn transient(e: &Error) -> bool {
     matches!(e, Error::Unreachable(_))
         || e.status()
             .is_some_and(|s| matches!(s, 408 | 409 | 429 | 500..=599))
@@ -34,6 +34,7 @@ impl Engine {
                 self.clean_staging().await;
                 clean_at = std::time::Instant::now() + Duration::from_secs(30);
             }
+            self.deliver_transfer_failures(unix_ms()).await;
             let mut more = false;
             if !*suspended.borrow_and_update() {
                 if downloads_first {
@@ -113,6 +114,17 @@ impl Engine {
                 _=self.file_slots.changed.notified()=>{},
                 _=suspended.changed()=>{},
                 _=tokio::time::sleep(if more {Duration::from_millis(1)} else {Duration::from_secs(2)})=>{},
+            }
+        }
+    }
+    /// Bounded outbox delivery also runs while connections are suspended.
+    async fn deliver_transfer_failures(&self, now:u64) {
+        let Ok(notices)=self.store.pending_transfer_failures(now) else{return};
+        for notice in notices {
+            if !self.store.start_failure_notice(&notice,now).unwrap_or(false) {continue;}
+            let host=self.host.clone();let copy=notice.clone();
+            if matches!(tokio::task::spawn_blocking(move||host.transfer_failed(&copy)).await,Ok(Ok(()))) {
+                let _=self.store.finish_failure_notice(&notice);
             }
         }
     }
@@ -293,4 +305,32 @@ mod tests {
             .unwrap()
             .contains("unexpectedly"));
     }
+    #[tokio::test]
+    async fn failure_delivery_replays_same_key_after_lost_host_reply_and_never_holds_store() {
+        struct NoticeHost { store:Arc<Store>, keys:Mutex<std::collections::HashSet<String>>, fail:std::sync::atomic::AtomicBool }
+        impl Host for NoticeHost {
+            fn event(&self,_:Event) {}
+            fn open_source(&self,_:&str)->std::io::Result<std::fs::File>{unreachable!()}
+            fn download_dir(&self)->std::path::PathBuf{std::path::PathBuf::new()}
+            fn transfer_failed(&self,n:&crate::store::TransferFailure)->std::io::Result<()> {
+                self.store.set_meta("notice-proof","host can use store").unwrap();
+                self.keys.lock().unwrap().insert(n.key());
+                if self.fail.swap(false,std::sync::atomic::Ordering::Relaxed){Err(std::io::Error::other("lost OS reply"))}else{Ok(())}
+            }
+        }
+        let store=Arc::new(Store::open_in_memory().unwrap());
+        store.queue_outgoing(&crate::store::NewOutgoing{id:"notice".into(),peer:"peer".into(),body:"body".into(),kind:None,reply_to:None,attachments:vec![crate::store::NewAttachment{name:"file".into(),bytes:3,source:"missing".into()}]},"now").unwrap();
+        store.fail_send("notice","failed").unwrap();
+        let host=Arc::new(NoticeHost{store:store.clone(),keys:Mutex::new(Default::default()),fail:std::sync::atomic::AtomicBool::new(true)});
+        let e=Engine::new(store.clone(),Identity::generate("failure-proof").unwrap(),Profile::default(),host.clone());
+        tokio::time::timeout(Duration::from_secs(2),e.deliver_transfer_failures(0)).await.unwrap();
+        assert_eq!(host.keys.lock().unwrap().len(),1);
+        // A fresh engine stands in for restart; the host's stable-key collection
+        // models replacement by the OS, including an accepted but lost reply.
+        let e=Engine::new(store.clone(),Identity::generate("failure-proof").unwrap(),Profile::default(),host.clone());
+        e.deliver_transfer_failures(30000).await;e.deliver_transfer_failures(60000).await;
+        assert_eq!(host.keys.lock().unwrap().len(),1);
+        assert!(store.pending_transfer_failures(u64::MAX/2).unwrap().is_empty());
+    }
+
 }

@@ -34,7 +34,8 @@ impl Store {
         self.with(|c| {
             let tx=c.transaction()?;
             tx.execute("UPDATE attachments SET state='failed',error='Transfer worker stopped unexpectedly; retry' WHERE message_id=? AND state='uploading'",[id])?;
-            tx.execute("UPDATE messages SET state='failed',error='Transfer worker stopped unexpectedly; retry' WHERE id=? AND state IN ('queued','sending')",[id])?;
+            let n=tx.execute("UPDATE messages SET state='failed',error='Transfer worker stopped unexpectedly; retry' WHERE id=? AND state IN ('queued','sending')",[id])?;
+            if n>0 {transfer_failures::queue(&tx,id,"Transfer worker stopped unexpectedly; retry")?;}
             tx.commit()
         })
     }
@@ -42,14 +43,12 @@ impl Store {
         self.with(|c| {
             let tx=c.transaction()?;
             let n=tx.execute("UPDATE download_jobs SET state=CASE WHEN state IN ('publishing','exporting') THEN state ELSE 'failed' END,error='Transfer worker stopped unexpectedly; retry' WHERE local_id=? AND state NOT IN ('done','cancelled')",[id])?;
-            if n>0 {tx.execute("UPDATE attachments SET state='failed',error='Transfer worker stopped unexpectedly; retry' WHERE local_id=?",[id])?;}
+            if n>0 {
+                tx.execute("UPDATE attachments SET state='failed',error='Transfer worker stopped unexpectedly; retry' WHERE local_id=?",[id])?;
+                let mid:String=tx.query_row("SELECT message_id FROM attachments WHERE local_id=?",[id],|r|r.get(0))?;
+                transfer_failures::queue(&tx,&mid,"Transfer worker stopped unexpectedly; retry")?;
+            }
             tx.commit()
-        })
-    }
-    pub(crate) fn clear_send_retry(&self, id: &str) -> Result<()> {
-        self.with(|c| {
-            c.execute("DELETE FROM transfer_send_state WHERE message_id=?", [id])
-                .map(|_| ())
         })
     }
     pub(crate) fn queued_downloads(
@@ -58,21 +57,23 @@ impl Store {
         now: u64,
     ) -> Result<Vec<(String, String, String)>> {
         self.with(|c| {
-            let mut q=c.prepare("SELECT j.local_id,a.message_id,COALESCE(a.hub,m.hub) FROM download_jobs j JOIN attachments a ON a.local_id=j.local_id JOIN messages m ON m.id=a.message_id WHERE (j.state IN ('queued','running','publishing','paused') OR (j.state='exporting' AND j.error IS NULL)) AND j.retry_at<=?1 AND j.local_id>?2 ORDER BY j.local_id LIMIT 64")?;
+            let mut q=c.prepare("SELECT j.local_id,a.message_id,COALESCE(a.hub,m.hub) FROM download_jobs j JOIN attachments a ON a.local_id=j.local_id JOIN messages m ON m.id=a.message_id WHERE (j.state IN ('queued','running','paused') OR (j.state IN ('publishing','exporting') AND j.error IS NULL)) AND j.retry_at<=?1 AND j.local_id>?2 ORDER BY j.local_id LIMIT 64")?;
             let rows=q.query_map(params![now,after],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?.collect();rows
         })
     }
     pub(crate) fn queue_download_job(&self, id: &str, partial: &str, dest: &str) -> Result<()> {
         self.with(|c| {
             let tx=c.transaction()?;
+            let retry_mid:Option<String>=tx.query_row("SELECT a.message_id FROM download_jobs j JOIN attachments a ON a.local_id=j.local_id WHERE j.local_id=? AND (j.state IN ('failed','expired','cancelled') OR (j.state IN ('publishing','exporting') AND j.error IS NOT NULL))",[id],|r|r.get(0)).optional()?;
+            if let Some(mid)=retry_mid {transfer_failures::retry(&tx,&mid)?;}
             tx.execute("INSERT OR IGNORE INTO download_jobs(local_id,partial,destination) VALUES(?,?,?)",params![id,partial,dest])?;
             tx.execute("UPDATE download_jobs SET state='queued',retry_at=0,error=NULL WHERE local_id=? AND state IN ('failed','expired','cancelled','paused')",[id])?;
-            tx.execute("UPDATE download_jobs SET error=NULL,retry_at=0 WHERE local_id=? AND state='exporting'",[id])?;
+            tx.execute("UPDATE download_jobs SET error=NULL,retry_at=0 WHERE local_id=? AND state IN ('publishing','exporting')",[id])?;
             tx.commit()
         })
     }
     pub(crate) fn defer_download(&self, id: &str, now: u64) -> Result<()> {
-        self.with(|c| c.execute("UPDATE download_jobs SET state='queued',retry_at=?1+MIN(300000,1000*(1 << MIN(attempt,8))) WHERE local_id=?2 AND state='failed'",params![now,id]).map(|_|()))
+        self.with(|c| c.execute("UPDATE download_jobs SET state='queued',retry_at=?1+MIN(300000,1000*(1 << MIN(attempt,8))) WHERE local_id=?2 AND state IN ('failed','paused')",params![now,id]).map(|_|()))
     }
 }
 

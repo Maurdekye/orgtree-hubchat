@@ -664,3 +664,18 @@ async fn cancelling_active_upload_blocks_early_retry_and_never_dispatches_mail()
     assert!(e.send_writers.lock().unwrap().is_empty());e.retry("m").unwrap();
     server.await.unwrap();
 }
+
+#[tokio::test]
+async fn shutdown_of_upload_is_resumable_and_has_no_failure_notice() {
+    let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client=HubClient::new(HubAddress::parse(&listener.local_addr().unwrap().to_string()).unwrap());let url=client.address().to_string();
+    let dir=tempfile::tempdir().unwrap();let file=dir.path().join("source");std::fs::write(&file,b"abc").unwrap();
+    let store=Arc::new(Store::open_in_memory().unwrap());let e=engine(store.clone());
+    store.queue_outgoing(&NewOutgoing{id:"m".into(),peer:"peer".into(),body:"body".into(),kind:None,reply_to:None,attachments:vec![NewAttachment{name:"file".into(),bytes:3,source:file.to_string_lossy().into()}]},"now").unwrap();
+    let (ready,wait)=tokio::sync::oneshot::channel();
+    let server=tokio::spawn(async move {let(mut socket,_)=listener.accept().await.unwrap();request(&mut socket).await;ready.send(()).unwrap();let mut rest=Vec::new();socket.read_to_end(&mut rest).await.unwrap();});
+    let pause=async {wait.await.unwrap();e.shutdown();};
+    let (result,())=tokio::time::timeout(Duration::from_secs(3),async{tokio::join!(e.send_one_on("m",(url,client,1024)),pause)}).await.unwrap();
+    assert!(!result.unwrap());let m=store.message("m").unwrap().unwrap();assert_eq!(m.state,"queued");assert_eq!(m.attachments[0].state,"pending");
+    assert!(store.pending_transfer_failures(u64::MAX/2).unwrap().is_empty());server.await.unwrap();
+}

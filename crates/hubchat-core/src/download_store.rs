@@ -162,7 +162,13 @@ impl Store {
             let tx=c.transaction()?;
             // User cancellation and publication win against stale worker errors.
             let n=tx.execute("UPDATE download_jobs SET state=CASE WHEN state IN ('publishing','exporting') THEN state ELSE ?1 END,error=?2 WHERE local_id=?3 AND attempt=?4 AND (state='running' OR (state IN ('publishing','exporting') AND ?1!='paused'))",params![state,error,id,attempt])?;
-            if n>0 {tx.execute("UPDATE attachments SET state=?,error=? WHERE local_id=?",params![state,error,id])?;}
+            if n>0 {
+                tx.execute("UPDATE attachments SET state=?,error=? WHERE local_id=?",params![state,error,id])?;
+                if matches!(state,"failed"|"expired") {
+                    let mid:String=tx.query_row("SELECT message_id FROM attachments WHERE local_id=?",[id],|r|r.get(0))?;
+                    transfer_failures::queue(&tx,&mid,error)?;
+                }
+            }
             tx.commit()
         })
     }

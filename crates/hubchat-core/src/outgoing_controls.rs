@@ -2,7 +2,12 @@
 use super::*;
 impl Store {
     pub(crate) fn fail_send(&self, id: &str, why: &str) -> Result<()> {
-        self.with(|c| c.execute("UPDATE messages SET state='failed',error=? WHERE id=? AND state IN ('queued','sending')",params![why,id]).map(|_|()))
+        self.with(|c| {
+            let tx=c.transaction()?;
+            let n=tx.execute("UPDATE messages SET state='failed',error=? WHERE id=? AND state IN ('queued','sending')",params![why,id])?;
+            if n>0 {transfer_failures::queue(&tx,id,why)?;}
+            tx.commit()
+        })
     }
 
     pub(crate) fn cancel_upload(&self, id: &str) -> Result<(String, Vec<String>)> {
@@ -17,6 +22,9 @@ impl Store {
             let lids={let mut q=tx.prepare("SELECT local_id FROM attachments WHERE message_id=?")?;let rows=q.query_map([&mid],|r|r.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;rows};
             tx.commit()?;Ok(Some((peer,lids)))
         })?.ok_or_else(||Error::Invalid("this upload can no longer be cancelled".into()))
+    }
+    pub(crate) fn pause_upload(&self,id:&str)->Result<()> {
+        self.with(|c|c.execute("UPDATE attachments SET state='pending',error=NULL WHERE local_id=? AND state='uploading' AND EXISTS(SELECT 1 FROM messages WHERE id=attachments.message_id AND state='sending')",[id]).map(|_|()))
     }
     pub(crate) fn requeue_send(&self, id: &str) -> Result<()> {
         self.with(|c| {
@@ -54,6 +62,7 @@ impl Store {
             if left==0 && body.trim().is_empty(){return Ok(None)}
             tx.execute("UPDATE messages SET state='queued',error=NULL WHERE id=? AND NOT EXISTS(SELECT 1 FROM attachments WHERE message_id=? AND state IN ('failed','cancelled'))",params![mid,mid])?;
             tx.execute("DELETE FROM transfer_send_state WHERE message_id=?",[mid])?;
+            transfer_failures::retry(&tx,mid)?;
             tx.commit()?;Ok(Some(peer))
         })?.ok_or_else(||Error::Invalid("remove a file only from a held message; delete the message if it would be empty".into()))
     }

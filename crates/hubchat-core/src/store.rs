@@ -184,6 +184,19 @@ CREATE TABLE download_jobs (
 "#,
     // 5: only durable hub acknowledgements survive an upload restart.
     r#"ALTER TABLE attachments ADD COLUMN upload_confirmed INTEGER NOT NULL DEFAULT 0;"#,
+    // 6: one local failure notice per message and explicit retry episode.
+    r#"
+CREATE TABLE transfer_failures (
+ message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+ episode INTEGER NOT NULL DEFAULT 0,
+ pending INTEGER NOT NULL DEFAULT 0,
+ delivered INTEGER NOT NULL DEFAULT 0,
+ attempts INTEGER NOT NULL DEFAULT 0,
+ retry_at INTEGER NOT NULL DEFAULT 0,
+ error TEXT
+);
+CREATE INDEX transfer_failure_pending ON transfer_failures(pending,retry_at,message_id);
+"#,
 ];
 
 pub struct Store {
@@ -1911,3 +1924,7 @@ pub use transfer_view::{TransferView, TransferPage};
 
 #[path = "outgoing_controls.rs"]
 mod outgoing_controls;
+
+#[path = "transfer_failures.rs"]
+mod transfer_failures;
+pub use transfer_failures::TransferFailure;
