@@ -76,6 +76,7 @@ export interface State {
   /** Android (design D6): stay connected (true) or check about every 15 minutes; null on desktop. */
   stay_connected: boolean | null;
   push: PushState | null;
+  file_background_hint: string | null;
   /** What other devices see this one called: its own name, or the one set in Settings › Devices. */
   device_name: string;
   /** The phone's maker on Android ("samsung", "Google"); empty elsewhere. */
@@ -224,6 +225,7 @@ export interface Devices {
 }
 
 export type HcEvent =
+  | { type: "file_lifecycle" }
   | { type: "chat"; peer: string }
   | { type: "incoming"; peer: string; id: string; preview: string }
   | { type: "hub"; url: string }

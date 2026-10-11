@@ -1,3 +1,4 @@
+import { FileBackgroundBanner } from "./Banners";
 // A conversation: header, hub banner, timeline (oldest to newest, day
 // dividers, grouped bubbles) and the composer. On desktop, files dropped on
 // it are attached.
@@ -397,6 +398,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
             {down.state === "disconnected" ? <HubHelpLink /> : null}{down.state !== "connecting" ? <button className="link" onClick={() => api.retryNow()}>Retry</button> : null}
           </div>
         ) : null}
+        <FileBackgroundBanner />
         <div className="tl-wrap">
           <div className="timeline" ref={tl} onScroll={onScroll} {...touch}><div>{rows}</div></div>
           {jumpBtn}

@@ -313,6 +313,7 @@ function onEvent(e: HcEvent) {
     }
     case "chat": schedule("chats"); chatChanged(e.peer); schedule("transfers"); break;
     case "incoming": schedule("chats"); chatChanged(e.peer); break;
+    case "file_lifecycle": schedule("state"); schedule("transfers"); break;
     case "hub": schedule("state"); schedule("transfers"); break;
     case "directory": schedule("dir"); break;
     case "transfer":

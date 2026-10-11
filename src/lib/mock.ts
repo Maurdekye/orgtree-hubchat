@@ -73,6 +73,7 @@ const st: State = {
   read_receipts: true,
   notifications: { enabled: true, preview: true, sound: false },
   stay_connected: new URLSearchParams(location.search).get("platform") === "android" ? true : null,
+  file_background_hint: null,
   push: params.get("platform") !== "android" ? null : pushStates[params.get("push") ?? ""]
     ?? { enabled: false, active: false, distributor: "", distributors: params.get("distributor") === "ntfy" ? [NTFY] : [], status: "Off" },
   device_name: new URLSearchParams(location.search).get("platform") === "android" ? "Pixel 8" : "Home-PC",

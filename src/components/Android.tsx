@@ -9,7 +9,7 @@ import { getSnap, useSendRoute, useSnap } from "../lib/store";
 import { chatLinkTarget } from "../lib/chatlink";
 import { installKeyboardImages } from "../lib/keyboardImages";
 import { startTake, useActive, useForeground, useLastChat, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
-import { HubBanner, RecoveryBanner, UpdateBanner } from "./Banners";
+import { FileBackgroundBanner, HubBanner, RecoveryBanner, UpdateBanner } from "./Banners";
 import { startTailnetWatch } from "../lib/tailnet";
 import { startUpdateChecks } from "../lib/updates";
 import { isSetupLink, startSetup, useSetupChat } from "../lib/setup";
@@ -72,6 +72,7 @@ function Chats({ go }: { go: (s: Scr) => void }) {
       </div>
       <UpdateBanner />
       <HubBanner />
+      <FileBackgroundBanner />
       <RecoveryBanner onShow={() => go({ s: "set", tab: "recovery" })} />
       <TransfersStrip onOpen={(p) => go({ s: "conv", p })} />
       <div className="fchips">{f("all", "All")}{f("agents", "Agents")}{f("people", "People")}</div>

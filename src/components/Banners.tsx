@@ -158,3 +158,10 @@ function AndroidUpdate({ avail, onHide }: { avail: Available; onHide: () => void
     </div>
   );
 }
+
+/** Android can refuse a temporary service; foreground work still continues. */
+export function FileBackgroundBanner() {
+  const hint = useSnap().state?.file_background_hint;
+  if (!hint) return null;
+  return <div className="strip warn" role="status" aria-label="File background notice"><Icon name="info" /><span>{hint}</span></div>;
+}
