@@ -48,4 +48,3 @@ mod tests {
         assert!(engine.queue_notification_reply(&owner,id,"pat.abcdef","hello").is_err());
     }
 }
-

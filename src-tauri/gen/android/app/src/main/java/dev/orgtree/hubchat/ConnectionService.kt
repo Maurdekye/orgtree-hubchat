@@ -64,6 +64,7 @@ class ConnectionService : Service() {
 
     /** Rust entry: one check (design D6); blocks, so never on the main thread. */
     @JvmStatic external fun checkNow(timeoutSecs: Int): Boolean
+    @JvmStatic external fun queueNotificationReply(owner: String, id: String, peer: String, body: String): String
     @JvmStatic external fun pushWork(action: String, capability: String): String
     @JvmStatic external fun fileServiceChanged()
     fun isRunning(): Boolean = running
@@ -86,6 +87,7 @@ class ConnectionService : Service() {
       appContext = ctx.applicationContext
       channels(ctx)
       startCore(ctx.filesDir.absolutePath)
+      NotificationReplies.recover(ctx)
     }
 
     fun stayConnected(ctx: Context): Boolean =
@@ -124,16 +126,18 @@ class ConnectionService : Service() {
 
     /** Called from Rust (any thread) when a message arrives. */
     @JvmStatic
-    fun notifyMessage(title: String, body: String, peer: String) {
+    fun notifyMessage(title: String, body: String, peer: String, owner: String) = synchronized(NotificationReplies) {
       val ctx = appContext ?: return
       // One notification per chat (replaced as new messages arrive); tapping
       // it opens that chat.
       val intent = Intent(ctx, MainActivity::class.java)
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        .setData(Uri.Builder().scheme("hubchat-notification").authority("chat").appendPath(owner).appendPath(peer).build())
         .putExtra("peer", peer)
       val open = PendingIntent.getActivity(
         ctx, peer.hashCode(), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-      val n = NotificationCompat.Builder(ctx, CHANNEL_MESSAGES)
+      val token = java.util.UUID.randomUUID().toString()
+      val builder = NotificationCompat.Builder(ctx, CHANNEL_MESSAGES)
         .setSmallIcon(R.drawable.ic_stat_hubchat)
         .setContentTitle(title)
         .setContentText(body)
@@ -144,7 +148,11 @@ class ConnectionService : Service() {
         .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
         .setAutoCancel(true)
         .setContentIntent(open)
-        .build()
+      if (owner.isNotEmpty()) {
+        builder.addExtras(android.os.Bundle().apply { putString(NotificationReplies.TOKEN, token) })
+        builder.addAction(NotificationReplies.action(ctx, owner, peer, token))
+      }
+      val n = builder.build()
       val nm = ctx.getSystemService(NotificationManager::class.java)
       nm.notify(peer, MESSAGE_ID, n)
       summary(ctx, nm)
@@ -202,7 +210,7 @@ class ConnectionService : Service() {
      *  or on another device): its message notification goes, and the
      *  group's summary with the last of them. */
     @JvmStatic
-    fun clearMessage(peer: String) {
+    fun clearMessage(peer: String) = synchronized(NotificationReplies) {
       val ctx = appContext ?: return
       val nm = ctx.getSystemService(NotificationManager::class.java)
       nm.cancel(peer, MESSAGE_ID)
@@ -538,6 +546,7 @@ class ConnectionService : Service() {
     running = true
     TransferService.coverageChanged(this)
     startCore(filesDir.absolutePath)
+    NotificationReplies.recover(this)
     stopIfUnneeded()
   }
 

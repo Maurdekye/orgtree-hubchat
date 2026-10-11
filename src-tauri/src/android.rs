@@ -141,7 +141,9 @@ impl crate::core::Platform for AndroidPlatform {
     /// (the design has no sound switch on Android).
     fn notify(&self, title: &str, body: &str, peer: &str, _sound: bool) {
         if let Some(j) = JNI.get() {
-            call(&j.service, "notifyMessage", &[title, body, peer], false);
+            let owner = crate::core::get().ok()
+                .and_then(|c| c.store.meta("identity.address").ok().flatten()).unwrap_or_default();
+            call(&j.service, "notifyMessage", &[title, body, peer, &owner], false);
         }
     }
     fn notify_transfer(&self, notice:&hubchat_core::store::TransferFailure,title:&str,body:&str,_sound:bool)->std::io::Result<()> {
@@ -316,6 +318,36 @@ fn check_now(timeout_secs: i32) -> bool {
     let _check = c.background_check();
     c.rt.block_on(async move { e.check_now(t).await })
 }
+
+/// WorkManager first admits locally, then a separate bounded check attempts delivery.
+/// No notification text or identity keys are written to logs or error results.
+fn notification_reply(mut env: JNIEnv, owner: JString, id: JString, peer: JString, body: JString) -> jni::sys::jstring {
+    let result = (|| -> Result<&'static str, ()> {
+        let owner = env.get_string(&owner).map(String::from).map_err(|_| ())?;
+        let id = env.get_string(&id).map(String::from).map_err(|_| ())?;
+        let peer = env.get_string(&peer).map(String::from).map_err(|_| ())?;
+        let body = env.get_string(&body).map(String::from).map_err(|_| ())?;
+        let c = crate::core::get().map_err(|_| ())?;
+        let e = c.engine().map_err(|_| ())?;
+        let _admission = c.file_admission(body.len() as u64 > hubchat_core::engine::BODY_INLINE_MAX);
+        match e.queue_notification_reply(&owner, &id, &peer, &body) {
+            Ok(_) => Ok("queued"),
+            Err(hubchat_core::Error::Invalid(_)) => Ok("rejected"),
+            Err(_) => Ok("retry"),
+        }
+    })().unwrap_or("rejected");
+    env.new_string(result).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_orgtree_hubchat_ConnectionService_queueNotificationReply(
+    env: JNIEnv, _class: JClass, owner: JString, id: JString, peer: JString, body: JString,
+) -> jni::sys::jstring { notification_reply(env, owner, id, peer, body) }
+
+#[no_mangle]
+pub extern "system" fn Java_dev_orgtree_hubchat_ConnectionService_00024Companion_queueNotificationReply(
+    env: JNIEnv, _this: JObject, owner: JString, id: JString, peer: JString, body: JString,
+) -> jni::sys::jstring { notification_reply(env, owner, id, peer, body) }
 
 #[derive(serde::Deserialize)]
 struct PushCapability {
