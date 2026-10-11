@@ -42,11 +42,29 @@ pub(crate) fn prepare(host: &dyn Host, message: NewOutgoing) -> Result<Prepared>
     let dir = root.join(uuid::Uuid::new_v4().simple().to_string());
     fs::create_dir(&dir)?;
     prepared.directory = Some(dir.clone());
+    let grand_total = prepared
+        .message
+        .attachments
+        .iter()
+        .try_fold(0u64, |n, a| n.checked_add(a.bytes))
+        .ok_or_else(|| Error::Invalid("attachments are too large".into()))?;
+    let mut copied = 0u64;
+    let mut tick = std::time::Instant::now();
+    let report = |name: &str, done| {
+        host.event(crate::engine::Event::Preparing {
+            message_id: prepared.message.id.clone(),
+            peer: prepared.message.peer.clone(),
+            name: name.into(),
+            done,
+            total: grand_total,
+        })
+    };
     let mut buffer = vec![0u8; 256 * 1024];
-    for (index, a) in prepared.message.attachments.iter_mut().enumerate() {
+    for (index, a) in prepared.message.attachments.iter().enumerate() {
         if a.bytes > i64::MAX as u64 {
             return Err(Error::Invalid("file is too large".into()));
         }
+        report(&a.name, copied);
         let mut source = host.open_source(&a.source)?;
         let before = source.metadata()?;
         let path = dir.join(format!("{index}.bin"));
@@ -74,6 +92,10 @@ pub(crate) fn prepare(host: &dyn Host, message: NewOutgoing) -> Result<Prepared>
             }
             dest.write_all(&buffer[..n])?;
             hash.update(&buffer[..n]);
+            if tick.elapsed() >= std::time::Duration::from_millis(100) {
+                report(&a.name, copied + total);
+                tick = std::time::Instant::now();
+            }
         }
         let after = source.metadata()?;
         if total != a.bytes || (before.is_file() && before.modified().ok() != after.modified().ok())
@@ -84,6 +106,8 @@ pub(crate) fn prepare(host: &dyn Host, message: NewOutgoing) -> Result<Prepared>
             )));
         }
         dest.sync_all()?;
+        copied += total;
+        report(&a.name, copied);
         prepared.digests.push(hex::encode(hash.finalize()));
         prepared.paths.push(path.to_string_lossy().into_owned());
     }
@@ -183,4 +207,20 @@ pub(crate) fn sweep_orphans(root: &std::path::Path, store: &crate::store::Store)
         }
     }
     collect(root, store)
+}
+
+/// Name storage exhaustion plainly instead of leaking an opaque OS error.
+pub(crate) fn explain_error(e: Error) -> Error {
+    if let Error::Io(ref io) = e {
+        #[cfg(windows)]
+        let full = matches!(io.raw_os_error(), Some(39 | 112));
+        #[cfg(not(windows))]
+        let full = io.raw_os_error() == Some(28);
+        if full {
+            return Error::Invalid(
+                "not enough space to prepare these files; free space and try again".into(),
+            );
+        }
+    }
+    e
 }

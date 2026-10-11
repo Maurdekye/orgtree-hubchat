@@ -511,3 +511,96 @@ async fn failed_staging_unlink_stays_durable_for_retry() {
     assert!(!PathBuf::from(&path).exists());
     assert!(store.staging_due(i64::MAX).unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn preparation_reports_local_bytes_before_admission_and_names_full_disk() {
+    struct ProgressHost {
+        dir: PathBuf,
+        store: Arc<Store>,
+        ticks: Mutex<Vec<(u64, u64)>>,
+        full: bool,
+    }
+    impl Host for ProgressHost {
+        fn event(&self, ev: Event) {
+            if let Event::Preparing {
+                message_id,
+                done,
+                total,
+                ..
+            } = ev
+            {
+                assert!(
+                    self.store.message(&message_id).unwrap().is_none(),
+                    "preparation is not queue admission"
+                );
+                self.ticks.lock().unwrap().push((done, total));
+            }
+        }
+        fn open_source(&self, source: &str) -> std::io::Result<std::fs::File> {
+            if self.full {
+                return Err(std::io::Error::from_raw_os_error(if cfg!(windows) {
+                    112
+                } else {
+                    28
+                }));
+            }
+            std::fs::File::open(source)
+        }
+        fn download_dir(&self) -> PathBuf {
+            self.dir.clone()
+        }
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Arc::new(Store::open(&tmp.path().join("store.db")).unwrap());
+    let host = Arc::new(ProgressHost {
+        dir: tmp.path().join("out"),
+        store: store.clone(),
+        ticks: Mutex::new(Vec::new()),
+        full: false,
+    });
+    let e = Engine::new(
+        store.clone(),
+        Identity::generate("preparing").unwrap(),
+        Profile::default(),
+        host.clone(),
+    );
+    let mut atts = Vec::new();
+    for (i, n) in [3 * 1024 * 1024usize, 1024 * 1024].into_iter().enumerate() {
+        let file = tmp.path().join(format!("source-{i}"));
+        std::fs::write(&file, vec![7; n]).unwrap();
+        atts.push(NewAttachment {
+            name: format!("source-{i}"),
+            bytes: n as u64,
+            source: file.to_string_lossy().into_owned(),
+        });
+    }
+    let message = NewOutgoing {
+        id: "preparing-proof".into(),
+        peer: "someone.123456".into(),
+        body: "files".into(),
+        kind: None,
+        reply_to: None,
+        attachments: atts,
+    };
+    e.send(message.clone()).await.unwrap();
+    let ticks = host.ticks.lock().unwrap().clone();
+    assert_eq!(ticks.first(), Some(&(0, 4 * 1024 * 1024)));
+    assert_eq!(ticks.last(), Some(&(4 * 1024 * 1024, 4 * 1024 * 1024)));
+    assert!(ticks.windows(2).all(|w| w[0].0 <= w[1].0));
+    let failed = Engine::new(
+        store.clone(),
+        Identity::generate("preparing-fail").unwrap(),
+        Profile::default(),
+        Arc::new(ProgressHost {
+            dir: tmp.path().join("full"),
+            store: store.clone(),
+            ticks: Mutex::new(Vec::new()),
+            full: true,
+        }),
+    );
+    let mut message = message;
+    message.id = "full-proof".into();
+    let error = failed.send(message).await.unwrap_err();
+    assert!(error.to_string().contains("not enough space"));
+    assert!(store.message("full-proof").unwrap().is_none());
+}

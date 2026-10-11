@@ -104,6 +104,14 @@ pub enum Event {
     Hub { url: String },
     /// The merged directory changed.
     Directory,
+    /// Local immutable-copy preparation, before queue admission.
+    Preparing {
+        message_id: String,
+        peer: String,
+        name: String,
+        done: u64,
+        total: u64,
+    },
     /// Upload or download progress for one attachment.
     Transfer {
         local_id: String,
@@ -122,7 +130,9 @@ pub trait Host: Send + Sync + 'static {
     /// Folder for downloaded attachments.
     fn download_dir(&self) -> PathBuf;
     /// Private, persistent storage. Shells override this with their app-data folder.
-    fn staging_dir(&self) -> PathBuf { self.download_dir().join(".hubchat-outbox") }
+    fn staging_dir(&self) -> PathBuf {
+        self.download_dir().join(".hubchat-outbox")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -1381,8 +1391,15 @@ impl Engine {
         // Admission and ownership of the snapshot then commit without an await.
         let host = self.host.clone();
         let prepared = tokio::task::spawn_blocking(move || crate::staging::prepare(host.as_ref(), msg))
-            .await.map_err(|e| Error::Invalid(format!("file preparation stopped: {e}")))??;
-        self.store.queue_prepared(&prepared.message, &now(), &prepared.digests, &prepared.paths)?;
+            .await
+            .map_err(|e| Error::Invalid(format!("file preparation stopped: {e}")))?
+            .map_err(crate::staging::explain_error)?;
+        self.store.queue_prepared(
+            &prepared.message,
+            &now(),
+            &prepared.digests,
+            &prepared.paths,
+        )?;
         let msg = prepared.commit();
         self.host.event(Event::Chat {
             peer: msg.peer.clone(),
