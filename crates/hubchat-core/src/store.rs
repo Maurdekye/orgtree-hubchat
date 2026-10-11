@@ -259,6 +259,8 @@ END;
 "#,
     // 14: consumed worker ids survive deletion so replay cannot resurrect a send.
     r#"CREATE TABLE notification_replies (id TEXT PRIMARY KEY);"#,
+    // 15: persistent device-local Close DM; custody and history are unchanged.
+    r#"CREATE TABLE closed_dms (peer TEXT PRIMARY KEY);"#,
 ];
 
 pub struct Store {
