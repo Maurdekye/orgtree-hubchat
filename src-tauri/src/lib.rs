@@ -41,6 +41,12 @@ mod desktop {
             // Remember who notified last so clicking the tray opens that chat.
             let _ = self.app.emit("hc-notified", peer);
         }
+        fn notify_transfer(&self, notice:&hubchat_core::store::TransferFailure, title:&str, body:&str, sound:bool) -> std::io::Result<()> {
+            #[cfg(windows)]
+            { toast::show_transfer(&self.app,title,body,&notice.peer,&notice.key(),sound,notice.attempts>0).map_err(std::io::Error::other) }
+            #[cfg(not(windows))]
+            { self.notify(title,body,&notice.peer,sound); Ok(()) }
+        }
         #[cfg(windows)]
         fn clear_notification(&self, peer: &str) {
             toast::clear(&self.app, peer);
@@ -150,6 +156,17 @@ mod desktop {
             let n = ToastNotification::CreateToastNotification(&xml(title, body, link.as_deref(), sound)?)?;
             n.SetTag(&tag(peer))?;
             n.SetGroup(h!("messages"))?;
+            ToastNotificationManager::CreateToastNotifierWithId(&app_id(app))?.Show(&n)
+        }
+
+        /// Failure notices survive marking the chat read and replace themselves
+        /// if the core restarts after Show but before saving its acknowledgement.
+        pub fn show_transfer(app:&AppHandle,title:&str,body:&str,peer:&str,key:&str,sound:bool,replay:bool)->Result<()> {
+            let link=(!app.config().identifier.ends_with(".test")).then(||chat_link(peer));
+            let n=ToastNotification::CreateToastNotification(&xml(title,body,link.as_deref(),sound)?)?;
+            n.SetTag(&tag(key))?;
+            n.SetGroup(h!("transfers"))?;
+            n.SetSuppressPopup(replay)?;
             ToastNotificationManager::CreateToastNotifierWithId(&app_id(app))?.Show(&n)
         }
 

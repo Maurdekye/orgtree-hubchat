@@ -144,6 +144,13 @@ impl crate::core::Platform for AndroidPlatform {
             call(&j.service, "notifyMessage", &[title, body, peer], false);
         }
     }
+    fn notify_transfer(&self, notice:&hubchat_core::store::TransferFailure,title:&str,body:&str,_sound:bool)->std::io::Result<()> {
+        let j=JNI.get().ok_or_else(||std::io::Error::other("Android is not ready"))?;
+        match call(&j.service,"notifyTransferFailure",&[&notice.key(),title,body,&notice.peer,if notice.attempts>0 {"1"} else {"0"}],true).as_deref() {
+            Some("")=>Ok(()),
+            _=>Err(std::io::Error::other("Android could not show the transfer notice")),
+        }
+    }
     fn status(&self, text: &str) {
         if let Some(j) = JNI.get() {
             call(&j.service, "setStatus", &[text], false);

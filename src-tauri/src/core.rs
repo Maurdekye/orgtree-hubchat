@@ -22,6 +22,12 @@ pub trait Platform: Send + Sync + 'static {
     /// Show a message notification (title = sender, body = preview).
     /// `sound`: play the notification sound (Settings › Notifications).
     fn notify(&self, title: &str, body: &str, peer: &str, sound: bool);
+    /// A local transfer failure uses its own replacement key, separate from
+    /// incoming-message notifications which disappear when a chat is read.
+    fn notify_transfer(&self, notice:&hubchat_core::store::TransferFailure, title:&str, body:&str, sound:bool) -> std::io::Result<()> {
+        self.notify(title,body,&notice.peer,sound); Ok(())
+    }
+
     /// Update the ongoing "connected" line (Android) / tray tooltip (desktop).
     fn status(&self, text: &str);
     fn open_source(&self, source: &str) -> std::io::Result<std::fs::File>;
@@ -220,6 +226,12 @@ impl Drop for BackgroundCheck {
 }
 
 impl Host for ShellHost {
+    fn transfer_failed(&self, notice:&hubchat_core::store::TransferFailure)->std::io::Result<()> {
+        if !self.notify_on.load(Ordering::Relaxed) {return Ok(())}
+        let title=self.store.display_name(&notice.peer).ok().flatten().unwrap_or_else(||notice.peer.clone());
+        // Keep OS text free of file paths, request URLs and message contents.
+        self.platform.notify_transfer(notice,&format!("{title}: transfer failed"),"A file transfer failed. Open this chat to retry or remove the file.",self.notify_sound.load(Ordering::Relaxed) && notice.attempts==0)
+    }
     fn event(&self, ev: Event) {
         if let Event::Incoming { peer, preview, quiet, .. } = &ev {
             let showing = self.foreground.load(Ordering::Relaxed)
@@ -638,5 +650,33 @@ mod key_tests {
         // can't be its owner; one brought here may be, so it is kept
         assert!(must_wipe(None, true, "pat.222222", true));
         assert!(!must_wipe(None, true, "alex.111111", false));
+    }
+}
+
+#[cfg(test)]
+mod transfer_notice_tests {
+    use super::*;
+    #[derive(Default)]
+    struct FakePlatform { notices:Mutex<Vec<(String,String,String,bool)>> }
+    impl Platform for FakePlatform {
+        fn notify(&self,_:&str,_:&str,_:&str,_:bool) {panic!("transfer must not use the incoming-message channel")}
+        fn notify_transfer(&self,n:&hubchat_core::store::TransferFailure,title:&str,body:&str,sound:bool)->std::io::Result<()> {
+            self.notices.lock().unwrap().push((n.key(),title.into(),body.into(),sound));Ok(())
+        }
+        fn status(&self,_:&str) {}
+        fn open_source(&self,_:&str)->std::io::Result<std::fs::File>{unreachable!()}
+        fn download_dir(&self)->PathBuf{PathBuf::new()}
+    }
+    #[test]
+    fn local_failure_notices_respect_settings_are_private_and_survive_an_open_chat() {
+        let platform=Arc::new(FakePlatform::default());
+        let host=ShellHost{staging:PathBuf::new(),app:OnceLock::new(),platform:platform.clone(),foreground:AtomicBool::new(true),open_chat:Mutex::new(Some("peer".into())),store:Arc::new(Store::open_in_memory().unwrap()),notify_on:AtomicBool::new(true),notify_text:AtomicBool::new(true),notify_sound:AtomicBool::new(true)};
+        let mut n=hubchat_core::store::TransferFailure{message_id:"m".into(),peer:"peer".into(),episode:0,attempts:0,error:"secret local path and signed request URL".into()};
+        host.transfer_failed(&n).unwrap();
+        n.attempts=1;host.transfer_failed(&n).unwrap();
+        host.notify_on.store(false,Ordering::Relaxed);host.transfer_failed(&n).unwrap();
+        let notices=platform.notices.lock().unwrap();assert_eq!(notices.len(),2);
+        assert_eq!(notices[0].0,notices[1].0);assert!(notices[0].3);assert!(!notices[1].3);
+        assert!(!notices[0].2.contains("secret"));assert!(notices[0].2.contains("retry"));
     }
 }
