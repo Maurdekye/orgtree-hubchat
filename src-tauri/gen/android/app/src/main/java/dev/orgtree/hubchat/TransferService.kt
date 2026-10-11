@@ -84,7 +84,7 @@ class TransferService : Service() {
     val open = PendingIntent.getActivity(this, ID, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
     val notice = NotificationCompat.Builder(this, CHANNEL)
       .setSmallIcon(R.drawable.ic_stat_hubchat).setContentTitle("Hubchat files")
-      .setContentText("Sending or saving files?").setProgress(0, 0, true)
+      .setContentText("Sending or saving files\u2026").setProgress(0, 0, true)
       .setOngoing(true).setSilent(true).setOnlyAlertOnce(true).setContentIntent(open).build()
     try {
       // Fulfil a pending start before inspecting whether the work is still wanted.
