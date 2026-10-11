@@ -14,6 +14,7 @@ pub mod link;
 pub mod recovery;
 pub mod setup;
 pub mod store;
+pub mod questions;
 pub mod text;
 
 pub use error::{Error, Result};

@@ -438,6 +438,8 @@ pub fn run() {
             commands::hc_vpn_active,
             commands::hc_setup_start,
             commands::hc_setup_status,
+            commands::hc_draft_answers,
+            commands::hc_set_draft_answers,
             link::hc_link_approve,
             link::hc_key_qr,
             link::hc_restore_qr,

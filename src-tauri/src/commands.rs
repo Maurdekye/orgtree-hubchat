@@ -632,13 +632,27 @@ pub fn hc_message(id: String) -> R<Option<Message>> {
     core::get()?.store.message(&id).map_err(s)
 }
 
+/// What the composer sends: the message, and what a multi-reply answers and
+/// the options it picks on question cards (docs/question-cards.md).
+#[derive(serde::Deserialize)]
+pub struct SendRequest {
+    #[serde(flatten)]
+    msg: NewOutgoing,
+    #[serde(default)]
+    replies: Vec<String>,
+    #[serde(default)]
+    answers: Vec<hubchat_core::questions::Answer>,
+}
+
 #[tauri::command]
-pub async fn hc_send(msg: NewOutgoing) -> R<()> {
+pub async fn hc_send(msg: SendRequest) -> R<()> {
+    let SendRequest { msg, replies, answers } = msg;
     let c=core::get()?;
     let _admission=c.file_admission(!msg.attachments.is_empty() || msg.body.len() as u64>hubchat_core::engine::BODY_INLINE_MAX);
     let e=engine()?;
+    let reply = hubchat_core::questions::ReplyMeta { replies, answers };
     // Own preparation even if the invoking view/command goes away.
-    c.rt.spawn(async move { let _admission=_admission; e.send(msg).await.map_err(s) }).await.map_err(s)?
+    c.rt.spawn(async move { let _admission=_admission; e.send_with(msg, reply).await.map_err(s) }).await.map_err(s)?
 }
 
 #[tauri::command]
@@ -754,6 +768,17 @@ pub fn hc_draft(peer: String) -> R<Option<String>> {
 #[tauri::command]
 pub fn hc_set_draft(peer: String, body: String) -> R<()> {
     core::get()?.store.set_draft(&peer, &body).map_err(s)
+}
+
+/// A chat's unsent replies and picked options (they survive a restart).
+#[tauri::command]
+pub fn hc_draft_answers(peer: String) -> R<Option<hubchat_core::store::DraftAnswers>> {
+    core::get()?.store.draft_answers(&peer).map_err(s)
+}
+
+#[tauri::command]
+pub fn hc_set_draft_answers(peer: String, answers: hubchat_core::store::DraftAnswers) -> R<()> {
+    core::get()?.store.set_draft_answers(&peer, &answers).map_err(s)
 }
 
 #[derive(Serialize)]

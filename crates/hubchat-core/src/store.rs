@@ -261,6 +261,10 @@ END;
     r#"CREATE TABLE notification_replies (id TEXT PRIMARY KEY);"#,
     // 15: persistent device-local Close DM; custody and history are unchanged.
     r#"CREATE TABLE closed_dms (peer TEXT PRIMARY KEY);"#,
+    // 16: question cards and multi-reply (docs/question-cards.md): what a
+    // message's checked meta holds, and each chat's unsent replies and picks
+    r#"ALTER TABLE messages ADD COLUMN meta TEXT;
+CREATE TABLE draft_answers (peer TEXT PRIMARY KEY, data TEXT NOT NULL);"#,
 ];
 
 pub struct Store {
@@ -325,6 +329,9 @@ pub struct Message {
     pub error: Option<String>,
     pub seen: bool,
     pub attachments: Vec<Attachment>,
+    /// Question cards and multi-reply: its replies, options and picks.
+    #[serde(flatten)]
+    pub qa: crate::questions::Meta,
 }
 
 /// How far back one hub has loaded one chat (lazy history).
@@ -598,16 +605,17 @@ impl Store {
 
     /// Queue an outgoing message (and its attachments) for the sender task.
     pub fn queue_outgoing(&self, msg: &NewOutgoing, now: &str) -> Result<()> {
-        self.queue_prepared(msg, now, &[], &[])
+        self.queue_prepared(msg, now, &[], &[], None)
     }
 
-    pub(crate) fn queue_prepared(&self, msg: &NewOutgoing, now: &str, digests: &[String], paths: &[String]) -> Result<()> {
+    /// `meta`: a multi-reply's replies and the options it picks, kept with it.
+    pub(crate) fn queue_prepared(&self, msg: &NewOutgoing, now: &str, digests: &[String], paths: &[String], meta: Option<&str>) -> Result<()> {
         self.with(|c| {
             let tx = c.transaction()?;
             tx.execute(
-                "INSERT INTO messages(id, peer, outgoing, body, kind, reply_to, sent_at, created_at, state)
-                 VALUES(?,?,1,?,?,?,?,?,'queued')",
-                params![msg.id, msg.peer, msg.body, msg.kind, msg.reply_to, now, now],
+                "INSERT INTO messages(id, peer, outgoing, body, kind, reply_to, sent_at, created_at, state, meta)
+                 VALUES(?,?,1,?,?,?,?,?,'queued',?)",
+                params![msg.id, msg.peer, msg.body, msg.kind, msg.reply_to, now, now, meta],
             )?;
             for (i, a) in msg.attachments.iter().enumerate() {
                 tx.execute(
@@ -624,16 +632,13 @@ impl Store {
     /// Store an incoming message. Returns false for a duplicate (the hub is
     /// at-least-once: a lost ack redelivers).
     pub fn insert_incoming(&self, hub: &str, env: &Envelope, now: &str) -> Result<bool> {
-        let body = match env.reply_to {
-            Some(_) => crate::engine::strip_quote(&env.body),
-            None => env.body.as_str(),
-        };
+        let (body, qa) = crate::questions::incoming(&env.body, env.kind.as_deref(), env.reply_to.as_deref(), env.meta.as_ref());
         self.with(|c| {
             let tx = c.transaction()?;
             let n = tx.execute(
-                "INSERT OR IGNORE INTO messages(id, peer, outgoing, hub, body, kind, reply_to, sent_at, received_at, created_at, state)
-                 VALUES(?,?,0,?,?,?,?,?,?,?,'received')",
-                params![env.id, env.from, hub, body, env.kind, env.reply_to, env.sent_at, env.received_at, now],
+                "INSERT OR IGNORE INTO messages(id, peer, outgoing, hub, body, kind, reply_to, sent_at, received_at, created_at, state, meta)
+                 VALUES(?,?,0,?,?,?,?,?,?,?,'received',?)",
+                params![env.id, env.from, hub, body, env.kind, env.reply_to, env.sent_at, env.received_at, now, qa.stored()],
             )?;
             if n > 0 {
                 close_dm::reopen(&tx, &env.from)?;
@@ -821,7 +826,8 @@ impl Store {
         self.with(|c| {
             c.execute_batch(
                 "DELETE FROM attachments; DELETE FROM messages; DELETE FROM roster; DELETE FROM hubs;
-                 DELETE FROM drafts; DELETE FROM notification_replies; DELETE FROM meta; DELETE FROM closed_dms;",
+                 DELETE FROM drafts; DELETE FROM notification_replies; DELETE FROM meta; DELETE FROM closed_dms;
+                 DELETE FROM draft_answers;",
             )
         })
     }
@@ -857,10 +863,7 @@ impl Store {
         } else {
             env.from.as_str()
         };
-        let body = match env.reply_to {
-            Some(_) => crate::engine::strip_quote(&env.body),
-            None => env.body.as_str(),
-        };
+        let (body, qa) = crate::questions::incoming(&env.body, env.kind.as_deref(), env.reply_to.as_deref(), env.meta.as_ref());
         let hub_state = if !outgoing {
             "received"
         } else if m.read_at.is_some() {
@@ -893,8 +896,8 @@ impl Store {
                 None => {
                     tx.execute(
                         "INSERT INTO messages(id, peer, outgoing, hub, body, kind, reply_to, sent_at, received_at,
-                           created_at, state, fetched_at, delivered_at, read_at, seen)
-                         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                           created_at, state, fetched_at, delivered_at, read_at, seen, meta)
+                         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         params![
                             env.id,
                             peer,
@@ -912,6 +915,7 @@ impl Store {
                             m.delivered_at,
                             m.read_at,
                             !outgoing && m.read_at.is_some(),
+                            qa.stored(),
                         ],
                     )?;
                     for (i, a) in env.attachments.iter().enumerate() {
@@ -1288,7 +1292,7 @@ impl Store {
         self.with(|c| {
             let sql = format!(
                 "SELECT m.id, m.peer, m.outgoing, m.hub, m.body, m.kind, m.reply_to, m.sent_at, m.received_at, m.created_at,
-                        m.state, m.fetched_at, m.delivered_at, m.read_at, m.error, m.seen
+                        m.state, m.fetched_at, m.delivered_at, m.read_at, m.error, m.seen, m.meta
                  FROM messages m WHERE {cond}"
             );
             let mut st = c.prepare(&sql)?;
@@ -1312,6 +1316,7 @@ impl Store {
                         error: r.get(14)?,
                         seen: r.get(15)?,
                         attachments: Vec::new(),
+                        qa: crate::questions::Meta::load(r.get::<_, Option<String>>(16)?.as_deref()),
                     })
                 })?
                 .collect::<rusqlite::Result<_>>()?;
@@ -1551,6 +1556,7 @@ mod tests {
                 name: "f.txt".into(),
                 bytes: 3,
             }],
+            meta: None,
         }
     }
 
@@ -2081,3 +2087,7 @@ mod store_notification_reply;
 mod store_hub_enabled;
 #[path = "store_pictures.rs"]
 mod store_pictures;
+
+#[path = "store_questions.rs"]
+mod store_questions;
+pub use store_questions::DraftAnswers;

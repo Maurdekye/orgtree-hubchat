@@ -1413,9 +1413,31 @@ impl Engine {
     // ---------------------------------------------------------- sending
 
     pub async fn send(&self, msg: NewOutgoing) -> Result<()> {
+        self.send_with(msg, crate::questions::ReplyMeta::default()).await
+    }
+
+    /// Send with what a multi-reply answers and the options it picks on
+    /// question cards (docs/question-cards.md).
+    pub async fn send_with(&self, mut msg: NewOutgoing, mut reply: crate::questions::ReplyMeta) -> Result<()> {
         if msg.peer == self.me.address() {
             return Err(Error::Invalid("that's you".into()));
         }
+        // the first message answered is the reply_to older clients read; a
+        // pick counts only on a message this one replies to
+        let mut seen = std::collections::HashSet::new();
+        reply.replies.retain(|id| seen.insert(id.clone()));
+        if let Some(first) = reply.replies.first() {
+            msg.reply_to = Some(first.clone());
+        }
+        if reply.replies.len() < 2 {
+            reply.replies.clear();
+        }
+        let set: Vec<&String> = if reply.replies.is_empty() { msg.reply_to.iter().collect() } else { reply.replies.iter().collect() };
+        reply.answers.retain(|a| set.contains(&&a.question) && !a.picked.is_empty());
+        if !crate::questions::fits(&reply) {
+            return Err(Error::Invalid("This message answers too much at once. Send it as two messages.".into()));
+        }
+        let meta = crate::questions::Meta { replies: reply.replies, answers: reply.answers, ..Default::default() }.stored();
         // Copy/hash on the blocking pool; no network and no SQLite lock during I/O.
         // Admission and ownership of the snapshot then commit without an await.
         let host = self.host.clone();
@@ -1428,6 +1450,7 @@ impl Engine {
             &now(),
             &prepared.digests,
             &prepared.paths,
+            meta.as_deref(),
         )?;
         let msg = prepared.commit();
         if !msg.attachments.is_empty() || msg.body.len() as u64 > BODY_INLINE_MAX {
@@ -1741,7 +1764,13 @@ impl Engine {
             .unwrap()
             .get(&url)
             .is_some_and(|h| h.status.features.iter().any(|f| f == "reply_to"));
-        let mut body = self.wire_body(&m)?;
+        let meta_field = self
+            .hubs
+            .lock()
+            .unwrap()
+            .get(&url)
+            .is_some_and(|h| h.status.features.iter().any(|f| f == crate::questions::FEATURE));
+        let (mut body, meta) = self.wire_body(&m, meta_field)?;
         let mut body_part = None;
         let long_ok = self
             .hubs
@@ -1780,6 +1809,7 @@ impl Engine {
             thread_id: None,
             sent_at: m.sent_at.clone(),
             attachments: hub_ids,
+            meta,
         };
         match client.send(&self.me, &out).await {
             Ok(r) => {
@@ -1804,22 +1834,24 @@ impl Engine {
         }
     }
 
-    /// The body as sent: a reply starts with a one-line quote of what it
-    /// answers, so clients without reply_to (Orgtree, older hubs) still see
-    /// the context. `strip_quote` removes it again on receipt.
-    fn wire_body(&self, m: &crate::store::Message) -> Result<String> {
-        let Some(rid) = &m.reply_to else {
-            return Ok(m.body.clone());
-        };
-        let quoted = self.store.message(rid)?.map(|q| q.body).unwrap_or_default();
-        let line: String = quoted
-            .lines()
-            .next()
-            .unwrap_or("")
-            .chars()
-            .take(120)
+    /// The body as sent, and its meta: a reply starts with a quote line of
+    /// each message it answers (and what it picked or skipped on a question
+    /// card), so clients without reply_to or meta (Orgtree, older hubs)
+    /// still see the context. On receipt `strip_quote` or the meta's
+    /// fallback range removes it again (docs/question-cards.md).
+    fn wire_body(&self, m: &crate::store::Message, meta_field: bool) -> Result<(String, Option<serde_json::Value>)> {
+        let ids: Vec<String> = if m.qa.replies.len() > 1 { m.qa.replies.clone() } else { m.reply_to.iter().cloned().collect() };
+        let held = ids.iter().map(|id| self.store.message(id)).collect::<Result<Vec<_>>>()?;
+        let quoted: Vec<crate::questions::Quoted> = ids
+            .iter()
+            .zip(&held)
+            .map(|(id, q)| crate::questions::Quoted {
+                id,
+                body: q.as_ref().map_or("", |q| q.body.as_str()),
+                card: q.as_ref().is_some_and(|q| !q.outgoing && q.kind.as_deref() == Some("question")),
+            })
             .collect();
-        Ok(format!("{QUOTE_PREFIX}{line}\n{}", m.body))
+        Ok(crate::questions::outgoing(&m.body, &quoted, &m.qa.answers, meta_field))
     }
 
     /// v2 hubs: upload in a resumable session; a retry continues where the

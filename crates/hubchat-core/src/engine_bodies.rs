@@ -50,8 +50,9 @@ impl Engine {
                         let id = row.id.clone();
                         let peer = row.peer.clone();
                         let reply = row.reply;
+                        let meta = crate::questions::Meta::load(row.meta.as_deref());
                         let task = workers.spawn(async move {
-                            e.fetch_body(&id, &peer, reply, &hub, client, stop).await;
+                            e.fetch_body(&id, &peer, reply, &meta, &hub, client, stop).await;
                         });
                         active.insert(task.id(), row.id.clone());
                     }
@@ -92,6 +93,7 @@ impl Engine {
         id: &str,
         peer: &str,
         reply: bool,
+        meta: &crate::questions::Meta,
         hub: &str,
         client: HubClient,
         stop: CancelFlag,
@@ -108,8 +110,8 @@ impl Engine {
         };
         match result {
             Ok(body) => {
-                let body = if reply { strip_quote(&body) } else { &body };
-                if self.store.finish_body(id, body).unwrap_or(false) {
+                let body = crate::questions::shown(&body, reply, meta);
+                if self.store.finish_body(id, &body).unwrap_or(false) {
                     self.host.event(Event::Chat { peer: peer.into() });
                 }
             }

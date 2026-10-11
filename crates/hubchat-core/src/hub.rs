@@ -218,6 +218,10 @@ pub struct Envelope {
     pub reply_to: Option<String>,
     #[serde(default)]
     pub attachments: Vec<AttachmentMeta>,
+    /// Question cards and multi-reply (docs/question-cards.md), as the
+    /// sender wrote it: untrusted until crate::questions has checked it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -267,6 +271,9 @@ pub struct Outgoing {
     /// v2 (G6): the body was uploaded like a file; `body` is then empty.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body_part: Option<String>,
+    /// Question cards and multi-reply: only to hubs that list "meta".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<serde_json::Value>,
 }
 
 impl Outgoing {
