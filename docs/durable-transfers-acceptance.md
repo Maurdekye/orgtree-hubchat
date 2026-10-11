@@ -82,8 +82,10 @@ screenshots on D:. Stop test processes and remove disposable fixtures afterward.
    timeout. Pending jobs remain durable, no terminal notice, plain keep-open hint,
    and reopening allows resumption. Also force failure inside onCreate's
    startForeground after startForegroundService returned: verify the app does not
-   crash with the foreground-service deadline exception. This is still an explicit
-   unresolved runtime risk, not a passed case.
+   crash with the foreground-service deadline exception. Passed on the Android 15
+   emulator by hubchat-opus on 2026-10-11 at 09:08Z: refusal at service start and
+   inside onCreate both showed the hint without a crash. A forced 20-second
+   dataSync timeout paused the hidden upload silently; reopening resumed it.
 7. **MediaStore boundaries.** For typed .jpg/.pdf files, stop after pending insert
    but before receipt write, during copy, and after IS_PENDING clears but before
    Rust commits the location. Replay must find/reuse one URI even if the provider
