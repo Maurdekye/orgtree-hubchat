@@ -12,3 +12,10 @@
 - Append SQLite migrations only after the real predecessor; don't invent empty
   migration entries to reserve numbers. Close DM migration 15 depends on
   notification reply receipt migration 14.
+
+- 2026-10-11: Async DM navigation must check both the mounted layout and latest
+  navigation intent before selecting a chat, resetting history or showing errors.
+  Newer opens/closes, overlays/info panels, Back/native Back and unmount invalidate
+  old completions. Core operations and list refreshes still finish.
+  [verified: `navigationIntent.ts`, `Desktop.tsx`, `Android.tsx`, `dm.ts`;
+  measured deferred-response predecessor controls: `docs/close-dm.md`]

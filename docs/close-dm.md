@@ -39,6 +39,15 @@ after `hc_close_dm` succeeds; a failed close displays its error and retains the
 conversation. Android clears the conversation navigation stack on close so Back
 does not restore a hidden DM. Existing draft unmount handling flushes typed text.
 
+Async open and close completions belong to the mounted layout and a navigation
+intent. A newer open, close, overlay, info-panel action or Back invalidates the
+older completion. Unmount invalidates it even if a new layout for another identity
+is mounted immediately. Only a current completion may select a conversation,
+reset Android's stack or show an error; core operations and chat-list refreshes
+still complete. Desktop Contact info from a row opens its panel only with the
+corresponding accepted navigation. Android's native Back hook invalidates pending
+navigation even at the chat-list root, before deciding whether to background.
+
 ## Verification
 
 Measured on 2026-10-11: the command below exited 0 with 31 store unit tests
@@ -63,6 +72,19 @@ isolated test-state folder before running it. The proof records desktop and
 Android-menu screenshots plus `result.json`. It exercises actions, full loaded
 history retention, draft flushing, restart, explicit reopening, incoming
 reopening, close failure and phone Back navigation.
+
+Review follow-up on 2026-10-11: `tools/proof-dm-navigation-races.mjs` defers API
+responses in the actual mounted Desktop and Android layouts. The predecessor
+`39549f3` (proof-only commit `a6facba`) fails 11 navigation invariants while request
+order/unresolved-request controls pass and no browser exceptions occur. The fixed
+layouts pass all 14 checks: reverse A/B completion, newer and dismissed overlays,
+same-peer reopening after close, obsolete failure notices, phone Back/native Back,
+newer conversation/Settings after delayed close, and unmounted history reset.
+Run with `HUBCHAT_PREDECESSOR=1` only for the predecessor control; the normal run
+fails on any failed check. It uses the same cache/evidence/temp variables as the
+other browser proof. After correction, typecheck and all 22 original feature
+checks pass again. Rust/store/native sources are unchanged by this follow-up,
+so the earlier measured store result remains applicable; no Rust build repeats.
 
 Limits: browser proof measures the shared UI against its mock, not a packaged
 Windows or Android app. Store tests exercise SQLite and live admission methods,
