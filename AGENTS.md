@@ -119,3 +119,14 @@
   lock and passes only `--hidden`, never the old start link.
   [decided: user 2026-10-11, mappings approved by lead-astra; verified:
   `tray.rs`, `updates.ts`; details: `docs/tray-menu.md`]
+
+- 2026-10-11: Normal logging is `hubchat_core::diag` (events only) plus
+  `src-tauri/src/trace.rs` (file, rotation, retention, verbose switch). Log
+  tags (`diag::tag`) and error kinds (`diag::err_kind`), never message or file
+  bodies, names, addresses, hosts, URLs, keys or error text, in verbose mode
+  too; new logging goes through the `diag` helpers. Logs
+  (`diagnostics/logs`) and crash reports (`diagnostics/crash-reports`) are
+  separate folders with separate owners. Rotation at 8 MiB and a 64 MiB budget
+  are coordinator choices; 30 days follows Orgtree. [decided: coordinator
+  2026-10-11; verified: `trace.rs`, `diag.rs`; mapping from Orgtree, invariants
+  and limits: `docs/logging.md`]
