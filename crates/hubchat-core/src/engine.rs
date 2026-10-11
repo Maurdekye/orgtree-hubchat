@@ -203,6 +203,7 @@ pub struct Engine {
     host: Arc<dyn Host>,
     hubs: Mutex<HashMap<String, HubRuntime>>,
     queue_changed: Notify,
+    body_changed: Notify,
     /// Set by shutdown(): the sender stops; hub tasks were stopped one by one.
     stopped: std::sync::atomic::AtomicBool,
     transfers: Mutex<HashMap<String, CancelFlag>>,
@@ -246,6 +247,7 @@ impl Engine {
             host,
             hubs: Mutex::new(HashMap::new()),
             queue_changed: Notify::new(),
+            body_changed: Notify::new(),
             stopped: std::sync::atomic::AtomicBool::new(false),
             transfers: Mutex::new(HashMap::new()),
             send_writers: Mutex::new(std::collections::HashSet::new()),
@@ -279,6 +281,8 @@ impl Engine {
         }
         let me = self.clone();
         tokio::spawn(async move { me.sender_loop().await });
+        let me = self.clone();
+        tokio::spawn(async move { me.body_loop().await });
         // in use: say so again before the hub's 90 s run out
         let me = self.clone();
         tokio::spawn(async move {
@@ -662,6 +666,7 @@ impl Engine {
             c.cancel();
         }
         self.queue_changed.notify_one();
+        self.body_changed.notify_one();
     }
 
     /// Take this device off our device list on every v2 hub (switching to
@@ -1070,19 +1075,7 @@ impl Engine {
                             }
                         }
                         let fresh = self.store.upsert_synced_at(url, &me, m, self.offset(url))?;
-                        if m.body_bytes.is_some() {
-                            if let Ok(body) = client
-                                .message_body(&self.me, &m.env.id, LONG_BODY_FETCH_MAX)
-                                .await
-                            {
-                                let body = if m.env.reply_to.is_some() {
-                                    strip_quote(&body).to_owned()
-                                } else {
-                                    body
-                                };
-                                self.store.set_body(&m.env.id, &body)?;
-                            }
-                        }
+                        self.body_changed.notify_one();
                         let incoming = m.env.from != me;
                         if incoming && fresh {
                             self.note_setup_reply(&m.env.from, &m.env.id, &m.env.body);
@@ -1179,6 +1172,7 @@ impl Engine {
             if let Some(m) = &c.last {
                 if !m.env.body.starts_with(crate::link::LINK_MESSAGE_PREFIX) {
                     self.store.upsert_synced_at(url, &me, m, offset)?;
+                    self.body_changed.notify_one();
                     listed = Some(m.env.id.as_str());
                 }
             }
@@ -1352,25 +1346,13 @@ impl Engine {
                     out.added += 1;
                 }
                 self.store.upsert_synced_at(&url, &me, m, offset)?;
+                self.body_changed.notify_one();
                 // an unread one this hub's chat list counted is now here
                 if m.env.from != me
                     && m.read_at.is_none()
                     && mark.listed_id.as_deref() != Some(m.env.id.as_str())
                 {
                     old_unread -= 1;
-                }
-                if m.body_bytes.is_some() {
-                    if let Ok(body) = client
-                        .message_body(&self.me, &m.env.id, LONG_BODY_FETCH_MAX)
-                        .await
-                    {
-                        let body = if m.env.reply_to.is_some() {
-                            strip_quote(&body).to_owned()
-                        } else {
-                            body
-                        };
-                        self.store.set_body(&m.env.id, &body)?;
-                    }
                 }
             }
             let done = page.before.is_none();
@@ -2376,3 +2358,6 @@ mod engine_scheduler;
 
 #[path = "download_gc.rs"]
 mod download_gc;
+
+#[path = "engine_bodies.rs"]
+mod engine_bodies;

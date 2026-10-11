@@ -27,6 +27,7 @@ impl Store {
             let tx=c.transaction()?;
             tx.execute("UPDATE transfer_send_state SET retry_at=0 WHERE ?1 IS NULL OR hub=?1",[hub])?;
             tx.execute("UPDATE download_jobs SET retry_at=0 WHERE ?1 IS NULL OR local_id IN (SELECT a.local_id FROM attachments a JOIN messages m ON m.id=a.message_id WHERE COALESCE(a.hub,m.hub)=?1)",[hub])?;
+            tx.execute("UPDATE body_fetches SET retry_at=0 WHERE done=0 AND (?1 IS NULL OR id IN (SELECT id FROM message_hubs WHERE hub=?1))",[hub])?;
             tx.commit()
         })
     }

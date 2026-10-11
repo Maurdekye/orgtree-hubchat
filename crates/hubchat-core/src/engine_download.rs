@@ -568,6 +568,152 @@ mod tests {
         .await
         .unwrap();
     }
+    fn long_message(id: &str) -> crate::hub_v2::SyncedMessage {
+        serde_json::from_value(serde_json::json!({
+            "id":id,"from":"remote.111","to":"local.222","body":"preview",
+            "received_at":"2026-10-11T00:00:00Z","body_bytes":30
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn long_bodies_recover_off_poll_and_do_not_wait_for_files_or_offline_heads() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("store.db");
+        let store = Arc::new(Store::open(&db).unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        store.add_hub(&url, "now").unwrap();
+        store.add_hub("http://offline:1", "now").unwrap();
+        for n in 0..70 {
+            store
+                .upsert_synced(
+                    "http://offline:1",
+                    "local.222",
+                    &long_message(&format!("a{n:03}")),
+                )
+                .unwrap();
+        }
+        for id in ["z1", "z2", "z3"] {
+            store
+                .upsert_synced(&url, "local.222", &long_message(id))
+                .unwrap();
+        }
+        store.defer_body("z3", 0).unwrap();
+        drop(store);
+        let store = Arc::new(Store::open(&db).unwrap());
+        let e = fixture(store.clone(), dir.path(), &url);
+        let _file1 = e.file_slots.try_acquire(&url).unwrap();
+        let _file2 = e.file_slots.try_acquire("other").unwrap();
+        let _previews = e.preview_slots.try_acquire_many(2).unwrap();
+        let (release, gate) = tokio::sync::watch::channel(false);
+        let (arrived, mut requests) = tokio::sync::mpsc::channel(3);
+        let server = tokio::spawn(async move {
+            let mut responses = tokio::task::JoinSet::new();
+            for _ in 0..3 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let h = headers(&mut socket).await;
+                arrived.send(h).await.unwrap();
+                let mut gate = gate.clone();
+                responses.spawn(async move {
+                    if !*gate.borrow_and_update(){gate.changed().await.unwrap();}
+                    socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nConnection: close\r\n\r\nfull body").await.unwrap();
+                });
+            }
+            while let Some(r) = responses.join_next().await {
+                r.unwrap();
+            }
+        });
+        let run = tokio::spawn(e.clone().body_loop());
+        for _ in 0..2 {
+            tokio::time::timeout(Duration::from_secs(3), requests.recv())
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), requests.recv())
+                .await
+                .is_err()
+        );
+        // Network workers retain no DB lease: ordinary sync custody and reads
+        // continue while both body requests are stalled.
+        let mut ordinary = long_message("ordinary");
+        ordinary.body_bytes = None;
+        store.upsert_synced(&url, "local.222", &ordinary).unwrap();
+        assert_eq!(store.message("ordinary").unwrap().unwrap().body, "preview");
+        release.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(3), requests.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        until(|| {
+            ["z1", "z2", "z3"]
+                .iter()
+                .all(|id| store.message(id).unwrap().unwrap().body == "full body")
+        })
+        .await;
+        // A receipt replay cannot enqueue a second fetch; deletion cannot be
+        // undone by a late worker's completion.
+        store
+            .upsert_synced(&url, "local.222", &long_message("z1"))
+            .unwrap();
+        assert!(store.pending_bodies("z", u64::MAX / 2).unwrap().is_empty());
+        store.delete_message("z1").unwrap();
+        assert!(!store.finish_body("z1", "late").unwrap());
+        e.shutdown();
+        tokio::time::timeout(Duration::from_secs(3), run)
+            .await
+            .unwrap()
+            .unwrap();
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn long_body_suspension_releases_http_and_resume_keeps_durable_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        store.add_hub(&url, "now").unwrap();
+        let mut message = long_message("body");
+        message.env.reply_to = Some("parent".into());
+        store.upsert_synced(&url, "local.222", &message).unwrap();
+        let e = fixture(store.clone(), dir.path(), &url);
+        let (arrived, ready) = tokio::sync::oneshot::channel();
+        let (closed, eof) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            headers(&mut socket).await;
+            arrived.send(()).unwrap();
+            let mut b = [0];
+            assert_eq!(socket.read(&mut b).await.unwrap(), 0);
+            closed.send(()).unwrap();
+            let (mut socket, _) = listener.accept().await.unwrap();
+            headers(&mut socket).await;
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 15\r\nConnection: close\r\n\r\n> old\nfull body").await.unwrap();
+        });
+        let run = tokio::spawn(e.clone().body_loop());
+        tokio::time::timeout(Duration::from_secs(3), ready)
+            .await
+            .unwrap()
+            .unwrap();
+        e.set_suspended(true);
+        tokio::time::timeout(Duration::from_secs(3), eof)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(store.pending_bodies("", u64::MAX / 2).unwrap().len(), 1);
+        e.set_suspended(false);
+        until(|| store.message("body").unwrap().unwrap().body == "full body").await;
+        e.shutdown();
+        tokio::time::timeout(Duration::from_secs(3), run)
+            .await
+            .unwrap()
+            .unwrap();
+        server.await.unwrap();
+    }
+
     #[tokio::test]
     async fn previews_use_independent_bounded_lane_and_stop_when_suspended_or_shutdown() {
         let dir = tempfile::tempdir().unwrap();

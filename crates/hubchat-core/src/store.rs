@@ -224,6 +224,15 @@ CREATE TABLE export_cleanup (
 );
 CREATE INDEX export_cleanup_due ON export_cleanup(retry_at,key,source);
 "#,
+    // 11: long bodies are admitted with sync/history, fetched off the poll loop.
+    r#"
+CREATE TABLE body_fetches (
+ id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+ done INTEGER NOT NULL DEFAULT 0, failures INTEGER NOT NULL DEFAULT 0,
+ retry_at INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX body_fetches_due ON body_fetches(done,retry_at,id);
+"#,
 ];
 
 pub struct Store {
@@ -872,6 +881,11 @@ impl Store {
                         ],
                     )?;
                 }
+            }
+            if m.body_bytes.is_some() {
+                // Keep a completion marker so receipt updates never redownload
+                // an already expanded body. Admission and message custody commit together.
+                tx.execute("INSERT OR IGNORE INTO body_fetches(id) VALUES(?)", [&env.id])?;
             }
             held_by(&tx, &env.id, hub)?;
             after_its_parent(&tx, &env.id)?;
@@ -1960,3 +1974,6 @@ pub use transfer_failures::TransferFailure;
 #[path = "download_gc_store.rs"]
 mod download_gc_store;
 pub(crate) use download_gc_store::ExportCleanup;
+
+#[path = "body_store.rs"]
+mod body_store;
