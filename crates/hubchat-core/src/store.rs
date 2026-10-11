@@ -257,6 +257,8 @@ WHEN OLD.digest IS NOT NULL AND OLD.digest IS NOT NEW.digest AND OLD.state IN ('
  VALUES(OLD.local_id||'-'||OLD.digest,OLD.destination,OLD.local_id);
 END;
 "#,
+    // 14: consumed worker ids survive deletion so replay cannot resurrect a send.
+    r#"CREATE TABLE notification_replies (id TEXT PRIMARY KEY);"#,
 ];
 
 pub struct Store {
@@ -798,7 +800,7 @@ impl Store {
         self.with(|c| {
             c.execute_batch(
                 "DELETE FROM attachments; DELETE FROM messages; DELETE FROM roster; DELETE FROM hubs;
-                 DELETE FROM drafts; DELETE FROM meta; DELETE FROM closed_dms;",
+                 DELETE FROM drafts; DELETE FROM notification_replies; DELETE FROM meta; DELETE FROM closed_dms;",
             )
         })
     }
