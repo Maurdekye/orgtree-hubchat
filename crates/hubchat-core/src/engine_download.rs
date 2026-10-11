@@ -253,7 +253,7 @@ impl Engine {
                 }
             };
             if job.state == "exporting" {
-                return self.export_download(&job, &a.name).await;
+                return self.export_download(&job, &a.name, a.bytes).await;
             }
             if job.state != "publishing" {
                 // Reserve the partial while holding the same lock as directory
@@ -315,7 +315,7 @@ impl Engine {
                 .store
                 .download_job(local_id)?
                 .ok_or_else(|| Error::Invalid("attachment was deleted".into()))?;
-            self.export_download(&publication, &a.name).await
+            self.export_download(&publication, &a.name, a.bytes).await
         }
         .await;
         if let Err(ref e) = result {
@@ -333,7 +333,7 @@ impl Engine {
         result
     }
 
-    async fn export_download(&self, job: &DownloadJob, name: &str) -> Result<PathBuf> {
+    async fn export_download(&self, job: &DownloadJob, name: &str, total: u64) -> Result<PathBuf> {
         let host = self.host.clone();
         let source = PathBuf::from(&job.destination);
         let path = source.clone();
@@ -345,8 +345,25 @@ impl Engine {
         let exported =
             tokio::task::spawn_blocking(move || host.publish_download(&export_key, &path, &name))
                 .await
-                .map_err(std::io::Error::other)??;
-        let destination = exported.unwrap_or_else(|| job.destination.clone());
+                .map_err(std::io::Error::other)?;
+        // Give a journalled platform export the first chance to recover its
+        // completed public URI, even when private bytes disappeared meanwhile.
+        // Without such a receipt, damaged private bytes need a fresh download.
+        if !matches!(&exported, Ok(Some(path)) if path != &job.destination) {
+            let damaged = match digest(&source, total).await {
+                Ok(hash) => job.digest.as_ref() != Some(&hash),
+                Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => true,
+                Err(Error::Invalid(_)) => true,
+                Err(e) => return Err(e),
+            };
+            if damaged {
+                self.store.reset_damaged_download(&job.local_id, job.attempt)?;
+                return Err(Error::Invalid(
+                    "download bytes changed or disappeared; retry from zero".into(),
+                ));
+            }
+        }
+        let destination = exported?.unwrap_or_else(|| job.destination.clone());
         self.store
             .download_exported(&job.local_id, &job.destination, &destination)?;
         let host = self.host.clone();
@@ -900,6 +917,7 @@ mod tests {
         );
         drop(e);
         drop(store);
+        std::fs::remove_file(&private).unwrap();
         // The user changed the completed public file after the lost response.
         // Recovery must preserve it, not copy private bytes over it.
         std::fs::write(dir.path().join("shared.bin"), b"user-edited").unwrap();
@@ -1077,6 +1095,49 @@ mod tests {
             server.await.unwrap();
         }
     }
+    #[tokio::test]
+    async fn damaged_export_retries_from_zero_and_does_not_publish_missing_bytes() {
+        for bytes in [None, Some(&b"bad"[..])] {
+            let dir = tempfile::tempdir().unwrap();
+            let db = dir.path().join("store.db");
+            let store = Arc::new(Store::open(&db).unwrap());
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let lid = attach(&store, &url, 3);
+            let private = dir.path().join("proof.bin");
+            let part = dir.path().join("private.part");
+            std::fs::write(&private, b"abc").unwrap();
+            let j = store.begin_download(&lid, &part.to_string_lossy(), &private.to_string_lossy()).unwrap();
+            let hash = digest(&private, 3).await.unwrap();
+            store.download_checkpoint(&lid, j.attempt, &DownloadCheckpoint {
+                confirmed: 3, validator: Some("old".into()), updated_ms: 1,
+            }).unwrap();
+            store.download_publishing(&lid, j.attempt, &hash, &private.to_string_lossy()).unwrap();
+            store.download_done(&lid, j.attempt, &private.to_string_lossy()).unwrap();
+            if let Some(bytes) = bytes { std::fs::write(&private, bytes).unwrap(); }
+            else { std::fs::remove_file(&private).unwrap(); }
+            drop(store);
+            let store = Arc::new(Store::open(&db).unwrap());
+            let e = fixture(store.clone(), dir.path(), &url);
+            assert!(e.download("message", &lid).await.unwrap_err().to_string().contains("retry from zero"));
+            let j = store.download_job(&lid).unwrap().unwrap();
+            assert_eq!(j.state, "failed");
+            assert_eq!(j.checkpoint.confirmed, 0);
+            assert!(j.digest.is_none());
+            assert_eq!(store.pending_transfer_failures(0).unwrap().len(), 1);
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                assert!(!headers(&mut socket).await.to_lowercase().contains("range:"));
+                socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc").await.unwrap();
+            });
+            e.queue_download("message", &lid).unwrap();
+            let saved = e.download("message", &lid).await.unwrap();
+            assert_eq!(std::fs::read(saved).unwrap(), b"abc");
+            if let Some(bytes) = bytes { assert_eq!(std::fs::read(&private).unwrap(), bytes); }
+            server.await.unwrap();
+        }
+    }
+
     #[tokio::test]
     async fn dropped_download_future_releases_writer_and_keeps_job_paused() {
         let dir = tempfile::tempdir().unwrap();
