@@ -383,7 +383,7 @@ impl Engine {
             if damaged {
                 self.store.reset_damaged_download(&job.local_id, job.attempt)?;
                 return Err(Error::Invalid(
-                    "download bytes changed or disappeared; retry from zero".into(),
+                    "The downloaded file was damaged. Download it again.".into(),
                 ));
             }
         }
@@ -427,7 +427,7 @@ impl Engine {
                 self.store
                     .reset_damaged_download(&job.local_id, job.attempt)?;
                 return Err(Error::Invalid(
-                    "download bytes changed or disappeared; retry from zero".into(),
+                    "The downloaded file was damaged. Download it again.".into(),
                 ));
             }
         };
@@ -1631,7 +1631,7 @@ mod tests {
                 .await
                 .unwrap_err()
                 .to_string()
-                .contains("retry from zero"));
+                .contains("The downloaded file was damaged. Download it again."));
             let j = store.download_job(&lid).unwrap().unwrap();
             assert_eq!(j.state, "failed");
             assert_eq!(j.checkpoint.confirmed, 0);
@@ -1799,7 +1799,24 @@ mod tests {
             "referenced source preserved"
         );
         assert_eq!(std::fs::read(&source).unwrap(), b"new");
-        assert!(store.abandoned_exports(160000).unwrap().is_empty());
+        assert_eq!(store.abandoned_exports(160000).unwrap().len(), 1,
+            "receipt cleanup must not forget referenced damaged bytes");
+        drop(e);
+        drop(store);
+        let store = Arc::new(Store::open(&db).unwrap());
+        let e = fixture_host(store.clone(), "http://127.0.0.1:9", host.clone());
+        // Retry chooses a new name because the damaged bytes still exist.
+        // Its completed pointer releases the old private copy for cleanup.
+        let saved = dir.path().join("private (2).bin");
+        std::fs::write(&saved, b"abc").unwrap();
+        let j = store.begin_download(&lid, "retry.part", &saved.to_string_lossy()).unwrap();
+        store.download_publishing(&lid, j.attempt, "digest", &saved.to_string_lossy()).unwrap();
+        store.download_done(&lid, j.attempt, &saved.to_string_lossy()).unwrap();
+        store.download_exported(&lid, &saved.to_string_lossy(), &saved.to_string_lossy()).unwrap();
+        e.clean_downloads(160000).await;
+        assert!(!source.exists(), "Retry must collect the abandoned damaged copy");
+        assert_eq!(std::fs::read(&saved).unwrap(), b"abc", "the completed copy survives");
+        assert!(store.abandoned_exports(190000).unwrap().is_empty());
     }
     #[tokio::test]
     async fn orphan_scan_pages_old_files_and_preserves_referenced_recent_and_unrelated_bytes() {
@@ -1978,7 +1995,7 @@ mod tests {
             drop(store);
             let store = Arc::new(Store::open(&db).unwrap());
             let e = fixture(store.clone(), dir.path(), &url);
-            assert!(e.download("message", &lid).await.unwrap_err().to_string().contains("retry from zero"));
+            assert!(e.download("message", &lid).await.unwrap_err().to_string().contains("The downloaded file was damaged. Download it again."));
             let j = store.download_job(&lid).unwrap().unwrap();
             assert_eq!(j.state, "failed");
             assert_eq!(j.checkpoint.confirmed, 0);

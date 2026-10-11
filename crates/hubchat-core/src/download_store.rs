@@ -130,13 +130,13 @@ impl Store {
         self.with(|c| {
             let tx = c.transaction()?;
             let n = tx.execute(
-                "UPDATE download_jobs SET state='failed',confirmed=0,validator=NULL,digest=NULL,error='download bytes changed or disappeared; retry from zero' WHERE local_id=? AND attempt=? AND state IN ('running','publishing','exporting')",
+                "UPDATE download_jobs SET state='failed',confirmed=0,validator=NULL,digest=NULL,error='The downloaded file was damaged. Download it again.' WHERE local_id=? AND attempt=? AND state IN ('running','publishing','exporting')",
                 params![id, attempt],
             )?;
             if n > 0 {
-                tx.execute("UPDATE attachments SET state='failed',error='download bytes changed or disappeared; retry from zero' WHERE local_id=?", [id])?;
+                tx.execute("UPDATE attachments SET state='failed',error='The downloaded file was damaged. Download it again.' WHERE local_id=?", [id])?;
                 let mid: String = tx.query_row("SELECT message_id FROM attachments WHERE local_id=?", [id], |r| r.get(0))?;
-                transfer_failures::queue(&tx, &mid, "download bytes changed or disappeared; retry from zero", true)?;
+                transfer_failures::queue(&tx, &mid, "The downloaded file was damaged. Download it again.", true)?;
             }
             tx.commit()
         })

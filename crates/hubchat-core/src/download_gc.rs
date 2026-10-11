@@ -121,11 +121,11 @@ impl Engine {
                     continue;
                 }
                 let _publication = self.download_publication.lock().await;
-                let source = if self
+                let source_in_use = self
                     .store
                     .download_destination_used(&row.source)
-                    .unwrap_or(true)
-                {
+                    .unwrap_or(true);
+                let source = if source_in_use {
                     String::new()
                 } else {
                     row.source.clone()
@@ -139,7 +139,11 @@ impl Engine {
                     .await,
                     Ok(Ok(()))
                 );
-                let _ = self.store.abandoned_export_finished(&row, ok, now);
+                // Receipt cleanup can finish while a failed job still names its
+                // damaged private copy. Keep the durable row until Retry moves
+                // that pointer (or deletion removes it), so the bytes are not
+                // forgotten when the native callback received an empty source.
+                let _ = self.store.abandoned_export_finished(&row, ok && !source_in_use, now);
             }
         }
         if let Ok(rows) = self.store.export_cleanup_due(now, None) {
