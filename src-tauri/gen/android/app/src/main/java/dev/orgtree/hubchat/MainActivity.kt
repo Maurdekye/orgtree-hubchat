@@ -62,6 +62,7 @@ class MainActivity : TauriActivity() {
   override fun onResume() {
     super.onResume()
     inFront = true
+    TransferService.foreground(this)
     ConnectionService.pushForeground("1")
     // an update that finished downloading while Hubchat was in the
     // background: Android's confirmation opens now (InstallReceiver)

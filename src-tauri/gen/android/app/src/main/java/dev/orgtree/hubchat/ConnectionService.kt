@@ -65,6 +65,12 @@ class ConnectionService : Service() {
     /** Rust entry: one check (design D6); blocks, so never on the main thread. */
     @JvmStatic external fun checkNow(timeoutSecs: Int): Boolean
     @JvmStatic external fun pushWork(action: String, capability: String): String
+    @JvmStatic external fun fileServiceChanged()
+    fun isRunning(): Boolean = running
+    @JvmStatic fun fileBackgroundCovered(): String = if (running || TransferService.running) "1" else "0"
+    @JvmStatic fun appVisible(): String = if (MainActivity.inFront) "1" else "0"
+    @JvmStatic fun setFileWork(on: String) { appContext?.let { TransferService.work(it, on == "1") } }
+    @JvmStatic fun fileBackgroundHint(): String = TransferService.backgroundHint()
     @JvmStatic external fun pushModeChanged()
     @JvmStatic external fun pushForeground(on: String)
 
@@ -523,6 +529,7 @@ class ConnectionService : Service() {
     val type = if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING else 0
     ServiceCompat.startForeground(this, ONGOING_ID, ongoing(this, lastStatus ?: "Connecting…"), type)
     running = true
+    TransferService.coverageChanged(this)
     startCore(filesDir.absolutePath)
     stopIfUnneeded()
   }
@@ -537,6 +544,7 @@ class ConnectionService : Service() {
 
   override fun onDestroy() {
     running = false
+    TransferService.coverageChanged(this)
     super.onDestroy()
   }
 
