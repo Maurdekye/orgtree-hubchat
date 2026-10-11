@@ -191,6 +191,7 @@ pub struct Engine {
     /// Set by shutdown(): the sender stops; hub tasks were stopped one by one.
     stopped: std::sync::atomic::AtomicBool,
     transfers: Mutex<HashMap<String, CancelFlag>>,
+    download_publication: tokio::sync::Mutex<()>,
     read_receipts: std::sync::atomic::AtomicBool,
     /// This installation's (device_id, device_name) for v2 sync.
     device: Mutex<(String, String)>,
@@ -224,6 +225,7 @@ impl Engine {
             queue_changed: Notify::new(),
             stopped: std::sync::atomic::AtomicBool::new(false),
             transfers: Mutex::new(HashMap::new()),
+            download_publication: tokio::sync::Mutex::new(()),
             read_receipts: std::sync::atomic::AtomicBool::new(true),
             active: std::sync::atomic::AtomicBool::new(false),
             suspended: tokio::sync::watch::channel(false).0,
@@ -1474,10 +1476,15 @@ impl Engine {
         Ok(())
     }
 
-    pub fn cancel_transfer(&self, local_id: &str) {
-        if let Some(c) = self.transfers.lock().unwrap().get(local_id) {
+    pub fn cancel_transfer(&self, local_id: &str) -> Result<()> {
+        let transfers = self.transfers.lock().unwrap();
+        if self.store.cancel_download(local_id)? == Some(false) {
+            return Ok(());
+        }
+        if let Some(c) = transfers.get(local_id) {
             c.cancel();
         }
+        Ok(())
     }
 
     async fn sender_loop(self: Arc<Self>) {
@@ -2050,84 +2057,6 @@ impl Engine {
         Ok(())
     }
 
-    /// Download an incoming attachment into the host's download folder.
-    pub async fn download(&self, message_id: &str, local_id: &str) -> Result<PathBuf> {
-        let m = self
-            .store
-            .message(message_id)?
-            .ok_or_else(|| Error::Invalid("no such message".into()))?;
-        let a = m
-            .attachments
-            .iter()
-            .find(|a| a.local_id == local_id)
-            .ok_or_else(|| Error::Invalid("no such attachment".into()))?;
-        let hub_id = a
-            .hub_id
-            .clone()
-            .ok_or_else(|| Error::Invalid("not on a hub".into()))?;
-        let hub = a
-            .hub
-            .clone()
-            .or_else(|| m.hub.clone())
-            .ok_or_else(|| Error::Invalid("unknown hub".into()))?;
-        let client = self
-            .hubs
-            .lock()
-            .unwrap()
-            .get(&hub)
-            .map(|h| h.client.clone())
-            .ok_or_else(|| Error::Invalid(format!("hub {hub} was removed")))?;
-        let dir = self.host.download_dir();
-        tokio::fs::create_dir_all(&dir).await?;
-        let dest = unique_path(&dir, &a.name);
-        let cancel = CancelFlag::default();
-        self.transfers
-            .lock()
-            .unwrap()
-            .insert(local_id.into(), cancel.clone());
-        self.store
-            .set_attachment(local_id, "downloading", None, None, None)?;
-        let host = self.host.clone();
-        let (lid, mid) = (local_id.to_string(), message_id.to_string());
-        let progress: crate::hub::Progress = Arc::new(move |done, total| {
-            host.event(Event::Transfer {
-                local_id: lid.clone(),
-                message_id: mid.clone(),
-                upload: false,
-                done,
-                total,
-            })
-        });
-        let r = client
-            .download_file(&self.me, &hub_id, &dest, Some(progress), cancel.clone())
-            .await;
-        self.transfers.lock().unwrap().remove(local_id);
-        let out = match r {
-            Ok(_) => {
-                self.store.set_attachment(
-                    local_id,
-                    "done",
-                    None,
-                    Some(&dest.to_string_lossy()),
-                    None,
-                )?;
-                Ok(dest)
-            }
-            Err(e) => {
-                let state = match (&e, cancel.is_cancelled()) {
-                    (_, true) => "cancelled",
-                    (Error::Hub { status: 410, .. }, _) => "expired",
-                    _ => "failed",
-                };
-                self.store
-                    .set_attachment(local_id, state, None, None, Some(&e.to_string()))?;
-                Err(e)
-            }
-        };
-        self.host.event(Event::Chat { peer: m.peer });
-        out
-    }
-
     /// Fetch an incoming attachment to `dest` for showing it in the chat (an
     /// image preview), leaving its download state alone: Download still saves
     /// it where downloads go. A hub that no longer has it marks it expired.
@@ -2380,3 +2309,6 @@ mod quote_tests {
 #[cfg(test)]
 #[path = "transfer_tests.rs"]
 mod transfer_tests;
+
+#[path = "engine_download.rs"]
+mod engine_download;
