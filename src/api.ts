@@ -108,6 +108,7 @@ export interface TransferView {
 }
 export interface TransferPage { rows: TransferView[]; next: string | null }
 export interface DownloadStatus {
+  restarted?: boolean;
   state: string;
   confirmed: number;
   retry_at: number;
