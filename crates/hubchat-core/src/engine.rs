@@ -201,6 +201,7 @@ pub struct Engine {
     /// Set by shutdown(): the sender stops; hub tasks were stopped one by one.
     stopped: std::sync::atomic::AtomicBool,
     transfers: Mutex<HashMap<String, CancelFlag>>,
+    send_writers: Mutex<std::collections::HashSet<String>>,
     download_publication: tokio::sync::Mutex<()>,
     file_slots: Arc<transfer_slots::TransferSlots>,
     read_receipts: std::sync::atomic::AtomicBool,
@@ -211,6 +212,11 @@ pub struct Engine {
     active: std::sync::atomic::AtomicBool,
     /// Android push mode parks hub loops between foreground use and wake checks.
     suspended: tokio::sync::watch::Sender<bool>,
+}
+
+struct SendWriter<'a> { writers:&'a Mutex<std::collections::HashSet<String>>, id:String }
+impl Drop for SendWriter<'_> {
+    fn drop(&mut self) {self.writers.lock().unwrap().remove(&self.id);}
 }
 
 fn unix_ms() -> u64 {
@@ -236,6 +242,7 @@ impl Engine {
             queue_changed: Notify::new(),
             stopped: std::sync::atomic::AtomicBool::new(false),
             transfers: Mutex::new(HashMap::new()),
+            send_writers: Mutex::new(std::collections::HashSet::new()),
             download_publication: tokio::sync::Mutex::new(()),
             file_slots: Arc::new(transfer_slots::TransferSlots::default()),
             read_receipts: std::sync::atomic::AtomicBool::new(true),
@@ -1476,6 +1483,8 @@ impl Engine {
 
     /// Put a failed message back in the queue; resumable sessions keep their bytes.
     pub fn retry(&self, id: &str) -> Result<()> {
+        let writers = self.send_writers.lock().unwrap();
+        if writers.contains(id) { return Err(Error::Invalid("the previous transfer is still stopping; retry shortly".into())); }
         if let Some(m) = self.store.message(id)? {
             if !m.outgoing || m.state != "failed" {
                 return Err(Error::Invalid(
@@ -1489,7 +1498,8 @@ impl Engine {
                         .set_attachment(&a.local_id, "pending", None, None, None)?;
                 }
             }
-            self.store.set_state(id, "queued", None)?;
+            self.store.set_state(id,"queued",None)?;
+            drop(writers);
             self.host.event(Event::Chat { peer: m.peer });
             self.queue_changed.notify_one();
         }
@@ -1497,17 +1507,32 @@ impl Engine {
     }
 
     pub fn cancel_transfer(&self, local_id: &str) -> Result<()> {
+        let _writers = self.send_writers.lock().unwrap();
         let transfers = self.transfers.lock().unwrap();
-        if self.store.cancel_download(local_id)? == Some(false) {
-            return Ok(());
+        match self.store.cancel_download(local_id)? {
+            Some(false) => return Ok(()),
+            Some(true) => { if let Some(c)=transfers.get(local_id) {c.cancel();} }
+            None => {
+                let (_,lids)=self.store.cancel_upload(local_id)?;
+                for id in lids {if let Some(c)=transfers.get(&id) {c.cancel();}}
+            }
         }
-        if let Some(c) = transfers.get(local_id) {
-            c.cancel();
-        }
-        drop(transfers);
+        drop(transfers); drop(_writers);
         if let Some(peer) = self.store.transfer_peer(local_id)? {
             self.host.event(Event::Chat { peer });
         }
+        Ok(())
+    }
+
+    pub async fn remove_attachment(&self, message_id:&str, local_id:&str) -> Result<()> {
+        let peer={
+            let writers=self.send_writers.lock().unwrap();
+            if writers.contains(message_id) {return Err(Error::Invalid("the previous transfer is still stopping; try again shortly".into()));}
+            self.store.remove_held_attachment(message_id,local_id)?
+        };
+        self.host.event(Event::Chat{peer});
+        self.queue_changed.notify_one();
+        self.clean_staging().await;
         Ok(())
     }
 
@@ -1526,8 +1551,15 @@ impl Engine {
 
     /// The scheduler has reserved a file slot when this message needs one.
     async fn send_one_on(&self, id: &str, (url,client,max):(String,HubClient,u64)) -> Result<bool> {
-        let Some(m) = self.store.message(id)? else { return Ok(false) };
-        if !m.outgoing || !matches!(m.state.as_str(), "queued" | "sending") { return Ok(false); }
+        let (m,_writer)={
+            let mut writers=self.send_writers.lock().unwrap();
+            if writers.contains(id) {return Ok(false);}
+            let Some(m)=self.store.message(id)? else{return Ok(false)};
+            if !m.outgoing || !matches!(m.state.as_str(),"queued"|"sending") {return Ok(false)}
+            self.store.set_state(id,"sending",None)?;
+            writers.insert(id.to_owned());
+            (m,SendWriter{writers:&self.send_writers,id:id.to_owned()})
+        };
         let total: u64 = m.body.len() as u64 + m.attachments.iter().map(|a| a.bytes).sum::<u64>();
         if !m.attachments.is_empty() && total > max {
             self.fail(
@@ -1537,7 +1569,6 @@ impl Engine {
             )?;
             return Ok(true);
         }
-        self.store.set_state(id, "sending", None)?;
         let mut hub_ids = Vec::new();
         for a in &m.attachments {
             // ids are per hub: after a route change the file goes up again
@@ -1569,12 +1600,12 @@ impl Engine {
                 }
             };
             let cancel = CancelFlag::default();
-            self.transfers
-                .lock()
-                .unwrap()
-                .insert(a.local_id.clone(), cancel.clone());
-            self.store
-                .set_attachment(&a.local_id, "uploading", None, None, None)?;
+            {
+                let _writers=self.send_writers.lock().unwrap();
+                let mut transfers=self.transfers.lock().unwrap();
+                self.store.begin_upload(&a.local_id)?;
+                transfers.insert(a.local_id.clone(),cancel.clone());
+            }
             self.host.event(Event::Chat { peer: m.peer.clone() });
             let host = self.host.clone();
             let (lid, mid) = (a.local_id.clone(), m.id.clone());
@@ -1606,7 +1637,7 @@ impl Engine {
             match r {
                 Ok(meta) => {
                     self.store
-                        .set_upload(&a.local_id, "uploaded", &meta.id, &url)?;
+                        .complete_upload(&a.local_id, &meta.id, &url)?;
                     hub_ids.push(meta.id);
                 }
                 Err(e)
@@ -1623,7 +1654,7 @@ impl Engine {
                         None,
                         Some(&e.to_string()),
                     )?;
-                    self.store.set_state(id, "queued", None)?;
+                    self.store.requeue_send(id)?;
                     self.host.event(Event::Chat {
                         peer: m.peer.clone(),
                     });
@@ -1672,7 +1703,7 @@ impl Engine {
                     return Ok(true);
                 }
                 Err(_) => {
-                    self.store.set_state(id, "queued", None)?;
+                    self.store.requeue_send(id)?;
                     return Ok(false);
                 }
             }
@@ -1709,7 +1740,7 @@ impl Engine {
             }
             Err(_) => {
                 // Network trouble: back to the queue, the hub task reconnects.
-                self.store.set_state(id, "queued", None)?;
+                self.store.requeue_send(id)?;
                 Ok(false)
             }
         }

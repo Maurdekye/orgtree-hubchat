@@ -604,3 +604,57 @@ async fn preparation_reports_local_bytes_before_admission_and_names_full_disk() 
     assert!(error.to_string().contains("not enough space"));
     assert!(store.message("full-proof").unwrap().is_none());
 }
+
+#[tokio::test]
+async fn queued_upload_cancel_survives_reopen_and_removal_is_explicit() {
+    let dir=tempfile::tempdir().unwrap();let db=dir.path().join("store.db");
+    let store=Arc::new(Store::open(&db).unwrap());let e=engine(store.clone());
+    for (id,body) in [("with-body","keep me"),("file-only","")] {
+        store.queue_outgoing(&NewOutgoing{id:id.into(),peer:"peer".into(),body:body.into(),kind:None,reply_to:None,attachments:vec![NewAttachment{name:"file".into(),bytes:3,source:"original-must-stay".into()}]},"now").unwrap();
+    }
+    let id=store.message("with-body").unwrap().unwrap().attachments[0].local_id.clone();
+    e.cancel_transfer(&id).unwrap();e.cancel_transfer(&id).unwrap();
+    assert!(store.complete_upload(&id,"late-reply","hub").is_err());
+    assert!(store.set_upload(&id,"uploading","late-session","hub").is_err());
+    store.requeue_send("with-body").unwrap();
+    assert_eq!(store.message("with-body").unwrap().unwrap().state,"failed");
+    assert!(store.queued().unwrap().iter().all(|m|m.id!="with-body"));
+    drop(e);drop(store);
+    let store=Arc::new(Store::open(&db).unwrap());let e=engine(store.clone());
+    assert_eq!(store.message("with-body").unwrap().unwrap().attachments[0].state,"cancelled");
+    e.retry("with-body").unwrap();
+    assert_eq!(store.message("with-body").unwrap().unwrap().state,"queued");
+    e.cancel_transfer(&id).unwrap();e.remove_attachment("with-body",&id).await.unwrap();
+    let m=store.message("with-body").unwrap().unwrap();assert!(m.attachments.is_empty());assert_eq!(m.body,"keep me");assert_eq!(m.state,"queued");
+    let id=store.message("file-only").unwrap().unwrap().attachments[0].local_id.clone();
+    e.cancel_transfer(&id).unwrap();
+    assert!(e.remove_attachment("file-only",&id).await.is_err());
+    assert_eq!(store.message("file-only").unwrap().unwrap().attachments.len(),1,"empty-message rejection rolls deletion back");
+}
+
+#[tokio::test]
+async fn cancelling_active_upload_blocks_early_retry_and_never_dispatches_mail() {
+    let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client=HubClient::new(HubAddress::parse(&listener.local_addr().unwrap().to_string()).unwrap());
+    let url=client.address().to_string();
+    let dir=tempfile::tempdir().unwrap();let file=dir.path().join("source");std::fs::write(&file,b"abc").unwrap();
+    let store=Arc::new(Store::open_in_memory().unwrap());let e=engine(store.clone());
+    store.queue_outgoing(&NewOutgoing{id:"m".into(),peer:"peer".into(),body:"body".into(),kind:None,reply_to:None,attachments:vec![NewAttachment{name:"file".into(),bytes:3,source:file.to_string_lossy().into()}]},"now").unwrap();
+    let id=store.message("m").unwrap().unwrap().attachments[0].local_id.clone();
+    let (ready,wait)=tokio::sync::oneshot::channel();
+    let server=tokio::spawn(async move {
+        let (mut socket,_)=listener.accept().await.unwrap();assert!(request(&mut socket).await.starts_with("POST /api/attachments"));
+        ready.send(()).unwrap();
+        let mut rest=Vec::new();socket.read_to_end(&mut rest).await.unwrap();
+        assert!(tokio::time::timeout(Duration::from_millis(100),listener.accept()).await.is_err(),"cancel must not dispatch mail");
+    });
+    let controls=async {
+        wait.await.unwrap();e.cancel_transfer(&id).unwrap();
+        assert!(e.retry("m").is_err());assert!(e.remove_attachment("m",&id).await.is_err());
+    };
+    let (result,())=tokio::time::timeout(Duration::from_secs(3),async{tokio::join!(e.send_one_on("m",(url,client,1024)),controls)}).await.unwrap();
+    assert!(result.is_ok());assert_eq!(store.message("m").unwrap().unwrap().state,"failed");
+    assert_eq!(store.message("m").unwrap().unwrap().attachments[0].state,"cancelled");
+    assert!(e.send_writers.lock().unwrap().is_empty());e.retry("m").unwrap();
+    server.await.unwrap();
+}

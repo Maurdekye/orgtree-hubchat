@@ -1125,13 +1125,10 @@ impl Store {
 
     /// An upload's id on `hub` (a finished file, or a resumable session).
     pub fn set_upload(&self, local_id: &str, state: &str, hub_id: &str, hub: &str) -> Result<()> {
-        self.with(|c| {
-            c.execute(
-                "UPDATE attachments SET upload_confirmed=CASE WHEN ?1='uploaded' THEN bytes WHEN hub_id=?2 AND hub=?3 THEN upload_confirmed ELSE 0 END,state=?1,hub_id=?2,hub=?3,error=NULL WHERE local_id=?4",
-                params![state, hub_id, hub, local_id],
-            )
-            .map(|_| ())
-        })
+        let n=self.with(|c| c.execute(
+            "UPDATE attachments SET upload_confirmed=CASE WHEN ?1='uploaded' THEN bytes WHEN hub_id=?2 AND hub=?3 THEN upload_confirmed ELSE 0 END,state=?1,hub_id=?2,hub=?3,error=NULL WHERE local_id=?4 AND (?1!='uploading' OR (state!='cancelled' AND EXISTS(SELECT 1 FROM messages m WHERE m.id=attachments.message_id AND m.state IN ('queued','sending'))))",
+            params![state,hub_id,hub,local_id]))?;
+        if n==0 {return Err(Error::Cancelled)} Ok(())
     }
 
     /// Bind an acknowledgement to this exact session and live upload. Late
@@ -1911,3 +1908,6 @@ mod scheduler_store;
 #[path = "transfer_view.rs"]
 mod transfer_view;
 pub use transfer_view::{TransferView, TransferPage};
+
+#[path = "outgoing_controls.rs"]
+mod outgoing_controls;

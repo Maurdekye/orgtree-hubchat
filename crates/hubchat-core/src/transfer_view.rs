@@ -196,6 +196,7 @@ mod tests {
         assert!(store
             .upload_checkpoint(&id, "hub1", "session1", 9000)
             .is_err());
+        store.set_attachment(&id,"pending",None,None,None).unwrap();
         store
             .set_upload(&id, "uploading", "session2", "hub1")
             .unwrap();
