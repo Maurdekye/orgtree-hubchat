@@ -1165,7 +1165,7 @@ mod tests {
         let expired=store.download_job(&attachments[1].local_id).unwrap().unwrap();
         assert_eq!(expired.checkpoint.confirmed,0);
         assert_eq!(expired.state,"cancelled","cleanup does not revive user cancellation");
-        assert!(expired.error.unwrap().contains("expired"));
+        assert!(expired.error.unwrap().contains("earlier progress"));
         store.queue_download_job(&attachments[1].local_id,"unused","unused").unwrap();
         let restarted=store.begin_download(&attachments[1].local_id,"unused","unused").unwrap();
         assert!(store.message("message").unwrap().unwrap().attachments.iter().find(|a|a.local_id==attachments[1].local_id).unwrap().download.as_ref().unwrap().restarted,"restart explanation survives admission and begin");

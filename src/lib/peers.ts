@@ -126,7 +126,7 @@ export function attView(a: Attachment, m: Message, prog?: { done: number; total:
   if (d) {
     const confirmed = d.state === "running" && prog ? prog.done : d.confirmed;
     const bar = a.bytes ? Math.min(100, Math.floor(100 * confirmed / a.bytes)) : 0;
-    const count = bytes(confirmed) + " of " + size + (d.restarted && confirmed === 0 ? " \u00b7 Partial expired; restarting from zero" : "");
+    const count = bytes(confirmed) + " of " + size + (d.restarted && confirmed === 0 ? " \u00b7 Starting over: the earlier progress was more than a day old." : "");
     if (d.state === "done") return { st: "got", ic: "file", open: true, sub: size + " · Saved · Open" };
     if (d.state === "expired") return { st: "expired", ic: "cloud_off", sub: "No longer on the hub · " + size };
     if (d.state === "cancelled") return { st: "bad", ic: "close", retry: "download", sub: "Download cancelled · " + count };

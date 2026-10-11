@@ -43,7 +43,7 @@ try {
  await browser.size(390,844);
  await browser.eval(`document.querySelector('#proof').style.padding='16px';window.current.download={state:'paused',confirmed:1024,retry_at:0,error:null};`);
  check('confirmed progress does not require a live event',await browser.eval(`(async()=>{const {attView}=await import('/src/lib/peers.ts');return attView(window.current,{outgoing:false}).sub.includes('Paused');})()`));
- check('expired partial explains zero restart then fresh progress removes explanation',await browser.eval(`(async()=>{const {attView}=await import('/src/lib/peers.ts');const a={...window.current,download:{state:'running',confirmed:0,retry_at:0,error:null,restarted:true}};return attView(a,{outgoing:false}).sub.includes('restarting from zero')&&!attView(a,{outgoing:false},{done:1,total:a.bytes}).sub.includes('restarting from zero');})()`));
+ check('expired partial explains zero restart then fresh progress removes explanation',await browser.eval(`(async()=>{const {attView}=await import('/src/lib/peers.ts');const a={...window.current,download:{state:'running',confirmed:0,retry_at:0,error:null,restarted:true}};return attView(a,{outgoing:false}).sub.includes('Starting over:')&&!attView(a,{outgoing:false},{done:1,total:a.bytes}).sub.includes('Starting over:');})()`));
  await browser.eval(`(async()=>{
    document.querySelector('#proof').style.display='none';
    const node=document.createElement('div');node.style.cssText='padding:16px;max-width:100%';document.body.append(node);

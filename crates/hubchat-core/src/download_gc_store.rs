@@ -24,7 +24,7 @@ impl Store {
     ) -> Result<bool> {
         self.with(|c|{
             let tx=c.transaction()?;
-            let n=tx.execute("UPDATE download_jobs SET partial=?1,confirmed=0,restarted=1,validator=NULL,updated_ms=?2,cleanup_at=?2,digest=NULL,error='Partial download expired; restarting from zero' WHERE local_id=?3 AND partial=?4 AND updated_ms<=?5 AND state NOT IN ('publishing','exporting','done')",params![new,now,id,old,now.saturating_sub(86400000)])?;
+            let n=tx.execute("UPDATE download_jobs SET partial=?1,confirmed=0,restarted=1,validator=NULL,updated_ms=?2,cleanup_at=?2,digest=NULL,error='Starting over: the earlier progress was more than a day old.' WHERE local_id=?3 AND partial=?4 AND updated_ms<=?5 AND state NOT IN ('publishing','exporting','done')",params![new,now,id,old,now.saturating_sub(86400000)])?;
             tx.commit()?;Ok(n>0)
         })
     }

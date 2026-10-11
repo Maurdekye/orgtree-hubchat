@@ -24,7 +24,7 @@ impl Store {
             let mut q = c.prepare(
                 "SELECT a.local_id,a.message_id,m.peer,a.name,
                 j.local_id IS NULL,COALESCE(j.state,a.state),COALESCE(j.confirmed,a.upload_confirmed),a.bytes,
-                COALESCE(j.error,CASE WHEN j.restarted=1 THEN 'Partial download expired; restarting from zero' END,a.error,m.error),m.created_at
+                COALESCE(j.error,CASE WHEN j.restarted=1 THEN 'Starting over: the earlier progress was more than a day old.' END,a.error,m.error),m.created_at
                 FROM attachments a JOIN messages m ON m.id=a.message_id
                 LEFT JOIN download_jobs j ON j.local_id=a.local_id
                 WHERE a.local_id>?1 AND (
