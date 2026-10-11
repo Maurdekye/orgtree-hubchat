@@ -4,6 +4,7 @@ use super::*;
 pub struct TransferView {
     pub local_id: String,
     pub message_id: String,
+    pub created_at: String,
     pub peer: String,
     pub name: String,
     pub upload: bool,
@@ -23,7 +24,7 @@ impl Store {
             let mut q = c.prepare(
                 "SELECT a.local_id,a.message_id,m.peer,a.name,
                 j.local_id IS NULL,COALESCE(j.state,a.state),COALESCE(j.confirmed,0),a.bytes,
-                COALESCE(j.error,a.error,m.error)
+                COALESCE(j.error,a.error,m.error),m.created_at
                 FROM attachments a JOIN messages m ON m.id=a.message_id
                 LEFT JOIN download_jobs j ON j.local_id=a.local_id
                 WHERE a.local_id>?1 AND (
@@ -38,6 +39,7 @@ impl Store {
                     Ok(TransferView {
                         local_id: r.get(0)?,
                         message_id: r.get(1)?,
+                        created_at: r.get(9)?,
                         peer: r.get(2)?,
                         name: r.get(3)?,
                         upload: r.get(4)?,
@@ -117,6 +119,7 @@ mod tests {
             assert!(!json.contains("validator"));
             for row in &page.rows {
                 assert!(ids.insert(row.local_id.clone()));
+                assert_eq!(row.created_at, "now");
                 if row.local_id == id {
                     assert!(!row.upload);
                     assert_eq!(row.done, 8000);
