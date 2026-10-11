@@ -32,7 +32,7 @@ impl Engine {
                         }
                         // A message can exist on several hubs; a disconnected
                         // first route must not hide a currently connected copy.
-                        let Ok(routes) = self.store.message_hubs(&row.id) else {
+                        let Ok(routes) = self.store.body_routes(&row.id) else {
                             continue;
                         };
                         let route = {
@@ -40,10 +40,10 @@ impl Engine {
                             routes.iter().find_map(|url| {
                                 hubs.get(url)
                                     .filter(|h| matches!(h.status.state, HubState::Connected))
-                                    .map(|h| (h.client.clone(), h.stop.clone()))
+                                    .map(|h| (url.clone(), h.client.clone(), h.stop.clone()))
                             })
                         };
-                        let Some((client, stop)) = route else {
+                        let Some((hub, client, stop)) = route else {
                             continue;
                         };
                         let e = self.clone();
@@ -51,7 +51,7 @@ impl Engine {
                         let peer = row.peer.clone();
                         let reply = row.reply;
                         let task = workers.spawn(async move {
-                            e.fetch_body(&id, &peer, reply, client, stop).await;
+                            e.fetch_body(&id, &peer, reply, &hub, client, stop).await;
                         });
                         active.insert(task.id(), row.id.clone());
                     }
@@ -92,6 +92,7 @@ impl Engine {
         id: &str,
         peer: &str,
         reply: bool,
+        hub: &str,
         client: HubClient,
         stop: CancelFlag,
     ) {
@@ -113,8 +114,28 @@ impl Engine {
                 }
             }
             Err(Error::Cancelled) => {}
-            Err(_) => {
-                let _ = self.store.defer_body(id, unix_ms());
+            Err(Error::Hub {
+                status: 404 | 410, ..
+            }) => {
+                if self.store.body_copy_missing(id, hub).unwrap_or(false) {
+                    self.host.event(Event::Chat { peer: peer.into() });
+                }
+                self.body_changed.notify_one();
+            }
+            Err(error) => {
+                let reason = match error {
+                    Error::BodyTooLarge(_) => {
+                        Some("The rest of this message is too large to load.")
+                    }
+                    _ => None,
+                };
+                if let Some(reason) = reason {
+                    if self.store.stop_body(id, reason).unwrap_or(false) {
+                        self.host.event(Event::Chat { peer: peer.into() });
+                    }
+                } else {
+                    let _ = self.store.defer_body(id, unix_ms());
+                }
             }
         }
     }

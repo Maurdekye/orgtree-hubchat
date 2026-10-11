@@ -236,14 +236,15 @@ impl HubClient {
             .send()
             .await?;
         let resp = check(resp).await?;
+        if resp.content_length().is_some_and(|n| n > max_bytes) {
+            return Err(Error::BodyTooLarge(max_bytes));
+        }
         let mut out = Vec::new();
         let mut s = resp.bytes_stream();
         while let Some(c) = s.next().await {
             let c = c?;
             if (out.len() + c.len()) as u64 > max_bytes {
-                return Err(Error::Invalid(format!(
-                    "message body is larger than {max_bytes} bytes"
-                )));
+                return Err(Error::BodyTooLarge(max_bytes));
             }
             out.extend_from_slice(&c);
         }

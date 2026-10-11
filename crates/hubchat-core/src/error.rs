@@ -17,6 +17,8 @@ pub enum Error {
     Invalid(String),
     #[error("local store: {0}")]
     Store(String),
+    #[error("message body is larger than {0} bytes")]
+    BodyTooLarge(u64),
     /// A publication recovery read was temporarily refused by local storage.
     #[error("Cannot read the saved file yet; waiting to retry")]
     LocalBusy,

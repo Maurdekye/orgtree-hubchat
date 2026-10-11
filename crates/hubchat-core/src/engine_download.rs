@@ -670,6 +670,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn unavailable_long_bodies_stop_retrying_and_keep_previews_after_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("store.db");
+        let store = Arc::new(Store::open(&db).unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        store.add_hub(&url, "now").unwrap();
+        for id in ["missing", "expired", "oversized", "temporary"] {
+            store
+                .upsert_synced(&url, "local.222", &long_message(id))
+                .unwrap();
+        }
+        let server = tokio::spawn(async move {
+            for _ in 0..4 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let h = headers(&mut socket).await;
+                let response = if h.contains("/missing/") {
+                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        .to_owned()
+                } else if h.contains("/expired/") {
+                    "HTTP/1.1 410 Gone\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_owned()
+                } else if h.contains("/oversized/") {
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        LONG_BODY_FETCH_MAX + 1
+                    )
+                } else {
+                    assert!(h.contains("/temporary/"));
+                    "HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        .to_owned()
+                };
+                socket.write_all(response.as_bytes()).await.unwrap();
+            }
+        });
+        let e = fixture(store.clone(), dir.path(), &url);
+        let run = tokio::spawn(e.clone().body_loop());
+        until(|| {
+            ["missing", "expired", "oversized"]
+                .iter()
+                .all(|id| store.body_unavailable(id).unwrap().is_some())
+        })
+        .await;
+        server.await.unwrap();
+        e.shutdown();
+        tokio::time::timeout(Duration::from_secs(3), run)
+            .await
+            .unwrap()
+            .unwrap();
+        drop(e);
+        drop(store);
+        let store = Store::open(&db).unwrap();
+        for id in ["missing", "expired", "oversized"] {
+            assert_eq!(store.message(id).unwrap().unwrap().body, "preview");
+            assert!(store.body_unavailable(id).unwrap().is_some());
+            store
+                .upsert_synced(&url, "local.222", &long_message(id))
+                .unwrap();
+        }
+        store.wake_transfer_retries(None).unwrap();
+        let pending = store.pending_bodies("", u64::MAX / 2).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, "temporary");
+        assert!(store.body_unavailable("temporary").unwrap().is_none());
+        assert!(store
+            .body_unavailable("oversized")
+            .unwrap()
+            .unwrap()
+            .contains("too large"));
+    }
+
+    #[tokio::test]
     async fn long_body_suspension_releases_http_and_resume_keeps_durable_request() {
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(Store::open_in_memory().unwrap());

@@ -233,6 +233,12 @@ CREATE TABLE body_fetches (
 );
 CREATE INDEX body_fetches_due ON body_fetches(done,retry_at,id);
 "#,
+    // 12: retain why an unavailable body stopped, without losing its preview.
+    r#"ALTER TABLE body_fetches ADD COLUMN unavailable TEXT;
+CREATE TABLE body_missing (
+ id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+ hub TEXT NOT NULL,PRIMARY KEY(id,hub)
+);"#,
 ];
 
 pub struct Store {
@@ -886,6 +892,9 @@ impl Store {
                 // Keep a completion marker so receipt updates never redownload
                 // an already expanded body. Admission and message custody commit together.
                 tx.execute("INSERT OR IGNORE INTO body_fetches(id) VALUES(?)", [&env.id])?;
+                // A newly discovered copy may still have a body whose other
+                // copies expired. Oversized bodies remain terminal everywhere.
+                tx.execute("UPDATE body_fetches SET done=0,retry_at=0,unavailable=NULL WHERE id=?1 AND unavailable=?3 AND NOT EXISTS(SELECT 1 FROM body_missing WHERE id=?1 AND hub=?2)",params![env.id,hub,body_store::BODY_MISSING])?;
             }
             held_by(&tx, &env.id, hub)?;
             after_its_parent(&tx, &env.id)?;
