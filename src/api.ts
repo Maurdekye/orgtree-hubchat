@@ -47,6 +47,23 @@ export interface PictureMeta { picture_owner?: string | null; revision: string; 
 export interface PictureRecord extends PictureMeta { data: string | null }
 export interface PictureCrop { x: number; y: number; size: number }
 
+/** Settings › Developer: the local diagnostic log (src-tauri/src/trace.rs). */
+export interface LogInfo {
+  /** The log is running on this device. */
+  active: boolean;
+  /** Verbose logging is on now. */
+  verbose: boolean;
+  /** What this build does without a setting (a development build is verbose). */
+  default_verbose: boolean;
+  /** HUBCHAT_LOG_VERBOSE fixes the switch for this run. */
+  pinned: boolean;
+  dir: string;
+  files: number;
+  bytes: number;
+  max_bytes: number;
+  retention_days: number;
+}
+
 /** Android: a newer release this phone can install. */
 export interface AppUpdate {
   version: string;
@@ -493,6 +510,13 @@ export const tauriApi = {
   onPendingLink: (f: () => void): Promise<UnlistenFn> => listen("hc-link-pending", () => f()),
   /** Open a downloaded attachment (or, desktop, show it in its folder). */
   openAttachment: (messageId: string, localId: string, reveal: boolean) => invoke<void>("hc_open_attachment", { messageId, localId, reveal }),
+
+  // diagnostics (src-tauri/src/trace.rs)
+  logInfo: () => invoke<LogInfo>("hc_log_info"),
+  /** Verbose logging on or off: applied at once, kept for the next start. */
+  setVerboseLogging: (on: boolean) => invoke<LogInfo>("hc_set_verbose_logging", { on }),
+  /** Desktop: show the logs folder in the file manager. */
+  openLogsFolder: () => invoke<void>("hc_open_logs_folder"),
 
   onEvent: (f: (e: HcEvent) => void): Promise<UnlistenFn> => listen<HcEvent>("hc", (e) => f(e.payload)),
 };

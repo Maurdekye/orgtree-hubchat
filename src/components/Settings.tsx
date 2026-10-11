@@ -2,7 +2,7 @@
 // General (desktop), About.
 // Desktop: one modal with a nav column. Android: a list and a screen each.
 import { useEffect, useState, type ReactNode } from "react";
-import { api, type Devices, type HubStatus } from "../api";
+import { api, type Devices, type HubStatus, type LogInfo } from "../api";
 import { chatLink, chatLinkTarget } from "../lib/chatlink";
 import { Icon, Logo, type IconName } from "../lib/icons";
 import { bytes } from "../lib/format";
@@ -22,9 +22,9 @@ import { GuideBody } from "./Guide";
 import { scanSetup } from "../lib/setup";
 import { Addr, Avatar, Confirm, NoteCard, QR, Switch, pressKeys, useDialogFocus, useNow, usePlatform } from "./ui";
 
-export type SetTab = "profile" | "hubs" | "devices" | "notifications" | "recovery" | "privacy" | "appearance" | "general" | "help" | "about";
-/** Every section (Android titles its screens from this too; General is desktop only). */
-export const TABS: [SetTab, string, IconName][] = [["profile", "Profile", "person"], ["hubs", "Hubs", "dns"], ["devices", "Devices", "computer"], ["notifications", "Notifications", "bell"], ["recovery", "Recovery words", "key"], ["privacy", "Privacy", "privacy"], ["appearance", "Appearance", "palette"], ["general", "General", "tune"], ["help", "Help", "help"], ["about", "About", "info"]];
+export type SetTab = "profile" | "hubs" | "devices" | "notifications" | "recovery" | "privacy" | "appearance" | "general" | "developer" | "help" | "about";
+/** Every section (Android titles its screens from this too; General and Developer are desktop only). */
+export const TABS: [SetTab, string, IconName][] = [["profile", "Profile", "person"], ["hubs", "Hubs", "dns"], ["devices", "Devices", "computer"], ["notifications", "Notifications", "bell"], ["recovery", "Recovery words", "key"], ["privacy", "Privacy", "privacy"], ["appearance", "Appearance", "palette"], ["general", "General", "tune"], ["developer", "Developer", "terminal"], ["help", "Help", "help"], ["about", "About", "info"]];
 
 // ---------------------------------------------------------------- shapes
 function Row({ icon, t1, t2, right, onClick }: { icon?: IconName; t1: ReactNode; t2?: ReactNode; right?: ReactNode; onClick?: () => void }) {
@@ -369,6 +369,28 @@ function General() {
   );
 }
 
+/** Settings › Developer (desktop): the local diagnostic log. It stays on this
+ *  device and nothing in it is ever sent anywhere (docs/logging.md). */
+function Developer() {
+  const [info, setInfo] = useState<LogInfo | null>(null);
+  useEffect(() => { api.logInfo().then(setInfo, (e) => toast(errText(e))); }, []);
+  const setVerbose = async (v: boolean) => { try { setInfo(await api.setVerboseLogging(v)); } catch (e) { toast(errText(e)); } };
+  const openFolder = async () => { try { await api.openLogsFolder(); } catch (e) { toast(errText(e)); } };
+  const verbose = info == null ? null : info.pinned
+    ? "Fixed for this run by the HUBCHAT_LOG_VERBOSE setting."
+    : info.active
+      ? "Adds step-by-step lines about hub calls and what you do to the log. Never message text, addresses or keys. Applies at once and stays after a restart."
+      : "The log is not running on this device.";
+  return (
+    <Sec first>
+      <Card>
+        <Row icon="terminal" t1="Verbose logging" t2={verbose ?? undefined} right={info && info.active && !info.pinned ? <Switch on={info.verbose} onChange={setVerbose} label="Verbose logging" /> : null} />
+        <Row icon="folder" t1="Open logs folder" t2={info ? (info.files ? info.files + (info.files === 1 ? " file, " : " files, ") + bytes(info.bytes) : "No files yet") + " (up to " + bytes(info.max_bytes) + ", kept " + info.retention_days + " days). Logs stay on this device and are never sent anywhere." : undefined} right={<button className="btn" onClick={() => void openFolder()}><Icon name="folder" />Open</button>} />
+      </Card>
+    </Sec>
+  );
+}
+
 /** Settings › Notifications (design): notify, show the text, sound on
  *  desktop; on Android, stay connected or check every 15 minutes (D6). */
 function Notifications() {
@@ -582,6 +604,7 @@ export function SettingsSection({ tab, onLink, goTab }: { tab: SetTab; onLink?: 
     case "devices": return <Devices onLink={onLink} goTab={goTab} />;
     case "notifications": return <Notifications />;
     case "general": return <General />;
+    case "developer": return <Developer />;
     case "recovery": return <Recovery />;
     case "privacy": return <Privacy />;
     case "appearance": return <Appearance />;

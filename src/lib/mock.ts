@@ -27,7 +27,7 @@
 // maya.e71f2b, or with a code starting "SAME" this device's own); nothing is
 // adopted before linkConfirm. A key file opens with any passphrase but
 // "wrong". Hubs on 127.0.0.1 / localhost can't be reached from the "phone".
-import type { Api, SetupLink, SetupState, Attachment, ChatSummary, SendRoute, Contact, HcEvent, HubRow, HubStatus, LinkEvent, LinkLookup, LinkRole, Message, NewOutgoing, OlderPage, ParsedLink, Probe, PushState, Resolved, State } from "../api";
+import type { Api, LogInfo, SetupLink, SetupState, Attachment, ChatSummary, SendRoute, Contact, HcEvent, HubRow, HubStatus, LinkEvent, LinkLookup, LinkRole, Message, NewOutgoing, OlderPage, ParsedLink, Probe, PushState, Resolved, State } from "../api";
 import { toast } from "./toast";
 
 const params = new URLSearchParams(location.search);
@@ -42,6 +42,10 @@ const now = () => Date.now();
 const uid = () => Math.random().toString(16).slice(2, 10) + Math.random().toString(16).slice(2, 10);
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 const sleep = (n: number) => new Promise((r) => setTimeout(r, n));
+
+/** Settings › Developer in the mock: a verbose switch and a small log folder. */
+let mockVerbose = false;
+const mockLog = (): LogInfo => ({ active: true, verbose: mockVerbose, default_verbose: false, pinned: false, dir: "C:\\Users\\alex\\AppData\\Roaming\\dev.orgtree.hubchat\\diagnostics\\logs", files: 3, bytes: 1_245_184, max_bytes: 64 * 1024 * 1024, retention_days: 30 });
 
 /** A time `days` ago at hh:mm local. */
 function at(days: number, hm: string): number {
@@ -943,6 +947,9 @@ export const mockApi: Api = {
     if (setupFail === "unreach" || setupFail === "unreach-wifi") return { reachable: false, name: null, error: "no answer within 5 s" };
     return { reachable: true, name: hubLabel(hub), error: null };
   },
+  logInfo: async () => mockLog(),
+  setVerboseLogging: async (on) => { mockVerbose = on; return mockLog(); },
+  openLogsFolder: async () => { toast("[Opens the logs folder]"); },
   appInstalled: async () => (st.platform === "android" ? setupFail !== "no-ts" : null),
   openApp: async (what) => { toast("[Opens " + (what === "get_tailscale" ? "Tailscale in Google Play" : what === "open_tailscale" ? "the Tailscale app" : what === "connection_notification" ? "Android's settings for Hubchat's Background connection notifications" : "Android's Wi-Fi settings") + "]"); return true; },
   vpnActive: async () => (st.platform !== "android" ? null : (window as unknown as { __hcVpn?: boolean }).__hcVpn ?? params.get("vpn") !== "off"),
