@@ -1,6 +1,6 @@
 //! One bounded owner for queued sends and explicit download requests.
 use super::*;
-use std::collections::HashSet;
+use std::collections::HashMap;
 fn transient(e: &Error) -> bool {
     matches!(e, Error::Unreachable(_))
         || e.status()
@@ -13,23 +13,27 @@ impl Engine {
         let _ =
             tokio::task::spawn_blocking(move || crate::staging::sweep_orphans(&root, &store)).await;
         let mut workers = tokio::task::JoinSet::new();
-        let mut active = HashSet::<String>::new();
+        let mut active = HashMap::<tokio::task::Id, String>::new();
+        let mut clean_at = std::time::Instant::now();
         let mut send_cursor: Option<(String, String)> = None;
         let mut download_cursor = String::new();
         let mut suspended = self.suspended.subscribe();
         let mut downloads_first = true;
         loop {
-            while let Some(result) = workers.try_join_next() {
-                if let Ok(key) = result {
-                    active.remove(&key);
-                }
+            while let Some(result) = workers.try_join_next_with_id() {
+                self.reap_worker(&mut active, result);
             }
             if self.stopped.load(std::sync::atomic::Ordering::Relaxed) {
                 // shutdown cancels sockets. Do not abort a filesystem publication.
-                while workers.join_next().await.is_some() {}
+                while let Some(result) = workers.join_next_with_id().await {
+                    self.reap_worker(&mut active, result);
+                }
                 return;
             }
-            self.clean_staging().await;
+            if std::time::Instant::now() >= clean_at {
+                self.clean_staging().await;
+                clean_at = std::time::Instant::now() + Duration::from_secs(30);
+            }
             let mut more = false;
             if !*suspended.borrow_and_update() {
                 if downloads_first {
@@ -51,7 +55,7 @@ impl Engine {
                             }
                             send_cursor = Some((m.created_at.clone(), m.id.clone()));
                             let key = format!("send:{}", m.id);
-                            if active.contains(&key) {
+                            if active.values().any(|value| value == &key) {
                                 continue;
                             }
                             let route = match self.route(&m.peer, &self.connected_hubs()) {
@@ -73,25 +77,25 @@ impl Engine {
                             } else {
                                 None
                             };
-                            active.insert(key.clone());
                             let e = self.clone();
                             let id = m.id.clone();
-                            workers.spawn(async move {
+                            let hub = route.0.clone();
+                            let task = workers.spawn(async move {
                                 let _permit = permit;
                                 match e.send_one_on(&id, route).await {
                                     Ok(false) => {
-                                        let _ = e.store.defer_send(&id, unix_ms());
+                                        let _ = e.store.defer_send(&id, &hub, unix_ms());
                                     }
                                     Err(ref err) if transient(err) => {
-                                        let _ = e.store.defer_send(&id, unix_ms());
+                                        let _ = e.store.defer_send(&id, &hub, unix_ms());
                                     }
                                     Err(err) => {
                                         let _ = e.fail(&m_peer(&e, &id), &id, &err.to_string());
                                     }
                                     _ => {}
                                 }
-                                key
                             });
+                            active.insert(task.id(), key);
                         }
                         if rows.len() < 64 {
                             send_cursor = None;
@@ -104,7 +108,7 @@ impl Engine {
                 downloads_first = !downloads_first;
             }
             tokio::select! {
-                result=workers.join_next(), if !workers.is_empty()=>{if let Some(Ok(key))=result{active.remove(&key);}},
+                result=workers.join_next_with_id(), if !workers.is_empty()=>{if let Some(result)=result{self.reap_worker(&mut active,result);}},
                 _=self.queue_changed.notified()=>{},
                 _=self.file_slots.changed.notified()=>{},
                 _=suspended.changed()=>{},
@@ -112,10 +116,44 @@ impl Engine {
             }
         }
     }
+    fn reap_worker(
+        &self,
+        active: &mut HashMap<tokio::task::Id, String>,
+        result: std::result::Result<(tokio::task::Id, ()), tokio::task::JoinError>,
+    ) {
+        let id = match &result {
+            Ok((id, _)) => *id,
+            Err(error) => error.id(),
+        };
+        let Some(key) = active.remove(&id) else {
+            return;
+        };
+        if result.is_ok() {
+            return;
+        }
+        if let Some(mid) = key.strip_prefix("send:") {
+            if let Ok(Some(m)) = self.store.message(mid) {
+                let mut transfers = self.transfers.lock().unwrap();
+                for a in &m.attachments {
+                    if a.state == "uploading" {
+                        transfers.remove(&a.local_id);
+                    }
+                }
+            }
+            let _ = self.fail(
+                &m_peer(self, mid),
+                mid,
+                "Transfer worker stopped unexpectedly; retry",
+            );
+        } else if let Some(lid) = key.strip_prefix("download:") {
+            self.transfers.lock().unwrap().remove(lid);
+            let _ = self.store.download_worker_failed(lid);
+        }
+    }
     fn launch_downloads(
         self: &Arc<Self>,
-        workers: &mut tokio::task::JoinSet<String>,
-        active: &mut HashSet<String>,
+        workers: &mut tokio::task::JoinSet<()>,
+        active: &mut HashMap<tokio::task::Id, String>,
         download_cursor: &mut String,
     ) -> bool {
         let mut more = false;
@@ -128,7 +166,9 @@ impl Engine {
                     }
                     *download_cursor = lid.clone();
                     let key = format!("download:{lid}");
-                    if active.contains(&key) || self.transfers.lock().unwrap().contains_key(lid) {
+                    if active.values().any(|value| value == &key)
+                        || self.transfers.lock().unwrap().contains_key(lid)
+                    {
                         continue;
                     }
                     if !self.hubs.lock().unwrap().contains_key(hub) {
@@ -137,18 +177,17 @@ impl Engine {
                     let Some(permit) = self.file_slots.try_acquire(hub) else {
                         continue;
                     };
-                    active.insert(key.clone());
                     let e = self.clone();
                     let lid = lid.clone();
                     let mid = mid.clone();
-                    workers.spawn(async move {
+                    let task = workers.spawn(async move {
                         if let Err(err) = e.download_with_slot(&mid, &lid, Some(permit)).await {
                             if transient(&err) {
                                 let _ = e.store.defer_download(&lid, unix_ms());
                             }
                         }
-                        key
                     });
+                    active.insert(task.id(), key);
                 }
                 if rows.len() < 64 {
                     download_cursor.clear();
@@ -165,4 +204,91 @@ fn m_peer(e: &Engine, id: &str) -> String {
         .flatten()
         .map(|m| m.peer)
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    struct HostStub;
+    impl Host for HostStub {
+        fn event(&self, _: Event) {}
+        fn open_source(&self, path: &str) -> std::io::Result<std::fs::File> {
+            std::fs::File::open(path)
+        }
+        fn download_dir(&self) -> PathBuf {
+            std::env::temp_dir()
+        }
+    }
+    #[tokio::test]
+    async fn panicked_workers_release_keys_and_slots_and_record_actionable_failure() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store
+            .queue_outgoing(
+                &NewOutgoing {
+                    id: "message".into(),
+                    peer: "peer".into(),
+                    body: "text".into(),
+                    kind: None,
+                    reply_to: None,
+                    attachments: vec![crate::store::NewAttachment {
+                        name: "file".into(),
+                        bytes: 3,
+                        source: "unused".into(),
+                    }],
+                },
+                "now",
+            )
+            .unwrap();
+        let lid = store.message("message").unwrap().unwrap().attachments[0]
+            .local_id
+            .clone();
+        let e = Engine::new(
+            store.clone(),
+            Identity::generate("panic-proof").unwrap(),
+            Profile::default(),
+            Arc::new(HostStub),
+        );
+        let mut active = HashMap::new();
+        let mut workers = tokio::task::JoinSet::new();
+        store
+            .set_attachment(&lid, "uploading", None, None, None)
+            .unwrap();
+        e.transfers
+            .lock()
+            .unwrap()
+            .insert(lid.clone(), CancelFlag::default());
+        let permit = e.file_slots.try_acquire("hub").unwrap();
+        let task = workers.spawn(async move {
+            let _permit = permit;
+            panic!("injected worker failure");
+        });
+        active.insert(task.id(), "send:message".into());
+        e.reap_worker(&mut active, workers.join_next_with_id().await.unwrap());
+        assert!(active.is_empty());
+        assert!(e.file_slots.try_acquire("hub").is_some());
+        assert!(e.transfers.lock().unwrap().is_empty());
+        assert_eq!(store.message("message").unwrap().unwrap().state, "failed");
+        assert!(store
+            .message("message")
+            .unwrap()
+            .unwrap()
+            .error
+            .unwrap()
+            .contains("unexpectedly"));
+        store.begin_download(&lid, "part", "dest").unwrap();
+        let task = workers.spawn(async {
+            panic!("injected download failure");
+        });
+        active.insert(task.id(), format!("download:{lid}"));
+        e.reap_worker(&mut active, workers.join_next_with_id().await.unwrap());
+        assert!(active.is_empty());
+        assert_eq!(store.download_job(&lid).unwrap().unwrap().state, "failed");
+        assert!(store
+            .download_job(&lid)
+            .unwrap()
+            .unwrap()
+            .error
+            .unwrap()
+            .contains("unexpectedly"));
+    }
 }

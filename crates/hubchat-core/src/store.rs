@@ -163,6 +163,7 @@ END;
     r#"
 CREATE TABLE transfer_send_state (
  message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+ hub TEXT NOT NULL,
  failures INTEGER NOT NULL DEFAULT 0,
  retry_at INTEGER NOT NULL DEFAULT 0
 );
@@ -557,6 +558,7 @@ impl Store {
             )?;
             if n > 0 {
                 held_by(&tx, id, hub)?;
+                tx.execute("DELETE FROM transfer_send_state WHERE message_id=?", [id])?;
             }
             tx.commit()?;
             Ok(n > 0)

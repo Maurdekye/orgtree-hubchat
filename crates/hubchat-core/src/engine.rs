@@ -502,6 +502,7 @@ impl Engine {
     }
 
     pub fn retry_now(&self) {
+        let _ = self.store.wake_transfer_retries(None);
         for rt in self.hubs.lock().unwrap().values() {
             rt.retry_now.notify_one();
         }
@@ -813,6 +814,7 @@ impl Engine {
         let max = health.max_attachment_bytes();
         self.store
             .hub_ok(url, &health.name, health.max_attachment_bytes, &now())?;
+        self.store.wake_transfer_retries(Some(url))?;
         self.set_status(url, |s| {
             s.name = health.name.clone();
             s.state = HubState::Connected;
