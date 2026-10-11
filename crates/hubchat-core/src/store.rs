@@ -199,6 +199,21 @@ CREATE INDEX transfer_failure_pending ON transfer_failures(pending,retry_at,mess
 "#,
     // 7: wording follows the failed operation, including downloads of sent files.
     r#"ALTER TABLE transfer_failures ADD COLUMN download INTEGER NOT NULL DEFAULT 0;"#,
+    // 8: removal intents survive message deletion and partial expiry.
+    r#"
+ALTER TABLE download_jobs ADD COLUMN cleanup_at INTEGER NOT NULL DEFAULT 0;
+CREATE TRIGGER download_initial_age AFTER INSERT ON download_jobs WHEN NEW.updated_ms=0 BEGIN
+ UPDATE download_jobs SET updated_ms=CAST(strftime('%s','now') AS INTEGER)*1000 WHERE local_id=NEW.local_id;
+END;
+CREATE TABLE download_gc(path TEXT PRIMARY KEY,local_id TEXT NOT NULL,retry_after INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX download_gc_due ON download_gc(retry_after,path);
+CREATE TRIGGER download_partial_deleted AFTER DELETE ON download_jobs BEGIN
+ INSERT OR IGNORE INTO download_gc(path,local_id) VALUES(OLD.partial,OLD.local_id);
+END;
+CREATE TRIGGER download_partial_replaced AFTER UPDATE OF partial ON download_jobs WHEN OLD.partial!=NEW.partial BEGIN
+ INSERT OR IGNORE INTO download_gc(path,local_id) VALUES(OLD.partial,OLD.local_id);
+END;
+"#,
 ];
 
 pub struct Store {
@@ -1930,3 +1945,6 @@ mod outgoing_controls;
 #[path = "transfer_failures.rs"]
 mod transfer_failures;
 pub use transfer_failures::TransferFailure;
+
+#[path = "download_gc_store.rs"]
+mod download_gc_store;

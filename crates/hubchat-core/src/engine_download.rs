@@ -1098,6 +1098,83 @@ mod tests {
             server.await.unwrap();
         }
     }
+    #[tokio::test]
+    async fn partial_cleanup_is_bounded_skips_writers_and_survives_deleted_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join(".hubchat-downloads");
+        std::fs::create_dir(&root).unwrap();
+        let db = dir.path().join("store.db");
+        let store = Arc::new(Store::open(&db).unwrap());
+        store.queue_outgoing(&NewOutgoing {
+            id: "message".into(), peer: "peer".into(), body: "files".into(), kind: None, reply_to: None,
+            attachments: (0..36).map(|i|NewAttachment{name:format!("{i}.bin"),bytes:3,source:"unused".into()}).collect(),
+        }, &now()).unwrap();
+        let attachments = store.message("message").unwrap().unwrap().attachments;
+        let mut paths = Vec::new();
+        for a in &attachments {
+            let part = root.join(format!("{}.part", uuid::Uuid::new_v4().simple()));
+            std::fs::write(&part,b"abc").unwrap();
+            let j = store.begin_download(&a.local_id,&part.to_string_lossy(),"published-do-not-delete").unwrap();
+            assert!(j.checkpoint.updated_ms>0,"new jobs get a real age before any checkpoint");
+            store.download_checkpoint(&a.local_id,j.attempt,&DownloadCheckpoint {
+                confirmed:3,validator:Some("etag".into()),updated_ms:1,
+            }).unwrap();
+            store.cancel_download(&a.local_id).unwrap();
+            paths.push(part);
+        }
+        let e=fixture(store.clone(),dir.path(),"http://127.0.0.1:9");
+        let active=&attachments[0].local_id;
+        e.transfers.lock().unwrap().insert(active.clone(),CancelFlag::default());
+        let at=86400002;
+        e.clean_downloads(at).await;
+        assert!(paths[0].exists(),"expiry never removes an active writer");
+        assert!(paths.iter().filter(|p|p.exists()).count()>=4,"one pass is bounded");
+        e.clean_downloads(at+30001).await;
+        assert_eq!(paths.iter().filter(|p|p.exists()).count(),1);
+        let expired=store.download_job(&attachments[1].local_id).unwrap().unwrap();
+        assert_eq!(expired.checkpoint.confirmed,0);
+        assert_eq!(expired.state,"cancelled","cleanup does not revive user cancellation");
+        assert!(expired.error.unwrap().contains("expired"));
+        // A cascading message delete records cleanup even while its writer stops.
+        store.delete_message("message").unwrap();
+        e.clean_downloads(at+60002).await;
+        assert!(paths[0].exists());
+        drop(e);drop(store);
+        let store=Arc::new(Store::open(&db).unwrap());
+        let e=fixture(store.clone(),dir.path(),"http://127.0.0.1:9");
+        e.clean_downloads(at+90003).await;
+        e.clean_downloads(at+120004).await;
+        assert!(!paths[0].exists(),"durable removal resumes after reopen");
+        assert!(!root.exists(),"empty private directory is removed");
+        // Unexpected paths are never deleted, including real completed files.
+        let visible=dir.path().join("keep.bin");std::fs::write(&visible,b"keep").unwrap();
+        rusqlite::Connection::open(&db).unwrap().execute("INSERT INTO download_gc(path,local_id) VALUES(?,'other')",[visible.to_string_lossy().as_ref()]).unwrap();
+        e.clean_downloads(at+150005).await;
+        assert_eq!(std::fs::read(visible).unwrap(),b"keep");
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn deleted_partial_unlink_failure_is_retried_after_reopen() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir=tempfile::tempdir().unwrap();let root=dir.path().join(".hubchat-downloads");
+        std::fs::create_dir(&root).unwrap();
+        let db=dir.path().join("store.db");let store=Arc::new(Store::open(&db).unwrap());
+        let lid=attach(&store,"http://127.0.0.1:9",3);
+        let part=root.join(format!("{}.part",uuid::Uuid::new_v4().simple()));
+        std::fs::write(&part,b"abc").unwrap();
+        store.begin_download(&lid,&part.to_string_lossy(),"never-delete").unwrap();
+        store.delete_message("message").unwrap();
+        let held=std::fs::OpenOptions::new().read(true).share_mode(0).open(&part).unwrap();
+        let e=fixture(store.clone(),dir.path(),"http://127.0.0.1:9");
+        e.clean_downloads(100).await;assert!(part.exists());
+        assert!(store.download_gc_due(100).unwrap().is_empty());
+        drop(e);drop(store);drop(held);
+        let store=Arc::new(Store::open(&db).unwrap());
+        let e=fixture(store.clone(),dir.path(),"http://127.0.0.1:9");
+        e.clean_downloads(30100).await;assert!(!part.exists());
+    }
+
     #[cfg(windows)]
     #[tokio::test]
     async fn live_publication_skips_extra_read_and_locked_recovery_backs_off() {

@@ -2353,3 +2353,6 @@ mod engine_download;
 mod transfer_slots;
 #[path = "engine_scheduler.rs"]
 mod engine_scheduler;
+
+#[path = "download_gc.rs"]
+mod download_gc;

@@ -32,6 +32,7 @@ impl Engine {
             }
             if std::time::Instant::now() >= clean_at {
                 self.clean_staging().await;
+                self.clean_downloads(unix_ms()).await;
                 clean_at = std::time::Instant::now() + Duration::from_secs(30);
             }
             self.deliver_transfer_failures(unix_ms()).await;
