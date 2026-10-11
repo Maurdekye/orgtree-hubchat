@@ -64,3 +64,6 @@
 .set-row.dev-rename { flex-wrap: wrap; gap: 8px; align-items: center; }
 .dev-rename .input { flex: 1 1 220px; min-width: 0; }
 .dev-rename .help { flex-basis: 100%; }
+
+.comp-preparing { display: flex; gap: 10px; align-items: center; padding: 10px 12px; font-size: 13px; overflow-wrap: anywhere; }
+.comp-preparing small { opacity: .75; }
