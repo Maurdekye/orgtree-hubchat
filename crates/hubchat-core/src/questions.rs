@@ -261,7 +261,7 @@ mod tests {
     fn a_card_keeps_only_options_that_follow_every_rule() {
         let ok = json!({"options": ["Beta", "Stable"], "multiple": true});
         assert_eq!(check_question(&ok), Some(QuestionMeta { options: vec!["Beta".into(), "Stable".into()], multiple: true }));
-        assert_eq!(check_question(&json!({"options": ["Beta", "Stable"]})).unwrap().multiple, false);
+        assert!(!check_question(&json!({"options": ["Beta", "Stable"]})).unwrap().multiple);
         for bad in [
             json!({"options": ["only one"]}),
             json!({"options": ["a", "A"]}),

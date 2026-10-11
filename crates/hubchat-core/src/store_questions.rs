@@ -33,7 +33,7 @@ impl Store {
                 c.execute("DELETE FROM draft_answers WHERE peer=?", [peer]).map(|_| ())
             } else {
                 let data = serde_json::to_string(d).unwrap_or_default();
-                c.execute("INSERT INTO draft_answers(peer, data) VALUES(?,?) ON CONFLICT(peer) DO UPDATE SET data=excluded.data", [peer, &data])
+                c.execute("INSERT INTO draft_answers(peer, data) VALUES(?,?) ON CONFLICT(peer) DO UPDATE SET data=excluded.data", params![peer, data])
                     .map(|_| ())
             }
         })
