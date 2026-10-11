@@ -30,6 +30,14 @@ impl Store {
             tx.commit()
         })
     }
+    pub(crate) fn send_worker_failed(&self, id: &str) -> Result<()> {
+        self.with(|c| {
+            let tx=c.transaction()?;
+            tx.execute("UPDATE attachments SET state='failed',error='Transfer worker stopped unexpectedly; retry' WHERE message_id=? AND state='uploading'",[id])?;
+            tx.execute("UPDATE messages SET state='failed',error='Transfer worker stopped unexpectedly; retry' WHERE id=? AND state IN ('queued','sending')",[id])?;
+            tx.commit()
+        })
+    }
     pub(crate) fn download_worker_failed(&self, id: &str) -> Result<()> {
         self.with(|c| {
             let tx=c.transaction()?;

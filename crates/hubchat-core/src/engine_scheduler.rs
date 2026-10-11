@@ -140,11 +140,10 @@ impl Engine {
                     }
                 }
             }
-            let _ = self.fail(
-                &m_peer(self, mid),
-                mid,
-                "Transfer worker stopped unexpectedly; retry",
-            );
+            let _ = self.store.send_worker_failed(mid);
+            self.host.event(Event::Chat {
+                peer: m_peer(self, mid),
+            });
         } else if let Some(lid) = key.strip_prefix("download:") {
             self.transfers.lock().unwrap().remove(lid);
             let _ = self.store.download_worker_failed(lid);
@@ -268,6 +267,9 @@ mod tests {
         assert!(e.file_slots.try_acquire("hub").is_some());
         assert!(e.transfers.lock().unwrap().is_empty());
         assert_eq!(store.message("message").unwrap().unwrap().state, "failed");
+        let attachment = &store.message("message").unwrap().unwrap().attachments[0];
+        assert_eq!(attachment.state, "failed");
+        assert!(attachment.error.as_ref().unwrap().contains("unexpectedly"));
         assert!(store
             .message("message")
             .unwrap()
