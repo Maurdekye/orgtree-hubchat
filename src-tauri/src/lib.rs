@@ -385,6 +385,7 @@ pub fn run() {
             commands::hc_retry,
             commands::hc_cancel_transfer,
             commands::hc_download,
+            commands::hc_transfers,
             commands::hc_mark_read,
             commands::hc_send_route,
             commands::hc_set_send_hub,

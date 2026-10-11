@@ -536,6 +536,11 @@ pub fn hc_cancel_transfer(local_id: String) -> R<()> {
 }
 
 #[tauri::command]
+pub fn hc_transfers(after: Option<String>) -> R<hubchat_core::store::TransferPage> {
+    core::get()?.store.transfer_page(after.as_deref().unwrap_or("")).map_err(s)
+}
+
+#[tauri::command]
 pub async fn hc_download(message_id: String, local_id: String) -> R<()> {
     let e = engine()?;
     // Admission only. A scheduler-owned worker finishes even if this command
