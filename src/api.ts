@@ -102,7 +102,14 @@ export type MessageState =
 
 /** pending | uploading | uploaded | failed | cancelled (outgoing);
  *  remote | downloading | done | failed | cancelled | expired (incoming). */
+export interface DownloadStatus {
+  state: string;
+  confirmed: number;
+  retry_at: number;
+  error: string | null;
+}
 export interface Attachment {
+  download?: DownloadStatus | null;
   local_id: string;
   hub_id: string | null;
   name: string;
@@ -357,7 +364,7 @@ export const tauriApi = {
   send: (msg: NewOutgoing) => invoke<void>("hc_send", { msg }),
   retry: (id: string) => invoke<void>("hc_retry", { id }),
   cancelTransfer: (localId: string) => invoke<void>("hc_cancel_transfer", { localId }),
-  download: (messageId: string, localId: string) => invoke<string>("hc_download", { messageId, localId }),
+  download: (messageId: string, localId: string) => invoke<void>("hc_download", { messageId, localId }),
   markRead: (peer: string) => invoke<void>("hc_mark_read", { peer }),
   sendRoute: (peer: string) => invoke<SendRoute>("hc_send_route", { peer }),
   /** Pin a chat to a hub; null = Automatic. */

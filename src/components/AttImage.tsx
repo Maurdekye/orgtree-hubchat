@@ -10,7 +10,7 @@ import { Icon } from "../lib/icons";
 import { closeImage, openImage, usePreview, useShownImage } from "../lib/images";
 import { errText, openAttachment, openFile } from "../lib/native";
 import { attView } from "../lib/peers";
-import { useTransfer } from "../lib/store";
+import { onChatChange, useTransfer } from "../lib/store";
 import { toast } from "../lib/toast";
 import { pressKeys, usePlatform } from "./ui";
 import "../styles/images.css";
@@ -32,7 +32,7 @@ export function AttImage({ a, m, fallback }: { a: Attachment; m: Message; fallba
           {v.bar != null ? <span className="att-bar"><i style={{ width: v.bar + "%" }} /></span> : null}
         </span>
       ) : null}
-      {v.cancel ? <button className="icon-btn att-x" title={m.outgoing ? "Cancel upload" : "Cancel download"} aria-label="Cancel" onClick={(e) => { e.stopPropagation(); api.cancelTransfer(a.local_id).catch(() => {}); }}><Icon name="close" /></button> : null}
+      {v.cancel ? <button className="icon-btn att-x" title={m.outgoing && !a.download ? "Cancel upload" : "Cancel download"} aria-label="Cancel" onClick={(e) => { e.stopPropagation(); api.cancelTransfer(a.local_id).catch(() => {}); }}><Icon name="close" /></button> : null}
     </div>
   );
 }
@@ -49,8 +49,21 @@ export function ImageViewer() {
 function Viewer({ m, a }: { m: Message; a: Attachment }) {
   const platform = usePlatform();
   const { url } = usePreview(m, a);
-  const [saved, setSaved] = useState<string | null>(a.state === "done" ? a.local_path : null);
-  const [saving, setSaving] = useState(false);
+  const [current, setCurrent] = useState(a);
+  const [requesting, setRequesting] = useState(false);
+  useEffect(() => {
+    let live = true;
+    const refresh = () => { void api.message(m.id).then((message) => {
+      const next = message?.attachments.find((x) => x.local_id === a.local_id);
+      if (live && next) setCurrent(next);
+    }, () => {}); };
+    refresh();
+    const off = onChatChange(m.peer, refresh);
+    return () => { live = false; off(); };
+  }, [m.id, m.peer, a.local_id]);
+  const view = attView(current, m);
+  const saved = view.open && current.local_path;
+  const saving = requesting || view.st === "busy";
 
   useEffect(() => {
     if (platform === "android") {
@@ -69,8 +82,8 @@ function Viewer({ m, a }: { m: Message; a: Attachment }) {
   const close = () => { if (platform === "android") history.back(); else closeImage(); };
 
   const download = () => {
-    setSaving(true);
-    api.download(m.id, a.local_id).then((p) => { setSaved(p); toast("Saved to Downloads"); }, (e) => toast("Download failed: " + errText(e))).finally(() => setSaving(false));
+    setRequesting(true);
+    api.download(m.id, a.local_id).catch((e) => toast("Download failed: " + errText(e))).finally(() => setRequesting(false));
   };
   const open = (reveal: boolean) => openAttachment(m.id, a.local_id, reveal).catch((e) => toast(errText(e)));
   const fromHere = m.outgoing && a.source && !a.source.startsWith("content://") && platform === "desktop" ? a.source : null;
@@ -78,7 +91,7 @@ function Viewer({ m, a }: { m: Message; a: Attachment }) {
     ? (fromHere ? <button className="link" onClick={() => openFile(fromHere).catch((e) => toast(errText(e)))}>Open</button> : null)
     : saved
       ? <><button className="link" onClick={() => open(false)}>Open</button>{platform === "desktop" ? <button className="link" onClick={() => open(true)}>Show in folder</button> : null}</>
-      : <button className="link" disabled={saving} onClick={download}>{saving ? "Downloading…" : "Download"}</button>;
+      : <button className="link" disabled={saving} onClick={download}>{saving ? view.sub : view.retry ? "Retry download" : "Download"}</button>;
 
   return (
     <div className="imgview" role="dialog" aria-label={a.name} onClick={close}>

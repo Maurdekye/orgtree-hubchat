@@ -121,8 +121,22 @@ export const hubCls = (h: HubStatus) => (h.state === "disconnected" ? "unreachab
 /** Attachment card state, following the prototype's attState. */
 export interface AttView { st: "busy" | "bad" | "got" | "remote" | "local" | "expired"; ic: IconName; sub: string; bar?: number; cancel?: boolean; retry?: "send" | "download"; download?: boolean; open?: boolean }
 export function attView(a: Attachment, m: Message, prog?: { done: number; total: number }): AttView {
-  const pct = prog && prog.total ? Math.floor((100 * prog.done) / prog.total) : 0;
   const size = bytes(a.bytes);
+  const d = a.download;
+  if (d) {
+    const bar = a.bytes ? Math.min(100, Math.floor(100 * d.confirmed / a.bytes)) : 0;
+    const count = bytes(d.confirmed) + " of " + size;
+    if (d.state === "done") return { st: "got", ic: "file", open: true, sub: size + " · Saved · Open" };
+    if (d.state === "expired") return { st: "expired", ic: "cloud_off", sub: "No longer on the hub · " + size };
+    if (d.state === "cancelled") return { st: "bad", ic: "close", retry: "download", sub: "Download cancelled · " + count };
+    if (d.state === "failed" || (d.error && ["publishing", "exporting"].includes(d.state)))
+      return { st: "bad", ic: "error", retry: "download", sub: "Download failed" + (d.error ? " (" + d.error + ")" : "") + " · " + count };
+    if (["publishing", "exporting"].includes(d.state) || (d.state === "running" && d.confirmed === a.bytes))
+      return { st: "busy", ic: "download", bar: 100, sub: "Finishing… · " + size };
+    const phase = d.state === "queued" ? "Waiting to download" : d.state === "paused" ? "Paused · waiting to resume" : "Downloading";
+    return { st: "busy", ic: "download", bar, cancel: true, sub: phase + " · " + count + (d.error ? " · " + d.error : "") };
+  }
+  const pct = prog && prog.total ? Math.floor((100 * prog.done) / prog.total) : 0;
   if (a.state === "expired") return { st: "expired", ic: "cloud_off", sub: "No longer on the hub · " + size };
   // sent from this device (its file is here); a message we sent from another
   // device of this identity has none, and downloads like a received one

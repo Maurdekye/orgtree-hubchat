@@ -50,7 +50,7 @@ function FileCard({ a, m }: { a: Attachment; m: Message }) {
         {v.open && a.local_path && platform === "desktop" ? <button className="link" style={{ fontSize: 12, alignSelf: "flex-start", marginTop: 2 }} onClick={(e) => { e.stopPropagation(); openAttachment(m.id, a.local_id, true).catch((err) => toast(errText(err))); }}>Show in folder</button> : null}
       </span>
       {v.download ? <span className="att-dl"><Icon name="download" /></span> : null}
-      {v.cancel ? <button className="att-x" title={m.outgoing ? "Cancel upload" : "Cancel download"} onClick={(e) => { e.stopPropagation(); api.cancelTransfer(a.local_id).catch(() => {}); }}><Icon name="close" /></button> : null}
+      {v.cancel ? <button className="att-x" title={m.outgoing && !a.download ? "Cancel upload" : "Cancel download"} onClick={(e) => { e.stopPropagation(); api.cancelTransfer(a.local_id).catch(() => {}); }}><Icon name="close" /></button> : null}
     </div>
   );
 }
@@ -60,7 +60,7 @@ function FileCard({ a, m }: { a: Attachment; m: Message }) {
 function attMenu(m: Message, a: Attachment): MenuEntry[] {
   const v = attView(a, m);
   const out: MenuEntry[] = [];
-  const download = () => void api.download(m.id, a.local_id).then(() => toast("Saved to Downloads"), (e) => toast("Download failed: " + errText(e)));
+  const download = () => void api.download(m.id, a.local_id).catch((e) => toast("Download failed: " + errText(e)));
   if (previewable(a)) out.push({ label: "View", icon: "image", run: () => openImage(m, a) });
   if (v.download) out.push({ label: "Download", icon: "download", run: download });
   if (v.retry === "download") out.push({ label: "Retry download", icon: "refresh", run: download });
@@ -72,7 +72,7 @@ function attMenu(m: Message, a: Attachment): MenuEntry[] {
     const src = a.source;
     out.push({ label: "Open", icon: "open_in_new", run: () => void openFile(src).catch(() => {}) });
   }
-  if (v.cancel) out.push({ label: m.outgoing ? "Cancel upload" : "Cancel download", icon: "close", run: () => void api.cancelTransfer(a.local_id).catch(() => {}) });
+  if (v.cancel) out.push({ label: m.outgoing && !a.download ? "Cancel upload" : "Cancel download", icon: "close", run: () => void api.cancelTransfer(a.local_id).catch(() => {}) });
   return out;
 }
 

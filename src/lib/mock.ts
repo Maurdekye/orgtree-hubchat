@@ -694,21 +694,32 @@ export const mockApi: Api = {
     void pipeline(m);
   },
   cancelTransfer: async (localId) => {
-    for (const m of msgs) for (const a of m.attachments) if (a.local_id === localId) { a.state = "cancelled"; chatEv(m.peer); }
+    for (const m of msgs) for (const a of m.attachments) if (a.local_id === localId) { a.state = "cancelled"; if (a.download) a.download.state = "cancelled"; chatEv(m.peer); }
   },
   download: async (messageId, localId) => {
     const m = find(messageId); const a = m?.attachments.find((x) => x.local_id === localId);
     if (!m || !a) throw "no such attachment";
+    if (a.download?.state === "done" || a.download?.state === "running" || a.download?.state === "queued") return;
+    a.download = { state: "queued", confirmed: a.download?.confirmed ?? 0, retry_at: 0, error: null };
+    const job = a.download;
     a.state = "downloading"; a.error = null; chatEv(m.peer);
-    let done = 0; const step = Math.max(1, Math.round(a.bytes / 16));
-    while (done < a.bytes) {
-      await sleep(120);
-      if (a.state === "cancelled") { chatEv(m.peer); throw "download cancelled"; }
-      done = Math.min(a.bytes, done + step);
-      emit({ type: "transfer", local_id: a.local_id, message_id: m.id, upload: false, done, total: a.bytes });
-    }
-    a.state = "done"; a.local_path = "C:\\Users\\alex\\Downloads\\" + a.name; chatEv(m.peer);
-    return a.local_path;
+    void (async () => {
+      await sleep(250);
+      if (a.download !== job || a.state === "cancelled") return;
+      a.download!.state = "running"; chatEv(m.peer);
+      const step = Math.max(1, Math.round(a.bytes / 16));
+      while (a.download!.confirmed < a.bytes) {
+        await sleep(120);
+        if (a.download !== job || a.state === "cancelled") return;
+        a.download!.confirmed = Math.min(a.bytes, a.download!.confirmed + step);
+        emit({ type: "transfer", local_id: a.local_id, message_id: m.id, upload: false, done: a.download!.confirmed, total: a.bytes });
+        chatEv(m.peer);
+      }
+      a.download!.state = "exporting"; chatEv(m.peer);
+      await sleep(500);
+      a.download!.state = "done"; a.state = "done";
+      a.local_path = "Downloads/" + a.name; chatEv(m.peer);
+    })();
   },
   sendRoute: async (peer) => route(peer),
   setSendHub: async (peer, hub) => {
