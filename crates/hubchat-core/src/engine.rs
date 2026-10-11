@@ -125,6 +125,9 @@ pub enum Event {
 /// The platform side: events, opening picked files, where downloads go.
 pub trait Host: Send + Sync + 'static {
     fn event(&self, ev: Event);
+    /// File admission, completion or controls changed durable lifetime demand.
+    /// Called without a database lease; ordinary incoming mail does not call it.
+    fn file_work_changed(&self) {}
     /// Deliver or replace this device's failure notice. Success means the OS
     /// accepted it (or notifications were explicitly disabled). Replay uses the
     /// stable key; no database lease is held during this call.
@@ -1082,6 +1085,9 @@ impl Engine {
                         let fresh = self.store.upsert_synced_at(url, &me, m, self.offset(url))?;
                         self.body_changed.notify_one();
                         let incoming = m.env.from != me;
+                        if !incoming && (!m.env.attachments.is_empty() || m.env.body.len() as u64 > BODY_INLINE_MAX) {
+                            self.host.file_work_changed();
+                        }
                         if incoming && fresh {
                             self.note_setup_reply(&m.env.from, &m.env.id, &m.env.body);
                         }
@@ -1107,6 +1113,7 @@ impl Engine {
                     crate::hub_v2::Change::Deleted(id) => {
                         if let Some(m) = self.store.message(id)? {
                             self.store.delete_message(id)?;
+                            if !m.attachments.is_empty() || m.body.len() as u64 > BODY_INLINE_MAX { self.host.file_work_changed(); }
                             peers.insert(m.peer);
                         }
                     }
@@ -1418,6 +1425,9 @@ impl Engine {
             &prepared.paths,
         )?;
         let msg = prepared.commit();
+        if !msg.attachments.is_empty() || msg.body.len() as u64 > BODY_INLINE_MAX {
+            self.host.file_work_changed();
+        }
         self.host.event(Event::Chat {
             peer: msg.peer.clone(),
         });
@@ -1487,6 +1497,7 @@ impl Engine {
             }
             self.store.retry_send(id)?;
             drop(writers);
+            self.host.file_work_changed();
             self.host.event(Event::Chat { peer: m.peer });
             self.queue_changed.notify_one();
         }
@@ -1505,6 +1516,7 @@ impl Engine {
             }
         }
         drop(transfers); drop(_writers);
+        self.host.file_work_changed();
         if let Some(peer) = self.store.transfer_peer(local_id)? {
             self.host.event(Event::Chat { peer });
         }
@@ -1517,6 +1529,7 @@ impl Engine {
             if writers.contains(message_id) {return Err(Error::Invalid("the previous transfer is still stopping; try again shortly".into()));}
             self.store.remove_held_attachment(message_id,local_id)?
         };
+        self.host.file_work_changed();
         self.host.event(Event::Chat{peer});
         self.queue_changed.notify_one();
         self.clean_staging().await;
@@ -1878,6 +1891,7 @@ impl Engine {
         let hubs: Vec<String> = self.hubs.lock().unwrap().keys().cloned().collect();
         let lids = self.store.forget_message(id, &hubs, &now())?;
         self.cancel_transfers(&lids);
+        self.host.file_work_changed();
         self.clean_staging().await;
         if let Some(m) = m {
             self.host.event(Event::Chat { peer: m.peer });
@@ -1910,6 +1924,7 @@ impl Engine {
         let t = now();
         let (ids, lids) = self.store.forget_chat(peer, &later, &t)?;
         self.cancel_transfers(&lids);
+        self.host.file_work_changed();
         self.clean_staging().await;
         self.host.event(Event::Chat { peer: peer.into() });
         for (url, client, connected, capable) in hubs {

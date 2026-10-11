@@ -155,6 +155,7 @@ impl Engine {
             &part.to_string_lossy(),
             &dest.to_string_lossy(),
         )?;
+        self.host.file_work_changed();
         self.queue_changed.notify_one();
         self.host.event(Event::Chat { peer: m.peer });
         self.store
@@ -162,7 +163,9 @@ impl Engine {
             .ok_or_else(|| Error::Invalid("attachment was deleted".into()))
     }
     pub async fn download(&self, message_id: &str, local_id: &str) -> Result<PathBuf> {
-        self.download_with_slot(message_id, local_id, None).await
+        let result = self.download_with_slot(message_id, local_id, None).await;
+        self.host.file_work_changed();
+        result
     }
     pub(super) async fn download_with_slot(
         &self,

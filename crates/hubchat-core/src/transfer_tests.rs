@@ -1053,3 +1053,37 @@ fn file_lifetime_work_survives_reopen_and_excludes_terminal_mail() {
     db.execute("UPDATE download_jobs SET state='exporting',error='Retry needed'",[]).unwrap();
     assert!(!store.pending_file_work().unwrap());
 }
+
+#[tokio::test]
+async fn file_lifetime_signals_follow_file_admission_and_controls_not_plain_mail() {
+    use std::sync::atomic::{AtomicUsize,Ordering};
+    struct LifetimeHost { dir:PathBuf, changes:Arc<AtomicUsize> }
+    impl Host for LifetimeHost {
+        fn event(&self,_:Event) {}
+        fn file_work_changed(&self) { self.changes.fetch_add(1,Ordering::SeqCst); }
+        fn open_source(&self,path:&str)->std::io::Result<std::fs::File> {std::fs::File::open(path)}
+        fn download_dir(&self)->PathBuf {self.dir.join("downloads")}
+        fn staging_dir(&self)->PathBuf {self.dir.join("outbox")}
+    }
+    let dir=tempfile::tempdir().unwrap();
+    let store=Arc::new(Store::open(&dir.path().join("lifetime.db")).unwrap());
+    let changes=Arc::new(AtomicUsize::new(0));
+    let e=Engine::new(store.clone(),Identity::generate("lifetime-test").unwrap(),
+        Profile{kind:"person".into(),org_name:String::new(),username:"test".into(),blurb:String::new()},
+        Arc::new(LifetimeHost{dir:dir.path().into(),changes:changes.clone()}));
+    e.send(outgoing("ordinary",&[])).await.unwrap();
+    assert_eq!(changes.load(Ordering::SeqCst),0);
+    let source=dir.path().join("selected");std::fs::write(&source,b"snapshot").unwrap();
+    e.send(outgoing("with-file",&[(&source,8)])).await.unwrap();
+    assert_eq!(changes.load(Ordering::SeqCst),1);
+    assert!(store.pending_file_work().unwrap());
+    let a=store.message("with-file").unwrap().unwrap().attachments.remove(0);
+    e.cancel_transfer(&a.local_id).unwrap();
+    assert_eq!(changes.load(Ordering::SeqCst),2);
+    assert!(!store.pending_file_work().unwrap());
+    e.retry("with-file").unwrap();
+    assert_eq!(changes.load(Ordering::SeqCst),3);
+    e.delete_message("with-file").await.unwrap();
+    assert_eq!(changes.load(Ordering::SeqCst),4);
+    assert!(!store.pending_file_work().unwrap());
+}

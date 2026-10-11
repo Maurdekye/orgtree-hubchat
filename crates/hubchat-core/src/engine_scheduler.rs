@@ -80,6 +80,7 @@ impl Engine {
                             } else {
                                 None
                             };
+                            let changes_file_demand = !m.attachments.is_empty() || m.body.len() as u64 > BODY_INLINE_MAX;
                             let e = self.clone();
                             let id = m.id.clone();
                             let hub = route.0.clone();
@@ -98,6 +99,7 @@ impl Engine {
                                     }
                                     _ => {}
                                 }
+                                if changes_file_demand { e.host.file_work_changed(); }
                             });
                             active.insert(task.id(), key);
                         }
@@ -163,6 +165,7 @@ impl Engine {
             self.transfers.lock().unwrap().remove(lid);
             let _ = self.store.download_worker_failed(lid);
         }
+        self.host.file_work_changed();
     }
     fn launch_downloads(
         self: &Arc<Self>,
@@ -201,6 +204,7 @@ impl Engine {
                                 let _ = e.store.defer_download(&lid, unix_ms());
                             }
                         }
+                        e.host.file_work_changed();
                     });
                     active.insert(task.id(), key);
                 }
