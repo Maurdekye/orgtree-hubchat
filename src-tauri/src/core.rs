@@ -263,10 +263,10 @@ impl Host for ShellHost {
         }
         Ok(())
     }
+    fn file_work_changed(&self) {
+        if let Ok(c)=get() { c.rt.spawn(async move { c.refresh_file_lifetime(); }); }
+    }
     fn event(&self, ev: Event) {
-        if matches!(&ev, Event::Chat { .. }) {
-            if let Ok(c)=get() { c.rt.spawn(async move { c.refresh_file_lifetime(); }); }
-        }
         if let Event::Incoming { peer, preview, quiet, .. } = &ev {
             let showing = self.foreground.load(Ordering::Relaxed)
                 && self.open_chat.lock().unwrap().as_deref() == Some(peer.as_str());
@@ -762,7 +762,7 @@ impl Drop for FileAdmission {
 }
 fn background_policy(visible:bool, coverage:Option<bool>, push:bool, checks:usize)->(bool,bool) {
     match coverage {
-        Some(covered)=>(!visible&&!covered&&checks==0,!visible&&!covered),
+        Some(covered)=>(push&&!visible&&!covered&&checks==0,!visible&&!covered),
         None=>(push&&!visible&&checks==0,false),
     }
 }
@@ -773,7 +773,7 @@ mod file_lifecycle_tests {
     fn background_checks_never_authorize_files_and_stay_connected_remains_covered() {
         for push in [false,true] {
             assert_eq!(background_policy(false,Some(true),push,0),(false,false));
-            assert_eq!(background_policy(false,Some(false),push,0),(true,true));
+            assert_eq!(background_policy(false,Some(false),push,0),(push,true));
             assert_eq!(background_policy(false,Some(false),push,1),(false,true));
             assert_eq!(background_policy(true,Some(false),push,0),(false,false));
         }
