@@ -165,6 +165,7 @@ CREATE TABLE download_jobs (
  local_id TEXT PRIMARY KEY REFERENCES attachments(local_id) ON DELETE CASCADE,
  partial TEXT NOT NULL,
  destination TEXT NOT NULL,
+ exported INTEGER NOT NULL DEFAULT 0,
  state TEXT NOT NULL DEFAULT 'queued',
  attempt INTEGER NOT NULL DEFAULT 0,
  confirmed INTEGER NOT NULL DEFAULT 0,

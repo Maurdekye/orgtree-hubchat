@@ -50,6 +50,40 @@ async fn digest(path: &std::path::Path, expected: u64) -> Result<String> {
     }
     Ok(hex::encode(hash.finalize()))
 }
+fn hide_partial_dir(path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        #[link(name = "Kernel32")]
+        extern "system" {
+            fn GetFileAttributesW(path: *const u16) -> u32;
+            fn SetFileAttributesW(path: *const u16, attributes: u32) -> i32;
+        }
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        if wide[..wide.len() - 1].contains(&0) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "invalid download path",
+            ));
+        }
+        let attrs = unsafe { GetFileAttributesW(wide.as_ptr()) };
+        if attrs == u32::MAX || unsafe { SetFileAttributesW(wide.as_ptr(), attrs | 2) } == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = path;
+    Ok(())
+}
+async fn remove_empty_partial_dir(partial: &std::path::Path) {
+    if let Some(parent) = partial
+        .parent()
+        .filter(|p| p.file_name().is_some_and(|n| n == ".hubchat-downloads"))
+    {
+        // Never recursive. Another download's partial keeps the directory alive.
+        let _ = tokio::fs::remove_dir(parent).await;
+    }
+}
 async fn publish_file(partial: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
     #[cfg(windows)]
     {
@@ -86,6 +120,10 @@ async fn publish_file(partial: &std::path::Path, dest: &std::path::Path) -> std:
     }
 }
 impl Engine {
+    /// Platform export (e.g. Android MediaStore) must move both durable pointers.
+    pub fn record_download_export(&self, local_id: &str, from: &str, to: &str) -> Result<()> {
+        self.store.download_exported(local_id, from, to)
+    }
     pub async fn download(&self, message_id: &str, local_id: &str) -> Result<PathBuf> {
         let m = self
             .store
@@ -115,7 +153,6 @@ impl Engine {
         let cancel = CancelFlag::default();
         let dir = self.host.download_dir();
         let partial_dir = dir.join(".hubchat-downloads");
-        tokio::fs::create_dir_all(&partial_dir).await?;
         let partial = partial_dir.join(format!("{}.part", uuid::Uuid::new_v4().simple()));
         let dest = unique_path(&dir, &a.name);
         let job = {
@@ -127,7 +164,7 @@ impl Engine {
             }
             if let Some(previous) = self.store.download_job(local_id)? {
                 if previous.state == "done" {
-                    if std::path::Path::new(&previous.destination).is_file() {
+                    if self.host.open_source(&previous.destination).is_ok() {
                         return Ok(previous.destination.into());
                     }
                     self.store.restart_missing_download(local_id)?;
@@ -151,6 +188,29 @@ impl Engine {
         });
         let result = async {
             if job.state != "publishing" {
+                // Reserve the partial while holding the same lock as directory
+                // removal. A concurrent completion cannot remove a new writer's
+                // empty directory between create_dir and open.
+                {
+                    let _publication = self.download_publication.lock().await;
+                    let path = std::path::Path::new(&job.partial);
+                    let parent = path
+                        .parent()
+                        .ok_or_else(|| Error::Invalid("invalid partial path".into()))?;
+                    tokio::fs::create_dir_all(parent).await?;
+                    if parent
+                        .file_name()
+                        .is_some_and(|n| n == ".hubchat-downloads")
+                    {
+                        hide_partial_dir(parent)?;
+                    }
+                    let _ = tokio::fs::OpenOptions::new()
+                        .create(true)
+                        .truncate(false)
+                        .write(true)
+                        .open(path)
+                        .await?;
+                }
                 let store = self.store.clone();
                 let lid = local_id.to_owned();
                 let attempt = job.attempt;
@@ -218,7 +278,9 @@ impl Engine {
                 if digest(existing, total).await.is_ok_and(|got| got == *want) {
                     self.store
                         .download_done(&job.local_id, job.attempt, &job.destination)?;
+                    let _publication = self.download_publication.lock().await;
                     let _ = tokio::fs::remove_file(part).await;
+                    remove_empty_partial_dir(part).await;
                     return Ok(existing.into());
                 }
             }
@@ -256,6 +318,7 @@ impl Engine {
                         &dest.to_string_lossy(),
                     )?;
                     let _ = tokio::fs::remove_file(part).await;
+                    remove_empty_partial_dir(part).await;
                     return Ok(dest);
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
@@ -285,11 +348,14 @@ mod tests {
         }
     }
     fn fixture(store: Arc<Store>, dir: &std::path::Path, url: &str) -> Arc<Engine> {
+        fixture_host(store, url, Arc::new(LocalHost(dir.into())))
+    }
+    fn fixture_host(store: Arc<Store>, url: &str, host: Arc<dyn Host>) -> Arc<Engine> {
         let e = Engine::new(
             store,
             Identity::generate("download-proof").unwrap(),
             Profile::default(),
-            Arc::new(LocalHost(dir.into())),
+            host,
         );
         e.hubs.lock().unwrap().insert(
             url.into(),
@@ -400,6 +466,17 @@ mod tests {
         })
         .await;
         assert!(!downloads.join("proof (2).bin").exists());
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            assert_ne!(
+                std::fs::metadata(downloads.join(".hubchat-downloads"))
+                    .unwrap()
+                    .file_attributes()
+                    & 2,
+                0
+            );
+        }
         cut.send(()).unwrap();
         assert!(task.await.unwrap().is_err());
         assert_eq!(store.download_job(&lid).unwrap().unwrap().state, "failed");
@@ -417,6 +494,7 @@ mod tests {
         assert_eq!(job.state, "done");
         assert_eq!(job.attempt, 2);
         assert!(!std::path::Path::new(&job.partial).exists());
+        assert!(!downloads.join(".hubchat-downloads").exists());
         server.await.unwrap();
     }
     #[tokio::test]
@@ -487,6 +565,88 @@ mod tests {
                 .local_path
                 .as_deref(),
             dest.to_str()
+        );
+    }
+    #[tokio::test]
+    async fn exported_location_survives_reopen_and_repeated_save_without_network() {
+        struct UriHost {
+            dir: PathBuf,
+            file: PathBuf,
+        }
+        impl Host for UriHost {
+            fn event(&self, _: Event) {}
+            fn open_source(&self, source: &str) -> std::io::Result<std::fs::File> {
+                if source == "content://downloads/proof" {
+                    std::fs::File::open(&self.file)
+                } else {
+                    std::fs::File::open(source)
+                }
+            }
+            fn download_dir(&self) -> PathBuf {
+                self.dir.clone()
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("store.db");
+        let private = dir.path().join("private.bin");
+        let public = dir.path().join("public.bin");
+        let url = "http://127.0.0.1:9";
+        let store = Arc::new(Store::open(&db).unwrap());
+        let lid = attach(&store, url, 3);
+        std::fs::write(&private, b"abc").unwrap();
+        let j = store
+            .begin_download(&lid, "unused.part", &private.to_string_lossy())
+            .unwrap();
+        store
+            .download_publishing(&lid, j.attempt, "digest", &private.to_string_lossy())
+            .unwrap();
+        store
+            .download_done(&lid, j.attempt, &private.to_string_lossy())
+            .unwrap();
+        let e = fixture_host(
+            store.clone(),
+            url,
+            Arc::new(UriHost {
+                dir: dir.path().into(),
+                file: public.clone(),
+            }),
+        );
+        std::fs::rename(&private, &public).unwrap();
+        e.record_download_export(
+            &lid,
+            &private.to_string_lossy(),
+            "content://downloads/proof",
+        )
+        .unwrap();
+        assert!(e
+            .record_download_export(&lid, "stale.bin", "wrong")
+            .is_err());
+        drop(e);
+        drop(store);
+        let store = Arc::new(Store::open(&db).unwrap());
+        let e = fixture_host(
+            store.clone(),
+            url,
+            Arc::new(UriHost {
+                dir: dir.path().into(),
+                file: public,
+            }),
+        );
+        for _ in 0..2 {
+            assert_eq!(
+                e.download("message", &lid).await.unwrap(),
+                PathBuf::from("content://downloads/proof")
+            );
+        }
+        let job = store.download_job(&lid).unwrap().unwrap();
+        assert!(job.exported);
+        assert_eq!(job.state, "done");
+        assert_eq!(job.attempt, 1);
+        assert_eq!(
+            store.message("message").unwrap().unwrap().attachments[0]
+                .local_path
+                .as_deref(),
+            Some("content://downloads/proof")
         );
     }
     #[tokio::test]

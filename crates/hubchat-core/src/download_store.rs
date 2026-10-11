@@ -9,6 +9,8 @@ pub struct DownloadJob {
     pub partial: String,
     #[serde(skip)]
     pub destination: String,
+    #[serde(skip)]
+    pub exported: bool,
     pub state: String,
     pub attempt: i64,
     pub checkpoint: DownloadCheckpoint,
@@ -30,10 +32,11 @@ fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<DownloadJob> {
         },
         digest: r.get(8)?,
         error: r.get(9)?,
+        exported: r.get(10)?,
     })
 }
 const COLUMNS: &str =
-    "local_id,partial,destination,state,attempt,confirmed,validator,updated_ms,digest,error";
+    "local_id,partial,destination,state,attempt,confirmed,validator,updated_ms,digest,error,exported";
 impl Store {
     pub fn download_job(&self, id: &str) -> Result<Option<DownloadJob>> {
         self.with(|c| {
@@ -65,7 +68,7 @@ impl Store {
     pub(crate) fn restart_missing_download(&self, id: &str) -> Result<()> {
         self.with(|c| {
             let tx=c.transaction()?;
-            tx.execute("UPDATE download_jobs SET state='queued',confirmed=0,validator=NULL,digest=NULL,error=NULL WHERE local_id=? AND state='done'",[id])?;
+            tx.execute("UPDATE download_jobs SET state='queued',confirmed=0,validator=NULL,digest=NULL,error=NULL,exported=0 WHERE local_id=? AND state='done'",[id])?;
             tx.execute("UPDATE attachments SET local_path=NULL WHERE local_id=?",[id])?;
             tx.commit()
         })
@@ -93,6 +96,26 @@ impl Store {
         let n=self.with(|c|c.execute("UPDATE download_jobs SET state='publishing',digest=?,destination=? WHERE local_id=? AND attempt=? AND state IN ('running','publishing')",params![digest,dest,id,attempt]))?;
         if n == 0 {
             Err(Error::Cancelled)
+        } else {
+            Ok(())
+        }
+    }
+    /// Record the platform's final location atomically with the attachment.
+    /// Matching the prior destination rejects a stale export after a retry.
+    pub(crate) fn download_exported(&self, id: &str, from: &str, to: &str) -> Result<()> {
+        let n = self.with(|c| {
+            let tx = c.transaction()?;
+            let n = tx.execute("UPDATE download_jobs SET destination=?,exported=1 WHERE local_id=? AND destination=? AND state='done'", params![to,id,from])?;
+            if n > 0 {
+                tx.execute("UPDATE attachments SET local_path=? WHERE local_id=?", params![to,id])?;
+            }
+            tx.commit()?;
+            Ok(n)
+        })?;
+        if n == 0 {
+            Err(Error::Invalid(
+                "download changed before export completed".into(),
+            ))
         } else {
             Ok(())
         }
