@@ -180,6 +180,19 @@ impl crate::core::Platform for AndroidPlatform {
         )
         .filter(|u| !u.is_empty())
     }
+    fn publish_transfer(&self, key: &str, path: &std::path::Path, name: &str)
+        -> std::io::Result<Option<String>> {
+        let j = JNI.get().ok_or_else(|| std::io::Error::other("Android is not ready to save the file"))?;
+        let reply = call(&j.service, "publishTransfer", &[key, &path.to_string_lossy(), name], true)
+            .ok_or_else(|| std::io::Error::other("Android could not save the file; retry"))?;
+        let value: serde_json::Value = serde_json::from_str(&reply).map_err(std::io::Error::other)?;
+        if let Some(error) = value.get("error").and_then(|v| v.as_str()) {
+            return Err(std::io::Error::other(error.to_owned()));
+        }
+        value.get("location").and_then(|v| v.as_str()).filter(|s| !s.is_empty())
+            .map(|s| Some(s.to_owned()))
+            .ok_or_else(|| std::io::Error::other("Android returned no saved file location"))
+    }
     fn take_pending_link(&self) -> Option<String> {
         let j = JNI.get()?;
         call(&j.service, "takePendingLink", &[], true).filter(|p| !p.is_empty())
