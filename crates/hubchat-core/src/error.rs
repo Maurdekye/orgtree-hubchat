@@ -27,6 +27,8 @@ pub enum Error {
     FilePaused,
     #[error("cancelled")]
     Cancelled,
+    #[error("Could not save the downloaded file. Check free space and file access, then retry.")]
+    SaveDownload(#[source] std::io::Error),
     #[error("i/o: {0}")]
     Io(#[from] std::io::Error),
 }

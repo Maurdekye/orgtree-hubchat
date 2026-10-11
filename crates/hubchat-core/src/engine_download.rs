@@ -84,6 +84,19 @@ async fn remove_empty_partial_dir(partial: &std::path::Path) {
         let _ = tokio::fs::remove_dir(parent).await;
     }
 }
+// Android SELinux denies hard links even within app-private storage. Every
+// caller holds download_publication across name selection and this operation;
+// this directory belongs to the app, so there is no external destination writer.
+// Compile the same helper in host tests to exercise Android's actual algorithm.
+#[cfg(any(target_os = "android", test))]
+async fn publish_private_file(partial: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
+    match tokio::fs::symlink_metadata(dest).await {
+        Ok(_) => return Err(std::io::ErrorKind::AlreadyExists.into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    tokio::fs::rename(partial, dest).await
+}
 async fn publish_file(partial: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
     #[cfg(windows)]
     {
@@ -113,7 +126,11 @@ async fn publish_file(partial: &std::path::Path, dest: &std::path::Path) -> std:
         .await
         .map_err(std::io::Error::other)?
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "android")]
+    {
+        publish_private_file(partial, dest).await
+    }
+    #[cfg(all(not(windows), not(target_os = "android")))]
     {
         // rename on Unix overwrites; hard_link is atomic and never replaces.
         tokio::fs::hard_link(partial, dest).await
@@ -413,8 +430,8 @@ impl Engine {
                 ));
             }
         };
-        // Serializes our own name selection only. The filesystem operation also
-        // refuses to overwrite a file created externally after that selection.
+        // Serializes all app publishers. Android uses rename inside app-private
+        // storage; desktop additionally refuses races from external writers.
         let _publication = self.download_publication.lock().await;
         for _ in 0..32 {
             let dest = unique_path(dir, name);
@@ -428,7 +445,9 @@ impl Engine {
                 Ok(()) => {
                     #[cfg(unix)]
                     {
-                        std::fs::File::open(dir)?.sync_all()?;
+                        std::fs::File::open(dir)
+                            .and_then(|folder| folder.sync_all())
+                            .map_err(Error::SaveDownload)?;
                     }
                     self.store.download_done(
                         &job.local_id,
@@ -440,7 +459,7 @@ impl Engine {
                     return Ok(dest);
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-                Err(e) => return Err(e.into()),
+                Err(e) => return Err(Error::SaveDownload(e)),
             }
         }
         Err(Error::Invalid(
@@ -1096,6 +1115,35 @@ mod tests {
         assert!(store
             .download_checkpoint(&lid, j.attempt, &DownloadCheckpoint::default())
             .is_err());
+    }
+    #[tokio::test]
+    async fn android_private_publication_renames_and_recovers_without_hard_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("db");
+        let store = Arc::new(Store::open(&db).unwrap());
+        let url = "http://127.0.0.1:9";
+        let lid = attach(&store, url, 3);
+        let part = dir.path().join("private.part");
+        let dest = dir.path().join("proof.bin");
+        std::fs::write(&part, b"abc").unwrap();
+        std::fs::write(&dest, b"keep").unwrap();
+        assert_eq!(publish_private_file(&part, &dest).await.unwrap_err().kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&part).unwrap(), b"abc");
+        assert_eq!(std::fs::read(&dest).unwrap(), b"keep");
+        let dest = dir.path().join("saved.bin");
+        let j = store.begin_download(&lid, &part.to_string_lossy(), &dest.to_string_lossy()).unwrap();
+        store.download_publishing(&lid, j.attempt, &digest(&part, 3).await.unwrap(), &dest.to_string_lossy()).unwrap();
+        publish_private_file(&part, &dest).await.unwrap();
+        assert!(!part.exists(), "rename must consume the partial; linking leaves it behind");
+        assert_eq!(std::fs::read(&dest).unwrap(), b"abc");
+        drop(store);
+        let store = Arc::new(Store::open(&db).unwrap());
+        let e = fixture(store.clone(), dir.path(), url);
+        assert_eq!(e.download("message", &lid).await.unwrap(), dest);
+        assert_eq!(store.download_job(&lid).unwrap().unwrap().state, "done");
+        let denied = Error::SaveDownload(std::io::Error::from_raw_os_error(13)).to_string();
+        assert_eq!(denied, "Could not save the downloaded file. Check free space and file access, then retry.");
+        assert!(!denied.contains("os error"));
     }
     #[tokio::test]
     async fn publication_recovers_after_move_without_network_or_overwrite() {
