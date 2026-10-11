@@ -1143,7 +1143,10 @@ mod tests {
         }
         cut.send(()).unwrap();
         assert!(task.await.unwrap().is_err());
-        assert_eq!(store.download_job(&lid).unwrap().unwrap().state, "failed");
+        let paused = store.download_job(&lid).unwrap().unwrap();
+        assert_eq!(paused.state, "paused");
+        assert_eq!(paused.error.as_deref(), Some("Connection interrupted; waiting to retry"));
+        assert!(store.pending_transfer_failures(0).unwrap().is_empty());
         drop(e);
         drop(store);
         let store = Arc::new(Store::open(&db).unwrap());
