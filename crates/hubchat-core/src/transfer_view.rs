@@ -23,7 +23,7 @@ impl Store {
         self.with(|c| {
             let mut q = c.prepare(
                 "SELECT a.local_id,a.message_id,m.peer,a.name,
-                j.local_id IS NULL,COALESCE(j.state,a.state),COALESCE(j.confirmed,0),a.bytes,
+                j.local_id IS NULL,COALESCE(j.state,a.state),COALESCE(j.confirmed,a.upload_confirmed),a.bytes,
                 COALESCE(j.error,a.error,m.error),m.created_at
                 FROM attachments a JOIN messages m ON m.id=a.message_id
                 LEFT JOIN download_jobs j ON j.local_id=a.local_id
@@ -144,5 +144,73 @@ mod tests {
             }
         }
         assert_eq!(count, 204);
+    }
+    #[test]
+    fn upload_confirmation_survives_reopen_and_is_bound_to_session_and_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("db");
+        let store = Store::open(&db).unwrap();
+        store
+            .queue_outgoing(
+                &NewOutgoing {
+                    id: "message".into(),
+                    peer: "peer".into(),
+                    body: "".into(),
+                    kind: None,
+                    reply_to: None,
+                    attachments: vec![NewAttachment {
+                        name: "file".into(),
+                        bytes: 9000,
+                        source: "source".into(),
+                    }],
+                },
+                "now",
+            )
+            .unwrap();
+        let id = store.message("message").unwrap().unwrap().attachments[0]
+            .local_id
+            .clone();
+        store
+            .set_upload(&id, "uploading", "session1", "hub1")
+            .unwrap();
+        store
+            .upload_checkpoint(&id, "hub1", "session1", 8000)
+            .unwrap();
+        drop(store);
+        let store = Store::open(&db).unwrap();
+        assert_eq!(store.transfer_page("").unwrap().rows[0].done, 8000);
+        assert_eq!(
+            store.message("message").unwrap().unwrap().attachments[0].upload_confirmed,
+            8000
+        );
+        assert!(store
+            .upload_checkpoint(&id, "hub2", "session1", 9000)
+            .is_err());
+        assert!(store.upload_checkpoint(&id, "hub1", "wrong", 9000).is_err());
+        assert!(store
+            .upload_checkpoint(&id, "hub1", "session1", 9001)
+            .is_err());
+        store
+            .set_attachment(&id, "cancelled", None, None, None)
+            .unwrap();
+        assert!(store
+            .upload_checkpoint(&id, "hub1", "session1", 9000)
+            .is_err());
+        store
+            .set_upload(&id, "uploading", "session2", "hub1")
+            .unwrap();
+        assert_eq!(store.transfer_page("").unwrap().rows[0].done, 0);
+        store
+            .upload_checkpoint(&id, "hub1", "session2", 4000)
+            .unwrap();
+        // The hub can rewind after checksum failure: its validated status wins.
+        store.upload_checkpoint(&id, "hub1", "session2", 0).unwrap();
+        store
+            .set_upload(&id, "uploaded", "session2", "hub1")
+            .unwrap();
+        assert_eq!(
+            store.message("message").unwrap().unwrap().attachments[0].upload_confirmed,
+            9000
+        );
     }
 }

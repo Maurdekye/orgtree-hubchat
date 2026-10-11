@@ -1575,6 +1575,7 @@ impl Engine {
                 .insert(a.local_id.clone(), cancel.clone());
             self.store
                 .set_attachment(&a.local_id, "uploading", None, None, None)?;
+            self.host.event(Event::Chat { peer: m.peer.clone() });
             let host = self.host.clone();
             let (lid, mid) = (a.local_id.clone(), m.id.clone());
             let progress: crate::hub::Progress = Arc::new(move |done, total| {
@@ -1781,8 +1782,17 @@ impl Engine {
                     st.id
                 }
             };
+            let store = self.store.clone();
+            let lid = a.local_id.clone();
+            let hub = url.to_owned();
+            let session = upload_id.clone();
+            let confirmed: crate::hub_v2::UploadCheckpoint = Arc::new(move |st| {
+                store.upload_checkpoint(&lid, &hub, &session, st.offset)?;
+                progress(st.offset, st.bytes);
+                Ok(())
+            });
             let st = client
-                .resume_upload(&self.me, &upload_id, file, Some(progress), cancel)
+                .resume_upload_confirmed(&self.me, &upload_id, file, None, cancel, Some(confirmed))
                 .await?;
             if !st.complete {
                 return Err(Error::Unreachable("upload stopped before the end".into()));

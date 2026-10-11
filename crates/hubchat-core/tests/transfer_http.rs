@@ -382,3 +382,91 @@ async fn download_eof_checkpoint_and_validator_replacement_are_safe() {
         server.await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn upload_pieces_checkpoint_only_acknowledged_bytes_before_continuing() {
+    use std::sync::{Arc, Mutex};
+    const PIECE: usize = 8 * 1024 * 1024;
+    const TOTAL: usize = PIECE + 1024 * 1024;
+    for mode in ["normal", "checkpoint-failed", "invalid-ack"] {
+        let (listener, hub, me) = client().await;
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source");
+        tokio::fs::write(&source, vec![42u8; TOTAL]).await.unwrap();
+        let saved = Arc::new(Mutex::new(Vec::new()));
+        let observed = saved.clone();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            assert!(request(&mut socket).await.starts_with("GET "));
+            answer(
+                &mut socket,
+                json!({"id":"same","bytes":TOTAL,"offset":0,"complete":false}),
+            )
+            .await;
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let headers = request(&mut socket).await;
+            assert!(headers.starts_with("PATCH /api/uploads/same?offset=0 "));
+            assert!(headers
+                .to_lowercase()
+                .contains(&format!("content-length: {PIECE}")));
+            let mut bytes = vec![0; PIECE];
+            socket.read_exact(&mut bytes).await.unwrap();
+            assert!(bytes.iter().all(|b| *b == 42));
+            assert_eq!(
+                *observed.lock().unwrap(),
+                vec![0],
+                "wire bytes are not confirmation"
+            );
+            answer(&mut socket,json!({"id":"same","bytes":TOTAL,"offset":if mode=="invalid-ack" {TOTAL}else{PIECE},"complete":mode=="invalid-ack"})).await;
+            if mode != "normal" {
+                assert!(
+                    tokio::time::timeout(Duration::from_millis(150), listener.accept())
+                        .await
+                        .is_err(),
+                    "must not send another piece"
+                );
+                return;
+            }
+            let (mut socket, _) = listener.accept().await.unwrap();
+            assert_eq!(*observed.lock().unwrap(), vec![0, PIECE as u64]);
+            let headers = request(&mut socket).await;
+            assert!(headers.starts_with(&format!("PATCH /api/uploads/same?offset={PIECE} ")));
+            assert!(headers
+                .to_lowercase()
+                .contains(&format!("content-length: {}", TOTAL - PIECE)));
+            let mut bytes = vec![0; TOTAL - PIECE];
+            socket.read_exact(&mut bytes).await.unwrap();
+            assert!(bytes.iter().all(|b| *b == 42));
+            answer(
+                &mut socket,
+                json!({"id":"same","bytes":TOTAL,"offset":TOTAL,"complete":true}),
+            )
+            .await;
+        });
+        let values = saved.clone();
+        let result = hub
+            .resume_upload_confirmed(
+                &me,
+                "same",
+                tokio::fs::File::open(source).await.unwrap(),
+                None,
+                CancelFlag::default(),
+                Some(Arc::new(move |st| {
+                    if mode == "checkpoint-failed" && st.offset > 0 {
+                        return Err(Error::Invalid("checkpoint disk failed".into()));
+                    }
+                    values.lock().unwrap().push(st.offset);
+                    Ok(())
+                })),
+            )
+            .await;
+        if mode == "normal" {
+            assert!(result.unwrap().complete);
+            assert_eq!(*saved.lock().unwrap(), vec![0, PIECE as u64, TOTAL as u64]);
+        } else {
+            assert!(matches!(result, Err(Error::Invalid(_))));
+            assert_eq!(*saved.lock().unwrap(), vec![0]);
+        }
+        server.await.unwrap();
+    }
+}

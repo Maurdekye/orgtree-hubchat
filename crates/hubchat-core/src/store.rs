@@ -182,6 +182,8 @@ CREATE TABLE download_jobs (
  error TEXT
 );
 "#,
+    // 5: only durable hub acknowledgements survive an upload restart.
+    r#"ALTER TABLE attachments ADD COLUMN upload_confirmed INTEGER NOT NULL DEFAULT 0;"#,
 ];
 
 pub struct Store {
@@ -207,6 +209,7 @@ pub struct DownloadStatus {
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Attachment {
+    pub upload_confirmed: u64,
     pub download: Option<DownloadStatus>,
     pub local_id: String,
     pub hub_id: Option<String>,
@@ -1124,11 +1127,21 @@ impl Store {
     pub fn set_upload(&self, local_id: &str, state: &str, hub_id: &str, hub: &str) -> Result<()> {
         self.with(|c| {
             c.execute(
-                "UPDATE attachments SET state=?, hub_id=?, hub=?, error=NULL WHERE local_id=?",
+                "UPDATE attachments SET upload_confirmed=CASE WHEN ?1='uploaded' THEN bytes WHEN hub_id=?2 AND hub=?3 THEN upload_confirmed ELSE 0 END,state=?1,hub_id=?2,hub=?3,error=NULL WHERE local_id=?4",
                 params![state, hub_id, hub, local_id],
             )
             .map(|_| ())
         })
+    }
+
+    /// Bind an acknowledgement to this exact session and live upload. Late
+    /// callbacks from a cancelled or replaced session cannot alter progress.
+    pub(crate) fn upload_checkpoint(&self, local_id: &str, hub: &str, session: &str, confirmed: u64) -> Result<()> {
+        let changed=self.with(|c|c.execute(
+            "UPDATE attachments SET upload_confirmed=?1 WHERE local_id=?2 AND hub=?3 AND hub_id=?4 AND state='uploading' AND ?1<=bytes",
+            params![confirmed,local_id,hub,session]))?;
+        if changed==0 { return Err(crate::Error::Cancelled); }
+        Ok(())
     }
 
     // ------------------------------------------------------------ drafts
@@ -1185,13 +1198,14 @@ impl Store {
                 })?
                 .collect::<rusqlite::Result<_>>()?;
             let mut st = c.prepare(
-                "SELECT a.local_id, a.hub_id, a.hub, a.name, a.bytes, a.source, a.local_path, a.state, a.error, a.source_sha256, a.staged_path, j.state, j.confirmed, j.retry_at, j.error FROM attachments a LEFT JOIN download_jobs j ON j.local_id=a.local_id
+                "SELECT a.local_id, a.hub_id, a.hub, a.name, a.bytes, a.source, a.local_path, a.state, a.error, a.source_sha256, a.staged_path, j.state, j.confirmed, j.retry_at, j.error, a.upload_confirmed FROM attachments a LEFT JOIN download_jobs j ON j.local_id=a.local_id
                  WHERE a.message_id=? ORDER BY a.position",
             )?;
             for m in &mut msgs {
                 m.attachments = st
                     .query_map([&m.id], |r| {
                         Ok(Attachment {
+                            upload_confirmed: r.get(15)?,
                             download: match r.get::<_, Option<String>>(11)? {
                                 Some(state) => Some(DownloadStatus {state, confirmed:r.get(12)?, retry_at:r.get(13)?, error:r.get(14)?}),
                                 None => None,

@@ -280,7 +280,7 @@ async fn resumable_upload_continues_after_a_break_and_big_files_go_through_the_e
 
     // Through the engine: a 24 MB attachment uses the resumable path.
     let maya = Identity::generate("maya").unwrap();
-    let (a, _) = device(&alex, "alex-pc", dir.path());
+    let (a, host) = device(&alex, "alex-pc", dir.path());
     let (m, _) = device(&maya, "maya-pc", dir.path());
     for e in [&a, &m] {
         e.start().unwrap();
@@ -304,6 +304,12 @@ async fn resumable_upload_continues_after_a_break_and_big_files_go_through_the_e
         m.store().message(&id).unwrap().is_some()
     })
     .await;
+    let offsets:Vec<u64> = host.events.lock().unwrap().iter().filter_map(|event| match event {
+        Event::Transfer{message_id,upload:true,done,..} if message_id==&id => Some(*done),
+        _ => None,
+    }).collect();
+    assert_eq!(offsets,vec![0,8*1024*1024,16*1024*1024,payload.len() as u64],"production progress is hub-confirmed, not socket writes");
+    assert_eq!(a.store().message(&id).unwrap().unwrap().attachments[0].upload_confirmed,payload.len() as u64);
     let got = m.store().message(&id).unwrap().unwrap();
     let path = m.download(&id, &got.attachments[0].local_id).await.unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), payload);

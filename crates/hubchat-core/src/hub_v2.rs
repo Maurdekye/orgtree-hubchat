@@ -138,6 +138,9 @@ pub struct UploadState {
     pub complete: bool,
 }
 
+/// Receives only validated hub-confirmed offsets, never bytes merely written to a socket.
+pub type UploadCheckpoint = std::sync::Arc<dyn Fn(&UploadState) -> Result<()> + Send + Sync>;
+
 impl HubClient {
     /// Every change for our address since `cursor` (None: from the start,
     /// or with `start_now` from now on, on hubs with lazy_history).
@@ -421,6 +424,21 @@ impl HubClient {
         progress: Option<Progress>,
         cancel: CancelFlag,
     ) -> Result<UploadState> {
+        self.resume_upload_confirmed(me, upload_id, file, progress, cancel, None)
+            .await
+    }
+
+    /// Send bounded pieces and expose each durable hub acknowledgement. The
+    /// checkpoint must be saved before another piece may be sent.
+    pub async fn resume_upload_confirmed(
+        &self,
+        me: &Identity,
+        upload_id: &str,
+        file: tokio::fs::File,
+        progress: Option<Progress>,
+        cancel: CancelFlag,
+        confirmed: Option<UploadCheckpoint>,
+    ) -> Result<UploadState> {
         let stop = cancel.clone();
         stop.run(async move {
             let std_file = file.into_std().await;
@@ -428,7 +446,14 @@ impl HubClient {
             loop {
                 let f = tokio::fs::File::from_std(std_file.try_clone()?);
                 match self
-                    .resume_once(me, upload_id, f, progress.clone(), cancel.clone())
+                    .resume_once(
+                        me,
+                        upload_id,
+                        f,
+                        progress.clone(),
+                        cancel.clone(),
+                        confirmed.clone(),
+                    )
                     .await
                 {
                     Err(e) if e.status() == Some(409) && tries < 20 && !cancel.is_cancelled() => {
@@ -449,51 +474,75 @@ impl HubClient {
         mut file: tokio::fs::File,
         progress: Option<Progress>,
         cancel: CancelFlag,
+        confirmed: Option<UploadCheckpoint>,
     ) -> Result<UploadState> {
         let total = file.metadata().await?.len();
-        let st = self.upload_state(me, upload_id).await?;
+        let mut st = self.upload_state(me, upload_id).await?;
         validate_upload(&st, upload_id, total)?;
-        if st.complete {
-            return Ok(st);
+        if let Some(save) = &confirmed {
+            save(&st)?;
         }
-        file.seek(std::io::SeekFrom::Start(st.offset)).await?;
-        let mut done = st.offset;
-        let reader = file.take(total - st.offset);
-        let stream =
-            tokio_util::io::ReaderStream::with_capacity(reader, 256 * 1024).map(move |chunk| {
-                if cancel.is_cancelled() {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Interrupted,
-                        "cancelled",
-                    ));
-                }
-                if let Ok(c) = &chunk {
-                    done += c.len() as u64;
-                    if let Some(p) = &progress {
-                        p(done, total);
+        loop {
+            if st.complete {
+                return Ok(st);
+            }
+            if st.offset == total {
+                return Err(Error::Unreachable(
+                    "hub is still finishing this upload".into(),
+                ));
+            }
+            // An acknowledged piece is a bounded checkpoint even when a
+            // single HTTP stream would take minutes to reach completion.
+            let count = (total - st.offset).min(8 * 1024 * 1024);
+            file.seek(std::io::SeekFrom::Start(st.offset)).await?;
+            // reqwest needs an owned body; clone the file after positioning.
+            let reader = file.try_clone().await?.take(count);
+            let mut done = st.offset;
+            let flag = cancel.clone();
+            let tick = progress.clone();
+            let stream =
+                tokio_util::io::ReaderStream::with_capacity(reader, 256 * 1024).map(move |chunk| {
+                    if flag.is_cancelled() {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::Interrupted,
+                            "cancelled",
+                        ));
                     }
-                }
-                chunk
-            });
-        let body = reqwest::Body::wrap_stream(stream);
-        let resp = self
-            .http
-            .patch(self.address().join(&format!(
-                "/api/uploads/{}?offset={}",
-                urlencode(upload_id),
-                st.offset
-            )))
-            .header("X-Org-Auth", me.auth_header())
-            .header(reqwest::header::CONTENT_LENGTH, total - st.offset)
-            .body(body)
-            .send()
-            .await?;
-        let result: UploadState = check(resp).await?.json().await?;
-        validate_upload(&result, upload_id, total)?;
-        if result.offset < st.offset {
-            return Err(Error::Invalid("hub upload offset moved backwards".into()));
+                    if let Ok(c) = &chunk {
+                        done += c.len() as u64;
+                        if let Some(p) = &tick {
+                            p(done, total);
+                        }
+                    }
+                    chunk
+                });
+            let resp = self
+                .http
+                .patch(self.address().join(&format!(
+                    "/api/uploads/{}?offset={}",
+                    urlencode(upload_id),
+                    st.offset
+                )))
+                .header("X-Org-Auth", me.auth_header())
+                .header(reqwest::header::CONTENT_LENGTH, count)
+                .body(reqwest::Body::wrap_stream(stream))
+                .send()
+                .await?;
+            let result: UploadState = check(resp).await?.json().await?;
+            validate_upload(&result, upload_id, total)?;
+            if result.offset < st.offset || result.offset > st.offset + count {
+                return Err(Error::Invalid(
+                    "hub confirmed bytes outside the uploaded piece".into(),
+                ));
+            }
+            if result.offset == st.offset {
+                return Err(Error::Unreachable("hub upload made no progress".into()));
+            }
+            if let Some(save) = &confirmed {
+                save(&result)?;
+            }
+            st = result;
         }
-        Ok(result)
     }
 }
 
