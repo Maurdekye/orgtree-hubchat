@@ -8,6 +8,8 @@ mod keylog;
 mod link;
 mod media;
 mod secrets;
+#[cfg(windows)]
+mod windows_icon;
 
 #[cfg(desktop)]
 mod desktop {
@@ -453,6 +455,13 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 use tauri::Manager;
+                #[cfg(windows)]
+                if let Some(window) = app.get_webview_window("main") {
+                    // Preserve the native resource mask for Task Manager.
+                    if let Err(error) = windows_icon::install(&window) {
+                        eprintln!("could not set native window icons: {error}");
+                    }
+                }
                 let dir = app.path().app_data_dir()?;
                 let downloads = app
                     .path()
