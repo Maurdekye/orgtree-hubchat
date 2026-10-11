@@ -136,6 +136,9 @@ pub trait Host: Send + Sync + 'static {
     /// None means this platform already uses the final Downloads directory.
     fn publish_download(&self, _key: &str, _path: &std::path::Path, _name: &str)
         -> std::io::Result<Option<String>> { Ok(None) }
+    /// Best-effort removal of the platform's replay receipt, after the core
+    /// committed the exported pointer. A failed cleanup must not fail a save.
+    fn download_export_committed(&self, _key: &str) -> std::io::Result<()> { Ok(()) }
     /// Private, persistent storage. Shells override this with their app-data folder.
     fn staging_dir(&self) -> PathBuf {
         self.download_dir().join(".hubchat-outbox")

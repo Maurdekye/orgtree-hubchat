@@ -333,13 +333,16 @@ impl Engine {
         let key = format!("{}-{}", job.local_id, job.digest.as_deref().unwrap_or(""));
         // The scheduler owns this future through shutdown: a UI command does
         // not own the copy, and a blocking platform call never owns a DB lease.
+        let export_key = key.clone();
         let exported =
-            tokio::task::spawn_blocking(move || host.publish_download(&key, &path, &name))
+            tokio::task::spawn_blocking(move || host.publish_download(&export_key, &path, &name))
                 .await
                 .map_err(std::io::Error::other)??;
         let destination = exported.unwrap_or_else(|| job.destination.clone());
         self.store
             .download_exported(&job.local_id, &job.destination, &destination)?;
+        let host = self.host.clone();
+        let _ = tokio::task::spawn_blocking(move || host.download_export_committed(&key)).await;
         if destination != job.destination {
             // Only our private completed download, never the original picked file.
             let _ = tokio::fs::remove_file(source).await;
@@ -795,6 +798,9 @@ mod tests {
         struct ExportHost(PathBuf);
         impl Host for ExportHost {
             fn event(&self, _: Event) {}
+            fn download_export_committed(&self, _: &str) -> std::io::Result<()> {
+                std::fs::remove_file(self.0.join("receipt"))
+            }
             fn download_dir(&self) -> PathBuf {
                 self.0.clone()
             }
@@ -867,6 +873,7 @@ mod tests {
         e.queue_download("message", &lid).unwrap();
         let runner = tokio::spawn(e.clone().sender_loop());
         until(|| store.download_job(&lid).unwrap().unwrap().state == "done").await;
+        until(|| !e.transfers.lock().unwrap().contains_key(&lid)).await;
         let a = &store.message("message").unwrap().unwrap().attachments[0];
         assert_eq!(a.local_path.as_deref(), Some("content://proof/export"));
         assert_eq!(
@@ -874,6 +881,7 @@ mod tests {
             b"user-edited"
         );
         assert!(!private.exists());
+        assert!(!dir.path().join("receipt").exists());
         until(|| !e.transfers.lock().unwrap().contains_key(&lid)).await;
         let attempt = store.download_job(&lid).unwrap().unwrap().attempt;
         assert_eq!(
