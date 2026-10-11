@@ -12,28 +12,53 @@ import java.security.MessageDigest
 
 /** One core writer owns each key. No activity or UI command owns this copy. */
 object DownloadPublisher {
-    fun publish(context: Context, key: String, path: String, name: String): String {
-        if (Build.VERSION.SDK_INT < 29) return path
-        val source = File(path)
-        val resolver = context.contentResolver
+    private class SaveProblem(message: String) : java.io.IOException(message)
+    fun failure(error: Exception): String {
+        if (error is SaveProblem) return error.message ?: "Could not save the file; retry"
+        var cause: Throwable? = error
+        while (cause != null) {
+            if (cause is android.system.ErrnoException && cause.errno == android.system.OsConstants.ENOSPC)
+                return "Not enough space to save the file. Free some space and retry."
+            if (cause is SecurityException)
+                return "Hubchat cannot access Downloads. Check its file permissions and retry."
+            cause = cause.cause
+        }
+        return "Could not save to Downloads. Check free space and retry."
+    }
+    private fun receipt(context: Context, key: String): AtomicFile {
         val journalDir = File(context.filesDir, "download-exports")
         check(journalDir.isDirectory || journalDir.mkdirs()) { "Cannot create download receipt" }
         val journalName = MessageDigest.getInstance("SHA-256").digest(key.toByteArray())
             .joinToString("") { "%02x".format(it) }
-        val journal = AtomicFile(File(journalDir, "$journalName.uri"))
+        return AtomicFile(File(journalDir, "$journalName.uri"))
+    }
+    fun committed(context: Context, key: String) { receipt(context, key).delete() }
+    fun publish(context: Context, key: String, path: String, name: String): String {
+        if (Build.VERSION.SDK_INT < 29) return path
+        val source = File(path)
+        val resolver = context.contentResolver
+        val journal = receipt(context, key)
         val previous = if (journal.baseFile.exists()) {
             journal.openRead().bufferedReader().use { it.readText() }.let(Uri::parse)
         } else null
-        fun pending(uri: Uri): Boolean? = resolver.query(
-            uri, arrayOf(MediaStore.Downloads.IS_PENDING), null, null, null
-        )?.use { if (it.moveToFirst()) it.getInt(0) != 0 else null }
+        @Suppress("DEPRECATION")
+        fun pendingUri(uri: Uri): Uri = MediaStore.setIncludePending(uri)
+        fun pending(uri: Uri): Boolean? {
+            val projection = arrayOf(MediaStore.Downloads.IS_PENDING)
+            val cursor = if (Build.VERSION.SDK_INT >= 30) {
+                resolver.query(uri, projection, android.os.Bundle().apply {
+                    putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
+                }, null)
+            } else resolver.query(pendingUri(uri), projection, null, null, null)
+            return cursor?.use { if (it.moveToFirst()) it.getInt(0) != 0 else null }
+        }
         // The URI was journalled before any bytes became visible. Once the
         // pending bit is clear, the prior copy finished, even if Rust died
         // before committing its pointer. Never overwrite the user's saved file.
         val oldPending = previous?.let(::pending)
         if (previous != null && oldPending == false) return previous.toString()
         val uri = if (previous != null && oldPending == true) previous else {
-            check(source.isFile) { "The private download is missing; download it again" }
+            if (!source.isFile) throw SaveProblem("The private download is missing. Download it again.")
             val values = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, name)
                 put(MediaStore.Downloads.IS_PENDING, 1)
@@ -47,7 +72,7 @@ object DownloadPublisher {
                 journal.finishWrite(output)
             } catch (e: Exception) {
                 journal.failWrite(output)
-                resolver.delete(created, null, null)
+                resolver.delete(pendingUri(created), null, null)
                 throw e
             }
             created
@@ -67,11 +92,11 @@ object DownloadPublisher {
                 }
             }
             val copiedHash = digest.digest().joinToString("") { "%02x".format(it) }
-            check(key.endsWith("-$copiedHash")) { "The private download changed; download it again" }
+            if (!key.endsWith("-$copiedHash")) throw SaveProblem("The private download changed. Download it again.")
             output.flush()
             output.fd.sync()
         }
-        val published = resolver.update(uri, ContentValues().apply {
+        val published = resolver.update(pendingUri(uri), ContentValues().apply {
             put(MediaStore.Downloads.IS_PENDING, 0)
         }, null, null)
         check(published == 1) { "Cannot finish saving the download" }

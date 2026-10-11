@@ -219,8 +219,13 @@ class ConnectionService : Service() {
       return try {
         org.json.JSONObject().put("location", DownloadPublisher.publish(ctx, key, path, name)).toString()
       } catch (e: Exception) {
-        org.json.JSONObject().put("error", "Could not save to Downloads: " + (e.message ?: "retry")).toString()
+        org.json.JSONObject().put("error", DownloadPublisher.failure(e)).toString()
       }
+    }
+
+    @JvmStatic
+    fun transferPublished(key: String) {
+      appContext?.let { DownloadPublisher.committed(it, key) }
     }
 
     @JvmStatic
