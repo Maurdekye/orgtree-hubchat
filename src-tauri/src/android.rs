@@ -205,6 +205,13 @@ impl crate::core::Platform for AndroidPlatform {
         call(&j.service, "transferPublished", &[key], false)
             .map(|_| ()).ok_or_else(|| std::io::Error::other("Could not remove download receipt"))
     }
+    fn transfer_abandoned(&self,key:&str,source:&str)->std::io::Result<()> {
+        let j=JNI.get().ok_or_else(||std::io::Error::other("Android is not ready"))?;
+        match call(&j.service,"transferAbandoned",&[key,source],true) {
+            Some(reply) if reply.is_empty()=>Ok(()),
+            _=>Err(std::io::Error::other("Android could not clean up the download yet")),
+        }
+    }
     fn take_pending_link(&self) -> Option<String> {
         let j = JNI.get()?;
         call(&j.service, "takePendingLink", &[], true).filter(|p| !p.is_empty())

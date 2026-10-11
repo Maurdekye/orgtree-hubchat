@@ -49,6 +49,7 @@ pub trait Platform: Send + Sync + 'static {
     fn publish_transfer(&self, _key: &str, _path: &std::path::Path, _name: &str)
         -> std::io::Result<Option<String>> { Ok(None) }
     fn transfer_published(&self, _key: &str) -> std::io::Result<()> { Ok(()) }
+    fn transfer_abandoned(&self, _key:&str, _source:&str)->std::io::Result<()> { Ok(()) }
     /// A hubchat:// link the system opened the app with (taken once).
     fn take_pending_link(&self) -> Option<String> {
         None
@@ -309,6 +310,9 @@ impl Host for ShellHost {
     }
     fn download_export_committed(&self, key: &str) -> std::io::Result<()> {
         self.platform.transfer_published(key)
+    }
+    fn download_export_abandoned(&self,key:&str,source:&str)->std::io::Result<()> {
+        self.platform.transfer_abandoned(key,source)
     }
     fn staging_dir(&self) -> PathBuf { self.staging.clone() }
 }
