@@ -233,12 +233,18 @@ pub async fn hc_set_picture(owner:String,data:Option<String>,crop:Option<hubchat
 
 /// Settings › Notifications: notify at all, show the message text, sound.
 #[tauri::command]
-pub fn hc_set_notifications(enabled: bool, preview: bool, sound: bool) -> R<()> {
+pub fn hc_set_notifications(app: tauri::AppHandle, enabled: bool, preview: bool, sound: bool) -> R<()> {
     core::get()?.set_notify_settings(core::NotifySettings {
         enabled,
         preview,
         sound,
-    })
+    })?;
+    // the tray's Notifications submenu shows the same switches
+    #[cfg(desktop)]
+    crate::tray::notifications_changed(&app);
+    #[cfg(not(desktop))]
+    let _ = app;
+    Ok(())
 }
 
 /// Android (design D6): stay connected, or check about every 15 minutes.

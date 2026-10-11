@@ -12,6 +12,8 @@ mod keylog;
 mod link;
 mod media;
 mod secrets;
+#[cfg(desktop)]
+mod tray;
 #[cfg(windows)]
 mod windows_icon;
 
@@ -19,8 +21,6 @@ mod windows_icon;
 mod desktop {
     use std::path::PathBuf;
 
-    use tauri::menu::{Menu, MenuItem};
-    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
     use tauri::{AppHandle, Emitter, Manager};
     use tauri_plugin_notification::NotificationExt;
 
@@ -305,36 +305,6 @@ mod desktop {
             let _ = w.set_focus();
         }
     }
-
-    /// Tray icon: click shows the window; menu has Open and Quit. Closing the
-    /// window hides it, so messages and transfers keep going (design §7).
-    pub fn tray(app: &AppHandle) -> tauri::Result<()> {
-        let open = MenuItem::with_id(app, "open", "Open Hubchat", true, None::<&str>)?;
-        let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-        let menu = Menu::with_items(app, &[&open, &quit])?;
-        TrayIconBuilder::with_id("main")
-            .icon(app.default_window_icon().cloned().expect("icon"))
-            .tooltip("Hubchat")
-            .menu(&menu)
-            .show_menu_on_left_click(false)
-            .on_menu_event(|app, ev| match ev.id().as_ref() {
-                "open" => show(app),
-                "quit" => app.exit(0),
-                _ => {}
-            })
-            .on_tray_icon_event(|tray, ev| {
-                if let TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
-                } = ev
-                {
-                    show(tray.app_handle());
-                }
-            })
-            .build(app)?;
-        Ok(())
-    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -367,7 +337,15 @@ pub fn run() {
         .on_window_event(|w, ev| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = ev {
                 api.prevent_close();
-                let _ = w.hide();
+                // Exit on close (the tray, Settings › General) quits as Quit
+                // does; otherwise closing hides the window, so messages and
+                // transfers keep going (design §7)
+                if tray::exit_on_close() {
+                    use tauri::Manager;
+                    w.app_handle().exit(0);
+                } else {
+                    let _ = w.hide();
+                }
             }
         });
     builder
@@ -435,6 +413,14 @@ pub fn run() {
             appupdate::hc_app_update_install,
             appupdate::hc_app_update_allow,
             appupdate::hc_app_update_state,
+            #[cfg(desktop)]
+            tray::hc_tray_updates,
+            #[cfg(desktop)]
+            tray::hc_set_autostart,
+            #[cfg(desktop)]
+            tray::hc_exit_on_close,
+            #[cfg(desktop)]
+            tray::hc_set_exit_on_close,
             link::hc_link_start,
             link::hc_link_cancel,
             link::hc_link_lookup,
@@ -487,7 +473,7 @@ pub fn run() {
                     downloads,
                 };
                 core::init(dir, std::sync::Arc::new(platform))?;
-                desktop::tray(app.handle())?;
+                tray::build(app.handle())?;
                 #[cfg(windows)]
                 desktop::register_scheme(app.handle());
                 let first = desktop::first_start_of_version(
