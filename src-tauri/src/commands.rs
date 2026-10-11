@@ -51,6 +51,7 @@ pub struct State {
     /// minutes (false); null on desktop.
     stay_connected: Option<bool>,
     push: Option<core::PushState>,
+    file_background_hint: Option<String>,
     hubs: Vec<HubStatus>,
     platform: &'static str,
     /// What other devices see this one called (linking uses it as is).
@@ -84,6 +85,7 @@ pub fn hc_state() -> R<State> {
         notifications: c.notify_settings(),
         stay_connected: c.platform().stay_connected(),
         push: c.platform().push_state(),
+        file_background_hint: c.platform().file_background_hint(),
         device_name: c.device_name(),
         device_maker: c.platform().device_maker(),
         hubs: engine.map(|e| e.hub_statuses()).unwrap_or_default(),
@@ -522,16 +524,22 @@ pub fn hc_message(id: String) -> R<Option<Message>> {
 
 #[tauri::command]
 pub async fn hc_send(msg: NewOutgoing) -> R<()> {
-    engine()?.send(msg).await.map_err(s)
+    let c=core::get()?;
+    let _admission=c.file_admission(!msg.attachments.is_empty() || msg.body.len() as u64>hubchat_core::engine::BODY_INLINE_MAX);
+    let e=engine()?;
+    // Own preparation even if the invoking view/command goes away.
+    c.rt.spawn(async move { let _admission=_admission; e.send(msg).await.map_err(s) }).await.map_err(s)?
 }
 
 #[tauri::command]
 pub async fn hc_remove_attachment(message_id:String,local_id:String) -> R<()> {
+    let _admission=core::get()?.file_admission(true);
     engine()?.remove_attachment(&message_id,&local_id).await.map_err(s)
 }
 
 #[tauri::command]
 pub fn hc_retry(id: String) -> R<()> {
+    let _admission=core::get()?.file_admission(true);
     engine()?.retry(&id).map_err(s)
 }
 
@@ -550,7 +558,11 @@ pub async fn hc_download(message_id: String, local_id: String) -> R<()> {
     let e = engine()?;
     // Admission only. A scheduler-owned worker finishes even if this command
     // or its originating view disappears; no network await in the command.
-    tokio::task::spawn_blocking(move || e.queue_download(&message_id, &local_id).map(|_| ()).map_err(s))
+    let admission=core::get()?.file_admission(true);
+    tokio::task::spawn_blocking(move || {
+        let _admission=admission;
+        e.queue_download(&message_id, &local_id).map(|_| ()).map_err(s)
+    })
         .await.map_err(s)?
 }
 

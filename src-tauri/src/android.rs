@@ -230,6 +230,18 @@ impl crate::core::Platform for AndroidPlatform {
         let j = JNI.get()?;
         serde_json::from_str(&call(&j.service, "pushState", &[], true)?).ok()
     }
+    fn file_background_covered(&self) -> Option<bool> {
+        Some(JNI.get().and_then(|j|call(&j.service,"fileBackgroundCovered",&[],true)).as_deref()==Some("1"))
+    }
+    fn app_visible(&self) -> Option<bool> {
+        Some(JNI.get().and_then(|j|call(&j.service,"appVisible",&[],true)).as_deref()==Some("1"))
+    }
+    fn set_file_work(&self,wanted:bool) {
+        if let Some(j)=JNI.get(){call(&j.service,"setFileWork",&[if wanted{"1"}else{"0"}],false);}
+    }
+    fn file_background_hint(&self)->Option<String> {
+        JNI.get().and_then(|j|call(&j.service,"fileBackgroundHint",&[],true)).filter(|s|!s.is_empty())
+    }
     fn push_active(&self) -> bool {
         JNI.get().and_then(|j| call(&j.service, "isPushActive", &[], true))
             .is_some_and(|value| value == "1")
@@ -432,4 +444,13 @@ fn start_core(mut env: JNIEnv, data_dir: JString) {
     }
     let dir = PathBuf::from(dir);
     let _ = crate::core::init(dir.clone(), Arc::new(AndroidPlatform { dir }));
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_orgtree_hubchat_ConnectionService_fileServiceChanged(_env:JNIEnv,_class:JClass) {
+    if let Ok(c)=crate::core::get(){c.file_service_changed();}
+}
+#[no_mangle]
+pub extern "system" fn Java_dev_orgtree_hubchat_ConnectionService_00024Companion_fileServiceChanged(_env:JNIEnv,_this:JObject) {
+    if let Ok(c)=crate::core::get(){c.file_service_changed();}
 }

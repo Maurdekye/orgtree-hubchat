@@ -88,6 +88,11 @@ pub trait Platform: Send + Sync + 'static {
     fn set_push(&self, _on: bool, _distributor: &str) -> Result<(), String> {
         Err("only Android has this setting".into())
     }
+    /// None on desktop; Android reports actual foreground-service coverage.
+    fn file_background_covered(&self) -> Option<bool> { None }
+    fn app_visible(&self) -> Option<bool> { None }
+    fn set_file_work(&self, _wanted:bool) {}
+    fn file_background_hint(&self) -> Option<String> { None }
     /// Reconcile registrations after hubs or identity change.
     fn refresh_push(&self) {}
     /// Take back a chat's message notification: everything in it was read
@@ -155,6 +160,8 @@ pub struct Core {
     pub store: Arc<Store>,
     engine: Mutex<Option<Arc<Engine>>>,
     background_checks: Mutex<usize>,
+    file_admissions: std::sync::atomic::AtomicUsize,
+    file_lifetime: Mutex<()>,
     pub rt: tokio::runtime::Handle,
     host: Arc<ShellHost>,
     /// Set while this device had an identity but its key can't be found.
@@ -257,6 +264,9 @@ impl Host for ShellHost {
         Ok(())
     }
     fn event(&self, ev: Event) {
+        if matches!(&ev, Event::Chat { .. }) {
+            if let Ok(c)=get() { c.rt.spawn(async move { c.refresh_file_lifetime(); }); }
+        }
         if let Event::Incoming { peer, preview, quiet, .. } = &ev {
             let showing = self.foreground.load(Ordering::Relaxed)
                 && self.open_chat.lock().unwrap().as_deref() == Some(peer.as_str());
@@ -348,6 +358,8 @@ pub fn init(dir: PathBuf, platform: Arc<dyn Platform>) -> Result<&'static Core, 
         store,
         engine: Mutex::new(None),
         background_checks: Mutex::new(0),
+        file_admissions: std::sync::atomic::AtomicUsize::new(0),
+        file_lifetime: Mutex::new(()),
         rt,
         host,
         key_lost: Mutex::new(None),
@@ -405,9 +417,12 @@ impl Core {
     /// check restores suspension, unless the UI became visible meanwhile.
     pub fn reconcile_background(&self) {
         let checks = self.background_checks.lock().unwrap();
-        let push_active = self.platform().push_active();
+        let visible = self.platform().app_visible().unwrap_or_else(||self.host.foreground.load(Ordering::Relaxed));
+        let coverage = self.platform().file_background_covered();
+        let (suspended,files_paused)=background_policy(visible,coverage,self.platform().push_active(),*checks);
         if let Ok(e) = self.engine() {
-            e.set_suspended(push_active && !self.host.foreground.load(Ordering::Relaxed) && *checks == 0);
+            e.set_files_paused(files_paused);
+            e.set_suspended(suspended);
         }
     }
 
@@ -423,6 +438,7 @@ impl Core {
     #[cfg(target_os = "android")]
     pub fn set_app_visible(&self, visible: bool) {
         self.host.foreground.store(visible, Ordering::Relaxed);
+        self.refresh_file_lifetime();
         if !visible {
             // JavaScript may freeze before reporting inactive. Tell the hub
             // natively so its active lease does not defer the next push.
@@ -432,6 +448,29 @@ impl Core {
             }
         }
         self.reconcile_background();
+    }
+
+    pub fn file_admission(&'static self, needed:bool) -> FileAdmission {
+        if needed {
+            self.file_admissions.fetch_add(1,Ordering::SeqCst);
+            self.refresh_file_lifetime();
+        }
+        FileAdmission(needed.then_some(self))
+    }
+    pub fn refresh_file_lifetime(&self) {
+        if self.platform().file_background_covered().is_none() { return; }
+        let _serial=self.file_lifetime.lock().unwrap();
+        let wanted=self.file_admissions.load(Ordering::SeqCst)>0 || self.store.pending_file_work().unwrap_or(true);
+        // Platform implementations queue this on their main thread; no callback
+        // may re-enter Core before this call returns.
+        self.platform().set_file_work(wanted);
+    }
+    #[cfg(target_os="android")]
+    pub fn file_service_changed(&self) {
+        self.reconcile_background();
+        if let Some(app)=self.host.app.get() {
+            let _=app.emit("hc",serde_json::json!({"type":"file_lifecycle"}));
+        }
     }
 
     pub fn engine(&self) -> Result<Arc<Engine>, String> {
@@ -627,8 +666,10 @@ impl Core {
         engine.set_device(&device_id, &self.device_name());
         let read = self.store.meta("settings.read_receipts").ok().flatten();
         engine.set_read_receipts(read.as_deref() != Some("off"));
-        engine.set_suspended(self.platform().push_active()
-            && !self.host.foreground.load(Ordering::Relaxed));
+        let visible=self.platform().app_visible().unwrap_or_else(||self.host.foreground.load(Ordering::Relaxed));
+        let (suspended,files_paused)=background_policy(visible,self.platform().file_background_covered(),self.platform().push_active(),0);
+        engine.set_files_paused(files_paused);
+        engine.set_suspended(suspended);
         {
             // start() spawns its tasks onto the core runtime.
             let _guard = self.rt.enter();
@@ -638,6 +679,7 @@ impl Core {
             .platform
             .status(&format!("Connected as {}", engine.me().address()));
         *self.engine.lock().unwrap() = Some(engine);
+        self.refresh_file_lifetime();
         Ok(())
     }
 }
@@ -705,5 +747,36 @@ mod transfer_notice_tests {
         assert!(!download.1.contains("remove"));
         assert!(failure_notice(NotifySettings { enabled: false, ..settings }, "Pat", &n).is_none());
         assert!(!failure_notice(NotifySettings { sound: false, ..settings }, "Pat", &n).unwrap().2);
+    }
+}
+
+/// Covers local preparation before a durable queued row exists.
+pub struct FileAdmission(Option<&'static Core>);
+impl Drop for FileAdmission {
+    fn drop(&mut self) {
+        if let Some(c)=self.0 {
+            c.file_admissions.fetch_sub(1,Ordering::SeqCst);
+            c.refresh_file_lifetime();
+        }
+    }
+}
+fn background_policy(visible:bool, coverage:Option<bool>, push:bool, checks:usize)->(bool,bool) {
+    match coverage {
+        Some(covered)=>(!visible&&!covered&&checks==0,!visible&&!covered),
+        None=>(push&&!visible&&checks==0,false),
+    }
+}
+#[cfg(test)]
+mod file_lifecycle_tests {
+    use super::background_policy;
+    #[test]
+    fn background_checks_never_authorize_files_and_stay_connected_remains_covered() {
+        for push in [false,true] {
+            assert_eq!(background_policy(false,Some(true),push,0),(false,false));
+            assert_eq!(background_policy(false,Some(false),push,0),(true,true));
+            assert_eq!(background_policy(false,Some(false),push,1),(false,true));
+            assert_eq!(background_policy(true,Some(false),push,0),(false,false));
+        }
+        assert_eq!(background_policy(false,None,false,0),(false,false));
     }
 }
