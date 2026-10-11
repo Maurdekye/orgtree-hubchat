@@ -146,7 +146,19 @@ CREATE TABLE IF NOT EXISTS pending_chat_deletes (
 );
 "#,
     // 3: digest of the private immutable source admitted with this message.
-    "ALTER TABLE attachments ADD COLUMN source_sha256 TEXT;",
+    r#"
+ALTER TABLE attachments ADD COLUMN source_sha256 TEXT;
+ALTER TABLE attachments ADD COLUMN staged_path TEXT;
+CREATE TABLE staging_gc (path TEXT PRIMARY KEY, retry_after INTEGER NOT NULL DEFAULT 0);
+CREATE TRIGGER stage_deleted AFTER DELETE ON attachments WHEN OLD.staged_path IS NOT NULL BEGIN
+  INSERT OR IGNORE INTO staging_gc(path) VALUES(OLD.staged_path);
+END;
+CREATE TRIGGER stage_sent AFTER UPDATE OF state ON messages
+WHEN NEW.outgoing=1 AND NEW.state IN ('sent','fetched','delivered','read') BEGIN
+  INSERT OR IGNORE INTO staging_gc(path) SELECT staged_path FROM attachments
+    WHERE message_id=NEW.id AND staged_path IS NOT NULL;
+END;
+"#,
 ];
 
 pub struct Store {
@@ -172,6 +184,8 @@ pub struct Attachment {
     pub source: Option<String>,
     #[serde(skip)]
     pub source_sha256: Option<String>,
+    #[serde(skip)]
+    pub staged_path: Option<String>,
     pub local_path: Option<String>,
     pub state: String,
     pub error: Option<String>,
@@ -452,10 +466,10 @@ impl Store {
 
     /// Queue an outgoing message (and its attachments) for the sender task.
     pub fn queue_outgoing(&self, msg: &NewOutgoing, now: &str) -> Result<()> {
-        self.queue_prepared(msg, now, &[])
+        self.queue_prepared(msg, now, &[], &[])
     }
 
-    pub(crate) fn queue_prepared(&self, msg: &NewOutgoing, now: &str, digests: &[String]) -> Result<()> {
+    pub(crate) fn queue_prepared(&self, msg: &NewOutgoing, now: &str, digests: &[String], paths: &[String]) -> Result<()> {
         self.with(|c| {
             let tx = c.transaction()?;
             tx.execute(
@@ -465,9 +479,9 @@ impl Store {
             )?;
             for (i, a) in msg.attachments.iter().enumerate() {
                 tx.execute(
-                    "INSERT INTO attachments(local_id, message_id, position, name, bytes, source, source_sha256, state)
-                     VALUES(?,?,?,?,?,?,?,'pending')",
-                    params![uuid::Uuid::new_v4().simple().to_string(), msg.id, i as i64, a.name, a.bytes, a.source, digests.get(i)],
+                    "INSERT INTO attachments(local_id, message_id, position, name, bytes, source, source_sha256, staged_path, state)
+                     VALUES(?,?,?,?,?,?,?,?,'pending')",
+                    params![uuid::Uuid::new_v4().simple().to_string(), msg.id, i as i64, a.name, a.bytes, a.source, digests.get(i), paths.get(i)],
                 )?;
             }
             tx.commit()
@@ -1137,7 +1151,7 @@ impl Store {
                 })?
                 .collect::<rusqlite::Result<_>>()?;
             let mut st = c.prepare(
-                "SELECT local_id, hub_id, hub, name, bytes, source, local_path, state, error, source_sha256 FROM attachments
+                "SELECT local_id, hub_id, hub, name, bytes, source, local_path, state, error, source_sha256, staged_path FROM attachments
                  WHERE message_id=? ORDER BY position",
             )?;
             for m in &mut msgs {
@@ -1154,6 +1168,7 @@ impl Store {
                             state: r.get(7)?,
                             error: r.get(8)?,
                             source_sha256: r.get(9)?,
+                            staged_path: r.get(10)?,
                         })
                     })?
                     .collect::<rusqlite::Result<_>>()?;
@@ -1830,3 +1845,6 @@ mod tests {
         assert_eq!(s.send_hub("pat.222222").unwrap(), None);
     }
 }
+
+#[path = "staging_store.rs"]
+mod staging_store;

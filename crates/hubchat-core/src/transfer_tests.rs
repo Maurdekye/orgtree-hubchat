@@ -336,10 +336,11 @@ async fn snapshot_finishes_before_admission_without_blocking_runtime_and_survive
         a.source_sha256,
         Some(hex::encode(Sha256::digest(&original)))
     );
-    let copy = PathBuf::from(a.source.unwrap());
+    let copy = PathBuf::from(a.staged_path.unwrap());
     assert!(copy.starts_with(dir.path().join("private-outbox")));
     assert_eq!(std::fs::read(copy).unwrap(), original);
     assert_eq!(a.state, "pending");
+    assert_eq!(a.source.as_deref(), source.to_str());
 }
 
 #[tokio::test]
@@ -384,4 +385,129 @@ async fn preparation_failure_and_duplicate_admission_leave_no_unowned_copies() {
         .is_err());
     assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
     assert_eq!(std::fs::read(copy).unwrap(), b"abc");
+}
+
+#[tokio::test]
+async fn staged_copies_are_collected_after_success_and_deletion_but_failed_mail_keeps_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("photo.jpg");
+    std::fs::write(&source, b"abc").unwrap();
+    let db = dir.path().join("store.db");
+    let store = Arc::new(Store::open(&db).unwrap());
+    let engine = staged_engine(
+        store.clone(),
+        StageHost {
+            dir: dir.path().into(),
+            gate: None,
+        },
+    );
+    let root = dir.path().join("private-outbox");
+    for id in ["sent-copy", "failed-copy", "deleted-copy", "chat-copy"] {
+        engine.send(outgoing(id, &[(&source, 3)])).await.unwrap();
+        let a = store.message(id).unwrap().unwrap().attachments.remove(0);
+        assert_eq!(a.source.as_deref(), source.to_str());
+        assert!(a.staged_path.is_some());
+    }
+    store
+        .set_state("failed-copy", "failed", Some("offline"))
+        .unwrap();
+    store.set_state("sent-copy", "sent", None).unwrap();
+    engine.delete_message("deleted-copy").await.unwrap();
+    engine.clean_staging().await;
+    let sent = store
+        .message("sent-copy")
+        .unwrap()
+        .unwrap()
+        .attachments
+        .remove(0);
+    assert!(sent.staged_path.is_none());
+    assert_eq!(sent.source.as_deref(), source.to_str());
+    let failed = store
+        .message("failed-copy")
+        .unwrap()
+        .unwrap()
+        .attachments
+        .remove(0);
+    assert_eq!(std::fs::read(failed.staged_path.unwrap()).unwrap(), b"abc");
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 2);
+    engine.delete_chat("peer.abcdef").await.unwrap();
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+    assert_eq!(
+        std::fs::read(&source).unwrap(),
+        b"abc",
+        "never delete the user's original"
+    );
+    // A process can stop after a successful queue-state transaction, before unlink.
+    engine
+        .send(outgoing("restart-clean", &[(&source, 3)]))
+        .await
+        .unwrap();
+    store.set_state("restart-clean", "sent", None).unwrap();
+    drop(engine);
+    drop(store);
+    let store = Store::open(&db).unwrap();
+    crate::staging::collect(&root, &store).unwrap();
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+    // Old orphan copies disappear, fresh preparation and referenced failures stay.
+    let old = root.join("11111111111111111111111111111111");
+    let fresh = root.join("22222222222222222222222222222222");
+    for p in [&old, &fresh] {
+        std::fs::create_dir(p).unwrap();
+        std::fs::write(p.join("0.bin"), b"abc").unwrap();
+    }
+    let oldtime = std::time::SystemTime::now() - Duration::from_secs(25 * 60 * 60);
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        opts.custom_flags(0x02000000).access_mode(0x100);
+    }
+    opts.open(&old)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(oldtime))
+        .unwrap();
+    crate::staging::sweep_orphans(&root, &store).unwrap();
+    assert!(!old.exists());
+    assert!(fresh.exists());
+}
+
+#[tokio::test]
+async fn failed_staging_unlink_stays_durable_for_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source");
+    std::fs::write(&source, b"abc").unwrap();
+    let store = Arc::new(Store::open(&dir.path().join("db")).unwrap());
+    let engine = staged_engine(
+        store.clone(),
+        StageHost {
+            dir: dir.path().into(),
+            gate: None,
+        },
+    );
+    engine
+        .send(outgoing("cleanup-error", &[(&source, 3)]))
+        .await
+        .unwrap();
+    let path = store.message("cleanup-error").unwrap().unwrap().attachments[0]
+        .staged_path
+        .clone()
+        .unwrap();
+    let held = PathBuf::from(&path).with_extension("held");
+    std::fs::rename(&path, &held).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    store.set_state("cleanup-error", "sent", None).unwrap();
+    engine.clean_staging().await;
+    assert!(
+        store.message("cleanup-error").unwrap().unwrap().attachments[0]
+            .staged_path
+            .is_some()
+    );
+    assert_eq!(store.staging_due(i64::MAX).unwrap(), vec![path.clone()]);
+    std::fs::remove_dir(&path).unwrap();
+    std::fs::rename(held, &path).unwrap();
+    store.staging_retry(&path, 0).unwrap();
+    engine.clean_staging().await;
+    assert!(!PathBuf::from(&path).exists());
+    assert!(store.staging_due(i64::MAX).unwrap().is_empty());
 }

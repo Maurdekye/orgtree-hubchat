@@ -1382,7 +1382,7 @@ impl Engine {
         let host = self.host.clone();
         let prepared = tokio::task::spawn_blocking(move || crate::staging::prepare(host.as_ref(), msg))
             .await.map_err(|e| Error::Invalid(format!("file preparation stopped: {e}")))??;
-        self.store.queue_prepared(&prepared.message, &now(), &prepared.digests)?;
+        self.store.queue_prepared(&prepared.message, &now(), &prepared.digests, &prepared.paths)?;
         let msg = prepared.commit();
         self.host.event(Event::Chat {
             peer: msg.peer.clone(),
@@ -1464,8 +1464,12 @@ impl Engine {
     }
 
     async fn sender_loop(self: Arc<Self>) {
+        let store = self.store.clone();
+        let root = self.host.staging_dir();
+        let _ = tokio::task::spawn_blocking(move || crate::staging::sweep_orphans(&root, &store)).await;
         let mut suspended = self.suspended.subscribe();
         while !self.stopped.load(std::sync::atomic::Ordering::Relaxed) {
+            self.clean_staging().await;
             if *suspended.borrow_and_update() {
                 tokio::select! {
                     _ = suspended.changed() => {},
@@ -1493,6 +1497,12 @@ impl Engine {
                 }
             }
         }
+    }
+
+    async fn clean_staging(&self) {
+        let store = self.store.clone();
+        let root = self.host.staging_dir();
+        let _ = tokio::task::spawn_blocking(move || crate::staging::collect(&root, &store)).await;
     }
 
     /// Try to send one queued message. Ok(true) = it left the queue.
@@ -1526,7 +1536,7 @@ impl Engine {
                     continue;
                 }
             }
-            let Some(source) = &a.source else {
+            let Some(source) = a.staged_path.as_ref().or(a.source.as_ref()) else {
                 let why = "attachment source is missing; retry or explicitly remove the file";
                 self.store
                     .set_attachment(&a.local_id, "failed", None, None, Some(why))?;
@@ -1677,6 +1687,7 @@ impl Engine {
                     self.store.queue_deletes(&url, std::slice::from_ref(&m.id), &now())?;
                     self.send_deletes_now(std::slice::from_ref(&url)).await;
                 }
+                self.clean_staging().await;
                 self.host.event(Event::Chat { peer: m.peer });
                 Ok(true)
             }
@@ -1790,6 +1801,7 @@ impl Engine {
         let hubs: Vec<String> = self.hubs.lock().unwrap().keys().cloned().collect();
         let lids = self.store.forget_message(id, &hubs, &now())?;
         self.cancel_transfers(&lids);
+        self.clean_staging().await;
         if let Some(m) = m {
             self.host.event(Event::Chat { peer: m.peer });
         }
@@ -1821,6 +1833,7 @@ impl Engine {
         let t = now();
         let (ids, lids) = self.store.forget_chat(peer, &later, &t)?;
         self.cancel_transfers(&lids);
+        self.clean_staging().await;
         self.host.event(Event::Chat { peer: peer.into() });
         for (url, client, connected, capable) in hubs {
             let owed = !connected
