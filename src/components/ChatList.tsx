@@ -31,16 +31,17 @@ export function useFilteredChats(filter: ChatFilter, q: string, open: string | n
 
 /** Desktop right-click on a chat (user 2026-10-09 05:54Z): what the chat's
  *  header and Android's chat menu offer. */
-export function chatMenu(e: ReactMouseEvent, peer: string, onOpen: (peer: string) => void, onInfo?: (peer: string) => void, open = "Open") {
+export function chatMenu(e: ReactMouseEvent, peer: string, onOpen: (peer: string) => void, onInfo?: (peer: string) => void, open = "Open", onCloseDm?: (peer: string) => void) {
   e.preventDefault();
   openMenu(e.clientX, e.clientY, [
     { label: open, icon: "forum", run: () => onOpen(peer) },
     ...(onInfo ? [{ label: "Contact info", icon: "info" as const, run: () => onInfo(peer) }] : []),
     { label: "Copy address", icon: "copy", run: () => void copyText("@net:" + peer, "Address copied") },
+    ...(onCloseDm ? [{ label: "Close DM", icon: "close" as const, run: () => onCloseDm(peer) }] : []),
   ]);
 }
 
-export function ChatRows({ rows, selected, onOpen, onInfo }: { rows: ReturnType<typeof useFilteredChats>["rows"]; selected: string | null; onOpen: (peer: string) => void; onInfo?: (peer: string) => void }) {
+export function ChatRows({ rows, selected, onOpen, onInfo, onCloseDm }: { rows: ReturnType<typeof useFilteredChats>["rows"]; selected: string | null; onOpen: (peer: string) => void; onInfo?: (peer: string) => void; onCloseDm?: (peer: string) => void }) {
   const snap = useSnap();
   const platform = usePlatform();
   const hubs = snap.state?.hubs || [];
@@ -57,7 +58,7 @@ export function ChatRows({ rows, selected, onOpen, onInfo }: { rows: ReturnType<
         else prev = <>{m.kind === "question" ? <span className="q">Question ·</span> : null}{m.kind === "question" ? " " : null}<span className="t" dir="auto">{preview(m)}</span></>;
         return (
           <div key={c.peer} className={"crow" + (selected === c.peer ? " sel" : "") + (c.unread ? " unread" : "")} onClick={() => onOpen(c.peer)} role="button" tabIndex={0}
-            onContextMenu={platform === "desktop" ? (e) => chatMenu(e, c.peer, onOpen, onInfo) : undefined}
+            onContextMenu={platform === "desktop" ? (e) => chatMenu(e, c.peer, onOpen, onInfo, "Open", onCloseDm) : undefined}
             onKeyDown={pressKeys(() => onOpen(c.peer))}>
             <PeerAvatar address={c.peer} c={ct} hubs={hubs} size={platform === "android" ? 52 : 44} />
             <div className="crow-main">
@@ -73,7 +74,7 @@ export function ChatRows({ rows, selected, onOpen, onInfo }: { rows: ReturnType<
 
 /** The collapsed chat list (desktop, user 2026-10-09 08:39Z): one avatar per
  *  chat with its presence dot and unread badge; the name shows on hover. */
-export function RailRows({ rows, selected, onOpen, onInfo }: { rows: ReturnType<typeof useFilteredChats>["rows"]; selected: string | null; onOpen: (peer: string) => void; onInfo?: (peer: string) => void }) {
+export function RailRows({ rows, selected, onOpen, onInfo, onCloseDm }: { rows: ReturnType<typeof useFilteredChats>["rows"]; selected: string | null; onOpen: (peer: string) => void; onInfo?: (peer: string) => void; onCloseDm?: (peer: string) => void }) {
   const snap = useSnap();
   const hubs = snap.state?.hubs || [];
   return (
@@ -84,7 +85,7 @@ export function RailRows({ rows, selected, onOpen, onInfo }: { rows: ReturnType<
         return (
           <button key={c.peer} className={"rrow" + (selected === c.peer ? " sel" : "") + (c.unread ? " unread" : "")} onClick={() => onOpen(c.peer)}
             title={name} aria-label={name + (c.unread ? ", " + c.unread + " unread" : "")}
-            onContextMenu={(e) => chatMenu(e, c.peer, onOpen, onInfo)}>
+            onContextMenu={(e) => chatMenu(e, c.peer, onOpen, onInfo, "Open", onCloseDm)}>
             <PeerAvatar address={c.peer} c={ct} hubs={hubs} size={40} />
             {c.unread ? <span className="badge">{c.unread}</span> : null}
           </button>

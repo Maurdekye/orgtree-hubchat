@@ -32,9 +32,11 @@ interface Props {
   infoOn?: boolean;
   /** Android: the app bar's menu (Contact info, Copy address). */
   onMenu?: () => void;
+  /** Close this DM while retaining its history. */
+  onCloseDm?: () => void;
 }
 
-export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, infoOn, onMenu }: Props) {
+export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, infoOn, onMenu, onCloseDm }: Props) {
   const platform = usePlatform();
   const snap = useSnap();
   const hubs = snap.state?.hubs || [];
@@ -424,6 +426,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
         </div>
         <button className="icon-btn" onClick={copyAddr} title="Copy address" aria-label="Copy address"><Icon name="copy" /></button>
         <button className={"icon-btn" + (infoOn ? " on" : "")} onClick={onContact} title="Contact info (Ctrl+I)" aria-label="Contact info" aria-pressed={!!infoOn}><Icon name="info" /></button>
+        {onCloseDm ? <button className="icon-btn" onClick={onCloseDm} title="Close DM (keep history)" aria-label="Close DM"><Icon name="close" /></button> : null}
       </div>
       <div className="tl-wrap">
         <div className="timeline scroll" ref={tl} onScroll={onScroll} tabIndex={platform === "desktop" ? -1 : undefined} role="region" aria-label={"Messages with " + name}

@@ -6,6 +6,7 @@ import type { Message } from "../api";
 import { Icon } from "../lib/icons";
 import { displayName, kindOf } from "../lib/peers";
 import { getSnap, useSendRoute, useSnap } from "../lib/store";
+import { closeDm, openDm } from "../lib/dm";
 import { chatLinkTarget } from "../lib/chatlink";
 import { installKeyboardImages } from "../lib/keyboardImages";
 import { startTake, useActive, useForeground, useLastChat, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
@@ -117,7 +118,7 @@ function MsgInfoScreen({ id, peer, back }: { id: string; peer: string; back: () 
 }
 
 /** The conversation's ⋮ menu: a bottom sheet (the prototype's conv-menu). */
-function ConvMenu({ peer, onContact, onClose }: { peer: string; onContact: () => void; onClose: () => void }) {
+function ConvMenu({ peer, onContact, onClose, onCloseDm }: { peer: string; onContact: () => void; onClose: () => void; onCloseDm: () => void }) {
   const snap = useSnap();
   const route = useSendRoute(peer);
   const [hubSheet, setHubSheet] = useState(false);
@@ -130,6 +131,7 @@ function ConvMenu({ peer, onContact, onClose }: { peer: string; onContact: () =>
         <button className="mi" role="menuitem" onClick={onContact}><Icon name="info" />Contact info</button>
         {hasChoice(route) ? <button className="mi" role="menuitem" onClick={() => setHubSheet(true)}><Icon name="dns" />Send through…<span className="s">{routeLabel(route, snap.state?.hubs || []).replace(/^via /, "")}</span></button> : null}
         <button className="mi" role="menuitem" onClick={() => { onClose(); void copyText("@net:" + peer, "Address copied"); }}><Icon name="copy" />Copy address</button>
+        <button className="mi" role="menuitem" onClick={onCloseDm}><Icon name="close" />Close DM</button>
       </div>
     </>
   );
@@ -159,7 +161,7 @@ export function Android() {
     closeOpenMenu = () => { if (!menuRef.current) return false; closeMenu(); return true; };
     return () => { closeOpenMenu = null; };
   }, [closeMenu]);
-  const go = useCallback((s: Scr) => {
+  const navigate = useCallback((s: Scr) => {
     const st = stackRef.current;
     const t = st[st.length - 1];
     closeMenu();
@@ -169,6 +171,20 @@ export function Android() {
     history.pushState({ hc: st.length + 1 }, "");
     depth.current = st.length + 1;
     setStack([...st, s]);
+  }, [closeMenu]);
+  const go = useCallback((s: Scr) => {
+    if (s.s === "conv") void openDm(s.p).then(() => navigate(s), (e) => toast(errText(e)));
+    else navigate(s);
+  }, [navigate]);
+  const close = useCallback((peer: string) => {
+    void closeDm(peer, () => {
+      closeMenu();
+      // Remove every conversation from the stack so Back cannot restore the closed DM.
+      history.replaceState({ hc: 1 }, "");
+      depth.current = 1;
+      setDir("back");
+      setStack([{ s: "chats" }]);
+    });
   }, [closeMenu]);
   const back = useCallback(() => { if (depth.current > 1) history.back(); }, []);
 
@@ -250,7 +266,7 @@ export function Android() {
       return (
         <Shell dir={dir} k={"conv:" + p}>
           <Conversation key={p} peer={p} onBack={back} onInfo={onInfo} onOpenAddr={openChat} onContact={contact} onMenu={() => openMenu(p)} />
-          {menu === p ? <ConvMenu peer={p} onContact={contact} onClose={closeMenu} /> : null}
+          {menu === p ? <ConvMenu peer={p} onContact={contact} onClose={closeMenu} onCloseDm={() => close(p)} /> : null}
         </Shell>
       );
     }

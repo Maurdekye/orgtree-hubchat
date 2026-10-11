@@ -9,6 +9,7 @@ import { routeLink, startJoin, useJoin } from "../lib/join";
 import { toast } from "../lib/toast";
 import { hubSummary } from "../lib/peers";
 import { useSnap } from "../lib/store";
+import { closeDm, openDm } from "../lib/dm";
 import { useActive, useForeground, useLastChat, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { isSetupLink, startSetup, useSetupChat } from "../lib/setup";
 import { chatLinkTarget } from "../lib/chatlink";
@@ -92,7 +93,12 @@ export function Desktop() {
 
   // the panel stays open across chats: Contact info follows the open chat,
   // another chat's message info gives way to it (the prototype's openChat)
-  const open = useCallback((peer: string) => { setChat(peer); setOv(null); setInfo((i) => (i?.k === "msg" && i.peer !== peer ? { k: "contact" } : i)); }, []);
+  const open = useCallback((peer: string) => {
+    void openDm(peer).then(() => { setChat(peer); setOv(null); setInfo((i) => (i?.k === "msg" && i.peer !== peer ? { k: "contact" } : i)); }, (e) => toast(errText(e)));
+  }, []);
+  const close = useCallback((peer: string) => {
+    void closeDm(peer, () => { setChat((p) => p === peer ? null : p); setInfo((i) => i?.k === "msg" && i.peer === peer ? null : i); });
+  }, []);
   const onInfo = useCallback((m: Message) => setInfo({ k: "msg", id: m.id, peer: m.peer }), []);
   const toggleContact = useCallback(() => setInfo((i) => (i?.k === "contact" ? null : { k: "contact" })), []);
   // the right-click menus' "Contact info": that chat, with its panel
@@ -190,7 +196,7 @@ export function Desktop() {
             <button className="icon-btn" onClick={() => settings("profile")} title="Settings (Ctrl+,)" aria-label="Settings"><Icon name="settings" /></button>
             <button className={"hubpill rail-hub " + hs.state} onClick={() => settings("hubs")} title={hs.text + " · Hub connections"} aria-label="Hub connections"><span className="dot" /></button>
             <div className="clist scroll rail-list">
-              <RailRows rows={rows} selected={chat} onOpen={open} onInfo={contactInfo} />
+              <RailRows rows={rows} selected={chat} onOpen={open} onInfo={contactInfo} onCloseDm={close} />
             </div>
           </aside>
         ) : (
@@ -213,7 +219,7 @@ export function Desktop() {
           <div className="filters">{fchip("all", "All")}{fchip("agents", "Agents")}{fchip("people", "People")}</div>
           <div className="clist scroll">
             {!total && !chat ? <EmptyChats onNew={() => setOv({ k: "newchat", q: "" })} />
-              : rows.length ? <ChatRows rows={rows} selected={chat} onOpen={open} onInfo={contactInfo} />
+              : rows.length ? <ChatRows rows={rows} selected={chat} onOpen={open} onInfo={contactInfo} onCloseDm={close} />
               : <div className="list-empty"><Icon name="search" /><b>No chats match</b>To reach someone new, use <button className="link" onClick={() => setOv({ k: "newchat", q })}>New chat</button> and type their address.</div>}
           </div>
           <div className="side-foot">
@@ -224,7 +230,7 @@ export function Desktop() {
           </div>
         </aside>
         )}
-        {chat ? <Conversation key={chat} peer={chat} onInfo={onInfo} onOpenAddr={open} onContact={toggleContact} infoOn={!!info && (info.k === "contact" || info.peer === chat)} /> : (
+        {chat ? <Conversation key={chat} peer={chat} onInfo={onInfo} onOpenAddr={open} onContact={toggleContact} infoOn={!!info && (info.k === "contact" || info.peer === chat)} onCloseDm={() => close(chat)} /> : (
           <section className="conv" role="main">
             <div className="conv-empty">
               <Logo size={64} />

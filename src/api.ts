@@ -362,6 +362,10 @@ export const tauriApi = {
   directory: () => invoke<Contact[]>("hc_directory"),
   resolve: (input: string) => invoke<Resolved>("hc_resolve", { input }),
   chats: () => invoke<ChatSummary[]>("hc_chats"),
+  /** Hide a DM from the chat list, keeping every message and file. */
+  closeDm: (peer: string) => invoke<void>("hc_close_dm", { peer }),
+  /** Explicitly opening a DM restores its chat-list entry. */
+  openDm: (peer: string) => invoke<void>("hc_open_dm", { peer }),
   /** A page of a chat, oldest first (lazy history): the newest `limit` before
    *  message `before`, or everything from message `from` on. */
   chat: (peer: string, o: { before?: Message | null; from?: Message | null; limit?: number } = {}) =>
