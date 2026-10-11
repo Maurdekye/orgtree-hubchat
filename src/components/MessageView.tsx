@@ -33,6 +33,7 @@ function FileCard({ a, m }: { a: Attachment; m: Message }) {
   const platform = usePlatform();
   const prog = useTransfer(a.local_id);
   const v = attView(a, m, prog && (a.state === "uploading" || a.state === "downloading") ? prog : undefined);
+  const remove = m.outgoing && m.state === "failed" && !a.download;
   const download = () => api.download(m.id, a.local_id).catch((e) => toast("Download failed: " + errText(e)));
   const click = () => {
     if (v.download || v.retry === "download") void download();
@@ -46,11 +47,12 @@ function FileCard({ a, m }: { a: Attachment; m: Message }) {
       <span className="att-t">
         <span className="att-n">{a.name}</span>
         <span className="att-s">{v.sub}{v.retry ? " · Retry" : ""}</span>
+        {remove ? <button className="link" onClick={(e) => { e.stopPropagation(); api.removeAttachment(m.id,a.local_id).catch(err=>toast(errText(err))); }}>Remove file</button> : null}
         {v.bar != null ? <span className="att-bar"><i style={{ width: v.bar + "%" }} /></span> : null}
         {v.open && a.local_path && platform === "desktop" ? <button className="link" style={{ fontSize: 12, alignSelf: "flex-start", marginTop: 2 }} onClick={(e) => { e.stopPropagation(); openAttachment(m.id, a.local_id, true).catch((err) => toast(errText(err))); }}>Show in folder</button> : null}
       </span>
       {v.download ? <span className="att-dl"><Icon name="download" /></span> : null}
-      {v.cancel ? <button className="att-x" title={m.outgoing && !a.download ? "Cancel upload" : "Cancel download"} onClick={(e) => { e.stopPropagation(); api.cancelTransfer(a.local_id).catch(() => {}); }}><Icon name="close" /></button> : null}
+      {v.cancel ? <button className="att-x" title={m.outgoing && !a.download ? "Cancel upload" : "Cancel download"} onClick={(e) => { e.stopPropagation(); api.cancelTransfer(a.local_id).catch(e => toast(errText(e))); }}><Icon name="close" /></button> : null}
     </div>
   );
 }
@@ -72,7 +74,8 @@ function attMenu(m: Message, a: Attachment): MenuEntry[] {
     const src = a.source;
     out.push({ label: "Open", icon: "open_in_new", run: () => void openFile(src).catch(() => {}) });
   }
-  if (v.cancel) out.push({ label: m.outgoing && !a.download ? "Cancel upload" : "Cancel download", icon: "close", run: () => void api.cancelTransfer(a.local_id).catch(() => {}) });
+  if (v.cancel) out.push({ label: m.outgoing && !a.download ? "Cancel upload" : "Cancel download", icon: "close", run: () => void api.cancelTransfer(a.local_id).catch(e => toast(errText(e))) });
+  if (m.outgoing && m.state === "failed" && !a.download) out.push({label:"Remove file",icon:"close",run:()=>void api.removeAttachment(m.id,a.local_id).catch(e=>toast(errText(e)))});
   return out;
 }
 

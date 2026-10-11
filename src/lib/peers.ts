@@ -144,6 +144,8 @@ export function attView(a: Attachment, m: Message, prog?: { done: number; total:
   if (m.outgoing && a.source) {
     const uploaded = a.state === "uploading" && prog ? prog.done : a.upload_confirmed ?? 0;
     const uploadPct = a.bytes ? Math.min(100, Math.floor(100 * uploaded / a.bytes)) : 0;
+    if (m.state === "failed" && ["pending", "uploading"].includes(a.state))
+      return { st: "bad", ic: "error", retry: "send", sub: "Message held" + (m.error ? " (" + m.error + ")" : "") + " · " + size };
     switch (a.state) {
       case "uploading": return { st: "busy", ic: "upload", bar: uploadPct, cancel: true, sub: prog ? "Uploading · " + bytes(prog.done) + " of " + bytes(prog.total || a.bytes) : "Uploading · " + bytes(uploaded) + " of " + size };
       case "pending": return { st: "busy", ic: "upload", bar: uploadPct, cancel: true, sub: "Waiting to upload · " + bytes(a.upload_confirmed ?? 0) + " of " + size };

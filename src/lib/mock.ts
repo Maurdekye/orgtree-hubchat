@@ -693,6 +693,14 @@ export const mockApi: Api = {
     m.attachments.forEach((a) => { if (a.state !== "uploaded") a.state = "pending"; });
     void pipeline(m);
   },
+  removeAttachment: async (messageId,localId) => {
+    const m=msgs.find(m=>m.id===messageId);const a=m?.attachments.find(a=>a.local_id===localId);
+    if(!m||!a||!m.outgoing||m.state!=="failed"||a.download) throw Error("Only files in held messages can be removed");
+    if(m.attachments.length===1&&!m.body.trim()) throw Error("Delete the message if it would be empty");
+    m.attachments=m.attachments.filter(a=>a.local_id!==localId);
+    if(!m.attachments.some(a=>["failed","cancelled"].includes(a.state))) {m.state="queued";m.error=null;}
+    emit({type:"chat",peer:m.peer});
+  },
   cancelTransfer: async (localId) => {
     for (const m of msgs) for (const a of m.attachments) if (a.local_id === localId) { a.state = "cancelled"; if (a.download) a.download.state = "cancelled"; chatEv(m.peer); }
   },

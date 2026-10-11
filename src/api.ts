@@ -369,6 +369,7 @@ export const tauriApi = {
   message: (id: string) => invoke<Message | null>("hc_message", { id }),
   send: (msg: NewOutgoing) => invoke<void>("hc_send", { msg }),
   retry: (id: string) => invoke<void>("hc_retry", { id }),
+  removeAttachment: (messageId: string, localId: string) => invoke<void>("hc_remove_attachment", { messageId, localId }),
   cancelTransfer: (localId: string) => invoke<void>("hc_cancel_transfer", { localId }),
   transfers: (after: string | null = null) => invoke<TransferPage>("hc_transfers", { after }),
   download: (messageId: string, localId: string) => invoke<void>("hc_download", { messageId, localId }),
