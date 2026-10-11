@@ -114,13 +114,22 @@ async function checkRaw(): Promise<Available | null> {
     return u ? { version: u.version, install: () => androidInstall(u) } : null;
   }
   if (!isTauri) {
-    await new Promise((r) => setTimeout(r, 700));
     const q = new URLSearchParams(location.search);
-    const u = q.get("update");
+    // `&defer=1` (tools/proof-update-races.mjs): the page settles each check
+    // and each install itself, through window.hcUpdateSeam
+    const seam = q.get("defer") === "1" ? updateSeam() : null;
+    let u = q.get("update");
+    if (seam) u = await new Promise<string>((r) => seam.checks.push(r));
+    else await new Promise((r) => setTimeout(r, 700));
     if (u === "down") throw "the update feed can't be reached";
     if (u !== "1") return null;
     // `&install=fail`: the download stops
     return { version: "0.2.0", install: tracked(async () => {
+      if (seam) {
+        seam.started++;
+        if (!(await new Promise<boolean>((r) => seam.installs.push(r)))) throw "the download stopped";
+        return;
+      }
       await new Promise((r) => setTimeout(r, 1500));
       if (q.get("install") === "fail") throw "the download stopped";
       location.reload();
@@ -141,6 +150,16 @@ async function checkRaw(): Promise<Available | null> {
       await relaunch();
     }),
   };
+}
+
+/** The browser mock's update seam (`?defer=1`): `checks.shift()!(update)`
+ *  settles the oldest check ("1": 0.2.0 is out, "down": the feed fails, "":
+ *  nothing newer), `installs.shift()!(ok)` the oldest install, and `started`
+ *  counts the installs begun. */
+interface UpdateSeam { checks: ((u: string) => void)[]; installs: ((ok: boolean) => void)[]; started: number }
+function updateSeam(): UpdateSeam {
+  const w = window as unknown as { hcUpdateSeam?: UpdateSeam };
+  return (w.hcUpdateSeam ??= { checks: [], installs: [], started: 0 });
 }
 
 /** A desktop install, wherever it starts (the banner, Settings › About, the
