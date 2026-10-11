@@ -12,3 +12,8 @@ pub fn root(app_data: &Path) -> PathBuf {
 pub fn crash_reports(app_data: &Path) -> PathBuf {
     root(app_data).join("crash-reports")
 }
+
+/// The normal log (trace.rs): one file per start, rolled over and pruned.
+pub fn logs(app_data: &Path) -> PathBuf {
+    root(app_data).join("logs")
+}

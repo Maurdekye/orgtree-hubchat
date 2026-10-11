@@ -14,7 +14,16 @@ use crate::core::{self, Core};
 
 type R<T> = Result<T, String>;
 
-fn s<E: std::fmt::Display>(e: E) -> String {
+/// An error as the text the UI shows. Verbose logging records that a command
+/// was refused and, for a core error, its kind (hubchat_core::diag::err_kind);
+/// the text itself is never logged.
+fn s<E: std::fmt::Display + 'static>(e: E) -> String {
+    if hubchat_core::diag::verbose() {
+        match (&e as &dyn std::any::Any).downcast_ref::<hubchat_core::Error>() {
+            Some(err) => tracing::info!(target: "cmd", "refused: {}", hubchat_core::diag::err_kind(err)),
+            None => tracing::info!(target: "cmd", "refused"),
+        }
+    }
     e.to_string()
 }
 
@@ -24,6 +33,8 @@ where
     T: Send + 'static,
     F: Future<Output = R<T>> + Send + 'static,
 {
+    // each piece of UI work is one `ui` request in the log
+    let f = tracing::Instrument::instrument(f, hubchat_core::diag::request("ui"));
     core::get()?.rt.spawn(f).await.map_err(s)?
 }
 
@@ -901,7 +912,7 @@ pub async fn hc_setup_check(hub: String, hubname: String) -> R<SetupReach> {
         Ok(match r {
             Ok(Ok(h)) if h.ok => {
                 if h.name != hubname {
-                    eprintln!("setup: {hub} answers as {:?}, the setup code says {hubname:?}", h.name);
+                    tracing::info!(hub = %hubchat_core::diag::tag("hub", &hub), "setup: the hub answers under another name than the setup code says");
                 }
                 SetupReach { reachable: true, name: Some(h.name), error: None }
             }

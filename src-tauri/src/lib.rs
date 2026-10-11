@@ -12,6 +12,7 @@ mod keylog;
 mod link;
 mod media;
 mod secrets;
+mod trace;
 #[cfg(desktop)]
 mod tray;
 #[cfg(windows)]
@@ -353,7 +354,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(trace::commands(tauri::generate_handler![
             commands::hc_state,
             commands::hc_ui_state,
             commands::hc_check_id,
@@ -444,26 +445,27 @@ pub fn run() {
             link::hc_key_file_import,
             commands::hc_close_dm,
             commands::hc_open_dm,
-        ])
+            trace::hc_log_info,
+            trace::hc_set_verbose_logging,
+            trace::hc_open_logs_folder,
+        ]))
         .setup(|app| {
             // On Android the ConnectionService creates the core (it outlives
             // the activity); here we only attach the UI to it.
             #[cfg(desktop)]
             {
                 use tauri::Manager;
+                let dir = app.path().app_data_dir()?;
                 // first, so a panic anywhere after this leaves a report
-                crash::install(
-                    &app.path().app_data_dir()?,
-                    &app.package_info().version.to_string(),
-                );
+                crash::install(&dir, &app.package_info().version.to_string());
+                trace::init(&dir, &diagnostics::logs(&dir));
                 #[cfg(windows)]
                 if let Some(window) = app.get_webview_window("main") {
                     // Preserve the native resource mask for Task Manager.
                     if let Err(error) = windows_icon::install(&window) {
-                        eprintln!("could not set native window icons: {error}");
+                        tracing::warn!("could not set native window icons: {error}");
                     }
                 }
-                let dir = app.path().app_data_dir()?;
                 let downloads = app
                     .path()
                     .download_dir()
@@ -500,8 +502,13 @@ pub fn run() {
             });
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                trace::shutdown();
+            }
+        });
 }
 
 #[cfg(all(test, desktop))]

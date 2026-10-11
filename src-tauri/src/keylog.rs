@@ -11,6 +11,9 @@ const FILE: &str = "identity-log.txt";
 const MAX: usize = 64 * 1024;
 
 pub fn note(dir: &Path, what: &str) {
+    // the engine log carries the same line (docs/logging.md); this file stays the
+    // small durable record that is never rolled away
+    tracing::info!(target: "keylog", "{what}");
     let path = dir.join(FILE);
     // over the limit: keep the newer half, from a line start
     if let Ok(s) = std::fs::read_to_string(&path) {
