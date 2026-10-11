@@ -94,3 +94,27 @@
   for exact protocol, migration reservation and measured checkpoint limits.
   [verified: pictures.rs, picture_image.rs, store_pictures.rs, engine_pictures.rs,
   hub_pictures.rs, PictureEditor.tsx, ui.tsx]
+
+- 2026-10-11: Crash reports are local only. A Rust panic writes
+  `diagnostics/crash-reports/panic-*.txt` (version, time, OS, thread, location,
+  message, backtrace); Hubchat never uploads one, and the tray's "Crash
+  reports…" is the only way to them. `crash.rs` installs the ONLY panic hook:
+  logging gets a pointer line via `note_panics_in`, never the message. The hook
+  never unwraps, a report stops at 64 KB and only the newest 50 stay. The
+  dialog counts the WebView2 runtime's own dumps but must not imply Hubchat
+  controls whether WebView2 sends them. Non-panic native crashes, panics before
+  setup and release backtrace names are not covered.
+  [decided: user via lead-astra 2026-10-11; verified: `crash.rs`; details and
+  limits: `docs/tray-menu.md`]
+
+- 2026-10-11: The desktop tray shows saved values and operation states, never
+  guesses. Its menu is built once and changed in place, never rebuilt. Anything
+  that writes a value the tray shows must update it: `hc_set_notifications`,
+  `hc_set_autostart` (Settings uses it, not the plugin directly),
+  `hc_set_exit_on_close`, and the updater's `hc_tray_updates`. Tray writes reach
+  the UI as `hc-settings`. Settings › About and the tray share one updater state
+  in `updates.ts`, and every desktop install goes through its `tracked()`. Exit
+  on close is a device file, off by default. Restart frees the single-instance
+  lock and passes only `--hidden`, never the old start link.
+  [decided: user 2026-10-11, mappings approved by lead-astra; verified:
+  `tray.rs`, `updates.ts`; details: `docs/tray-menu.md`]
