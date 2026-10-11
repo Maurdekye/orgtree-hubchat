@@ -144,6 +144,33 @@ class ConnectionService : Service() {
       summary(ctx, nm)
     }
 
+    /** Stable per-message/episode tag; never cleared by read receipts. */
+    @JvmStatic
+    fun notifyTransferFailure(key: String, title: String, body: String, peer: String, replay: String): String {
+      val ctx = appContext ?: return "not ready"
+      return try {
+        val nm = ctx.getSystemService(NotificationManager::class.java)
+        // Respect the user's OS notification permission without retrying forever.
+        if (!nm.areNotificationsEnabled()) return ""
+        val intent = Intent(ctx, MainActivity::class.java)
+          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+          .setAction("dev.orgtree.hubchat.transfer." + key)
+          .putExtra("peer", peer)
+        val open = PendingIntent.getActivity(ctx, 3, intent,
+          PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val n = NotificationCompat.Builder(ctx, CHANNEL_MESSAGES)
+          .setSmallIcon(R.drawable.ic_stat_hubchat)
+          .setContentTitle(title).setContentText(body)
+          .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+          .setCategory(NotificationCompat.CATEGORY_ERROR)
+          .setPriority(NotificationCompat.PRIORITY_HIGH)
+          .setOnlyAlertOnce(true).setSilent(replay == "1")
+          .setAutoCancel(true).setContentIntent(open).build()
+        nm.notify(key, 3, n)
+        ""
+      } catch (_: Exception) { "notice failed" }
+    }
+
     /** The message group's summary, shown by Android when two or more chats
      *  are waiting; silent (the chats' own notifications alert). Tapping it
      *  opens Hubchat. */
