@@ -7,6 +7,7 @@ import { Icon } from "../lib/icons";
 import { displayName, kindOf } from "../lib/peers";
 import { getSnap, useSendRoute, useSnap } from "../lib/store";
 import { closeDm, openDm } from "../lib/dm";
+import { useNavigationIntent } from "../lib/navigationIntent";
 import { chatLinkTarget } from "../lib/chatlink";
 import { installKeyboardImages } from "../lib/keyboardImages";
 import { startTake, useActive, useForeground, useLastChat, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
@@ -44,7 +45,9 @@ type Scr =
 // intervention), but this page's own history.back() still reaches it. Every
 // entry the page adds says so: a depth above 1, or a key of its own.
 let closeOpenMenu: (() => boolean) | null = null;
+let cancelPendingNavigation: (() => void) | null = null;
 (window as unknown as { __hcBack: () => boolean }).__hcBack = () => {
+  cancelPendingNavigation?.();
   if (closeOpenMenu?.()) return true;
   const s = history.state as Record<string, unknown> | null;
   if (!s || !((typeof s.hc === "number" && s.hc > 1) || Object.keys(s).some((k) => k !== "hc"))) return false;
@@ -138,6 +141,7 @@ function ConvMenu({ peer, onContact, onClose, onCloseDm }: { peer: string; onCon
 }
 
 export function Android() {
+  const intent = useNavigationIntent();
   const [stack, setStack] = useState<Scr[]>([{ s: "chats" }]);
   const [dir, setDir] = useState<"enter" | "back" | "">("");
   const depth = useRef(1);
@@ -155,12 +159,13 @@ export function Android() {
   // the open conversation's menu (its address); a screen change closes it
   const [menu, setMenu] = useState<string | null>(null);
   const menuRef = useRef<string | null>(null);
-  const openMenu = useCallback((p: string) => { menuRef.current = p; setMenu(p); }, []);
+  const openMenu = useCallback((p: string) => { intent.invalidate(); menuRef.current = p; setMenu(p); }, [intent]);
   const closeMenu = useCallback(() => { menuRef.current = null; setMenu(null); }, []);
   useEffect(() => {
     closeOpenMenu = () => { if (!menuRef.current) return false; closeMenu(); return true; };
-    return () => { closeOpenMenu = null; };
-  }, [closeMenu]);
+    cancelPendingNavigation = intent.invalidate;
+    return () => { closeOpenMenu = null; cancelPendingNavigation = null; };
+  }, [closeMenu, intent]);
   const navigate = useCallback((s: Scr) => {
     const st = stackRef.current;
     const t = st[st.length - 1];
@@ -173,10 +178,12 @@ export function Android() {
     setStack([...st, s]);
   }, [closeMenu]);
   const go = useCallback((s: Scr) => {
-    if (s.s === "conv") void openDm(s.p).then(() => navigate(s), (e) => toast(errText(e)));
+    const current = intent.begin();
+    if (s.s === "conv") void openDm(s.p).then(() => { if (current()) navigate(s); }, (e) => { if (current()) toast(errText(e)); });
     else navigate(s);
-  }, [navigate]);
+  }, [navigate, intent]);
   const close = useCallback((peer: string) => {
+    const current = intent.begin();
     void closeDm(peer, () => {
       closeMenu();
       // Remove every conversation from the stack so Back cannot restore the closed DM.
@@ -184,13 +191,14 @@ export function Android() {
       depth.current = 1;
       setDir("back");
       setStack([{ s: "chats" }]);
-    });
-  }, [closeMenu]);
-  const back = useCallback(() => { if (depth.current > 1) history.back(); }, []);
+    }, current);
+  }, [closeMenu, intent]);
+  const back = useCallback(() => { intent.invalidate(); if (depth.current > 1) history.back(); }, [intent]);
 
   useEffect(() => {
     history.replaceState({ hc: 1 }, "");
     const pop = (e: PopStateEvent) => {
+      intent.invalidate();
       // back with the menu open: close it and keep the screen (put back the
       // history entry the system back button took)
       if (menuRef.current) { closeMenu(); history.pushState({ hc: depth.current }, ""); return; }
@@ -201,20 +209,22 @@ export function Android() {
     };
     const key = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || document.querySelector(".dialog")) return;
+      intent.invalidate();
       if (menuRef.current) closeMenu(); else back();
     };
     window.addEventListener("popstate", pop);
     window.addEventListener("keydown", key);
     return () => { window.removeEventListener("popstate", pop); window.removeEventListener("keydown", key); };
-  }, [back, closeMenu]);
+  }, [back, closeMenu, intent]);
 
   // a tapped message notification names a chat: open it (at start, and
   // whenever the app comes back to the foreground)
   useEffect(() => {
     const take = () => {
       if (document.visibilityState !== "visible") return;
+      const current = intent.capture();
       return api.takePendingChat().then((p) => {
-        if (!p) return false;
+        if (!p || !current()) return false;
         const t = stackRef.current[stackRef.current.length - 1];
         if (t.s !== "conv" || t.p !== p) go({ s: "conv", p });
         return true;
@@ -229,7 +239,7 @@ export function Android() {
       document.removeEventListener("visibilitychange", take);
       window.removeEventListener("hc-pending", take);
     };
-  }, [go]);
+  }, [go, intent]);
 
   // a phone camera opened a hubchat:// link: a signed-in device's (role give)
   // is joined; a new device's (role take) is looked up on Link a device ›
@@ -237,7 +247,7 @@ export function Android() {
   // Scan setup code opens the org's chat when it's done
   useSetupChat((p) => go({ s: "conv", p }));
   usePendingLink((input) => {
-    if (isSetupLink(input)) { startSetup(input); return; }
+    if (isSetupLink(input)) { intent.invalidate(); startSetup(input); return; }
     // a profile QR's chat link opens that chat; your own opens your profile
     const to = chatLinkTarget(input);
     if (to !== null) {
@@ -246,9 +256,15 @@ export function Android() {
       else go({ s: "conv", p: to });
       return;
     }
-    routeLink(input, "approve").then((r) => (r.k === "join" ? startJoin(r.p.code, r.p.hub, r.p.hubs, r.p.hub_name) : go({ s: "link", tab: "approve", input: r.input })), (e) => toast(errText(e)));
+    const current = intent.begin();
+    routeLink(input, "approve").then((r) => {
+      if (!current()) return;
+      if (r.k === "join") startJoin(r.p.code, r.p.hub, r.p.hubs, r.p.hub_name);
+      else go({ s: "link", tab: "approve", input: r.input });
+    }, (e) => { if (current()) toast(errText(e)); });
   });
   const join = useJoin();
+  useEffect(() => { if (join) intent.invalidate(); }, [join, intent]);
   // the chat the stack is in (also under its info screens); the list alone is none
   const inChat = [...stack].reverse().find((s): s is { s: "conv"; p: string } => s.s === "conv")?.p ?? null;
   // restored over the list only; the back button then leads to the list

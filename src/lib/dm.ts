@@ -4,12 +4,12 @@ import { refreshChats } from "./store";
 import { toast } from "./toast";
 
 /** Navigate only after the core accepted the close; keep drafts and history. */
-export async function closeDm(peer: string, closed: () => void): Promise<void> {
+export async function closeDm(peer: string, closed: () => void, current = () => true): Promise<void> {
   try {
     await api.closeDm(peer);
-    closed();
+    if (current()) closed();
     await refreshChats();
-  } catch (e) { toast(errText(e)); }
+  } catch (e) { if (current()) toast(errText(e)); }
 }
 
 /** Used by every way of opening a conversation, including notification links. */

@@ -10,6 +10,7 @@ import { toast } from "../lib/toast";
 import { hubSummary } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { closeDm, openDm } from "../lib/dm";
+import { useNavigationIntent } from "../lib/navigationIntent";
 import { useActive, useForeground, useLastChat, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { isSetupLink, startSetup, useSetupChat } from "../lib/setup";
 import { chatLinkTarget } from "../lib/chatlink";
@@ -70,6 +71,7 @@ function InfoPanel({ id, peer, onClose }: { id: string; peer: string; onClose: (
 const RAIL_KEY = "hubchat.chatlist.rail";
 
 export function Desktop() {
+  const intent = useNavigationIntent();
   const snap = useSnap();
   const me = snap.state!.me!;
   const hubs = snap.state!.hubs;
@@ -84,8 +86,10 @@ export function Desktop() {
     if (on) { setQ(""); setFilter("all"); }
     setRailState(on);
   }, []);
-  const [ov, setOv] = useState<Overlay>(null);
-  const [info, setInfo] = useState<Info>(null);
+  const [ov, setOverlay] = useState<Overlay>(null);
+  const setOv = useCallback((value: Overlay) => { intent.invalidate(); setOverlay(value); }, [intent]);
+  const [info, setPanel] = useState<Info>(null);
+  const setInfo = useCallback((value: Info | ((prev: Info) => Info)) => { intent.invalidate(); setPanel(value); }, [intent]);
   const fg = useForeground("desktop");
   useActive(fg);
   useReadTracking(ov ? null : chat, fg);
@@ -93,23 +97,29 @@ export function Desktop() {
 
   // the panel stays open across chats: Contact info follows the open chat,
   // another chat's message info gives way to it (the prototype's openChat)
-  const open = useCallback((peer: string) => {
-    void openDm(peer).then(() => { setChat(peer); setOv(null); setInfo((i) => (i?.k === "msg" && i.peer !== peer ? { k: "contact" } : i)); }, (e) => toast(errText(e)));
-  }, []);
+  const open = useCallback((peer: string, contact = false) => {
+    const current = intent.begin();
+    void openDm(peer).then(() => {
+      if (!current()) return;
+      setChat(peer); setOverlay(null);
+      setPanel((i) => contact || (i?.k === "msg" && i.peer !== peer) ? { k: "contact" } : i);
+    }, (e) => { if (current()) toast(errText(e)); });
+  }, [intent]);
   const close = useCallback((peer: string) => {
-    void closeDm(peer, () => { setChat((p) => p === peer ? null : p); setInfo((i) => i?.k === "msg" && i.peer === peer ? null : i); });
-  }, []);
-  const onInfo = useCallback((m: Message) => setInfo({ k: "msg", id: m.id, peer: m.peer }), []);
-  const toggleContact = useCallback(() => setInfo((i) => (i?.k === "contact" ? null : { k: "contact" })), []);
+    const current = intent.begin();
+    void closeDm(peer, () => { setChat((p) => p === peer ? null : p); setPanel((i) => i?.k === "msg" && i.peer === peer ? null : i); }, current);
+  }, [intent]);
+  const onInfo = useCallback((m: Message) => setInfo({ k: "msg", id: m.id, peer: m.peer }), [setInfo]);
+  const toggleContact = useCallback(() => setInfo((i) => (i?.k === "contact" ? null : { k: "contact" })), [setInfo]);
   // the right-click menus' "Contact info": that chat, with its panel
-  const contactInfo = useCallback((peer: string) => { open(peer); setInfo({ k: "contact" }); }, [open]);
+  const contactInfo = useCallback((peer: string) => open(peer, true), [open]);
   const settings = (tab: SetTab) => setOv({ k: "settings", tab });
   // a hubchat:// link the system opened us with: a signed-in device's (role
   // give) is joined; a new device's (role take) is approved here
   // Scan setup code opens the org's chat when it's done
   useSetupChat((p) => open(p));
   usePendingLink((input) => {
-    if (isSetupLink(input)) { startSetup(input); return; }
+    if (isSetupLink(input)) { intent.invalidate(); startSetup(input); return; }
     // a profile QR's chat link opens that chat; your own opens your profile
     const to = chatLinkTarget(input);
     if (to !== null) {
@@ -118,7 +128,12 @@ export function Desktop() {
       else open(to);
       return;
     }
-    routeLink(input, "approve").then((r) => (r.k === "join" ? startJoin(r.p.code, r.p.hub, r.p.hubs, r.p.hub_name) : setOv({ k: "link", tab: "approve", input: r.input })), (e) => toast(errText(e)));
+    const current = intent.begin();
+    routeLink(input, "approve").then((r) => {
+      if (!current()) return;
+      if (r.k === "join") startJoin(r.p.code, r.p.hub, r.p.hubs, r.p.hub_name);
+      else setOv({ k: "link", tab: "approve", input: r.input });
+    }, (e) => { if (current()) toast(errText(e)); });
   });
   // joining another identity's link: it replaces whatever overlay started it
   const join = useJoin();
@@ -164,13 +179,14 @@ export function Desktop() {
         if (chat && !ov && !document.querySelector(".scrim")) { e.preventDefault(); toggleContact(); }
       }
       else if (e.key === "Escape") {
+        intent.invalidate();
         if (document.querySelector(".modal.confirm, .modal.link3")) return;
         if (ov) { e.preventDefault(); setOv(null); } else if (info) setInfo(null);
       }
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [ov, join, info, chat, open, toggleContact, setRail]);
+  }, [ov, join, info, chat, open, toggleContact, setRail, setOv, setInfo, intent]);
 
   const { rows, counts, total } = useFilteredChats(filter, q, chat);
   rowsRef.current = rows;
