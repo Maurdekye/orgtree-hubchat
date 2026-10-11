@@ -617,6 +617,9 @@ async fn queued_upload_cancel_survives_reopen_and_removal_is_explicit() {
     assert!(store.complete_upload(&id,"late-reply","hub").is_err());
     assert!(store.set_upload(&id,"uploading","late-session","hub").is_err());
     store.requeue_send("with-body").unwrap();
+    store.defer_send("with-body","hub",0).unwrap();
+    e.fail("peer","with-body","late worker error").unwrap();
+    assert_eq!(store.message("with-body").unwrap().unwrap().error.as_deref(),Some("Upload cancelled; retry or remove the file"));
     assert_eq!(store.message("with-body").unwrap().unwrap().state,"failed");
     assert!(store.queued().unwrap().iter().all(|m|m.id!="with-body"));
     drop(e);drop(store);
@@ -649,10 +652,13 @@ async fn cancelling_active_upload_blocks_early_retry_and_never_dispatches_mail()
         assert!(tokio::time::timeout(Duration::from_millis(100),listener.accept()).await.is_err(),"cancel must not dispatch mail");
     });
     let controls=async {
-        wait.await.unwrap();e.cancel_transfer(&id).unwrap();
+        wait.await.unwrap();
+        assert!(e.send_one_on("m",(url.clone(),client.clone(),1024)).await.unwrap(),"busy launch must not request a deferral");
+        assert_eq!(store.message("m").unwrap().unwrap().state,"sending");
+        e.cancel_transfer(&id).unwrap();
         assert!(e.retry("m").is_err());assert!(e.remove_attachment("m",&id).await.is_err());
     };
-    let (result,())=tokio::time::timeout(Duration::from_secs(3),async{tokio::join!(e.send_one_on("m",(url,client,1024)),controls)}).await.unwrap();
+    let (result,())=tokio::time::timeout(Duration::from_secs(3),async{tokio::join!(e.send_one_on("m",(url.clone(),client.clone(),1024)),controls)}).await.unwrap();
     assert!(result.is_ok());assert_eq!(store.message("m").unwrap().unwrap().state,"failed");
     assert_eq!(store.message("m").unwrap().unwrap().attachments[0].state,"cancelled");
     assert!(e.send_writers.lock().unwrap().is_empty());e.retry("m").unwrap();

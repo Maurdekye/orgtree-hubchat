@@ -1,6 +1,10 @@
 //! Atomic local controls; the engine serializes retry/admission with send writers.
 use super::*;
 impl Store {
+    pub(crate) fn fail_send(&self, id: &str, why: &str) -> Result<()> {
+        self.with(|c| c.execute("UPDATE messages SET state='failed',error=? WHERE id=? AND state IN ('queued','sending')",params![why,id]).map(|_|()))
+    }
+
     pub(crate) fn cancel_upload(&self, id: &str) -> Result<(String, Vec<String>)> {
         self.with(|c| {
             let tx=c.transaction()?;

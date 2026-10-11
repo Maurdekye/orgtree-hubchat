@@ -1553,7 +1553,8 @@ impl Engine {
     async fn send_one_on(&self, id: &str, (url,client,max):(String,HubClient,u64)) -> Result<bool> {
         let (m,_writer)={
             let mut writers=self.send_writers.lock().unwrap();
-            if writers.contains(id) {return Ok(false);}
+            // A duplicate launch is handled without changing the active worker's queue state.
+            if writers.contains(id) {return Ok(true);}
             let Some(m)=self.store.message(id)? else{return Ok(false)};
             if !m.outgoing || !matches!(m.state.as_str(),"queued"|"sending") {return Ok(false)}
             self.store.set_state(id,"sending",None)?;
@@ -1834,7 +1835,7 @@ impl Engine {
     }
 
     fn fail(&self, peer: &str, id: &str, why: &str) -> Result<()> {
-        self.store.set_state(id, "failed", Some(why))?;
+        self.store.fail_send(id, why)?;
         self.host.event(Event::Chat { peer: peer.into() });
         Ok(())
     }
