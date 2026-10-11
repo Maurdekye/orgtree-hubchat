@@ -108,6 +108,7 @@ impl Store {
     pub(crate) fn download_exported(&self, id: &str, from: &str, to: &str) -> Result<()> {
         let n = self.with(|c| {
             let tx = c.transaction()?;
+            tx.execute("INSERT OR IGNORE INTO export_cleanup(key,source,local_id) SELECT local_id||'-'||digest,CASE WHEN ?1!=?2 THEN ?2 ELSE '' END,local_id FROM download_jobs WHERE local_id=?3 AND destination=?2 AND digest IS NOT NULL AND state IN ('exporting','done')",params![to,from,id])?;
             let n = tx.execute("UPDATE download_jobs SET destination=?,exported=1,state='done',error=NULL WHERE local_id=? AND destination=? AND state IN ('exporting','done')", params![to,id,from])?;
             if n > 0 {
                 tx.execute("UPDATE attachments SET local_path=?,state='done',error=NULL WHERE local_id=?", params![to,id])?;

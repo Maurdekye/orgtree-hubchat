@@ -79,7 +79,45 @@ fn discover_orphans(root: &Path, store: &Store) -> Result<()> {
     )
 }
 impl Engine {
+    // Caller owns the transfer claim (either the publisher or the collector).
+    pub(super) async fn remove_export_receipt(&self, row: &crate::store::ExportCleanup, now: u64) {
+        let host = self.host.clone();
+        let key = row.key.clone();
+        let receipt = matches!(
+            tokio::task::spawn_blocking(move || host.download_export_committed(&key)).await,
+            Ok(Ok(()))
+        );
+        let path = Path::new(&row.source);
+        let root = self.host.download_dir();
+        let bytes = if row.source.is_empty() {
+            true
+        } else if path.parent() != Some(root.as_path())
+            || path
+                .symlink_metadata()
+                .is_ok_and(|m| m.file_type().is_symlink())
+        {
+            // A stored path outside our download directory never grants deletion.
+            true
+        } else {
+            match tokio::fs::remove_file(path).await {
+                Ok(()) => true,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+                Err(_) => false,
+            }
+        };
+        let _ = self
+            .store
+            .export_cleanup_finished(row, receipt && bytes, now);
+    }
     pub(super) async fn clean_downloads(&self, now: u64) {
+        if let Ok(rows) = self.store.export_cleanup_due(now, None) {
+            for row in rows {
+                let Some(_claim) = claim(self, &row.local_id) else {
+                    continue;
+                };
+                self.remove_export_receipt(&row, now).await;
+            }
+        }
         let root = self.host.download_dir().join(".hubchat-downloads");
         let scan_root = root.clone();
         let store = self.store.clone();

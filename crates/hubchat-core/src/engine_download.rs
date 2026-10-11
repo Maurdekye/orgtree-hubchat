@@ -369,11 +369,10 @@ impl Engine {
         let destination = exported?.unwrap_or_else(|| job.destination.clone());
         self.store
             .download_exported(&job.local_id, &job.destination, &destination)?;
-        let host = self.host.clone();
-        let _ = tokio::task::spawn_blocking(move || host.download_export_committed(&key)).await;
-        if destination != job.destination {
-            // Only our private completed download, never the original picked file.
-            let _ = tokio::fs::remove_file(source).await;
+        // The writer still owns this local id. Failed postcommit work remains
+        // durable for the maintenance pass and never turns a saved file red.
+        if let Ok(rows) = self.store.export_cleanup_due(unix_ms(),Some(&job.local_id)) {
+            for row in rows { self.remove_export_receipt(&row,unix_ms()).await; }
         }
         Ok(destination.into())
     }
@@ -1098,6 +1097,48 @@ mod tests {
             server.await.unwrap();
         }
     }
+    #[tokio::test]
+    async fn export_cleanup_survives_commit_crash_deletion_and_platform_failure() {
+        struct ReceiptHost {dir:PathBuf, fail:std::sync::atomic::AtomicBool}
+        impl Host for ReceiptHost {
+            fn event(&self,_:Event) {}
+            fn download_dir(&self)->PathBuf {self.dir.clone()}
+            fn open_source(&self,p:&str)->std::io::Result<std::fs::File>{std::fs::File::open(p)}
+            fn download_export_committed(&self,key:&str)->std::io::Result<()> {
+                assert!(key.ends_with("-digest"));
+                if self.fail.swap(false,std::sync::atomic::Ordering::SeqCst) {return Err(std::io::Error::other("injected receipt failure"));}
+                match std::fs::remove_file(self.dir.join("receipt")) {
+                    Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Ok(()), result=>result,
+                }
+            }
+        }
+        let dir=tempfile::tempdir().unwrap();let db=dir.path().join("store.db");
+        let private=dir.path().join("private.bin");let public=dir.path().join("public.bin");
+        std::fs::write(&private,b"abc").unwrap();std::fs::write(&public,b"saved").unwrap();
+        std::fs::write(dir.path().join("receipt"),b"uri").unwrap();
+        let store=Arc::new(Store::open(&db).unwrap());let lid=attach(&store,"http://127.0.0.1:9",3);
+        let j=store.begin_download(&lid,"unused.part",&private.to_string_lossy()).unwrap();
+        store.download_publishing(&lid,j.attempt,"digest",&private.to_string_lossy()).unwrap();
+        store.download_done(&lid,j.attempt,&private.to_string_lossy()).unwrap();
+        store.download_exported(&lid,&private.to_string_lossy(),&public.to_string_lossy()).unwrap();
+        store.delete_message("message").unwrap();drop(store);
+        // Crash occurred after pointer commit, before receipt/copy cleanup.
+        let store=Arc::new(Store::open(&db).unwrap());
+        let host=Arc::new(ReceiptHost{dir:dir.path().into(),fail:std::sync::atomic::AtomicBool::new(true)});
+        let e=fixture_host(store.clone(),"http://127.0.0.1:9",host);
+        #[cfg(windows)]
+        let held={use std::os::windows::fs::OpenOptionsExt;std::fs::OpenOptions::new().read(true).share_mode(0).open(&private).unwrap()};
+        e.clean_downloads(100).await;
+        assert!(store.export_cleanup_due(100,None).unwrap().is_empty());
+        assert!(dir.path().join("receipt").exists());
+        #[cfg(windows)]
+        {assert!(private.exists());drop(held);}
+        e.clean_downloads(30100).await;
+        assert!(store.export_cleanup_due(u64::MAX/2,None).unwrap().is_empty());
+        assert!(!private.exists());assert!(!dir.path().join("receipt").exists());
+        assert_eq!(std::fs::read(&public).unwrap(),b"saved","cleanup never touches exported bytes");
+    }
+
     #[tokio::test]
     async fn orphan_scan_pages_old_files_and_preserves_referenced_recent_and_unrelated_bytes() {
         let dir=tempfile::tempdir().unwrap();let root=dir.path().join(".hubchat-downloads");

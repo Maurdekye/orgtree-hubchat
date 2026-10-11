@@ -1,5 +1,44 @@
 use super::*;
+#[derive(Debug)]
+pub(crate) struct ExportCleanup {
+    pub key: String,
+    pub source: String,
+    pub local_id: String,
+}
+
 impl Store {
+    pub(crate) fn export_cleanup_due(
+        &self,
+        now: u64,
+        id: Option<&str>,
+    ) -> Result<Vec<ExportCleanup>> {
+        self.with(|c| {
+            let mut q=c.prepare("SELECT key,source,local_id FROM export_cleanup WHERE retry_at<=?1 AND (?2 IS NULL OR local_id=?2) ORDER BY retry_at,key,source LIMIT 32")?;
+            let rows=q.query_map(params![now,id],|r|Ok(ExportCleanup{key:r.get(0)?,source:r.get(1)?,local_id:r.get(2)?}))?.collect();rows
+        })
+    }
+    pub(crate) fn export_cleanup_finished(
+        &self,
+        row: &ExportCleanup,
+        ok: bool,
+        now: u64,
+    ) -> Result<()> {
+        self.with(|c| {
+            if ok {
+                c.execute(
+                    "DELETE FROM export_cleanup WHERE key=? AND source=?",
+                    params![row.key, row.source],
+                )?;
+            } else {
+                c.execute(
+                    "UPDATE export_cleanup SET retry_at=? WHERE key=? AND source=?",
+                    params![now + 30000, row.key, row.source],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
     pub(crate) fn stale_downloads(&self, now: u64) -> Result<Vec<(String, String)>> {
         self.with(|c| {
             let mut q=c.prepare("SELECT local_id,partial FROM download_jobs WHERE updated_ms<=?1 AND cleanup_at<=?2 AND state NOT IN ('publishing','exporting','done') ORDER BY cleanup_at,local_id LIMIT 32")?;

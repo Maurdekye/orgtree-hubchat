@@ -216,6 +216,14 @@ END;
 "#,
     // 9: explain a zero-offset restart until fresh bytes are confirmed.
     r#"ALTER TABLE download_jobs ADD COLUMN restarted INTEGER NOT NULL DEFAULT 0;"#,
+    // 10: postcommit platform receipts/private copies survive cleanup crashes.
+    r#"
+CREATE TABLE export_cleanup (
+ key TEXT NOT NULL,source TEXT NOT NULL,local_id TEXT NOT NULL,
+ retry_at INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(key,source)
+);
+CREATE INDEX export_cleanup_due ON export_cleanup(retry_at,key,source);
+"#,
 ];
 
 pub struct Store {
@@ -1951,3 +1959,4 @@ pub use transfer_failures::TransferFailure;
 
 #[path = "download_gc_store.rs"]
 mod download_gc_store;
+pub(crate) use download_gc_store::ExportCleanup;
