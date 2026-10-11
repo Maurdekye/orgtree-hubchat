@@ -480,6 +480,16 @@ pub fn hc_chats() -> R<Vec<ChatSummary>> {
 }
 
 #[tauri::command]
+pub fn hc_close_dm(peer: String) -> R<()> {
+    engine()?.close_dm(&peer).map_err(s)
+}
+
+#[tauri::command]
+pub fn hc_open_dm(peer: String) -> R<()> {
+    engine()?.open_dm(&peer).map_err(s)
+}
+
+#[tauri::command]
 /// A page of a chat (lazy history, user 23:46Z): the newest `limit` before
 /// the message (`before_at`, `before_id`), or, with `from_*`, everything
 /// from that message on (a re-read of what the chat shows).

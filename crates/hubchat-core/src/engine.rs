@@ -1085,7 +1085,7 @@ impl Engine {
                                 continue;
                             }
                         }
-                        let fresh = self.store.upsert_synced_at(url, &me, m, self.offset(url))?;
+                        let fresh = self.store.upsert_live_synced_at(url, &me, m, self.offset(url))?;
                         self.body_changed.notify_one();
                         let incoming = m.env.from != me;
                         if !incoming && (!m.env.attachments.is_empty() || m.env.body.len() as u64 > BODY_INLINE_MAX) {
@@ -1232,6 +1232,20 @@ impl Engine {
             v.retain(|m| m.created_at >= floor);
         }
         Ok(v)
+    }
+
+    /// Hide only this device's DM list entry; keep its history and files.
+    pub fn close_dm(&self, peer: &str) -> Result<()> {
+        self.store.close_dm(peer)?;
+        self.host.event(Event::Chat { peer: peer.to_owned() });
+        Ok(())
+    }
+
+    pub fn open_dm(&self, peer: &str) -> Result<()> {
+        if self.store.open_dm(peer)? {
+            self.host.event(Event::Chat { peer: peer.to_owned() });
+        }
+        Ok(())
     }
 
     /// How far back the chat with `peer` may show (our clock, the store's

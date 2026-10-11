@@ -613,6 +613,7 @@ impl Store {
                 params![env.id, env.from, hub, body, env.kind, env.reply_to, env.sent_at, env.received_at, now],
             )?;
             if n > 0 {
+                close_dm::reopen(&tx, &env.from)?;
                 for (i, a) in env.attachments.iter().enumerate() {
                     insert_remote_attachment(&tx, hub, &env.id, i, a)?;
                 }
@@ -762,7 +763,8 @@ impl Store {
             let mut st = c.prepare(
                 "SELECT peer, MAX(created_at) AS last, SUM(CASE WHEN outgoing=0 AND seen=0 THEN 1 ELSE 0 END)
                    + (SELECT COALESCE(SUM(h.old_unread), 0) FROM history_marks h WHERE h.peer=messages.peer)
-                 FROM messages GROUP BY peer ORDER BY last DESC",
+                 FROM messages WHERE NOT EXISTS(SELECT 1 FROM closed_dms d WHERE d.peer=messages.peer)
+                 GROUP BY peer ORDER BY last DESC",
             )?;
             let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? as u64)))?;
             rows.collect()
@@ -796,7 +798,7 @@ impl Store {
         self.with(|c| {
             c.execute_batch(
                 "DELETE FROM attachments; DELETE FROM messages; DELETE FROM roster; DELETE FROM hubs;
-                 DELETE FROM drafts; DELETE FROM meta;",
+                 DELETE FROM drafts; DELETE FROM meta; DELETE FROM closed_dms;",
             )
         })
     }
@@ -814,6 +816,16 @@ impl Store {
     /// ms): a message sorts by when the hub received it, on our clock, and
     /// one held on several hubs by the earliest of those times.
     pub fn upsert_synced_at(&self, hub: &str, me: &str, m: &SyncedMessage, offset_ms: i64) -> Result<bool> {
+        self.upsert_synced_with_visibility(hub, me, m, offset_ms, false)
+    }
+
+    /// Forward sync admits new incoming mail, including mail already read on
+    /// another device. Historical pages and duplicate/receipt updates stay closed.
+    pub fn upsert_live_synced_at(&self, hub: &str, me: &str, m: &SyncedMessage, offset_ms: i64) -> Result<bool> {
+        self.upsert_synced_with_visibility(hub, me, m, offset_ms, true)
+    }
+
+    fn upsert_synced_with_visibility(&self, hub: &str, me: &str, m: &SyncedMessage, offset_ms: i64, live: bool) -> Result<bool> {
         let env = &m.env;
         let at = shift_ms(&env.received_at, -offset_ms).unwrap_or_else(|| env.received_at.clone());
         let outgoing = env.from == me;
@@ -851,6 +863,9 @@ impl Store {
             let existing: Option<String> =
                 tx.query_row("SELECT state FROM messages WHERE id=?", [&env.id], |r| r.get(0)).optional()?;
             let fresh = existing.is_none();
+            if live && fresh && !outgoing {
+                close_dm::reopen(&tx, peer)?;
+            }
             match existing {
                 None => {
                     tx.execute(
@@ -2004,3 +2019,6 @@ pub(crate) use download_gc_store::ExportCleanup;
 
 #[path = "body_store.rs"]
 mod body_store;
+
+#[path = "close_dm.rs"]
+mod close_dm;

@@ -448,6 +448,8 @@ pub fn run() {
             link::hc_restore_qr,
             link::hc_key_file_export,
             link::hc_key_file_import,
+            commands::hc_close_dm,
+            commands::hc_open_dm,
         ])
         .setup(|app| {
             // On Android the ConnectionService creates the core (it outlives
