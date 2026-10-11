@@ -203,3 +203,182 @@ async fn lost_completion_and_partial_resume_use_confirmed_server_offset() {
         server.await.unwrap();
     }
 }
+
+use hubchat_core::download::{DownloadCheckpoint, DownloadSpec, SaveCheckpoint};
+use std::sync::{Arc, Mutex};
+fn checkpoint(n: u64, validator: Option<&str>) -> DownloadCheckpoint {
+    DownloadCheckpoint {
+        confirmed: n,
+        validator: validator.map(str::to_owned),
+        updated_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64,
+    }
+}
+fn save_checkpoint(
+    path: std::path::PathBuf,
+    value: Arc<Mutex<DownloadCheckpoint>>,
+) -> SaveCheckpoint {
+    Arc::new(move |cp| {
+        assert!(std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0) >= cp.confirmed);
+        *value.lock().unwrap() = cp.clone();
+        Ok(())
+    })
+}
+
+#[tokio::test]
+async fn download_restarts_from_durable_checkpoint_without_unconfirmed_tail() {
+    let (listener, hub, me) = client().await;
+    let dir = tempfile::tempdir().unwrap();
+    let partial = dir.path().join("private.part");
+    let state = Arc::new(Mutex::new(DownloadCheckpoint::default()));
+    let save = save_checkpoint(partial.clone(), state.clone());
+    let total = 9 * 1024 * 1024;
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        assert!(!request(&mut socket)
+            .await
+            .to_ascii_lowercase()
+            .contains("\r\nrange:"));
+        socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {total}\r\nETag: \"v1\"\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+        socket
+            .write_all(&vec![41u8; 8 * 1024 * 1024])
+            .await
+            .unwrap();
+        socket.shutdown().await.unwrap();
+        drop(socket);
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let headers = request(&mut socket).await.to_ascii_lowercase();
+        assert!(headers.contains("range: bytes=8388608-"));
+        assert!(headers.contains("if-range: \"v1\""));
+        socket.write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Length: 1048576\r\nContent-Range: bytes 8388608-9437183/9437184\r\nETag: \"v1\"\r\nConnection: close\r\n\r\n").await.unwrap();
+        socket.write_all(&vec![42u8; 1024 * 1024]).await.unwrap();
+    });
+    assert!(hub
+        .download_resumable(
+            &me,
+            DownloadSpec {
+                attachment_id: "file",
+                partial: &partial,
+                total,
+                checkpoint: DownloadCheckpoint::default()
+            },
+            save.clone(),
+            None,
+            CancelFlag::default()
+        )
+        .await
+        .is_err());
+    let saved = state.lock().unwrap().clone();
+    assert_eq!(saved.confirmed, 8 * 1024 * 1024);
+    // Bytes beyond the durable checkpoint can come from the interrupted write.
+    let mut file = tokio::fs::OpenOptions::new()
+        .append(true)
+        .open(&partial)
+        .await
+        .unwrap();
+    file.write_all(b"unconfirmed tail").await.unwrap();
+    drop(file);
+    let done = hub
+        .download_resumable(
+            &me,
+            DownloadSpec {
+                attachment_id: "file",
+                partial: &partial,
+                total,
+                checkpoint: saved,
+            },
+            save,
+            None,
+            CancelFlag::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(done.confirmed, total);
+    let bytes = std::fs::read(partial).unwrap();
+    assert!(bytes[..8 * 1024 * 1024].iter().all(|x| *x == 41));
+    assert!(bytes[8 * 1024 * 1024..].iter().all(|x| *x == 42));
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn download_eof_checkpoint_and_validator_replacement_are_safe() {
+    for mode in [
+        "eof",
+        "changed",
+        "bad-range",
+        "bad-validator",
+        "expired",
+        "416",
+    ] {
+        let (listener, hub, me) = client().await;
+        let dir = tempfile::tempdir().unwrap();
+        let partial = dir.path().join("private.part");
+        std::fs::write(
+            &partial,
+            if mode == "eof" {
+                b"abc".as_slice()
+            } else {
+                b"ab".as_slice()
+            },
+        )
+        .unwrap();
+        let mut initial = checkpoint(if mode == "eof" { 3 } else { 2 }, Some("\"v1\""));
+        if mode == "expired" {
+            initial.updated_ms = 1;
+        }
+        let state = Arc::new(Mutex::new(initial.clone()));
+        let save = save_checkpoint(partial.clone(), state.clone());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let headers = request(&mut socket).await.to_ascii_lowercase();
+            if mode == "expired" {
+                assert!(!headers.contains("\r\nrange:"));
+            } else {
+                assert!(headers.contains("range: bytes=2-"));
+            }
+            let answer=match mode {
+                "eof" => "HTTP/1.1 206 Partial Content\r\nContent-Length: 1\r\nContent-Range: bytes 2-2/3\r\nETag: \"v1\"\r\n\r\nc",
+                "changed" | "expired" => "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nETag: \"v2\"\r\n\r\nxyz",
+                "bad-range" => "HTTP/1.1 206 Partial Content\r\nContent-Length: 1\r\nContent-Range: bytes 1-2/3\r\nETag: \"v1\"\r\n\r\nc",
+                "416" => "HTTP/1.1 416 Range Not Satisfiable\r\nContent-Length: 0\r\n\r\n",
+                _ => "HTTP/1.1 206 Partial Content\r\nContent-Length: 1\r\nContent-Range: bytes 2-2/3\r\nETag: \"v2\"\r\n\r\nc"
+            };
+            socket.write_all(answer.as_bytes()).await.unwrap();
+        });
+        let result = hub
+            .download_resumable(
+                &me,
+                DownloadSpec {
+                    attachment_id: "file",
+                    partial: &partial,
+                    total: 3,
+                    checkpoint: initial,
+                },
+                save,
+                None,
+                CancelFlag::default(),
+            )
+            .await;
+        match mode {
+            "eof" => {
+                assert_eq!(result.unwrap().confirmed, 3);
+                assert_eq!(std::fs::read(&partial).unwrap(), b"abc");
+            }
+            "changed" | "expired" => {
+                assert_eq!(result.unwrap().confirmed, 3);
+                assert_eq!(std::fs::read(&partial).unwrap(), b"xyz");
+            }
+            "416" => {
+                assert!(result.is_err());
+                assert_eq!(state.lock().unwrap().confirmed, 0);
+            }
+            _ => {
+                assert!(result.is_err());
+                assert_eq!(std::fs::read(&partial).unwrap(), b"ab");
+            }
+        }
+        server.await.unwrap();
+    }
+}

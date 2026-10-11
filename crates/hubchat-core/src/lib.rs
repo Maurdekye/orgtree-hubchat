@@ -20,3 +20,5 @@ pub use hub::{HubAddress, HubClient};
 pub use identity::Identity;
 
 mod staging;
+
+pub mod download;
