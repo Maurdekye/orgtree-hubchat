@@ -193,6 +193,11 @@ impl crate::core::Platform for AndroidPlatform {
             .map(|s| Some(s.to_owned()))
             .ok_or_else(|| std::io::Error::other("Android returned no saved file location"))
     }
+    fn transfer_published(&self, key: &str) -> std::io::Result<()> {
+        let j = JNI.get().ok_or_else(|| std::io::Error::other("Android is not ready"))?;
+        call(&j.service, "transferPublished", &[key], false)
+            .map(|_| ()).ok_or_else(|| std::io::Error::other("Could not remove download receipt"))
+    }
     fn take_pending_link(&self) -> Option<String> {
         let j = JNI.get()?;
         call(&j.service, "takePendingLink", &[], true).filter(|p| !p.is_empty())

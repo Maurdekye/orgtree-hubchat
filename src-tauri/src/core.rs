@@ -42,6 +42,7 @@ pub trait Platform: Send + Sync + 'static {
     /// implementations retain a journal and never delete the private source.
     fn publish_transfer(&self, _key: &str, _path: &std::path::Path, _name: &str)
         -> std::io::Result<Option<String>> { Ok(None) }
+    fn transfer_published(&self, _key: &str) -> std::io::Result<()> { Ok(()) }
     /// A hubchat:// link the system opened the app with (taken once).
     fn take_pending_link(&self) -> Option<String> {
         None
@@ -259,6 +260,9 @@ impl Host for ShellHost {
     fn publish_download(&self, key: &str, path: &std::path::Path, name: &str)
         -> std::io::Result<Option<String>> {
         self.platform.publish_transfer(key, path, name)
+    }
+    fn download_export_committed(&self, key: &str) -> std::io::Result<()> {
+        self.platform.transfer_published(key)
     }
     fn staging_dir(&self) -> PathBuf { self.staging.clone() }
 }
