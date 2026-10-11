@@ -3,7 +3,7 @@
 // once and re-reads only what an `hc` event says changed; transfer progress
 // is kept apart so a progress tick re-renders only the file card it concerns.
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { api, type ChatSummary, type Contact, type HcEvent, type Message, type OlderPage, type SendRoute, type State } from "../api";
+import { api, type ChatSummary, type Contact, type HcEvent, type Message, type NewOutgoing, type OlderPage, type SendRoute, type State } from "../api";
 import { errText } from "./native";
 
 export interface Snap {
@@ -239,12 +239,54 @@ setInterval(() => {
   if (n) activeChanged();
 }, 5000);
 
+// Local preparation survives navigation between chats. No message is admitted
+// until the core has safely copied all files; progress is not a send receipt.
+export interface Preparation {
+  message: NewOutgoing;
+  phase: "preparing" | "queued" | "failed";
+  done: number;
+  total: number;
+  name: string;
+  error: string | null;
+}
+const preparations = new Map<string, Preparation>();
+const psubs = new Set<() => void>();
+const preparationChanged = () => psubs.forEach((f) => f());
+export const getPreparation = (peer: string) => preparations.get(peer) ?? null;
+export function usePreparation(peer: string) {
+  return useSyncExternalStore((f) => { psubs.add(f); return () => { psubs.delete(f); }; }, () => preparations.get(peer) ?? null);
+}
+export function clearPreparation(peer: string) {
+  if (preparations.get(peer)?.phase === "preparing") return;
+  preparations.delete(peer); preparationChanged();
+}
+export async function prepareSend(message: NewOutgoing): Promise<void> {
+  if (preparations.get(message.peer)?.phase === "preparing") return;
+  const p: Preparation = { message, phase: "preparing", done: 0, total: (message.attachments ?? []).reduce((n, a) => n + a.bytes, 0), name: message.attachments?.[0]?.name ?? "", error: null };
+  preparations.set(message.peer, p); preparationChanged();
+  try {
+    await api.setDraft(message.peer, message.body);
+    await api.send(message);
+    // A completed command after an identity switch must not touch the new UI.
+    if (preparations.get(message.peer)?.message.id !== message.id) return;
+    noteDraft(message.peer, "");
+    await api.setDraft(message.peer, "").catch(() => {});
+    preparations.set(message.peer, { ...p, phase: "queued" });
+    void refreshChats();
+  } catch (e) {
+    if (preparations.get(message.peer)?.message.id !== message.id) return;
+    preparations.set(message.peer, { ...p, phase: "failed", error: errText(e) });
+  }
+  preparationChanged();
+}
+
 // ------------------------------------------------------------------- misc
 export function setOnboarding(on: boolean) { set({ onboarding: on }); }
 
 /** This device now holds another identity (a link switched it): drop what
  *  belonged to the old one and load the new one, like a fresh sign-in. */
 export async function reloadAfterSwitch(): Promise<void> {
+  preparations.clear(); preparationChanged();
   transfers.clear(); tsubs.forEach((f) => f());
   active.clear(); activeChanged();
   set({ chats: [], directory: [], byAddr: new Map(), drafts: {}, onboarding: false, chatsReady: false });
@@ -257,6 +299,14 @@ export function noteDraft(peer: string, body: string) {
 
 function onEvent(e: HcEvent) {
   switch (e.type) {
+    case "preparing": {
+      const p = preparations.get(e.peer);
+      if (p?.phase === "preparing" && p.message.id === e.message_id) {
+        preparations.set(e.peer, { ...p, done: e.done, total: e.total, name: e.name });
+        preparationChanged();
+      }
+      break;
+    }
     case "chat": schedule("chats"); chatChanged(e.peer); recheckTransfers(e.peer); break;
     case "incoming": schedule("chats"); chatChanged(e.peer); break;
     case "hub": schedule("state"); break;

@@ -214,6 +214,7 @@ export type HcEvent =
   | { type: "incoming"; peer: string; id: string; preview: string }
   | { type: "hub"; url: string }
   | { type: "directory" }
+  | { type: "preparing"; message_id: string; peer: string; name: string; done: number; total: number }
   | { type: "transfer"; local_id: string; message_id: string; upload: boolean; done: number; total: number };
 
 /** What hc_link_start (new device) and hc_link_offer (signed-in device)

@@ -676,6 +676,11 @@ export const mockApi: Api = {
   },
   message: async (id) => { const m = find(id); return m ? clone(m) : null; },
   send: async (n: NewOutgoing) => {
+    const total = (n.attachments ?? []).reduce((n, a) => n + a.bytes, 0);
+    if (total) for (let step = 0; step <= 4; step++) {
+      emit({ type: "preparing", peer: n.peer, message_id: n.id, name: n.attachments![0].name, done: Math.floor(total * step / 4), total });
+      await sleep(250);
+    }
     const m = add(n.peer, true, now(), n.body, {
       id: n.id, kind: n.kind ?? null, reply_to: n.reply_to ?? null, state: "queued", hub: null,
       sent_at: null, received_at: null, fetched_at: null, delivered_at: null, read_at: null,

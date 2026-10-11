@@ -8,7 +8,7 @@ import { bytes, isLong, MAX_FILES, num, utf8Len } from "../lib/format";
 import { isImage, pastedImages, pastedName, thumbable, useFilePreview } from "../lib/images";
 import { errText, pickFiles } from "../lib/native";
 import { displayName, limitFor, preview } from "../lib/peers";
-import { noteDraft, refreshChats } from "../lib/store";
+import { noteDraft, usePreparation, getPreparation, prepareSend, clearPreparation } from "../lib/store";
 import { usePlatform } from "./ui";
 
 interface Props {
@@ -31,24 +31,24 @@ export interface ComposerApi {
 }
 
 /** A file waiting to be sent: its name and size. */
-function AttChip({ a, onRemove }: { a: NewAttachment; onRemove: () => void }) {
+function AttChip({ a, onRemove, disabled }: { a: NewAttachment; onRemove: () => void; disabled?: boolean }) {
   return (
     <span className="attchip">
       <Icon name={isImage(a.name) ? "image" : "file"} /><span className="ell">{a.name}</span> <span className="s">{bytes(a.bytes)}</span>
-      <button className="icon-btn" title="Remove" aria-label={"Remove " + a.name} onClick={onRemove}><Icon name="close" /></button>
+      <button className="icon-btn" title="Remove" aria-label={"Remove " + a.name} disabled={disabled} onClick={onRemove}><Icon name="close" /></button>
     </span>
   );
 }
 
 /** An image waiting to be sent, as a thumbnail (user 2026-10-09 07:06Z);
  *  the file chip if it can't be read. */
-function AttThumb({ a, onRemove }: { a: NewAttachment; onRemove: () => void }) {
+function AttThumb({ a, onRemove, disabled }: { a: NewAttachment; onRemove: () => void; disabled?: boolean }) {
   const url = useFilePreview(a.source, a.name);
-  if (url === "failed") return <AttChip a={a} onRemove={onRemove} />;
+  if (url === "failed") return <AttChip a={a} onRemove={onRemove} disabled={disabled} />;
   return (
     <span className="attthumb" title={a.name + " · " + bytes(a.bytes)}>
       {url ? <img src={url} alt={a.name} draggable={false} /> : <span className="ph"><Icon name="image" /></span>}
-      <button className="icon-btn" title="Remove" aria-label={"Remove " + a.name} onClick={onRemove}><Icon name="close" /></button>
+      <button className="icon-btn" title="Remove" aria-label={"Remove " + a.name} disabled={disabled} onClick={onRemove}><Icon name="close" /></button>
     </span>
   );
 }
@@ -58,7 +58,8 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref, o
   const [text, setText] = useState("");
   const [atts, setAtts] = useState<NewAttachment[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
+  const preparation = usePreparation(peer);
+  const sending = preparation?.phase === "preparing";
   const ta = useRef<HTMLTextAreaElement>(null);
   const saveT = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textRef = useRef(text);
@@ -68,13 +69,22 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref, o
   useEffect(() => {
     let live = true;
     setText(""); setAtts([]); setErr(null);
-    api.draft(peer).then((d) => { if (live && d) { setText(d); noteDraft(peer, d); } }, () => {});
+    const saved = getPreparation(peer);
+    if (saved && saved.phase !== "queued") { setText(saved.message.body); setAtts(saved.message.attachments ?? []); }
+    else api.draft(peer).then((d) => { if (live && d && !getPreparation(peer)) { setText(d); noteDraft(peer, d); } }, () => {});
     return () => {
       live = false;
       if (saveT.current) { clearTimeout(saveT.current); saveT.current = null; void api.setDraft(peer, textRef.current).catch(() => {}); }
     };
   }, [peer]);
   useEffect(() => { if (replyTo) ta.current?.focus(); }, [replyTo]);
+  useEffect(() => {
+    if (preparation?.phase !== "queued") return;
+    setText(""); setAtts([]); setErr(null);
+    clearPreparation(peer);
+    onCancelReply(); onSent();
+    ta.current?.focus();
+  }, [preparation, peer, onCancelReply, onSent]);
 
   useLayoutEffect(() => {
     const t = ta.current; if (!t) return;
@@ -83,6 +93,8 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref, o
   }, [text, platform]);
 
   const change = (v: string) => {
+    if (sending) return;
+    clearPreparation(peer);
     setText(v); setErr(null);
     noteDraft(peer, v);
     if (saveT.current) clearTimeout(saveT.current);
@@ -98,6 +110,8 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref, o
   const attsRef = useRef(atts);
   attsRef.current = atts;
   const addFiles = async (sources: string[]) => {
+    if (getPreparation(peer)?.phase === "preparing") return;
+    clearPreparation(peer);
     setErr(null);
     const next = [...attsRef.current];
     for (const source of sources) {
@@ -129,18 +143,8 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref, o
 
   const send = async () => {
     if (!can) { if (over) setErr(overNote); return; }
-    setSending(true);
-    try {
-      await api.send({ id: newId(), peer, body: text.trim(), reply_to: replyTo?.id ?? null, attachments: atts });
-      if (saveT.current) { clearTimeout(saveT.current); saveT.current = null; }
-      setText(""); setAtts([]); setErr(null);
-      noteDraft(peer, "");
-      void api.setDraft(peer, "").catch(() => {});
-      onCancelReply();
-      onSent();
-      void refreshChats();
-    } catch (e) { setErr(errText(e)); }
-    finally { setSending(false); ta.current?.focus(); }
+    if (saveT.current) { clearTimeout(saveT.current); saveT.current = null; }
+    await prepareSend({ id: newId(), peer, body: text.trim(), reply_to: replyTo?.id ?? preparation?.message.reply_to ?? null, attachments: atts });
   };
 
   const who = replyTo ? (replyTo.outgoing ? "yourself" : displayName(c, peer)) : "";
@@ -150,18 +154,21 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref, o
         <div className="replybar">
           {platform === "desktop" ? <Icon name="reply" className="lead" /> : null}
           <div className="rb-t"><span className="rb-who">{platform === "android" ? <Icon name="reply" style={{ width: 16, height: 16 }} /> : null}Replying to {who}</span><span className="rb-txt" dir="auto">{preview(replyTo)}</span></div>
-          <button className="icon-btn" onClick={onCancelReply} title="Cancel reply (Esc)" aria-label="Cancel reply"><Icon name="close" /></button>
+          <button className="icon-btn" disabled={sending} onClick={onCancelReply} title="Cancel reply (Esc)" aria-label="Cancel reply"><Icon name="close" /></button>
         </div>
       ) : null}
       {atts.length ? (
         <div className="attrow">
           {atts.map((a) => {
-            const remove = () => setAtts(atts.filter((x) => x !== a));
-            return thumbable(a.name, a.bytes) ? <AttThumb key={a.source} a={a} onRemove={remove} /> : <AttChip key={a.source} a={a} onRemove={remove} />;
+            const remove = () => { clearPreparation(peer); setAtts(atts.filter((x) => x !== a)); };
+            return thumbable(a.name, a.bytes) ? <AttThumb key={a.source} a={a} onRemove={remove} disabled={sending} /> : <AttChip key={a.source} a={a} onRemove={remove} disabled={sending} />;
           })}
         </div>
       ) : null}
-      {err ? <div className="comp-err"><Icon name="error" />{err}</div> : null}
+      {sending && preparation.total > 0 ? <div className="comp-preparing" role="status" aria-live="polite">
+        <span className="spin" /><span><b>Preparing files...</b> {bytes(preparation.done)} / {bytes(preparation.total)}<br /><small>{preparation.name}. Your message will queue when its files are ready.</small></span>
+      </div> : sending ? <div className="comp-preparing" role="status">Queuing message...</div> : null}
+      {err || preparation?.error ? <div className="comp-err" role="alert"><Icon name="error" />{err || preparation?.error}</div> : null}
     </>
   );
   const meta = over
@@ -173,20 +180,20 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref, o
   const row = (
     <div className="comp-row">
       <div className="comp-box">
-        <button className="icon-btn" onClick={attach} title="Attach files" aria-label="Attach files"><Icon name="attach" /></button>
-        <textarea ref={ta} rows={1} value={text} spellCheck dir="auto" aria-label={"Message " + displayName(c, peer)} placeholder={"Message " + displayName(c, peer)}
+        <button className="icon-btn" disabled={sending} onClick={attach} title="Attach files" aria-label="Attach files"><Icon name="attach" /></button>
+        <textarea disabled={sending} ref={ta} rows={1} value={text} spellCheck dir="auto" aria-label={"Message " + displayName(c, peer)} placeholder={"Message " + displayName(c, peer)}
           onChange={(e) => change(e.target.value)}
           onPaste={(e) => { const imgs = pastedImages(e.clipboardData); if (imgs.length) { e.preventDefault(); void paste(imgs); } }}
           onKeyDown={(e) => {
             if (platform === "desktop" && e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); }
-            else if (e.key === "Escape" && replyTo) { e.stopPropagation(); e.preventDefault(); onCancelReply(); }
+            else if (e.key === "Escape" && replyTo && !sending) { e.stopPropagation(); e.preventDefault(); onCancelReply(); }
           }} />
       </div>
       {/* pressing Send leaves the focus (and Android's keyboard) in the message box */}
       <button className="sendbtn" disabled={!can} onMouseDown={(e) => e.preventDefault()} onClick={send}title={platform === "desktop" ? "Send (Enter)" : "Send"} aria-label="Send"><Icon name="send" /></button>
     </div>
   );
-  if (off) {
+  if (off && !sending) {
     const note = <div className="comp-off" role="status"><Icon name="cloud_off" /><span>{off}</span></div>;
     return platform === "android" ? <div className="composer">{note}</div> : <div className="composer"><div className="composer-in">{note}</div></div>;
   }
