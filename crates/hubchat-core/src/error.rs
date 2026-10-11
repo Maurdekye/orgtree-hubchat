@@ -17,6 +17,9 @@ pub enum Error {
     Invalid(String),
     #[error("local store: {0}")]
     Store(String),
+    /// A publication recovery read was temporarily refused by local storage.
+    #[error("Cannot read the saved file yet; waiting to retry")]
+    LocalBusy,
     #[error("cancelled")]
     Cancelled,
     #[error("i/o: {0}")]

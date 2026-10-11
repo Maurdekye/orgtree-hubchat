@@ -2,7 +2,7 @@
 use super::*;
 use std::collections::HashMap;
 pub(super) fn transient(e: &Error) -> bool {
-    matches!(e, Error::Unreachable(_))
+    matches!(e, Error::Unreachable(_) | Error::LocalBusy)
         || e.status()
             .is_some_and(|s| matches!(s, 408 | 409 | 429 | 500..=599))
 }

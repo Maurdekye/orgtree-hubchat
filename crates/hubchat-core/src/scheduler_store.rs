@@ -73,7 +73,7 @@ impl Store {
         })
     }
     pub(crate) fn defer_download(&self, id: &str, now: u64) -> Result<()> {
-        self.with(|c| c.execute("UPDATE download_jobs SET state='queued',retry_at=?1+MIN(300000,1000*(1 << MIN(attempt,8))) WHERE local_id=?2 AND state IN ('failed','paused')",params![now,id]).map(|_|()))
+        self.with(|c| c.execute("UPDATE download_jobs SET state=CASE WHEN state IN ('publishing','exporting') THEN state ELSE 'queued' END,retry_at=?1+MIN(300000,1000*(1 << MIN(attempt,8))) WHERE local_id=?2 AND (state IN ('failed','paused') OR (state IN ('publishing','exporting') AND error IS NULL))",params![now,id]).map(|_|()))
     }
 }
 

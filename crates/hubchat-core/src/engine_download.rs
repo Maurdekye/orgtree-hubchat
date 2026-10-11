@@ -253,7 +253,7 @@ impl Engine {
                 }
             };
             if job.state == "exporting" {
-                return self.export_download(&job, &a.name, a.bytes).await;
+                return self.export_download(&job, &a.name, a.bytes, false).await;
             }
             if job.state != "publishing" {
                 // Reserve the partial while holding the same lock as directory
@@ -315,7 +315,7 @@ impl Engine {
                 .store
                 .download_job(local_id)?
                 .ok_or_else(|| Error::Invalid("attachment was deleted".into()))?;
-            self.export_download(&publication, &a.name, a.bytes).await
+            self.export_download(&publication, &a.name, a.bytes, true).await
         }
         .await;
         if let Err(ref e) = result {
@@ -333,7 +333,7 @@ impl Engine {
         result
     }
 
-    async fn export_download(&self, job: &DownloadJob, name: &str, total: u64) -> Result<PathBuf> {
+    async fn export_download(&self, job: &DownloadJob, name: &str, total: u64, freshly_published: bool) -> Result<PathBuf> {
         let host = self.host.clone();
         let source = PathBuf::from(&job.destination);
         let path = source.clone();
@@ -349,11 +349,14 @@ impl Engine {
         // Give a journalled platform export the first chance to recover its
         // completed public URI, even when private bytes disappeared meanwhile.
         // Without such a receipt, damaged private bytes need a fresh download.
-        if !matches!(&exported, Ok(Some(path)) if path != &job.destination) {
+        if !(matches!(&exported, Ok(Some(path)) if path != &job.destination)
+            || freshly_published && exported.is_ok())
+        {
             let damaged = match digest(&source, total).await {
                 Ok(hash) => job.digest.as_ref() != Some(&hash),
                 Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => true,
                 Err(Error::Invalid(_)) => true,
+                Err(Error::Io(_)) => return Err(Error::LocalBusy),
                 Err(e) => return Err(e),
             };
             if damaged {
@@ -1095,6 +1098,45 @@ mod tests {
             server.await.unwrap();
         }
     }
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn live_publication_skips_extra_read_and_locked_recovery_backs_off() {
+        use std::os::windows::fs::OpenOptionsExt;
+        for fresh in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let store = Arc::new(Store::open_in_memory().unwrap());
+            let url = "http://127.0.0.1:9";
+            let lid = attach(&store, url, 3);
+            let part = dir.path().join("private.part");
+            let dest = dir.path().join("proof.bin");
+            std::fs::write(&part, b"abc").unwrap();
+            let e = fixture(store.clone(), dir.path(), url);
+            let j = store.begin_download(&lid, &part.to_string_lossy(), &dest.to_string_lossy()).unwrap();
+            e.finish_download(&j, 3, dir.path(), "proof.bin").await.unwrap();
+            let j = store.download_job(&lid).unwrap().unwrap();
+            // Simulate an indexer opening the published file without read sharing.
+            let held = std::fs::OpenOptions::new().read(true).share_mode(0).open(&j.destination).unwrap();
+            if fresh {
+                assert!(e.export_download(&j, "proof.bin", 3, true).await.is_ok());
+                assert_eq!(store.download_job(&lid).unwrap().unwrap().state, "done");
+            } else {
+                assert!(matches!(e.download("message", &lid).await, Err(Error::LocalBusy)));
+                assert!(store.pending_transfer_failures(0).unwrap().is_empty());
+                store.defer_download(&lid, 1000).unwrap();
+                assert!(store.queued_downloads("", 1000).unwrap().is_empty());
+                let resumed = store.download_job(&lid).unwrap().unwrap();
+                assert_eq!(resumed.state, "exporting");
+                assert_eq!(resumed.digest, j.digest);
+                assert_eq!(store.queued_downloads("", 300000).unwrap().len(), 1);
+            }
+            drop(held);
+            if !fresh {
+                assert_eq!(e.download("message", &lid).await.unwrap(), PathBuf::from(&j.destination));
+            }
+            assert_eq!(std::fs::read(&j.destination).unwrap(), b"abc");
+        }
+    }
+
     #[tokio::test]
     async fn damaged_export_retries_from_zero_and_does_not_publish_missing_bytes() {
         for bytes in [None, Some(&b"bad"[..])] {
