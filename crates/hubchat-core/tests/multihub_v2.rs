@@ -422,7 +422,7 @@ async fn deleting_a_message_on_its_way_stops_it() {
             bytes: 4 * 1024 * 1024,
             source: file.to_string_lossy().into(),
         }],
-    })
+    }).await
     .unwrap();
     until("the file is uploading", 20, || {
         a.store()

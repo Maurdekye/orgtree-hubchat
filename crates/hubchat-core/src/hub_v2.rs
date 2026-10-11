@@ -382,10 +382,14 @@ impl HubClient {
     // ---------------------------------------------------- resumable uploads
 
     pub async fn open_upload(&self, me: &Identity, name: &str, bytes: u64) -> Result<UploadState> {
+        self.open_upload_checked(me, name, bytes, None).await
+    }
+
+    pub async fn open_upload_checked(&self, me: &Identity, name: &str, bytes: u64, sha256: Option<&str>) -> Result<UploadState> {
         self.post_json(
             me,
             "/api/uploads",
-            &serde_json::json!({ "bytes": bytes, "name": name }),
+            &serde_json::json!({ "bytes": bytes, "name": name, "sha256": sha256 }),
             Duration::from_secs(30),
         )
         .await

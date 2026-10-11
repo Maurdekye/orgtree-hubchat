@@ -18,3 +18,5 @@ pub mod text;
 pub use error::{Error, Result};
 pub use hub::{HubAddress, HubClient};
 pub use identity::Identity;
+
+mod staging;

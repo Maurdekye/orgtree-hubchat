@@ -145,6 +145,8 @@ CREATE TABLE IF NOT EXISTS pending_chat_deletes (
   PRIMARY KEY (hub, peer)
 );
 "#,
+    // 3: digest of the private immutable source admitted with this message.
+    "ALTER TABLE attachments ADD COLUMN source_sha256 TEXT;",
 ];
 
 pub struct Store {
@@ -168,6 +170,8 @@ pub struct Attachment {
     pub name: String,
     pub bytes: u64,
     pub source: Option<String>,
+    #[serde(skip)]
+    pub source_sha256: Option<String>,
     pub local_path: Option<String>,
     pub state: String,
     pub error: Option<String>,
@@ -448,6 +452,10 @@ impl Store {
 
     /// Queue an outgoing message (and its attachments) for the sender task.
     pub fn queue_outgoing(&self, msg: &NewOutgoing, now: &str) -> Result<()> {
+        self.queue_prepared(msg, now, &[])
+    }
+
+    pub(crate) fn queue_prepared(&self, msg: &NewOutgoing, now: &str, digests: &[String]) -> Result<()> {
         self.with(|c| {
             let tx = c.transaction()?;
             tx.execute(
@@ -457,9 +465,9 @@ impl Store {
             )?;
             for (i, a) in msg.attachments.iter().enumerate() {
                 tx.execute(
-                    "INSERT INTO attachments(local_id, message_id, position, name, bytes, source, state)
-                     VALUES(?,?,?,?,?,?,'pending')",
-                    params![uuid::Uuid::new_v4().simple().to_string(), msg.id, i as i64, a.name, a.bytes, a.source],
+                    "INSERT INTO attachments(local_id, message_id, position, name, bytes, source, source_sha256, state)
+                     VALUES(?,?,?,?,?,?,?,'pending')",
+                    params![uuid::Uuid::new_v4().simple().to_string(), msg.id, i as i64, a.name, a.bytes, a.source, digests.get(i)],
                 )?;
             }
             tx.commit()
@@ -1129,7 +1137,7 @@ impl Store {
                 })?
                 .collect::<rusqlite::Result<_>>()?;
             let mut st = c.prepare(
-                "SELECT local_id, hub_id, hub, name, bytes, source, local_path, state, error FROM attachments
+                "SELECT local_id, hub_id, hub, name, bytes, source, local_path, state, error, source_sha256 FROM attachments
                  WHERE message_id=? ORDER BY position",
             )?;
             for m in &mut msgs {
@@ -1145,6 +1153,7 @@ impl Store {
                             local_path: r.get(6)?,
                             state: r.get(7)?,
                             error: r.get(8)?,
+                            source_sha256: r.get(9)?,
                         })
                     })?
                     .collect::<rusqlite::Result<_>>()?;

@@ -102,7 +102,7 @@ async fn every_device_gets_everything() {
 
     // A message to alex reaches BOTH of alex's devices.
     let m1 = uid("m1-");
-    m.send(msg(&m1, &alex.address(), "hello alex")).unwrap();
+    m.send(msg(&m1, &alex.address(), "hello alex")).await.unwrap();
     until("A gets m1", 15, || {
         a.store().message(&m1).unwrap().is_some()
     })
@@ -120,7 +120,7 @@ async fn every_device_gets_everything() {
 
     // What A sends shows up on B, as ours; maya's read reaches both.
     let a1 = uid("a1-");
-    a.send(msg(&a1, &maya.address(), "from the pc")).unwrap();
+    a.send(msg(&a1, &maya.address(), "from the pc")).await.unwrap();
     until("B sees A's message", 15, || {
         b.store().message(&a1).unwrap().is_some_and(|x| x.outgoing)
     })
@@ -164,7 +164,7 @@ async fn every_device_gets_everything() {
     // A long body (over the 64 KiB sync cut) arrives whole.
     let long: String = "0123456789abcdef\n".repeat(10_000); // 170 KB
     let m2 = uid("m2-");
-    m.send(msg(&m2, &alex.address(), &long)).unwrap();
+    m.send(msg(&m2, &alex.address(), &long)).await.unwrap();
     until("A gets long m2 whole", 20, || {
         a.store()
             .message(&m2)
@@ -299,7 +299,7 @@ async fn resumable_upload_continues_after_a_break_and_big_files_go_through_the_e
         bytes: payload.len() as u64,
         source: src.to_string_lossy().into(),
     });
-    a.send(out).unwrap();
+    a.send(out).await.unwrap();
     until("maya gets the big file", 60, || {
         m.store().message(&id).unwrap().is_some()
     })
@@ -383,9 +383,9 @@ async fn a_check_takes_in_what_arrived_and_returns() {
 
     // something to send and something to take in
     let out = uid("out-");
-    a.send(msg(&out, &bob.address(), "sent by the check")).unwrap();
+    a.send(msg(&out, &bob.address(), "sent by the check")).await.unwrap();
     let inc = uid("in-");
-    b.send(msg(&inc, &ann.address(), "arrived while away")).unwrap();
+    b.send(msg(&inc, &ann.address(), "arrived while away")).await.unwrap();
     until("B sent it", 15, || {
         b.store()
             .message(&inc)
@@ -451,7 +451,7 @@ async fn another_device_in_use_keeps_this_one_quiet() {
 
     // nobody using a device: the phone notifies
     let m0 = uid("m0-");
-    b.send(msg(&m0, &ann.address(), "nobody looking")).unwrap();
+    b.send(msg(&m0, &ann.address(), "nobody looking")).await.unwrap();
     until("phone gets m0", 20, || quiet_of(&m0).is_some()).await;
     assert_eq!(quiet_of(&m0), Some(false), "no device in use");
 
@@ -459,7 +459,7 @@ async fn another_device_in_use_keeps_this_one_quiet() {
     pc.set_active(true);
     tokio::time::sleep(Duration::from_millis(1500)).await;
     let m1 = uid("m1-");
-    b.send(msg(&m1, &ann.address(), "while the pc is in use")).unwrap();
+    b.send(msg(&m1, &ann.address(), "while the pc is in use")).await.unwrap();
     until("phone gets m1", 20, || quiet_of(&m1).is_some()).await;
     assert_eq!(quiet_of(&m1), Some(true), "the pc is in use");
 
@@ -467,7 +467,7 @@ async fn another_device_in_use_keeps_this_one_quiet() {
     pc.set_active(false);
     tokio::time::sleep(Duration::from_millis(1500)).await;
     let m2 = uid("m2-");
-    b.send(msg(&m2, &ann.address(), "the pc was put down")).unwrap();
+    b.send(msg(&m2, &ann.address(), "the pc was put down")).await.unwrap();
     until("phone gets m2", 20, || quiet_of(&m2).is_some()).await;
     assert_eq!(quiet_of(&m2), Some(false), "the pc was put down");
     for e in [&pc, &phone, &b] {

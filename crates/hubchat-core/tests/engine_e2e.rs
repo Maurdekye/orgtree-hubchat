@@ -86,7 +86,7 @@ async fn two_engines_chat_through_a_hub() {
 
     // Alex queues a message before having any hub: it waits.
     alex.start().unwrap();
-    alex.send(msg("m1", &maya.me().address(), "queued while offline"))
+    alex.send(msg("m1", &maya.me().address(), "queued while offline")).await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(alex.store().message("m1").unwrap().unwrap().state, "queued");
@@ -134,7 +134,7 @@ async fn two_engines_chat_through_a_hub() {
         bytes: payload.len() as u64,
         source: src.to_string_lossy().into(),
     });
-    alex.send(m2).unwrap();
+    alex.send(m2).await.unwrap();
     until("maya receives m2", 15, || {
         maya.store().message("m2").unwrap().is_some()
     })
@@ -152,7 +152,7 @@ async fn two_engines_chat_through_a_hub() {
     );
 
     // Unknown address -> failed with the hub's reason; Retry re-queues.
-    alex.send(msg("m3", "nobody.000000", "hello?")).unwrap();
+    alex.send(msg("m3", "nobody.000000", "hello?")).await.unwrap();
     until("m3 failed", 15, || {
         alex.store().message("m3").unwrap().unwrap().state == "failed"
     })
@@ -171,7 +171,7 @@ async fn two_engines_chat_through_a_hub() {
     .await;
 
     // Sending to yourself is refused up front.
-    assert!(alex.send(msg("m4", &alex.me().address(), "me")).is_err());
+    assert!(alex.send(msg("m4", &alex.me().address(), "me")).await.is_err());
 
     // Removing the hub drops its roster.
     alex.remove_hub(&format!("http://{url}"), false)
@@ -212,7 +212,7 @@ async fn a_chat_keeps_its_hub_when_two_hubs_reach_the_peer() {
     alex.start().unwrap();
     let b = alex.add_hub(&url_b).unwrap().to_string();
     until("alex on B", 15, || connected(&alex, 1)).await;
-    alex.send(msg("k1", &maya.me().address(), "first")).unwrap();
+    alex.send(msg("k1", &maya.me().address(), "first")).await.unwrap();
     until("k1 sent", 15, || {
         alex.store().message("k1").unwrap().unwrap().hub.is_some()
     })
@@ -237,7 +237,7 @@ async fn a_chat_keeps_its_hub_when_two_hubs_reach_the_peer() {
 
     for i in 2..=6 {
         let id = format!("k{i}");
-        alex.send(msg(&id, &maya.me().address(), "more")).unwrap();
+        alex.send(msg(&id, &maya.me().address(), "more")).await.unwrap();
         until("sent", 15, || {
             alex.store().message(&id).unwrap().unwrap().hub.is_some()
         })
@@ -302,7 +302,7 @@ async fn a_pinned_hub_carries_the_chat_and_waits_when_it_cannot() {
     assert_eq!((r.pinned.clone(), r.automatic.clone()), (None, Some(first.clone())));
     assert_eq!(r.next, r.automatic);
     assert_eq!(r.hubs.len(), 2);
-    alex.send(msg("p1", &peer, "auto")).unwrap();
+    alex.send(msg("p1", &peer, "auto")).await.unwrap();
     until("p1 sent", 15, || sent_via("p1").is_some()).await;
     assert_eq!(sent_via("p1"), Some(first.clone()));
 
@@ -311,7 +311,7 @@ async fn a_pinned_hub_carries_the_chat_and_waits_when_it_cannot() {
     let r = alex.send_route(&peer).unwrap();
     assert_eq!((r.pinned.clone(), r.next.clone()), (Some(other.clone()), Some(other.clone())));
     assert_eq!(r.automatic, Some(first.clone()));
-    alex.send(msg("p2", &peer, "pinned")).unwrap();
+    alex.send(msg("p2", &peer, "pinned")).await.unwrap();
     until("p2 sent", 15, || sent_via("p2").is_some()).await;
     assert_eq!(sent_via("p2"), Some(other.clone()));
 
@@ -322,7 +322,7 @@ async fn a_pinned_hub_carries_the_chat_and_waits_when_it_cannot() {
     let r = alex.send_route(&peer).unwrap();
     assert_eq!((r.pinned.clone(), r.next.clone()), (Some(other.clone()), None));
     assert_eq!(r.automatic, Some(first.clone()));
-    alex.send(msg("p3", &peer, "waits")).unwrap();
+    alex.send(msg("p3", &peer, "waits")).await.unwrap();
     tokio::time::sleep(Duration::from_secs(2)).await;
     let p3 = alex.store().message("p3").unwrap().unwrap();
     assert_eq!((p3.state.as_str(), p3.hub), ("queued", None));
@@ -339,7 +339,7 @@ async fn a_pinned_hub_carries_the_chat_and_waits_when_it_cannot() {
     let r = alex.send_route(&peer).unwrap();
     assert_eq!((r.pinned.clone(), r.next.clone()), (None, r.automatic.clone()));
     let auto = r.automatic.clone().expect("a hub can reach maya");
-    alex.send(msg("p4", &peer, "auto again")).unwrap();
+    alex.send(msg("p4", &peer, "auto again")).await.unwrap();
     until("p4 sent", 15, || sent_via("p4").is_some()).await;
     assert_eq!(sent_via("p4"), Some(auto));
     alex.shutdown();

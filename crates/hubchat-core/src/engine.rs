@@ -121,6 +121,8 @@ pub trait Host: Send + Sync + 'static {
     fn open_source(&self, source: &str) -> std::io::Result<std::fs::File>;
     /// Folder for downloaded attachments.
     fn download_dir(&self) -> PathBuf;
+    /// Private, persistent storage. Shells override this with their app-data folder.
+    fn staging_dir(&self) -> PathBuf { self.download_dir().join(".hubchat-outbox") }
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -577,7 +579,7 @@ impl Engine {
             kind: None,
             reply_to: None,
             attachments: Vec::new(),
-        })?;
+        }).await?;
         Ok(link.org.clone())
     }
 
@@ -1371,11 +1373,17 @@ impl Engine {
 
     // ---------------------------------------------------------- sending
 
-    pub fn send(&self, msg: NewOutgoing) -> Result<()> {
+    pub async fn send(&self, msg: NewOutgoing) -> Result<()> {
         if msg.peer == self.me.address() {
             return Err(Error::Invalid("that's you".into()));
         }
-        self.store.queue_outgoing(&msg, &now())?;
+        // Copy/hash on the blocking pool; no network and no SQLite lock during I/O.
+        // Admission and ownership of the snapshot then commit without an await.
+        let host = self.host.clone();
+        let prepared = tokio::task::spawn_blocking(move || crate::staging::prepare(host.as_ref(), msg))
+            .await.map_err(|e| Error::Invalid(format!("file preparation stopped: {e}")))??;
+        self.store.queue_prepared(&prepared.message, &now(), &prepared.digests)?;
+        let msg = prepared.commit();
         self.host.event(Event::Chat {
             peer: msg.peer.clone(),
         });
@@ -1736,7 +1744,7 @@ impl Engine {
             let upload_id = match existing {
                 Some(id) => id,
                 None => {
-                    let st = client.open_upload(&self.me, &a.name, a.bytes).await?;
+                    let st = client.open_upload_checked(&self.me, &a.name, a.bytes, a.source_sha256.as_deref()).await?;
                     if st.id.is_empty()
                         || st.bytes != a.bytes
                         || st.offset > a.bytes

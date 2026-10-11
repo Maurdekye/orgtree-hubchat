@@ -231,3 +231,157 @@ async fn missing_source_holds_entire_message_without_network_send() {
             .is_err()
     );
 }
+
+struct StageHost {
+    dir: PathBuf,
+    gate: Option<(
+        std::sync::mpsc::Sender<()>,
+        Mutex<std::sync::mpsc::Receiver<()>>,
+    )>,
+}
+impl Host for StageHost {
+    fn event(&self, _: Event) {}
+    fn open_source(&self, source: &str) -> std::io::Result<std::fs::File> {
+        if let Some((entered, release)) = &self.gate {
+            entered.send(()).unwrap();
+            release.lock().unwrap().recv().unwrap();
+        }
+        std::fs::File::open(source)
+    }
+    fn download_dir(&self) -> PathBuf {
+        self.dir.clone()
+    }
+    fn staging_dir(&self) -> PathBuf {
+        self.dir.join("private-outbox")
+    }
+}
+fn staged_engine(store: Arc<Store>, host: StageHost) -> Arc<Engine> {
+    Engine::new(
+        store,
+        Identity::generate("snapshot-proof").unwrap(),
+        Profile {
+            kind: "person".into(),
+            org_name: String::new(),
+            username: "test".into(),
+            blurb: String::new(),
+        },
+        Arc::new(host),
+    )
+}
+fn outgoing(id: &str, sources: &[(&std::path::Path, u64)]) -> NewOutgoing {
+    NewOutgoing {
+        id: id.into(),
+        peer: "peer.abcdef".into(),
+        body: "all files or no send".into(),
+        kind: None,
+        reply_to: None,
+        attachments: sources
+            .iter()
+            .map(|(p, n)| NewAttachment {
+                name: "../../not-a-path.bin".into(),
+                bytes: *n,
+                source: p.to_string_lossy().into_owned(),
+            })
+            .collect(),
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn snapshot_finishes_before_admission_without_blocking_runtime_and_survives_restart() {
+    use sha2::{Digest, Sha256};
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("store.db");
+    let source = dir.path().join("selected.bin");
+    let original = vec![47u8; 3 * 1024 * 1024];
+    std::fs::write(&source, &original).unwrap();
+    let store = Arc::new(Store::open(&db).unwrap());
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let engine = staged_engine(
+        store.clone(),
+        StageHost {
+            dir: dir.path().into(),
+            gate: Some((entered_tx, Mutex::new(release_rx))),
+        },
+    );
+    let engine2 = engine.clone();
+    let message = outgoing("snapshot", &[(&source, original.len() as u64)]);
+    let send = tokio::spawn(async move { engine2.send(message).await });
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while entered_rx.try_recv().is_err() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        store.message("snapshot").unwrap().is_none(),
+        "partially staged message cannot be sent"
+    );
+    assert!(!send.is_finished());
+    release_tx.send(()).unwrap();
+    send.await.unwrap().unwrap();
+    std::fs::write(&source, vec![99; original.len()]).unwrap();
+    std::fs::remove_file(&source).unwrap();
+    drop(engine);
+    drop(store);
+    let reopened = Store::open(&db).unwrap();
+    let a = reopened
+        .message("snapshot")
+        .unwrap()
+        .unwrap()
+        .attachments
+        .remove(0);
+    assert_eq!(
+        a.source_sha256,
+        Some(hex::encode(Sha256::digest(&original)))
+    );
+    let copy = PathBuf::from(a.source.unwrap());
+    assert!(copy.starts_with(dir.path().join("private-outbox")));
+    assert_eq!(std::fs::read(copy).unwrap(), original);
+    assert_eq!(a.state, "pending");
+}
+
+#[tokio::test]
+async fn preparation_failure_and_duplicate_admission_leave_no_unowned_copies() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("file.bin");
+    std::fs::write(&source, b"abc").unwrap();
+    let store = Arc::new(Store::open(&dir.path().join("store.db")).unwrap());
+    let engine = staged_engine(
+        store.clone(),
+        StageHost {
+            dir: dir.path().into(),
+            gate: None,
+        },
+    );
+    let missing = dir.path().join("missing");
+    assert!(engine
+        .send(outgoing("broken", &[(&source, 3), (&missing, 3)]))
+        .await
+        .is_err());
+    assert!(store.message("broken").unwrap().is_none());
+    let root = dir.path().join("private-outbox");
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+    for declared in [2, 4] {
+        assert!(engine
+            .send(outgoing("wrong-length", &[(&source, declared)]))
+            .await
+            .is_err());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+    }
+    engine
+        .send(outgoing("kept", &[(&source, 3)]))
+        .await
+        .unwrap();
+    let copy = store.message("kept").unwrap().unwrap().attachments[0]
+        .source
+        .clone()
+        .unwrap();
+    assert!(engine
+        .send(outgoing("kept", &[(&source, 3)]))
+        .await
+        .is_err());
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+    assert_eq!(std::fs::read(copy).unwrap(), b"abc");
+}
