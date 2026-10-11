@@ -541,15 +541,16 @@ pub async fn hc_download(message_id: String, local_id: String) -> R<String> {
     let (mid, lid) = (message_id.clone(), local_id.clone());
     let path = on_core(async move { e.download(&mid, &lid).await.map_err(s) }).await?;
     let c = core::get()?;
+    if c.store.download_job(&local_id).map_err(s)?.is_some_and(|j| j.exported) {
+        return Ok(path.to_string_lossy().into_owned());
+    }
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     match c.platform().publish_download(&path, &name) {
         Some(moved) => {
-            c.store
-                .set_attachment(&local_id, "done", None, Some(&moved), None)
-                .map_err(s)?;
+            engine()?.record_download_export(&local_id, &path.to_string_lossy(), &moved).map_err(s)?;
             Ok(moved)
         }
         None => Ok(path.to_string_lossy().into_owned()),
