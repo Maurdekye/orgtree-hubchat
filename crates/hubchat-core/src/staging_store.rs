@@ -1,5 +1,10 @@
 use super::*;
 impl Store {
+    /// Metadata-only existence check for Android's temporary file service.
+    pub fn pending_file_work(&self) -> Result<bool> {
+        self.with(|c| c.query_row("SELECT EXISTS(SELECT 1 FROM messages m WHERE m.outgoing=1 AND m.state IN ('queued','sending') AND (length(CAST(m.body AS BLOB))>?1 OR EXISTS(SELECT 1 FROM attachments a WHERE a.message_id=m.id))) OR EXISTS(SELECT 1 FROM download_jobs WHERE state IN ('queued','running','paused') OR (state IN ('publishing','exporting') AND error IS NULL))",[crate::engine::BODY_INLINE_MAX],|r|r.get(0)))
+    }
+
     pub(crate) fn install_legacy_snapshot(
         &self,
         mid: &str,

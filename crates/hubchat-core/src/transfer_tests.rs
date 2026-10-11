@@ -1017,3 +1017,39 @@ async fn lifecycle_pause_closes_upload_without_cancelling_or_notifying() {
         assert!(e.send_writers.lock().unwrap().is_empty());
     }
 }
+
+#[test]
+fn file_lifetime_work_survives_reopen_and_excludes_terminal_mail() {
+    let dir=tempfile::tempdir().unwrap();
+    let path=dir.path().join("lifetime.db");
+    let store=Store::open(&path).unwrap();
+    assert!(!store.pending_file_work().unwrap());
+    let mut msg=outgoing("lifetime",&[]);
+    store.queue_outgoing(&msg,"2026-10-11T06:50:00Z").unwrap();
+    assert!(!store.pending_file_work().unwrap());
+    rusqlite::Connection::open(&path).unwrap().execute("UPDATE messages SET body=?1 WHERE id='lifetime'",["x".repeat(BODY_INLINE_MAX as usize+1)]).unwrap();
+    assert!(store.pending_file_work().unwrap());
+    rusqlite::Connection::open(&path).unwrap().execute("UPDATE messages SET state='failed' WHERE id='lifetime'",[]).unwrap();
+    assert!(!store.pending_file_work().unwrap());
+    msg.id="file-lifetime".into();
+    msg.attachments.push(crate::store::NewAttachment{name:"a".into(),bytes:3,source:"original".into()});
+    store.queue_outgoing(&msg,"2026-10-11T06:50:00Z").unwrap();
+    drop(store);
+    let store=Store::open(&path).unwrap();
+    assert!(store.pending_file_work().unwrap());
+    rusqlite::Connection::open(&path).unwrap().execute("UPDATE messages SET state='sent' WHERE id='file-lifetime'",[]).unwrap();
+    assert!(!store.pending_file_work().unwrap());
+    let a=store.message("file-lifetime").unwrap().unwrap().attachments.remove(0);
+    store.begin_download(&a.local_id,"private.part","destination").unwrap();
+    let db=rusqlite::Connection::open(&path).unwrap();
+    for state in ["queued","running","paused","publishing","exporting"] {
+        db.execute("UPDATE download_jobs SET state=?1,error=NULL",[state]).unwrap();
+        assert!(store.pending_file_work().unwrap(),"{state}");
+    }
+    for state in ["done","failed","cancelled","expired"] {
+        db.execute("UPDATE download_jobs SET state=?1",[state]).unwrap();
+        assert!(!store.pending_file_work().unwrap(),"{state}");
+    }
+    db.execute("UPDATE download_jobs SET state='exporting',error='Retry needed'",[]).unwrap();
+    assert!(!store.pending_file_work().unwrap());
+}
