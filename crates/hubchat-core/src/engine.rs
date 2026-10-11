@@ -1554,6 +1554,19 @@ impl Engine {
             )?;
             return Ok(true);
         }
+        let m = match self.snapshot_legacy(m, &url).await {
+            Ok(message) => message,
+            Err(error) => {
+                if self.store.message(id)?.is_none_or(|m| m.state == "failed") {
+                    return Ok(true);
+                }
+                return Err(error);
+            }
+        };
+        if self.stopped.load(std::sync::atomic::Ordering::Relaxed) || *self.suspended.borrow() {
+            self.store.requeue_send(id)?;
+            return Ok(false);
+        }
         let mut hub_ids = Vec::new();
         for a in &m.attachments {
             // ids are per hub: after a route change the file goes up again
@@ -2363,3 +2376,6 @@ mod download_gc;
 
 #[path = "engine_bodies.rs"]
 mod engine_bodies;
+
+#[path = "engine_legacy.rs"]
+mod engine_legacy;

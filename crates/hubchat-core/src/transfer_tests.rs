@@ -679,3 +679,282 @@ async fn shutdown_of_upload_is_resumable_and_has_no_failure_notice() {
     assert!(!result.unwrap());let m=store.message("m").unwrap().unwrap();assert_eq!(m.state,"queued");assert_eq!(m.attachments[0].state,"pending");
     assert!(store.pending_transfer_failures(u64::MAX/2).unwrap().is_empty());server.await.unwrap();
 }
+
+#[tokio::test]
+async fn legacy_snapshot_discards_unverifiable_session_and_survives_reopen() {
+    use sha2::{Digest, Sha256};
+    let dir = tempfile::tempdir().unwrap();
+    let db = dir.path().join("store.db");
+    let source = dir.path().join("original");
+    std::fs::write(&source, b"new").unwrap();
+    let store = Arc::new(Store::open(&db).unwrap());
+    store
+        .queue_outgoing(&outgoing("legacy", &[(&source, 3)]), "now")
+        .unwrap();
+    let lid = store.message("legacy").unwrap().unwrap().attachments[0]
+        .local_id
+        .clone();
+    store
+        .set_upload(&lid, "uploading", "old-partial", "http://hub")
+        .unwrap();
+    store
+        .upload_checkpoint(&lid, "http://hub", "old-partial", 2)
+        .unwrap();
+    store.set_state("legacy", "sending", None).unwrap();
+    let e = staged_engine(
+        store.clone(),
+        StageHost {
+            dir: dir.path().into(),
+            gate: None,
+        },
+    );
+    let m = e
+        .snapshot_legacy(store.message("legacy").unwrap().unwrap(), "http://hub")
+        .await
+        .unwrap();
+    let a = &m.attachments[0];
+    assert!(a.hub_id.is_none());
+    assert_eq!(a.upload_confirmed, 0);
+    assert_eq!(a.source.as_deref(), source.to_str());
+    assert_eq!(a.source_sha256, Some(hex::encode(Sha256::digest(b"new"))));
+    std::fs::write(&source, b"bad").unwrap();
+    drop(e);
+    drop(store);
+    let store = Store::open(&db).unwrap();
+    let a = store
+        .message("legacy")
+        .unwrap()
+        .unwrap()
+        .attachments
+        .remove(0);
+    assert_eq!(std::fs::read(a.staged_path.unwrap()).unwrap(), b"new");
+    assert_eq!(std::fs::read(source).unwrap(), b"bad");
+}
+
+#[tokio::test]
+async fn legacy_completed_remote_copy_does_not_require_original_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("gone");
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    store
+        .queue_outgoing(&outgoing("legacy", &[(&missing, 3)]), "now")
+        .unwrap();
+    let lid = store.message("legacy").unwrap().unwrap().attachments[0]
+        .local_id
+        .clone();
+    store
+        .set_upload(&lid, "uploaded", "complete", "http://hub")
+        .unwrap();
+    store.set_state("legacy", "sending", None).unwrap();
+    let e = staged_engine(
+        store.clone(),
+        StageHost {
+            dir: dir.path().into(),
+            gate: None,
+        },
+    );
+    let m = e
+        .snapshot_legacy(store.message("legacy").unwrap().unwrap(), "http://hub")
+        .await
+        .unwrap();
+    assert_eq!(m.attachments[0].hub_id.as_deref(), Some("complete"));
+    assert!(m.attachments[0].staged_path.is_none());
+    assert!(e.snapshot_legacy(m, "http://different-hub").await.is_err());
+    assert_eq!(store.message("legacy").unwrap().unwrap().state, "failed");
+    assert_eq!(
+        store.pending_transfer_failures(u64::MAX / 2).unwrap().len(),
+        1
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn legacy_preparation_cannot_revive_cancelled_or_deleted_message() {
+    for deleted in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("original");
+        std::fs::write(&source, b"abc").unwrap();
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        store
+            .queue_outgoing(&outgoing("legacy", &[(&source, 3)]), "now")
+            .unwrap();
+        let lid = store.message("legacy").unwrap().unwrap().attachments[0]
+            .local_id
+            .clone();
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let e = staged_engine(
+            store.clone(),
+            StageHost {
+                dir: dir.path().into(),
+                gate: Some((entered_tx, Mutex::new(release_rx))),
+            },
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client =
+            HubClient::new(HubAddress::parse(&listener.local_addr().unwrap().to_string()).unwrap());
+        let url = client.address().to_string();
+        let worker = e.clone();
+        let task =
+            tokio::spawn(async move { worker.send_one_on("legacy", (url, client, 1024)).await });
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while entered_rx.try_recv().is_err() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        if deleted {
+            e.delete_message("legacy").await.unwrap();
+        } else {
+            e.cancel_transfer(&lid).unwrap();
+            assert!(e.retry("legacy").is_err());
+        }
+        release_tx.send(()).unwrap();
+        assert!(task.await.unwrap().unwrap());
+        assert!(e.send_writers.lock().unwrap().is_empty());
+        if !deleted {
+            let m = store.message("legacy").unwrap().unwrap();
+            assert_eq!(m.state, "failed");
+            assert_eq!(m.attachments[0].state, "cancelled");
+            assert!(m.attachments[0].staged_path.is_none());
+        }
+        assert_eq!(
+            std::fs::read_dir(dir.path().join("private-outbox"))
+                .unwrap()
+                .count(),
+            0
+        );
+        assert_eq!(std::fs::read(&source).unwrap(), b"abc");
+        assert!(store
+            .pending_transfer_failures(u64::MAX / 2)
+            .unwrap()
+            .is_empty());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), listener.accept())
+                .await
+                .is_err()
+        );
+    }
+}
+
+#[tokio::test]
+async fn legacy_sender_starts_new_session_and_uploads_snapshot_after_source_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source");
+    let size = RESUMABLE_MIN as usize;
+    std::fs::write(&source, vec![7u8; size]).unwrap();
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    store
+        .queue_outgoing(&outgoing("legacy", &[(&source, size as u64)]), "now")
+        .unwrap();
+    let lid = store.message("legacy").unwrap().unwrap().attachments[0]
+        .local_id
+        .clone();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = HubAddress::parse(&listener.local_addr().unwrap().to_string()).unwrap();
+    let client = HubClient::new(address);
+    let url = client.address().to_string();
+    store
+        .set_upload(&lid, "uploading", "untrusted-old-session", &url)
+        .unwrap();
+    store
+        .upload_checkpoint(&lid, &url, "untrusted-old-session", 4096)
+        .unwrap();
+    let e = staged_engine(
+        store.clone(),
+        StageHost {
+            dir: dir.path().into(),
+            gate: None,
+        },
+    );
+    e.hubs.lock().unwrap().insert(
+        url.clone(),
+        HubRuntime {
+            client: client.clone(),
+            status: HubStatus {
+                url: url.clone(),
+                name: "mock".into(),
+                state: HubState::Connected,
+                error: None,
+                retry_at_ms: None,
+                max_attachment_bytes: 1073741824,
+                features: vec!["uploads".into()],
+                version: None,
+                answered_ms: None,
+                waiting_since_ms: None,
+                clock_offset_ms: None,
+            },
+            retry_now: Arc::new(Notify::new()),
+            kick: Arc::new(Notify::new()),
+            stop: CancelFlag::default(),
+        },
+    );
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        assert!(
+            request(&mut socket).await.starts_with("POST /api/uploads "),
+            "legacy partial must never be resumed"
+        );
+        std::fs::write(&source, vec![9u8; size]).unwrap();
+        response(
+            &mut socket,
+            200,
+            serde_json::json!({"id":"fresh","bytes":size,"offset":0,"complete":false}),
+        )
+        .await;
+        drop(socket);
+        let (mut socket, _) = listener.accept().await.unwrap();
+        assert!(request(&mut socket)
+            .await
+            .starts_with("GET /api/uploads/fresh "));
+        response(
+            &mut socket,
+            200,
+            serde_json::json!({"id":"fresh","bytes":size,"offset":0,"complete":false}),
+        )
+        .await;
+        drop(socket);
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut headers = Vec::new();
+        while !headers.ends_with(b"\r\n\r\n") {
+            let mut b = [0];
+            socket.read_exact(&mut b).await.unwrap();
+            headers.push(b[0]);
+            assert!(headers.len() < 16384);
+        }
+        let headers = String::from_utf8(headers).unwrap();
+        assert!(headers.starts_with("PATCH /api/uploads/fresh?offset=0 "));
+        let length: usize = headers
+            .lines()
+            .find_map(|l| {
+                l.split_once(':')
+                    .filter(|(n, _)| n.eq_ignore_ascii_case("content-length"))
+                    .map(|(_, v)| v.trim().parse().unwrap())
+            })
+            .unwrap();
+        assert_eq!(length, size);
+        let mut bytes = vec![0; length];
+        socket.read_exact(&mut bytes).await.unwrap();
+        assert!(bytes.iter().all(|b| *b == 7));
+        response(&mut socket, 503, serde_json::json!({"detail":"try again"})).await;
+        drop(socket);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(75), listener.accept())
+                .await
+                .is_err(),
+            "message must stay queued on incomplete upload"
+        );
+    });
+    assert!(!tokio::time::timeout(
+        Duration::from_secs(5),
+        e.send_one_on("legacy", (url, client, 2 * size as u64))
+    )
+    .await
+    .unwrap()
+    .unwrap());
+    server.await.unwrap();
+    let m = store.message("legacy").unwrap().unwrap();
+    assert_eq!(m.state, "queued");
+    assert_eq!(m.attachments[0].hub_id.as_deref(), Some("fresh"));
+    assert!(m.attachments[0].staged_path.is_some());
+}
