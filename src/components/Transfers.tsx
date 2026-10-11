@@ -22,17 +22,19 @@ function XRow({ t, onOpen, android }: { t: Active; onOpen: (peer: string) => voi
   const snap = useSnap();
   const who = t.peer ? displayName(snap.byAddr.get(t.peer), t.peer) : "…";
   const cancel = () => cancelTransfer(t.local_id).catch((e) => toast(errText(e)));
+  const finishing = ["publishing", "exporting"].includes(t.state) || (!t.upload && t.state === "running" && t.done === t.total);
+  const label = finishing ? "Finishing..." : ["queued", "pending"].includes(t.state) ? "Waiting" : t.state === "paused" ? "Paused" : pct(t.done, t.total) + "%";
   return (
     <div className={"xrow " + (t.upload ? "up" : "down")} onClick={() => t.peer && onOpen(t.peer)} role="button">
       <span className="xic"><Icon name={t.upload ? "upload" : "download"} /></span>
       <div className="t">
         <b>{t.name || "File"}</b>
-        <span>{t.upload ? "to " : "from "}{who} · {pct(t.done, t.total)}% · {bytes(t.done)} of {bytes(t.total)}</span>
+        <span>{t.upload ? "to " : "from "}{who} · {label} · {bytes(t.done)} of {bytes(t.total)}</span>
         <i className="tb-bar"><b style={{ width: pct(t.done, t.total) + "%" }} /></i>
       </div>
-      {android
+      {!finishing && (android
         ? <button className="link" onClick={(e) => { e.stopPropagation(); void cancel(); }}>Cancel</button>
-        : <button className="icon-btn" title={t.upload ? "Cancel upload" : "Cancel download"} aria-label="Cancel" onClick={(e) => { e.stopPropagation(); void cancel(); }}><Icon name="close" /></button>}
+        : <button className="icon-btn" title={t.upload ? "Cancel upload" : "Cancel download"} aria-label="Cancel" onClick={(e) => { e.stopPropagation(); void cancel(); }}><Icon name="close" /></button>)}
     </div>
   );
 }
@@ -73,7 +75,7 @@ export function TransfersChip({ onOpen }: { onOpen: (peer: string) => void }) {
           <div className="pop-h">Transfers</div>
           {list.map((t) => <XRow key={t.local_id} t={t} onOpen={(peer) => { setOpen(false); onOpen(peer); }} />)}
           <div className="sep" />
-          <div className="help" style={{ padding: "4px 10px 6px", fontSize: 12, maxWidth: 380 }}>Transfers keep going while Hubchat is open or in the tray. A retry starts the file again: the hub can't resume a transfer.</div>
+          <div className="help" style={{ padding: "4px 10px 6px", fontSize: 12, maxWidth: 380 }}>Transfers keep going while Hubchat is open or in the tray. Interrupted files resume when the hub supports it; older hubs restart from zero.</div>
         </div>
       ) : null}
     </>

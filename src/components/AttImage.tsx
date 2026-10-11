@@ -61,7 +61,8 @@ function Viewer({ m, a }: { m: Message; a: Attachment }) {
     const off = onChatChange(m.peer, refresh);
     return () => { live = false; off(); };
   }, [m.id, m.peer, a.local_id]);
-  const view = attView(current, m);
+  const progress = useTransfer(current.local_id);
+  const view = attView(current, m, progress);
   const saved = view.open && current.local_path;
   const saving = requesting || view.st === "busy";
 
@@ -87,11 +88,13 @@ function Viewer({ m, a }: { m: Message; a: Attachment }) {
   };
   const open = (reveal: boolean) => openAttachment(m.id, a.local_id, reveal).catch((e) => toast(errText(e)));
   const fromHere = m.outgoing && a.source && !a.source.startsWith("content://") && platform === "desktop" ? a.source : null;
-  const actions = m.outgoing
+  const actions = m.outgoing && a.source && !current.download
     ? (fromHere ? <button className="link" onClick={() => openFile(fromHere).catch((e) => toast(errText(e)))}>Open</button> : null)
     : saved
       ? <><button className="link" onClick={() => open(false)}>Open</button>{platform === "desktop" ? <button className="link" onClick={() => open(true)}>Show in folder</button> : null}</>
-      : <button className="link" disabled={saving} onClick={download}>{saving ? view.sub : view.retry ? "Retry download" : "Download"}</button>;
+      : saving
+        ? <span className="iv-progress" role="status">{view.sub}</span>
+        : <button className="link" onClick={download}>{view.retry ? "Retry download" : "Download"}</button>;
 
   return (
     <div className="imgview" role="dialog" aria-label={a.name} onClick={close}>

@@ -696,6 +696,15 @@ export const mockApi: Api = {
   cancelTransfer: async (localId) => {
     for (const m of msgs) for (const a of m.attachments) if (a.local_id === localId) { a.state = "cancelled"; if (a.download) a.download.state = "cancelled"; chatEv(m.peer); }
   },
+  transfers: async (after = null) => {
+    const rows = msgs.flatMap(m => m.attachments.flatMap(a => {
+      const d = a.download;
+      const show = d ? ["queued", "running", "paused", "publishing", "exporting"].includes(d.state) && !(["publishing", "exporting"].includes(d.state) && d.error)
+        : m.outgoing && ["queued", "sending"].includes(m.state) && ["pending", "uploading"].includes(a.state);
+      return show ? [{local_id:a.local_id,message_id:m.id,peer:m.peer,name:a.name,upload:!d,state:d?.state??a.state,done:d?.confirmed??0,total:a.bytes,error:d?.error??a.error}] : [];
+    })).filter(r => !after || r.local_id > after).sort((a,b) => a.local_id < b.local_id ? -1 : 1);
+    return {rows:rows.slice(0,100),next:rows.length>100?rows[99].local_id:null};
+  },
   download: async (messageId, localId) => {
     const m = find(messageId); const a = m?.attachments.find((x) => x.local_id === localId);
     if (!m || !a) throw "no such attachment";
@@ -713,7 +722,6 @@ export const mockApi: Api = {
         if (a.download !== job || a.state === "cancelled") return;
         a.download!.confirmed = Math.min(a.bytes, a.download!.confirmed + step);
         emit({ type: "transfer", local_id: a.local_id, message_id: m.id, upload: false, done: a.download!.confirmed, total: a.bytes });
-        chatEv(m.peer);
       }
       a.download!.state = "exporting"; chatEv(m.peer);
       await sleep(500);

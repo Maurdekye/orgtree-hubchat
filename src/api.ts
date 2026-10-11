@@ -102,6 +102,11 @@ export type MessageState =
 
 /** pending | uploading | uploaded | failed | cancelled (outgoing);
  *  remote | downloading | done | failed | cancelled | expired (incoming). */
+export interface TransferView {
+  local_id: string; message_id: string; peer: string; name: string;
+  upload: boolean; state: string; done: number; total: number; error: string | null;
+}
+export interface TransferPage { rows: TransferView[]; next: string | null }
 export interface DownloadStatus {
   state: string;
   confirmed: number;
@@ -364,6 +369,7 @@ export const tauriApi = {
   send: (msg: NewOutgoing) => invoke<void>("hc_send", { msg }),
   retry: (id: string) => invoke<void>("hc_retry", { id }),
   cancelTransfer: (localId: string) => invoke<void>("hc_cancel_transfer", { localId }),
+  transfers: (after: string | null = null) => invoke<TransferPage>("hc_transfers", { after }),
   download: (messageId: string, localId: string) => invoke<void>("hc_download", { messageId, localId }),
   markRead: (peer: string) => invoke<void>("hc_mark_read", { peer }),
   sendRoute: (peer: string) => invoke<SendRoute>("hc_send_route", { peer }),

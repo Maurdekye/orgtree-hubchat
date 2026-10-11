@@ -31,7 +31,7 @@ try {
  check('explicit Retry queues again',await browser.eval(`window.current.download.state==='queued'`));
  await browser.eval(`window.shown=false;window.render()`);await sleep(800);
  await browser.eval(`window.shown=true;window.render()`);await sleep(50);
- check('reopened card restores confirmed progress',await browser.eval(`window.current.download.confirmed>0&&document.querySelector('#proof').textContent.includes(' of ')`));
+ check('reopened card restores confirmed progress',await browser.eval(`parseFloat(document.querySelector('#proof .att-bar i').style.width)>0&&document.querySelector('#proof').textContent.includes(' of ')`));
  await browser.shot(join(out,'progress-desktop.png'));
  await sleep(1300);
  check('finishing shown at complete bytes without cancel',await browser.eval(`document.querySelector('#proof').textContent.includes('Finishing\u2026')&&!document.querySelector('#proof .att-x')`));
