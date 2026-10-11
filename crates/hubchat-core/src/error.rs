@@ -34,6 +34,22 @@ pub enum Error {
 }
 
 impl Error {
+    /// Public file-card text must never contain request URLs or server bodies.
+    /// Keep the original error for diagnostics; do not persist it as UI text.
+    pub(crate) fn file_message(&self) -> String {
+        match self {
+            Self::Unreachable(_) => "Connection interrupted; waiting to retry".into(),
+            Self::Hub { status: 408 | 409 | 429 | 500..=599, .. } =>
+                "The hub is busy or unavailable; waiting to retry".into(),
+            Self::Hub { status: 404 | 410, .. } => "The file is no longer on the hub".into(),
+            Self::Hub { status: 413, .. } => "The file is too large for this hub".into(),
+            Self::Hub { status: 401 | 403, .. } => "The hub refused access to this file".into(),
+            Self::Hub { .. } => "The hub could not accept the file. Try again.".into(),
+            Self::NotAHub(_) => "The hub sent an unexpected response. Try again.".into(),
+            _ => self.to_string(),
+        }
+    }
+
     pub fn status(&self) -> Option<u16> {
         match self {
             Error::Hub { status, .. } => Some(*status),

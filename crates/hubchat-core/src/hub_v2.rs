@@ -242,7 +242,7 @@ impl HubClient {
         let mut out = Vec::new();
         let mut s = resp.bytes_stream();
         while let Some(c) = s.next().await {
-            let c = c?;
+            let c = c.map_err(|e| Error::Unreachable(e.to_string()))?;
             if (out.len() + c.len()) as u64 > max_bytes {
                 return Err(Error::BodyTooLarge(max_bytes));
             }

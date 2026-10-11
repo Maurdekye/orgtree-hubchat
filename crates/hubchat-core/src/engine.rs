@@ -1687,12 +1687,13 @@ impl Engine {
                 {
                     // The connection dropped mid-file: the hub keeps what it
                     // got. Wait for the network and continue from there.
+                    eprintln!("upload interrupted: {e}");
                     self.store.set_attachment(
                         &a.local_id,
                         "pending",
                         None,
                         None,
-                        Some(&e.to_string()),
+                        Some(&e.file_message()),
                     )?;
                     self.store.requeue_send(id)?;
                     self.host.event(Event::Chat {
@@ -1701,6 +1702,7 @@ impl Engine {
                     return Ok(false);
                 }
                 Err(e) => {
+                    eprintln!("upload failed: {e}");
                     let what = if cancel.is_cancelled() {
                         "cancelled"
                     } else {
@@ -1711,7 +1713,7 @@ impl Engine {
                         what,
                         None,
                         None,
-                        Some(&e.to_string()),
+                        Some(&e.file_message()),
                     )?;
                     self.fail(&m.peer, id, &format!("upload {what}: {}", a.name))?;
                     return Ok(true);

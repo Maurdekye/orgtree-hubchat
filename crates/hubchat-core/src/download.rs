@@ -153,7 +153,9 @@ impl HubClient {
                 let mut last_save = Instant::now();
                 let mut body = resp.bytes_stream();
                 while let Some(chunk) = body.next().await {
-                    let chunk = chunk?;
+                    // A truncated HTTP body is transport loss, even when
+                    // reqwest labels its body decoder error as is_decode().
+                    let chunk = chunk.map_err(|e| Error::Unreachable(e.to_string()))?;
                     if chunk.len() as u64 > spec.total - done {
                         return Err(Error::Invalid("download exceeded its declared size".into()));
                     }

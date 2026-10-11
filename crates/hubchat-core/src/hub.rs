@@ -616,7 +616,7 @@ impl HubClient {
                         let _ = tokio::fs::remove_file(&part).await;
                         return Err(Error::Cancelled);
                     }
-                    let chunk = chunk?;
+                    let chunk = chunk.map_err(|e| Error::Unreachable(e.to_string()))?;
                     out.write_all(&chunk).await?;
                     done += chunk.len() as u64;
                     if let Some(p) = &progress {

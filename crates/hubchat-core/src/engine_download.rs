@@ -339,6 +339,7 @@ impl Engine {
         }
         .await;
         if let Err(ref e) = result {
+            eprintln!("download failed: {e}");
             let state = if matches!(e,Error::FilePaused) || cancel.is_cancelled() || super::engine_scheduler::transient(e) {
                 "paused"
             } else if e.status() == Some(410) {
@@ -347,7 +348,7 @@ impl Engine {
                 "failed"
             };
             self.store
-                .download_error(local_id, job.attempt, state, &e.to_string())?;
+                .download_error(local_id, job.attempt, state, &e.file_message())?;
         }
         self.host.event(Event::Chat { peer: m.peer });
         result
@@ -569,6 +570,86 @@ mod tests {
         assert!(!public.contains(".hubchat-downloads"));
         store.cancel_download(&lid).unwrap();
         assert_eq!(store.message("message").unwrap().unwrap().attachments[0].download.as_ref().unwrap().state, "cancelled");
+    }
+
+    #[tokio::test]
+    async fn truncated_download_keeps_checkpoint_and_scheduler_resumes_without_notice() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let total = 10 * 1024 * 1024u64;
+        let lid = attach(&store, &url, total);
+        store.set_state("message", "sent", None).unwrap();
+        let engine = fixture(store.clone(), dir.path(), &url);
+        engine.queue_download("message", &lid).unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            assert!(!headers(&mut socket).await.to_lowercase().contains("range:"));
+            socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {total}\r\nETag: \"stable\"\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+            socket.write_all(&vec![73; 9 * 1024 * 1024]).await.unwrap();
+            socket.shutdown().await.unwrap();
+            drop(socket);
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let request = headers(&mut socket).await.to_lowercase();
+            let range = request.lines().find_map(|line| line.strip_prefix("range: bytes=")).unwrap();
+            let offset: u64 = range.trim_end_matches('-').parse().unwrap();
+            assert!((8 * 1024 * 1024..=9 * 1024 * 1024).contains(&offset));
+            assert!(request.contains("if-range: \"stable\""));
+            socket.write_all(format!("HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{total}\r\nETag: \"stable\"\r\nConnection: close\r\n\r\n", total-offset, offset, total-1).as_bytes()).await.unwrap();
+            socket.write_all(&vec![73; (total-offset) as usize]).await.unwrap();
+        });
+        let run = tokio::spawn(engine.clone().sender_loop());
+        until(|| store.download_job(&lid).unwrap().is_some_and(|j|
+            matches!(j.state.as_str(), "paused" | "queued") && j.error.is_some())).await;
+        let job = store.download_job(&lid).unwrap().unwrap();
+        assert!(job.checkpoint.confirmed >= 8 * 1024 * 1024);
+        assert_eq!(job.error.as_deref(), Some("Connection interrupted; waiting to retry"));
+        assert!(store.pending_transfer_failures(0).unwrap().is_empty());
+        // No manual Retry: the production scheduler's saved backoff expires.
+        until(|| store.download_job(&lid).unwrap().is_some_and(|j| j.state == "done")).await;
+        let job = store.download_job(&lid).unwrap().unwrap();
+        assert_eq!(std::fs::read(job.destination).unwrap(), vec![73; total as usize]);
+        assert!(store.pending_transfer_failures(0).unwrap().is_empty());
+        engine.shutdown();
+        run.await.unwrap();
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn truncated_legacy_download_and_long_body_are_transport_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let client = HubClient::new(HubAddress::parse(&url).unwrap());
+        let me = Identity::generate("cut-body").unwrap();
+        let server = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                headers(&mut socket).await;
+                socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 12\r\nConnection: close\r\n\r\ncut").await.unwrap();
+                socket.shutdown().await.unwrap();
+            }
+        });
+        let dest = dir.path().join("legacy.bin");
+        let error = client.download_file(&me, "file", &dest, None, CancelFlag::default()).await.unwrap_err();
+        assert!(matches!(error, Error::Unreachable(_)));
+        assert!(!dest.exists());
+        let error = client.message_body(&me, "body", 100).await.unwrap_err();
+        assert!(matches!(error, Error::Unreachable(_)));
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn file_error_text_does_not_reveal_network_details() {
+        for error in [Error::Unreachable("request http://secret-host/api/uploads/private?offset=3".into()),
+            Error::NotAHub("decode http://secret-host".into()),
+            Error::Hub { status: 422, detail: "http://secret-host/private rejected".into() }] {
+            let text = error.file_message();
+            assert!(!text.contains("http"));
+            assert!(!text.contains("secret-host"));
+            assert!(!text.contains("private"));
+        }
     }
 
     async fn headers(s: &mut tokio::net::TcpStream) -> String {
