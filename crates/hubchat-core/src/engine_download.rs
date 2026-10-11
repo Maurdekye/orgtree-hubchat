@@ -569,6 +569,99 @@ mod tests {
         .unwrap();
     }
     #[tokio::test]
+    async fn previews_share_file_slots_and_stop_when_suspended_or_shutdown() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let lid = attach(&store, &url, 3);
+        let e = fixture(store.clone(), dir.path(), &url);
+        let dest = dir.path().join("preview.png");
+        let reserved = e.file_slots.try_acquire(&url).unwrap();
+        let preview = e.fetch_preview("message", &lid, &dest);
+        tokio::pin!(preview);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(40), &mut preview)
+                .await
+                .is_err()
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(40), listener.accept())
+                .await
+                .is_err()
+        );
+        drop(reserved);
+        // Two unrelated hubs also consume the global budget.
+        let first = e.file_slots.try_acquire("other-one").unwrap();
+        let second = e.file_slots.try_acquire("other-two").unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(40), &mut preview)
+                .await
+                .is_err()
+        );
+        drop(first);
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            headers(&mut socket).await;
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc")
+                .await
+                .unwrap();
+            let (mut socket, _) = listener.accept().await.unwrap();
+            headers(&mut socket).await;
+            // Do not answer: suspension must interrupt waiting for headers.
+            let mut b = [0];
+            assert_eq!(socket.read(&mut b).await.unwrap(), 0);
+        });
+        tokio::time::timeout(Duration::from_secs(2), &mut preview)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"abc");
+        assert!(store.download_job(&lid).unwrap().is_none());
+        drop(second);
+        let other_dest = dir.path().join("stalled.png");
+        let stalled = e.fetch_preview("message", &lid, &other_dest);
+        tokio::pin!(stalled);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut stalled)
+                .await
+                .is_err()
+        );
+        e.set_suspended(true);
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(2), &mut stalled)
+                .await
+                .unwrap(),
+            Err(Error::Cancelled)
+        ));
+        assert!(!other_dest.exists());
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(e.file_slots.try_acquire(&url).is_some());
+        e.set_suspended(false);
+        let reserved = e.file_slots.try_acquire(&url).unwrap();
+        let waiting = e.fetch_preview("message", &lid, &dest);
+        tokio::pin!(waiting);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(40), &mut waiting)
+                .await
+                .is_err()
+        );
+        e.shutdown();
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(2), &mut waiting)
+                .await
+                .unwrap(),
+            Err(Error::Cancelled)
+        ));
+        drop(reserved);
+        assert_eq!(std::fs::read(&dest).unwrap(), b"abc");
+    }
+
+    #[tokio::test]
     async fn stored_download_resumes_after_disconnect_and_store_reopen() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("store.db");

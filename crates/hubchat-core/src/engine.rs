@@ -2114,13 +2114,27 @@ impl Engine {
         let (Some(hub_id), Some(hub)) = (a.hub_id.clone(), a.hub.clone().or_else(|| m.hub.clone())) else {
             return Err(Error::Invalid("not on a hub".into()));
         };
-        let client = self
+        let (client, stop) = self
             .hubs
             .lock()
             .unwrap()
             .get(&hub)
-            .map(|h| h.client.clone())
+            .map(|h| (h.client.clone(), h.stop.clone()))
             .ok_or_else(|| Error::Invalid(format!("hub {hub} was removed")))?;
+        let mut suspended = self.suspended.subscribe();
+        if *suspended.borrow_and_update()
+            || self.stopped.load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err(Error::Cancelled);
+        }
+        // Previews share the same file budget as explicit saves and uploads.
+        // Waiting never reserves the other hub's slot, and suspension/shutdown
+        // cancels both a queued preview and an in-flight HTTP request.
+        let slot = tokio::select! {
+            biased;
+            _ = suspended.changed() => return Err(Error::Cancelled),
+            result = stop.run(async { Ok(self.file_slots.acquire(&hub).await) }) => result?,
+        };
         if let Some(dir) = dest.parent() {
             tokio::fs::create_dir_all(dir).await?;
         }
@@ -2129,10 +2143,14 @@ impl Engine {
         static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let part = dest.with_extension(format!("part{n}"));
-        match client
-            .download_file(&self.me, &hub_id, &part, None, CancelFlag::default())
-            .await
-        {
+        let result = tokio::select! {
+            biased;
+            _ = suspended.changed() => Err(Error::Cancelled),
+            result = client.download_file(&self.me, &hub_id, &part, None, stop) => result,
+        };
+        // The slot also covers closing and publishing the file.
+        let _slot = slot;
+        match result {
             Ok(_) => {
                 tokio::fs::rename(&part, dest).await?;
                 Ok(())
