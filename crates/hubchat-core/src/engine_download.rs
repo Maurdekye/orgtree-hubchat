@@ -339,7 +339,7 @@ impl Engine {
         }
         .await;
         if let Err(ref e) = result {
-            eprintln!("download failed: {e}");
+            crate::diag::failure("download failed", e);
             let state = if matches!(e,Error::FilePaused) || cancel.is_cancelled() || super::engine_scheduler::transient(e) {
                 "paused"
             } else if e.status() == Some(410) {

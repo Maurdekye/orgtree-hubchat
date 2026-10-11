@@ -3,6 +3,7 @@
 //! Everything that talks to a mail hub lives here, so the Windows and Android
 //! shells share one implementation. The UI never builds hub requests itself.
 
+pub mod diag;
 pub mod engine;
 pub mod door;
 pub mod error;

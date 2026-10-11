@@ -384,12 +384,22 @@ impl HubClient {
     /// Probe: is something there, and is it a mail hub? Unauthenticated.
     pub async fn healthz(&self) -> Result<Health> {
         self.session_work(async {
-        let resp = self
+        let wire = crate::diag::Wire::start(self.addr.as_str(), "GET", "/healthz");
+        let resp = match self
             .http
             .get(self.addr.join("/healthz"))
             .timeout(Duration::from_secs(10))
             .send()
-            .await?;
+            .await
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                let e = Error::from(e);
+                wire.failed(&e);
+                return Err(e);
+            }
+        };
+        wire.status(resp.status().as_u16());
         if !resp.status().is_success() {
             return Err(Error::NotAHub(format!(
                 "/healthz answered {}",
@@ -707,15 +717,27 @@ impl HubClient {
         timeout: Duration,
     ) -> Result<R> {
         self.session_work(async {
-        let resp = self
+        let wire = crate::diag::Wire::start(self.addr.as_str(), "POST", path);
+        let resp = match self
             .http
             .post(self.addr.join(path))
             .header("X-Org-Auth", me.auth_header())
             .json(body)
             .timeout(timeout)
             .send()
-            .await?;
-        Ok(check(resp).await?.json::<R>().await?)
+            .await
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                let e = Error::from(e);
+                wire.failed(&e);
+                return Err(e);
+            }
+        };
+        let status = resp.status().as_u16();
+        let answer: Result<R> = async { Ok(check(resp).await?.json::<R>().await?) }.await;
+        wire.answered(status, &answer);
+        answer
         }).await
     }
 }

@@ -284,13 +284,26 @@ impl HubClient {
             #[serde(default)]
             deleted: u64,
         }
-        let resp = self
+        let wire = crate::diag::Wire::start(self.address().as_str(), "DELETE", path);
+        let resp = match self
             .http
             .delete(self.address().join(path))
             .header("X-Org-Auth", me.auth_header())
             .timeout(Duration::from_secs(60))
             .send()
-            .await?;
+            .await
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                let e = Error::from(e);
+                wire.failed(&e);
+                return Err(e);
+            }
+        };
+        match resp.status().as_u16() {
+            404 => wire.expected(404),
+            status => wire.status(status),
+        }
         match check(resp).await {
             Ok(r) => Ok(r.json::<R>().await?.deleted),
             Err(e) if e.status() == Some(404) => Ok(0),

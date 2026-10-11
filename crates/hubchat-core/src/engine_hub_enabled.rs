@@ -9,6 +9,7 @@ impl Engine {
         let mut hubs = self.hubs.lock().unwrap();
         if self.stopped.load(std::sync::atomic::Ordering::Relaxed) { return Err(Error::Cancelled); }
         self.store.set_hub_enabled_for(Some(&self.me.address()), &url, enabled)?;
+        tracing::info!("hub {}: {}", crate::diag::tag("hub", &url), if enabled { "enabled" } else { "disabled" });
         if !enabled {
             if let Some(rt) = hubs.remove(&url) {
                 rt.stop.cancel();
@@ -36,13 +37,26 @@ impl Engine {
     }
 
     pub(super) fn set_status_for(&self, url: &str, stop: &CancelFlag, f: impl FnOnce(&mut HubStatus)) {
+        let mut moved = None;
         let changed = {
             let mut hubs = self.hubs.lock().unwrap();
             match hubs.get_mut(url).filter(|h| h.stop.same(stop) && !stop.is_cancelled()) {
-                Some(h) => { let before = format!("{:?}", h.status); f(&mut h.status); before != format!("{:?}", h.status) }
+                Some(h) => {
+                    let before = format!("{:?}", h.status);
+                    let from = h.status.state.clone();
+                    f(&mut h.status);
+                    if from != h.status.state {
+                        moved = Some((from, h.status.state.clone(), h.status.version.clone()));
+                    }
+                    before != format!("{:?}", h.status)
+                }
                 None => false,
             }
         };
+        if let Some((from, to, version)) = moved {
+            // the state only (the error text stays with the status the UI shows)
+            tracing::info!("hub {}: {from:?} -> {to:?} (hub software {})", crate::diag::tag("hub", url), version.as_deref().unwrap_or("unknown"));
+        }
         if changed { self.host.event(Event::Hub { url: url.into() }); }
     }
 

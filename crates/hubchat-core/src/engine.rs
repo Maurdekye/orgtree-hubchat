@@ -287,16 +287,18 @@ impl Engine {
 
     /// Start a task per stored hub plus the sender. Call once, inside a runtime.
     pub fn start(self: &Arc<Self>) -> Result<()> {
-        for h in self.store.hubs()? {
+        let hubs = self.store.hubs()?;
+        tracing::info!(hubs = hubs.len(), enabled = hubs.iter().filter(|h| h.enabled).count(), "engine starting");
+        for h in hubs {
             if !h.enabled { continue; }
             if let Ok(a) = HubAddress::parse(&h.url) {
                 self.spawn_hub(a, h.name, h.max_attachment_bytes);
             }
         }
         let me = self.clone();
-        tokio::spawn(async move { me.sender_loop().await });
+        crate::diag::spawn_engine(async move { me.sender_loop().await });
         let me = self.clone();
-        tokio::spawn(async move { me.body_loop().await });
+        crate::diag::spawn_engine(async move { me.body_loop().await });
         // in use: say so again before the hub's 90 s run out
         let me = self.clone();
         tokio::spawn(async move {
@@ -676,6 +678,7 @@ impl Engine {
     /// Stop every hub connection and the sender (switching identity). The
     /// engine is not usable afterwards.
     pub fn shutdown(&self) {
+        tracing::info!("engine shutting down");
         self.set_files_paused(true);
         self.stopped
             .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -760,7 +763,7 @@ impl Engine {
         hubs.insert(addr.to_string(), rt);
         drop(hubs);
         let me = self.clone();
-        tokio::spawn(async move { me.hub_loop(client, retry, kick, stop).await });
+        crate::diag::spawn_engine(async move { me.hub_loop(client, retry, kick, stop).await });
     }
 
     fn connected_hubs(&self) -> Vec<(String, HubClient, u64)> {
@@ -819,6 +822,7 @@ impl Engine {
                     let refused = matches!(e, Error::NotAHub(_)) || matches!(e.status(), Some(403));
                     let wait = BACKOFF[failures.min(BACKOFF.len() - 1)];
                     failures += 1;
+                    crate::diag::failure(&format!("hub {} session ended, next try in {wait} s (failure {failures})", crate::diag::tag("hub", &url)), &e);
                     self.set_status_for(&url, &stop, |s| {
                         s.state = if refused {
                             HubState::Refused
@@ -1551,7 +1555,19 @@ impl Engine {
     }
 
     /// The scheduler has reserved a file slot when this message needs one.
-    async fn send_one_on(&self, id: &str, (url,client,max):(String,HubClient,u64)) -> Result<bool> {
+    async fn send_one_on(&self, id: &str, route: (String, HubClient, u64)) -> Result<bool> {
+        use crate::diag;
+        let hub = diag::tag("hub", &route.0);
+        diag::traced_with(
+            "engine.send",
+            || format!("msg={}, hub={hub}", diag::tag("msg", id)),
+            self.send_one_on_inner(id, route),
+            |handled| (if *handled { "handled" } else { "requeued" }).into(),
+        )
+        .await
+    }
+
+    async fn send_one_on_inner(&self, id: &str, (url,client,max):(String,HubClient,u64)) -> Result<bool> {
         if client.session_cancelled() { return Ok(false); }
         let (m,_writer)={
             let mut writers=self.send_writers.lock().unwrap();
@@ -1686,7 +1702,7 @@ impl Engine {
                 {
                     // The connection dropped mid-file: the hub keeps what it
                     // got. Wait for the network and continue from there.
-                    eprintln!("upload interrupted: {e}");
+                    crate::diag::failure("upload interrupted", &e);
                     self.store.set_attachment(
                         &a.local_id,
                         "pending",
@@ -1701,7 +1717,7 @@ impl Engine {
                     return Ok(false);
                 }
                 Err(e) => {
-                    eprintln!("upload failed: {e}");
+                    crate::diag::failure("upload failed", &e);
                     let what = if cancel.is_cancelled() {
                         "cancelled"
                     } else {
@@ -1876,6 +1892,8 @@ impl Engine {
     }
 
     fn fail(&self, peer: &str, id: &str, why: &str) -> Result<()> {
+        // the reason carries file names and hub addresses: it stays with the message
+        tracing::warn!("send failed: message {} to {} (reason kept with the message)", crate::diag::tag("msg", id), crate::diag::tag("peer", peer));
         self.store.fail_send(id, why)?;
         self.host.event(Event::Chat { peer: peer.into() });
         Ok(())
