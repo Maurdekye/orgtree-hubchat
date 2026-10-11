@@ -420,6 +420,16 @@ fn show_crash_reports(app: &AppHandle) {
         });
 }
 
+/// What must run before Restart Hubchat restarts, which skips the Exit event
+/// (logging flushes its file): set once, by logging.
+static BEFORE_RESTART: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+
+/// Run `f` just before Restart Hubchat restarts (it must not panic).
+#[allow(dead_code)] // logging sets it
+pub fn before_restart(f: fn()) {
+    let _ = BEFORE_RESTART.set(f);
+}
+
 /// What a restart starts the new process with: nothing, or `--hidden` when
 /// the window is hidden, so Hubchat comes back as it was. Never the old
 /// process's own arguments: a hubchat:// link it was started with (a setup
@@ -439,6 +449,9 @@ fn restart(app: &AppHandle) {
     let mut env = app.env();
     let argv0 = env.args_os.first().cloned().unwrap_or_default();
     env.args_os = restart_args(argv0, hidden);
+    if let Some(f) = BEFORE_RESTART.get() {
+        f();
+    }
     // Free the one-instance lock first. The new process would otherwise find
     // this one still running, hand it its start and quit (Tauri frees it on
     // the Exit event, which a restart from the main thread never sends).
