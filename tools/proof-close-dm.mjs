@@ -88,4 +88,3 @@ try {
   writeFileSync(join(out, 'result.json'), JSON.stringify({ checks, errors: b.errors }, null, 2));
   await b.close(); await server.close();
 }
-
