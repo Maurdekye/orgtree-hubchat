@@ -50,8 +50,10 @@ object DownloadPublisher {
         }
     }
     private fun findPending(context: Context, key: String): Uri? {
-        val selection = "${MediaStore.Downloads.DISPLAY_NAME}=? AND ${MediaStore.MediaColumns.OWNER_PACKAGE_NAME}=? AND ${MediaStore.Downloads.IS_PENDING}=1"
-        val args = arrayOf(pendingName(key), context.packageName)
+        val selection = "${MediaStore.Downloads.DISPLAY_NAME} LIKE ? AND ${MediaStore.MediaColumns.OWNER_PACKAGE_NAME}=? AND ${MediaStore.Downloads.IS_PENDING}=1"
+        // MediaProvider may append the MIME extension; the fixed SHA-256 prefix
+        // has no SQL wildcard characters and remains unique to this export.
+        val args = arrayOf(pendingName(key) + "%", context.packageName)
         val projection = arrayOf(MediaStore.Downloads._ID)
         val cursor = if (Build.VERSION.SDK_INT >= 30) {
             context.contentResolver.query(collection(), projection, android.os.Bundle().apply {
@@ -66,7 +68,7 @@ object DownloadPublisher {
         }
     }
     /** Drop only our invisible pending copy; a completed user file always survives. */
-    fun abandoned(context: Context, key: String, source: String) {
+    fun abandoned(context: Context, key: String, source: String, downloadRoot: String) {
         if (Build.VERSION.SDK_INT < 29) return
         val journal = receipt(context, key)
         val previous = if (journal.baseFile.exists()) {
@@ -74,14 +76,20 @@ object DownloadPublisher {
         } else null
         val uris = listOfNotNull(previous, findPending(context, key)).distinct()
         for (uri in uris) {
-            context.contentResolver.delete(pendingUri(uri),
-                "${MediaStore.Downloads.IS_PENDING}=1 AND ${MediaStore.MediaColumns.OWNER_PACKAGE_NAME}=?",
-                arrayOf(context.packageName))
+            val selection = "${MediaStore.Downloads.IS_PENDING}=1 AND ${MediaStore.MediaColumns.OWNER_PACKAGE_NAME}=?"
+            val args = arrayOf(context.packageName)
+            if (Build.VERSION.SDK_INT >= 30) {
+                context.contentResolver.delete(uri, android.os.Bundle().apply {
+                    putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
+                    putString(android.content.ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+                    putStringArray(android.content.ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, args)
+                })
+            } else context.contentResolver.delete(pendingUri(uri), selection, args)
         }
         // Rust holds both the job claim and publication lock, and passes an empty
         // source when another job still references this private path.
         if (source.isNotEmpty()) {
-            val root = File(context.filesDir, "downloads").absoluteFile
+            val root = File(downloadRoot).absoluteFile
             val file = File(source).absoluteFile
             if (file.parentFile == root && !java.nio.file.Files.isSymbolicLink(root.toPath()) &&
                 !java.nio.file.Files.isSymbolicLink(file.toPath()) && file.exists()) {

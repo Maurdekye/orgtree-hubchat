@@ -257,9 +257,9 @@ class ConnectionService : Service() {
     }
 
     @JvmStatic
-    fun transferAbandoned(key: String, source: String): String {
+    fun transferAbandoned(key: String, source: String, root: String): String {
       val ctx = appContext ?: return "not ready"
-      return try { DownloadPublisher.abandoned(ctx, key, source); "" }
+      return try { DownloadPublisher.abandoned(ctx, key, source, root); "" }
         catch (_: Exception) { "cleanup failed" }
     }
 
