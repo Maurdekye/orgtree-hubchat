@@ -185,6 +185,7 @@ export function useTransfer(localId: string): Progress | undefined {
 
 /** Durable unfinished transfers, enriched by checkpoint/wire events. */
 export interface Active extends Progress {
+  created_at: string;
   local_id: string;
   name: string | null;
   peer: string | null;
@@ -194,7 +195,7 @@ export interface Active extends Progress {
 const active = new Map<string, Active>();
 let activeList: Active[] = [];
 const asubs = new Set<() => void>();
-function activeChanged() { activeList = [...active.values()]; asubs.forEach((f) => f()); }
+function activeChanged() { activeList = [...active.values()].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.message_id.localeCompare(b.message_id) || a.local_id.localeCompare(b.local_id)); asubs.forEach((f) => f()); }
 export function useActiveTransfers(): Active[] {
   return useSyncExternalStore((f) => { asubs.add(f); return () => { asubs.delete(f); }; }, () => activeList);
 }

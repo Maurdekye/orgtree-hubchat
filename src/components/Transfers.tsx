@@ -8,7 +8,7 @@ import { errText } from "../lib/native";
 import { displayName } from "../lib/peers";
 import { cancelTransfer, useActiveTransfers, useSnap, type Active } from "../lib/store";
 import { toast } from "../lib/toast";
-import { pressKeys } from "./ui";
+import { pressKeys, usePlatform } from "./ui";
 
 const pct = (done: number, total: number) => Math.floor((100 * done) / Math.max(1, total));
 
@@ -41,6 +41,7 @@ function XRow({ t, onOpen, android }: { t: Active; onOpen: (peer: string) => voi
 
 /** Desktop: the chip (shown only while something moves) and its popover. */
 export function TransfersChip({ onOpen }: { onOpen: (peer: string) => void }) {
+  const platform = usePlatform();
   const list = useActiveTransfers();
   const [open, setOpen] = useState(false);
   const btn = useRef<HTMLButtonElement>(null);
@@ -75,7 +76,7 @@ export function TransfersChip({ onOpen }: { onOpen: (peer: string) => void }) {
           <div className="pop-h">Transfers</div>
           {list.map((t) => <XRow key={t.local_id} t={t} onOpen={(peer) => { setOpen(false); onOpen(peer); }} />)}
           <div className="sep" />
-          <div className="help" style={{ padding: "4px 10px 6px", fontSize: 12, maxWidth: 380 }}>Transfers keep going while Hubchat is open or in the tray. Interrupted files resume when the hub supports it; older hubs restart from zero.</div>
+          <div className="help" style={{ padding: "4px 10px 6px", fontSize: 12, maxWidth: 380 }}>{platform === "android" ? "If Android pauses a transfer, open Hubchat to resume it." : "Transfers keep going while Hubchat is open or in the tray."} Interrupted files resume when the hub supports it; older hubs restart from zero.</div>
         </div>
       ) : null}
     </>

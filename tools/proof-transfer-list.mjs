@@ -11,12 +11,15 @@ try {
  await b.eval(`(async()=>{
   const {api}=await import('/src/api.ts');window.api=api;window.oldTransfers=api.transfers;
   const s=await import('/src/lib/store.ts');window.s=s;
-  window.rows=Array.from({length:205},(_,i)=>({local_id:String(i).padStart(4,'0'),message_id:'proof'+i,peer:'proof-peer',name:'File '+i,upload:false,state:'queued',done:0,total:1048576,error:null}));
+  window.rows=Array.from({length:205},(_,i)=>({local_id:String(i).padStart(4,'0'),message_id:'proof'+i,created_at:String(205-i).padStart(4,'0'),peer:'proof-peer',name:'File '+i,upload:false,state:'queued',done:0,total:1048576,error:null}));
   window.reads=0;api.transfers=async(after)=>{window.reads++;const rows=window.rows.filter(r=>!after||r.local_id>after);return {rows:rows.slice(0,100),next:rows.length>100?rows[99].local_id:null};};
   await s.refreshTransfers();
  })()`);
  await sleep(100);
  check('all durable pages loaded without transfer events',await b.eval(`window.reads===3&&document.querySelector('.tb-xfer .n').textContent==='205'`));
+ await b.click('.tb-xfer',70);
+ check('display follows message time rather than UUID order',await b.eval(`document.querySelector('.xrow b').textContent==='File 204'`));
+ await b.click('.tb-xfer',70);
  await b.eval(`window.rows=[{...window.rows[0],state:'exporting',done:1048576}];window.s.refreshTransfers()`);await sleep(80);
  await b.click('.tb-xfer',70);
  check('100 percent exporting stays listed without Cancel',await b.eval(`document.querySelector('.xrow').textContent.includes('Finishing')&&!document.querySelector('.xrow button')`));

@@ -701,7 +701,7 @@ export const mockApi: Api = {
       const d = a.download;
       const show = d ? ["queued", "running", "paused", "publishing", "exporting"].includes(d.state) && !(["publishing", "exporting"].includes(d.state) && d.error)
         : m.outgoing && ["queued", "sending"].includes(m.state) && ["pending", "uploading"].includes(a.state);
-      return show ? [{local_id:a.local_id,message_id:m.id,peer:m.peer,name:a.name,upload:!d,state:d?.state??a.state,done:d?.confirmed??0,total:a.bytes,error:d?.error??a.error}] : [];
+      return show ? [{local_id:a.local_id,message_id:m.id,created_at:m.created_at,peer:m.peer,name:a.name,upload:!d,state:d?.state??a.state,done:d?.confirmed??0,total:a.bytes,error:d?.error??a.error}] : [];
     })).filter(r => !after || r.local_id > after).sort((a,b) => a.local_id < b.local_id ? -1 : 1);
     return {rows:rows.slice(0,100),next:rows.length>100?rows[99].local_id:null};
   },

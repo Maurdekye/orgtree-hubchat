@@ -103,7 +103,7 @@ export type MessageState =
 /** pending | uploading | uploaded | failed | cancelled (outgoing);
  *  remote | downloading | done | failed | cancelled | expired (incoming). */
 export interface TransferView {
-  local_id: string; message_id: string; peer: string; name: string;
+  local_id: string; message_id: string; created_at: string; peer: string; name: string;
   upload: boolean; state: string; done: number; total: number; error: string | null;
 }
 export interface TransferPage { rows: TransferView[]; next: string | null }
