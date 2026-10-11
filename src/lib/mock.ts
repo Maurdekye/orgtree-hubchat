@@ -128,7 +128,18 @@ const hubOld = new Map<string, Map<string, Message[]>>();
 const oldUnread = new Map<string, number>();
 /** How far back a chat may show (no pop-ins); it never rises again. */
 const shownFloor = new Map<string, string>();
-const closedDms = new Set<string>();
+// Device-local visibility survives restarting the mock page, keyed by identity.
+function closedDms(): Set<string> {
+  try { return new Set(JSON.parse(localStorage.getItem("hubchat.mock.closed." + st.me?.address) || "[]")); }
+  catch { return new Set(); }
+}
+function dmVisibility(peer: string, closed: boolean): boolean {
+  const peers = closedDms();
+  const changed = closed ? !peers.has(peer) : peers.has(peer);
+  if (closed) peers.add(peer); else peers.delete(peer);
+  localStorage.setItem("hubchat.mock.closed." + st.me?.address, JSON.stringify([...peers]));
+  return changed;
+}
 
 function att(name: string, b: number, state: string, extra?: Partial<Attachment>): Attachment {
   return { local_id: uid(), hub_id: "h" + uid().slice(0, 6), name, bytes: b, source: null, local_path: null, state, error: null, ...extra };
@@ -296,11 +307,18 @@ const pasted = new Map<string, Uint8Array>();
 // ------------------------------------------------------------------ events
 const listeners = new Set<(e: HcEvent) => void>();
 const emit = (e: HcEvent) => {
-  if (e.type === "incoming") closedDms.delete(e.peer);
+  if (e.type === "incoming") dmVisibility(e.peer, false);
   listeners.forEach((f) => f(e));
 };
 const chatEv = (peer: string) => emit({ type: "chat", peer });
 const hubEv = (url: string) => emit({ type: "hub", url });
+
+/** Isolated browser proofs can deliver new mail without connecting to a hub. */
+export function mockIncoming(peer: string, body: string): void {
+  const m = add(peer, false, now(), body, { seen: false });
+  emit({ type: "incoming", peer, id: m.id, preview: body });
+  chatEv(peer);
+}
 
 // ?labback=S: the lab hub comes back after S seconds (lazy history: its
 // older messages then fill in)
@@ -494,7 +512,7 @@ function chatsList(): ChatSummary[] {
   for (const m of msgs) { const l = by.get(m.peer) || []; l.push(m); by.set(m.peer, l); }
   const out: ChatSummary[] = [];
   for (const [peer, l] of by) {
-    if (closedDms.has(peer)) continue;
+    if (closedDms().has(peer)) continue;
     l.sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
     out.push({ peer, last: clone(l[l.length - 1]), unread: l.filter((m) => !m.outgoing && !m.seen).length + (oldUnread.get(peer) || 0) });
   }
@@ -651,8 +669,8 @@ export const mockApi: Api = {
     return { exact: clone(exact), matches: clone(matches), is_me: raw === st.me?.address, valid, address: raw };
   },
   chats: async () => chatsList(),
-  closeDm: async (peer) => { closedDms.add(peer); chatEv(peer); },
-  openDm: async (peer) => { if (closedDms.delete(peer)) chatEv(peer); },
+  closeDm: async (peer) => { dmVisibility(peer, true); chatEv(peer); },
+  openDm: async (peer) => { if (dmVisibility(peer, false)) chatEv(peer); },
   chat: async (peer, o = {}) => {
     // as the core pages: by time then id, newest `limit` before `before`, none older than `from`
     const key = (m: Message) => [m.created_at, m.id] as const;
