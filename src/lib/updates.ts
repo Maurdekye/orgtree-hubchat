@@ -115,10 +115,16 @@ async function checkRaw(): Promise<Available | null> {
   }
   if (!isTauri) {
     await new Promise((r) => setTimeout(r, 700));
-    const u = new URLSearchParams(location.search).get("update");
+    const q = new URLSearchParams(location.search);
+    const u = q.get("update");
     if (u === "down") throw "the update feed can't be reached";
     if (u !== "1") return null;
-    return { version: "0.2.0", install: async () => { await new Promise((r) => setTimeout(r, 1500)); location.reload(); } };
+    // `&install=fail`: the download stops
+    return { version: "0.2.0", install: tracked(async () => {
+      await new Promise((r) => setTimeout(r, 1500));
+      if (q.get("install") === "fail") throw "the download stopped";
+      location.reload();
+    }) };
   }
   // a test build runs beside the real app; the real release would install the
   // real app, so a test build never offers it
@@ -129,20 +135,21 @@ async function checkRaw(): Promise<Available | null> {
   if (!u) return null;
   return {
     version: u.version,
-    // the banner, Settings › About, the setup screen and the tray all come
-    // here, so each of them sees an install under way or failed
-    install: async () => {
-      if (check.k === "installing") return;
-      setCheck({ k: "installing" });
-      try {
-        await u.downloadAndInstall();
-        const { relaunch } = await import("@tauri-apps/plugin-process");
-        await relaunch();
-      } catch (e) {
-        setCheck({ k: "failed", msg: errText(e) });
-        throw e;
-      }
-    },
+    install: tracked(async () => {
+      await u.downloadAndInstall();
+      const { relaunch } = await import("@tauri-apps/plugin-process");
+      await relaunch();
+    }),
+  };
+}
+
+/** A desktop install, wherever it starts (the banner, Settings › About, the
+ *  setup screen, the tray): each of them sees it under way, or failed. */
+function tracked(run: () => Promise<void>): () => Promise<void> {
+  return async () => {
+    if (check.k === "installing") return;
+    setCheck({ k: "installing" });
+    try { await run(); } catch (e) { setCheck({ k: "failed", msg: errText(e) }); throw e; }
   };
 }
 
