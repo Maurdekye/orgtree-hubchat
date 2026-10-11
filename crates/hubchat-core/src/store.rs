@@ -161,11 +161,17 @@ END;
 "#,
     // 4: requested downloads keep confirmed offsets and publication intent.
     r#"
+CREATE TABLE transfer_send_state (
+ message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+ failures INTEGER NOT NULL DEFAULT 0,
+ retry_at INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE download_jobs (
  local_id TEXT PRIMARY KEY REFERENCES attachments(local_id) ON DELETE CASCADE,
  partial TEXT NOT NULL,
  destination TEXT NOT NULL,
  exported INTEGER NOT NULL DEFAULT 0,
+ retry_at INTEGER NOT NULL DEFAULT 0,
  state TEXT NOT NULL DEFAULT 'queued',
  attempt INTEGER NOT NULL DEFAULT 0,
  confirmed INTEGER NOT NULL DEFAULT 0,
@@ -1868,3 +1874,6 @@ mod staging_store;
 #[path = "download_store.rs"]
 mod download_store;
 pub use download_store::DownloadJob;
+
+#[path = "scheduler_store.rs"]
+mod scheduler_store;

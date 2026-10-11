@@ -192,6 +192,7 @@ pub struct Engine {
     stopped: std::sync::atomic::AtomicBool,
     transfers: Mutex<HashMap<String, CancelFlag>>,
     download_publication: tokio::sync::Mutex<()>,
+    file_slots: Arc<transfer_slots::TransferSlots>,
     read_receipts: std::sync::atomic::AtomicBool,
     /// This installation's (device_id, device_name) for v2 sync.
     device: Mutex<(String, String)>,
@@ -226,6 +227,7 @@ impl Engine {
             stopped: std::sync::atomic::AtomicBool::new(false),
             transfers: Mutex::new(HashMap::new()),
             download_publication: tokio::sync::Mutex::new(()),
+            file_slots: Arc::new(transfer_slots::TransferSlots::default()),
             read_receipts: std::sync::atomic::AtomicBool::new(true),
             active: std::sync::atomic::AtomicBool::new(false),
             suspended: tokio::sync::watch::channel(false).0,
@@ -1460,9 +1462,15 @@ impl Engine {
         })
     }
 
-    /// Put a failed message back in the queue (Retry). Uploads restart from zero.
+    /// Put a failed message back in the queue; resumable sessions keep their bytes.
     pub fn retry(&self, id: &str) -> Result<()> {
         if let Some(m) = self.store.message(id)? {
+            if !m.outgoing || m.state != "failed" {
+                return Err(Error::Invalid(
+                    "only failed outgoing messages can be retried".into(),
+                ));
+            }
+            self.store.clear_send_retry(id)?;
             for a in &m.attachments {
                 if a.state != "uploaded" {
                     self.store
@@ -1487,60 +1495,23 @@ impl Engine {
         Ok(())
     }
 
-    async fn sender_loop(self: Arc<Self>) {
-        let store = self.store.clone();
-        let root = self.host.staging_dir();
-        let _ = tokio::task::spawn_blocking(move || crate::staging::sweep_orphans(&root, &store)).await;
-        let mut suspended = self.suspended.subscribe();
-        while !self.stopped.load(std::sync::atomic::Ordering::Relaxed) {
-            self.clean_staging().await;
-            if *suspended.borrow_and_update() {
-                tokio::select! {
-                    _ = suspended.changed() => {},
-                    _ = self.queue_changed.notified() => {},
-                }
-                continue;
-            }
-            let mut progressed = false;
-            if let Ok(queue) = self.store.queued() {
-                for m in queue {
-                    if *self.suspended.borrow() {
-                        break;
-                    }
-                    match self.send_one(&m.id).await {
-                        Ok(true) => progressed = true,
-                        Ok(false) => {}
-                        Err(_) => {}
-                    }
-                }
-            }
-            if !progressed {
-                tokio::select! {
-                    _ = self.queue_changed.notified() => {}
-                    _ = tokio::time::sleep(Duration::from_secs(30)) => {}
-                }
-            }
-        }
-    }
-
     async fn clean_staging(&self) {
         let store = self.store.clone();
         let root = self.host.staging_dir();
         let _ = tokio::task::spawn_blocking(move || crate::staging::collect(&root, &store)).await;
     }
 
-    /// Try to send one queued message. Ok(true) = it left the queue.
+    #[cfg(test)]
     async fn send_one(&self, id: &str) -> Result<bool> {
-        let Some(m) = self.store.message(id)? else {
-            return Ok(false);
-        };
-        let connected = self.connected_hubs();
-        if connected.is_empty() {
-            return Ok(false);
-        }
-        let Some((url, client, max)) = self.route(&m.peer, &connected)?.next else {
-            return Ok(false);
-        }; // its hubs are down: wait
+        let Some(m) = self.store.message(id)? else { return Ok(false) };
+        let Some(route) = self.route(&m.peer, &self.connected_hubs())?.next else { return Ok(false) };
+        self.send_one_on(id, route).await
+    }
+
+    /// The scheduler has reserved a file slot when this message needs one.
+    async fn send_one_on(&self, id: &str, (url,client,max):(String,HubClient,u64)) -> Result<bool> {
+        let Some(m) = self.store.message(id)? else { return Ok(false) };
+        if !m.outgoing || !matches!(m.state.as_str(), "queued" | "sending") { return Ok(false); }
         let total: u64 = m.body.len() as u64 + m.attachments.iter().map(|a| a.bytes).sum::<u64>();
         if !m.attachments.is_empty() && total > max {
             self.fail(
@@ -2312,3 +2283,8 @@ mod transfer_tests;
 
 #[path = "engine_download.rs"]
 mod engine_download;
+
+#[path = "transfer_slots.rs"]
+mod transfer_slots;
+#[path = "engine_scheduler.rs"]
+mod engine_scheduler;

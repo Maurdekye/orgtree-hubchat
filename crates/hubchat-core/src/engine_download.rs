@@ -124,7 +124,45 @@ impl Engine {
     pub fn record_download_export(&self, local_id: &str, from: &str, to: &str) -> Result<()> {
         self.store.download_exported(local_id, from, to)
     }
+    /// Queue an explicit user request durably; no network or file copy here.
+    pub fn queue_download(&self, message_id: &str, local_id: &str) -> Result<DownloadJob> {
+        let m = self
+            .store
+            .message(message_id)?
+            .ok_or_else(|| Error::Invalid("no such message".into()))?;
+        let a = m
+            .attachments
+            .iter()
+            .find(|a| a.local_id == local_id)
+            .ok_or_else(|| Error::Invalid("no such attachment".into()))?;
+        if a.hub_id.is_none() || a.hub.as_ref().or(m.hub.as_ref()).is_none() {
+            return Err(Error::Invalid("not on a hub".into()));
+        }
+        let dir = self.host.download_dir();
+        let part = dir
+            .join(".hubchat-downloads")
+            .join(format!("{}.part", uuid::Uuid::new_v4().simple()));
+        let dest = unique_path(&dir, &a.name);
+        self.store.queue_download_job(
+            local_id,
+            &part.to_string_lossy(),
+            &dest.to_string_lossy(),
+        )?;
+        self.queue_changed.notify_one();
+        self.host.event(Event::Chat { peer: m.peer });
+        self.store
+            .download_job(local_id)?
+            .ok_or_else(|| Error::Invalid("attachment was deleted".into()))
+    }
     pub async fn download(&self, message_id: &str, local_id: &str) -> Result<PathBuf> {
+        self.download_with_slot(message_id, local_id, None).await
+    }
+    pub(super) async fn download_with_slot(
+        &self,
+        message_id: &str,
+        local_id: &str,
+        reserved: Option<transfer_slots::Permit>,
+    ) -> Result<PathBuf> {
         let m = self
             .store
             .message(message_id)?
@@ -163,6 +201,14 @@ impl Engine {
                 ));
             }
             if let Some(previous) = self.store.download_job(local_id)? {
+                if reserved.is_some()
+                    && !matches!(
+                        previous.state.as_str(),
+                        "queued" | "running" | "publishing" | "paused"
+                    )
+                {
+                    return Err(Error::Cancelled);
+                }
                 if previous.state == "done" {
                     if self.host.open_source(&previous.destination).is_ok() {
                         return Ok(previous.destination.into());
@@ -187,6 +233,14 @@ impl Engine {
             peer: m.peer.clone(),
         });
         let result = async {
+            let _slot = match reserved {
+                Some(slot) => slot,
+                None => {
+                    cancel
+                        .run(async { Ok(self.file_slots.acquire(&hub).await) })
+                        .await?
+                }
+            };
             if job.state != "publishing" {
                 // Reserve the partial while holding the same lock as directory
                 // removal. A concurrent completion cannot remove a new writer's
@@ -567,6 +621,144 @@ mod tests {
                 .as_deref(),
             dest.to_str()
         );
+    }
+    #[tokio::test]
+    async fn queued_downloads_reopen_share_slots_and_leave_control_mail_responsive() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("store.db");
+        let store = Arc::new(Store::open(&db).unwrap());
+        let mut listeners = Vec::new();
+        let mut urls = Vec::new();
+        for _ in 0..2 {
+            let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            urls.push(format!("http://{}", l.local_addr().unwrap()));
+            listeners.push(l);
+        }
+        let e = fixture(store.clone(), dir.path(), &urls[0]);
+        let mut jobs = Vec::new();
+        for (i, hub) in [0, 0, 1].into_iter().enumerate() {
+            let mid = format!("file{i}");
+            store
+                .queue_outgoing(
+                    &NewOutgoing {
+                        id: mid.clone(),
+                        peer: format!("peer{i}"),
+                        body: "file".into(),
+                        kind: None,
+                        reply_to: None,
+                        attachments: vec![NewAttachment {
+                            name: format!("file{i}.bin"),
+                            bytes: 3,
+                            source: "unused".into(),
+                        }],
+                    },
+                    &now(),
+                )
+                .unwrap();
+            let lid = store.message(&mid).unwrap().unwrap().attachments[0]
+                .local_id
+                .clone();
+            store
+                .set_upload(&lid, "uploaded", &format!("remote{i}"), &urls[hub])
+                .unwrap();
+            store.set_state(&mid, "sent", None).unwrap();
+            assert_eq!(e.queue_download(&mid, &lid).unwrap().state, "queued");
+            jobs.push(lid);
+        }
+        drop(e);
+        drop(store);
+        let store = Arc::new(Store::open(&db).unwrap());
+        let e = fixture(store.clone(), dir.path(), &urls[0]);
+        let other = fixture(store.clone(), dir.path(), &urls[1]);
+        let rt = other.hubs.lock().unwrap().remove(&urls[1]).unwrap();
+        e.hubs.lock().unwrap().insert(urls[1].clone(), rt);
+        let stop = CancelFlag::default();
+        let (release, _) = tokio::sync::watch::channel(false);
+        let (entered, mut arrivals) = tokio::sync::mpsc::unbounded_channel();
+        let peak = Arc::new(AtomicUsize::new(0));
+        let current = Arc::new(AtomicUsize::new(0));
+        let mut servers = Vec::new();
+        for (hub, l) in listeners.into_iter().enumerate() {
+            let stop = stop.clone();
+            let release = release.clone();
+            let entered = entered.clone();
+            let peak = peak.clone();
+            let current = current.clone();
+            servers.push(tokio::spawn(async move {
+                let local=Arc::new(AtomicUsize::new(0));let mut requests=tokio::task::JoinSet::new();
+                while let Ok(accepted)=stop.run(async {Ok(l.accept().await?)}).await {
+                    let (mut sock,_)=accepted;let mut release=release.subscribe();let entered=entered.clone();let local=local.clone();let current=current.clone();let peak=peak.clone();
+                    requests.spawn(async move {
+                        let h=headers(&mut sock).await;
+                        if h.starts_with("GET ") {
+                            assert_eq!(local.fetch_add(1,Ordering::SeqCst),0,"one file per hub");
+                            let n=current.fetch_add(1,Ordering::SeqCst)+1;peak.fetch_max(n,Ordering::SeqCst);
+                            entered.send(hub).unwrap();
+                            while !*release.borrow_and_update() {release.changed().await.unwrap();}
+                            sock.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc").await.unwrap();
+                            current.fetch_sub(1,Ordering::SeqCst);local.fetch_sub(1,Ordering::SeqCst);
+                        } else {
+                            assert!(h.starts_with("POST /api/send "),"{h}");
+                            let len=h.lines().find_map(|line|line.to_lowercase().strip_prefix("content-length: ").and_then(|n|n.parse::<usize>().ok())).unwrap();
+                            sock.read_exact(&mut vec![0;len]).await.unwrap();
+                            let body=r#"{"id":"control","received_at":"2026-10-11T00:00:00Z"}"#;
+                            sock.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).as_bytes()).await.unwrap();
+                        }
+                    });
+                }
+                while let Some(r)=requests.join_next().await {r.unwrap();}
+            }));
+        }
+        let runner = tokio::spawn(e.clone().sender_loop());
+        let a = tokio::time::timeout(Duration::from_secs(5), arrivals.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let b = tokio::time::timeout(Duration::from_secs(5), arrivals.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_ne!(a, b);
+        assert_eq!(peak.load(Ordering::SeqCst), 2);
+        store
+            .queue_outgoing(
+                &NewOutgoing {
+                    id: "control".into(),
+                    peer: "someone-else".into(),
+                    body: "ordinary mail".into(),
+                    kind: None,
+                    reply_to: None,
+                    attachments: vec![],
+                },
+                &now(),
+            )
+            .unwrap();
+        e.queue_changed.notify_one();
+        until(|| store.message("control").unwrap().unwrap().state == "sent").await;
+        assert!(jobs
+            .iter()
+            .all(|id| store.download_job(id).unwrap().unwrap().state != "done"));
+        release.send(true).unwrap();
+        until(|| {
+            jobs.iter()
+                .all(|id| store.download_job(id).unwrap().unwrap().state == "done")
+        })
+        .await;
+        for lid in &jobs {
+            let j = store.download_job(lid).unwrap().unwrap();
+            assert_eq!(std::fs::read(j.destination).unwrap(), b"abc");
+        }
+        assert_eq!(peak.load(Ordering::SeqCst), 2);
+        e.shutdown();
+        tokio::time::timeout(Duration::from_secs(5), runner)
+            .await
+            .unwrap()
+            .unwrap();
+        stop.cancel();
+        for s in servers {
+            s.await.unwrap();
+        }
     }
     #[tokio::test]
     async fn exported_location_survives_reopen_and_repeated_save_without_network() {
