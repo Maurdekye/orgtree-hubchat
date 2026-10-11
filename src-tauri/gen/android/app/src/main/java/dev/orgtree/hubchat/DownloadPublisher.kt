@@ -32,6 +32,64 @@ object DownloadPublisher {
             .joinToString("") { "%02x".format(it) }
         return AtomicFile(File(journalDir, "$journalName.uri"))
     }
+    private fun pendingName(key: String): String = "hubchat-" +
+        MessageDigest.getInstance("SHA-256").digest(key.toByteArray())
+            .joinToString("") { "%02x".format(it) } + ".pending"
+    private fun collection(): Uri = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+    @Suppress("DEPRECATION")
+    private fun pendingUri(uri: Uri): Uri = MediaStore.setIncludePending(uri)
+    private fun pending(context: Context, uri: Uri): Boolean? {
+        val projection = arrayOf(MediaStore.Downloads.IS_PENDING, MediaStore.MediaColumns.OWNER_PACKAGE_NAME)
+        val cursor = if (Build.VERSION.SDK_INT >= 30) {
+            context.contentResolver.query(uri, projection, android.os.Bundle().apply {
+                putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
+            }, null)
+        } else context.contentResolver.query(pendingUri(uri), projection, null, null, null)
+        return checkNotNull(cursor) { "Cannot inspect saved downloads" }.use {
+            if (it.moveToFirst() && it.getString(1) == context.packageName) it.getInt(0) != 0 else null
+        }
+    }
+    private fun findPending(context: Context, key: String): Uri? {
+        val selection = "${MediaStore.Downloads.DISPLAY_NAME}=? AND ${MediaStore.MediaColumns.OWNER_PACKAGE_NAME}=? AND ${MediaStore.Downloads.IS_PENDING}=1"
+        val args = arrayOf(pendingName(key), context.packageName)
+        val projection = arrayOf(MediaStore.Downloads._ID)
+        val cursor = if (Build.VERSION.SDK_INT >= 30) {
+            context.contentResolver.query(collection(), projection, android.os.Bundle().apply {
+                putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
+                putString(android.content.ContentResolver.QUERY_ARG_SQL_SELECTION, selection)
+                putStringArray(android.content.ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, args)
+                putInt(android.content.ContentResolver.QUERY_ARG_LIMIT, 1)
+            }, null)
+        } else context.contentResolver.query(pendingUri(collection()), projection, selection, args, null)
+        return checkNotNull(cursor) { "Cannot inspect saved downloads" }.use {
+            if (it.moveToFirst()) android.content.ContentUris.withAppendedId(collection(), it.getLong(0)) else null
+        }
+    }
+    /** Drop only our invisible pending copy; a completed user file always survives. */
+    fun abandoned(context: Context, key: String, source: String) {
+        if (Build.VERSION.SDK_INT < 29) return
+        val journal = receipt(context, key)
+        val previous = if (journal.baseFile.exists()) {
+            journal.openRead().bufferedReader().use { it.readText() }.let(Uri::parse)
+        } else null
+        val uris = listOfNotNull(previous, findPending(context, key)).distinct()
+        for (uri in uris) {
+            context.contentResolver.delete(pendingUri(uri),
+                "${MediaStore.Downloads.IS_PENDING}=1 AND ${MediaStore.MediaColumns.OWNER_PACKAGE_NAME}=?",
+                arrayOf(context.packageName))
+        }
+        // Rust holds both the job claim and publication lock, and passes an empty
+        // source when another job still references this private path.
+        if (source.isNotEmpty()) {
+            val root = File(context.filesDir, "downloads").absoluteFile
+            val file = File(source).absoluteFile
+            if (file.parentFile == root && !java.nio.file.Files.isSymbolicLink(root.toPath()) &&
+                !java.nio.file.Files.isSymbolicLink(file.toPath()) && file.exists()) {
+                check(file.isFile && file.delete()) { "Cannot remove private download" }
+            }
+        }
+        journal.delete()
+    }
     fun committed(context: Context, key: String) { receipt(context, key).delete() }
     fun publish(context: Context, key: String, path: String, name: String): String {
         if (Build.VERSION.SDK_INT < 29) return path
@@ -41,41 +99,34 @@ object DownloadPublisher {
         val previous = if (journal.baseFile.exists()) {
             journal.openRead().bufferedReader().use { it.readText() }.let(Uri::parse)
         } else null
-        @Suppress("DEPRECATION")
-        fun pendingUri(uri: Uri): Uri = MediaStore.setIncludePending(uri)
-        fun pending(uri: Uri): Boolean? {
-            val projection = arrayOf(MediaStore.Downloads.IS_PENDING)
-            val cursor = if (Build.VERSION.SDK_INT >= 30) {
-                resolver.query(uri, projection, android.os.Bundle().apply {
-                    putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
-                }, null)
-            } else resolver.query(pendingUri(uri), projection, null, null, null)
-            return cursor?.use { if (it.moveToFirst()) it.getInt(0) != 0 else null }
-        }
         // The URI was journalled before any bytes became visible. Once the
         // pending bit is clear, the prior copy finished, even if Rust died
         // before committing its pointer. Never overwrite the user's saved file.
-        val oldPending = previous?.let(::pending)
+        val oldPending = previous?.let { pending(context, it) }
         if (previous != null && oldPending == false) return previous.toString()
         val uri = if (previous != null && oldPending == true) previous else {
-            if (!source.isFile) throw SaveProblem("The private download is missing. Download it again.")
-            val values = ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, name)
-                put(MediaStore.Downloads.IS_PENDING, 1)
+            findPending(context, key) ?: run {
+                if (!source.isFile) throw SaveProblem("The private download is missing. Download it again.")
+                val values = ContentValues().apply {
+                    // Recover even a crash after insert but before the URI receipt.
+                    put(MediaStore.Downloads.DISPLAY_NAME, pendingName(key))
+                    val extension = name.substringAfterLast('.', "").lowercase(java.util.Locale.ROOT)
+                    put(MediaStore.Downloads.MIME_TYPE, android.webkit.MimeTypeMap.getSingleton()
+                        .getMimeTypeFromExtension(extension) ?: "application/octet-stream")
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+                checkNotNull(resolver.insert(collection(), values)) { "Cannot create download" }
             }
-            val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            val created = checkNotNull(resolver.insert(collection, values)) { "Cannot create download" }
-            var output: java.io.FileOutputStream? = null
-            try {
-                output = journal.startWrite()
-                output.write(created.toString().toByteArray())
-                journal.finishWrite(output)
-            } catch (e: Exception) {
-                journal.failWrite(output)
-                resolver.delete(pendingUri(created), null, null)
-                throw e
-            }
-            created
+        }
+        var output: java.io.FileOutputStream? = null
+        try {
+            output = journal.startWrite()
+            output.write(uri.toString().toByteArray())
+            journal.finishWrite(output)
+        } catch (e: Exception) {
+            journal.failWrite(output)
+            // Leave the keyed pending row discoverable for replay or cleanup.
+            throw e
         }
         // Keep the source until the core commits the URI. A crash during this
         // copy leaves a pending URI and replay truncates that same destination.
@@ -97,6 +148,7 @@ object DownloadPublisher {
             output.fd.sync()
         }
         val published = resolver.update(pendingUri(uri), ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, name)
             put(MediaStore.Downloads.IS_PENDING, 0)
         }, null, null)
         check(published == 1) { "Cannot finish saving the download" }
