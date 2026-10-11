@@ -1,5 +1,6 @@
-// One message: kind chip, reply quote, file cards, markdown body with the
-// time and ticks, the failed line, and (desktop) the hover actions.
+// One message: kind chip, reply quotes, file cards, markdown body with the
+// time and ticks, a question card's options, the failed line, and
+// (desktop) the hover actions.
 import { memo, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { api, type Attachment, type Message } from "../api";
 import { Icon, iconHTML } from "../lib/icons";
@@ -7,6 +8,8 @@ import { isLong, num, time } from "../lib/format";
 import { esc, md } from "../lib/md";
 import { copyText, errText, openAttachment, openFile, openLink } from "../lib/native";
 import { attView, msgTime, preview, tickInfo, type Kind } from "../lib/peers";
+import { foldAt, replyIds } from "../lib/replies";
+import { cardOf, type AnswerNote, type CardState } from "../lib/questions";
 import { openImage, previewable } from "../lib/images";
 import { openMenu, selectionIn, type MenuEntry } from "../lib/ctxmenu";
 import { useTransfer } from "../lib/store";
@@ -81,6 +84,10 @@ function attMenu(m: Message, a: Attachment): MenuEntry[] {
 
 export interface MsgHandlers {
   onReply: (m: Message) => void;
+  /** Add the message to the selection, or take it out. */
+  onSelect?: (m: Message) => void;
+  /** Pick (or unpick) an option of a question card. */
+  onPick?: (m: Message, label: string) => void;
   onInfo: (m: Message) => void;
   onDelete: (m: Message) => void;
   onJump: (id: string) => void;
@@ -93,15 +100,24 @@ interface Props extends MsgHandlers {
   peerName: string;
   peerKind: Kind;
   quoted: Message | null | undefined;
+  /** A multi-reply: one quote per message it answers (null: not on this device). */
+  quotes?: (Message | null | undefined)[];
+  /** A question card: where it stands. */
+  card?: CardState;
+  /** A question card: the options picked for the next message. */
+  picks?: string[];
+  /** A reply to question cards: what it did to each. */
+  notes?: AnswerNote[];
   hover: boolean;
   selected?: boolean;
   /** Desktop: the keyboard's highlight (Shift+Tab walks it, R replies). */
   highlighted?: boolean;
 }
 
-export const MessageView = memo(function MessageView({ m, first, peerName, peerKind, quoted, hover, selected, highlighted, onReply, onInfo, onDelete, onJump, onOpenAddr }: Props) {
+export const MessageView = memo(function MessageView({ m, first, peerName, peerKind, quoted, quotes, card, picks, notes, hover, selected, highlighted, onReply, onSelect, onPick, onInfo, onDelete, onJump, onOpenAddr }: Props) {
   const platform = usePlatform();
   const [open, setOpen] = useState(false);
+  const [allQuotes, setAllQuotes] = useState(false);
   const long = !!m.body && isLong(m.body);
 
   const delegate = (e: MouseEvent<HTMLDivElement>) => {
@@ -111,7 +127,9 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
     const link = t.closest("a.md-a") as HTMLElement | null;
     if (link) { e.preventDefault(); void openLink(link.dataset.href || ""); return; }
     const addr = t.closest("a.addr") as HTMLElement | null;
-    if (addr) { e.preventDefault(); onOpenAddr(addr.dataset.slug || ""); }
+    if (addr) { e.preventDefault(); onOpenAddr(addr.dataset.slug || ""); return; }
+    // desktop: Ctrl+click adds the message to the selection (multi-reply)
+    if ((e.ctrlKey || e.metaKey) && platform === "desktop" && !t.closest("button, [data-att], .quote") && onSelect) { e.preventDefault(); onSelect(m); }
   };
 
   // a link or address (no href: it is opened by us) by keyboard
@@ -123,19 +141,71 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
   };
 
   const k = m.kind ? KCHIP[m.kind] : undefined;
+  // what this reply did to a question card it answers
+  const noteEl = (id: string) => {
+    const n = notes?.find((x) => x.id === id);
+    const t = !n ? "" : !n.counted ? "Not counted: answered earlier" : n.picked ? "Answer: " + n.picked.join(", ") : n.skipped ? "Skipped" : "";
+    return t ? <span className={"q-ans" + (n?.counted ? "" : " stale")}>{t}</span> : null;
+  };
+  const quoteEl = (q: Message | null | undefined, id: string) => {
+    if (q === null) return <div className="quote missing" key={id}>Original message is not on this device{noteEl(id)}</div>;
+    if (!q) return null;
+    const kc = q.outgoing ? "k-me" : peerKind === "person" ? "" : "k-" + peerKind;
+    return (
+      <div className={"quote " + kc} key={id} onClick={(e) => { e.stopPropagation(); onJump(q.id); }} title="Show the original message">
+        <span className="q-who">{q.outgoing ? "You" : peerName}</span>
+        <span className="q-txt" dir="auto">{preview(q).slice(0, 140)}</span>
+        {noteEl(id)}
+      </div>
+    );
+  };
   let quote = null;
-  if (m.reply_to) {
-    if (quoted === null) quote = <div className="quote missing">Original message is not on this device</div>;
-    else if (quoted) {
-      const kc = quoted.outgoing ? "k-me" : peerKind === "person" ? "" : "k-" + peerKind;
-      quote = (
-        <div className={"quote " + kc} onClick={(e) => { e.stopPropagation(); onJump(quoted.id); }} title="Show the original message">
-          <span className="q-who">{quoted.outgoing ? "You" : peerName}</span>
-          <span className="q-txt" dir="auto">{preview(quoted).slice(0, 140)}</span>
+  const ids = replyIds(m);
+  if (ids.length > 1 && quotes) {
+    // several: stacked, a long list folded (up to three show whole)
+    const n = foldAt(quotes.length), folded = !allQuotes && n < quotes.length;
+    quote = (
+      <div className="quotes">
+        {(folded ? quotes.slice(0, n) : quotes).map((q, i) => quoteEl(q, ids[i]))}
+        {folded ? <button className="quote-more" onClick={(e) => { e.stopPropagation(); setAllQuotes(true); }}>and {quotes.length - n} more</button> : null}
+      </div>
+    );
+  } else if (m.reply_to) quote = quoteEl(quoted, m.reply_to);
+
+  // a question card: its header says how to answer, or how it was answered
+  // (the hint starts a reply, user 2026-10-11 13:24Z); its options wait in
+  // the composer until the next message goes (13:03Z)
+  const qc = cardOf(m);
+  const settled = card && card.st !== "open" ? card : null;
+  const canPick = !!qc && !settled && !m.outgoing && !!onPick;
+  let qhead = null, qopts = null, qfoot = null;
+  if (qc) {
+    qhead = (
+      <div className="qhead">
+        <div className="kchip kc-q">Question</div>
+        {canPick ? <button className="q-hint" onClick={(e) => { e.stopPropagation(); onReply(m); }}>{qc.options.length ? "Reply to answer something else" : "Reply to answer"}</button>
+          : settled ? <button className={"q-state " + settled.st} onClick={(e) => { e.stopPropagation(); onJump(settled.by.id); }} title="Show the answer">{settled.st === "skipped" ? "Skipped" : "Answered"} · {time(msgTime(settled.by))}</button> : null}
+      </div>
+    );
+    if (qc.options.length) {
+      const chosen = settled?.st === "answered" ? settled.picked ?? [] : canPick ? picks ?? [] : [];
+      qopts = (
+        <div className={"q-opts" + (qc.multiple ? " multi" : "")} role={qc.multiple ? "group" : "radiogroup"} aria-label={qc.multiple ? "Pick one or more" : "Pick one"}>
+          {qc.options.map((o) => {
+            const on = chosen.includes(o);
+            return (
+              <button key={o} className={"q-opt" + (on ? " on" : "")} role={qc.multiple ? "checkbox" : "radio"} aria-checked={on} disabled={!canPick} onClick={(e) => { e.stopPropagation(); onPick?.(m, o); }}>
+                <span className="q-mark">{on ? <Icon name="check" /> : null}</span><span className="q-l" dir="auto">{o}</span>
+              </button>
+            );
+          })}
         </div>
       );
+      if (canPick) qfoot = <div className="q-note">{picks?.length ? "Your answer goes with your next message" : qc.multiple ? "Pick one or more" : "Pick one"}</div>;
+      else if (settled?.st === "answered" && !settled.picked) qfoot = <div className="q-note">Answered in a reply</div>;
     }
   }
+  const metaLast = !!qopts;
   const meta = metaHTML(m);
   let body = null;
   if (m.body && long) {
@@ -143,14 +213,16 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
       <>
         <div className={"mbody" + (open ? "" : " clamp")} dir="auto" dangerouslySetInnerHTML={{ __html: md(m.body) }} />
         <button className="more" onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>{open ? "Show less" : "Show more · " + num(m.body.length) + " characters"}</button>
-        <div className="meta-line" dangerouslySetInnerHTML={{ __html: meta }} />
+        {metaLast ? null : <div className="meta-line" dangerouslySetInnerHTML={{ __html: meta }} />}
       </>
     );
+  } else if (m.body && metaLast) {
+    body = <div className="mtext" dir="auto" dangerouslySetInnerHTML={{ __html: md(m.body) }} />;
   } else if (m.body) {
     let h = md(m.body);
     h = /<\/p>$/.test(h) ? h.slice(0, -4) + meta + "</p>" : h + '<div class="meta-line">' + meta + "</div>";
     body = <div className="mtext" dir="auto" dangerouslySetInnerHTML={{ __html: h }} />;
-  } else {
+  } else if (!metaLast) {
     body = <div className="meta-line" dangerouslySetInnerHTML={{ __html: meta }} />;
   }
 
@@ -178,6 +250,7 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
     }
     const sel = selectionIn(e.currentTarget);
     items.push({ label: "Reply", icon: "reply", run: () => onReply(m) });
+    if (onSelect) items.push({ label: selected ? "Unselect" : "Select", icon: "check_circle", run: () => onSelect(m) });
     if (sel) items.push({ label: "Copy selection", icon: "copy", run: () => void copyText(sel, "Copied") });
     else if (m.body) items.push({ label: "Copy text", icon: "copy", run: () => void copyText(m.body, "Copied") });
     items.push({ label: "Message info", icon: "info", run: () => onInfo(m) });
@@ -188,12 +261,15 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
     <div className={"msg " + (m.outgoing ? "out" : "in") + (first ? " first" : "") + (selected ? " sel" : "") + (highlighted ? " hl" : "")} id={"m-" + m.id} data-id={m.id}>
       {platform === "android" ? <span className="swipe-ic"><Icon name="reply" /></span> : null}
       <div className="row">
-        <div className={"bubble" + (m.attachments.length && !m.body ? " only-att" : "") + (m.reply_to ? " has-quote" : "")} onClick={delegate} onKeyDown={keyOpen} onContextMenu={menu}>
+        <div className={"bubble" + (m.attachments.length && !m.body ? " only-att" : "") + (m.reply_to ? " has-quote" : "") + (qc ? " qcard" : "")} onClick={delegate} onKeyDown={keyOpen} onContextMenu={menu}>
           <span className="sr">{(m.outgoing ? "You" : peerName) + (k ? ", " + k[0] : "") + ": "}</span>
-          {k ? <div className={"kchip " + k[1]}>{k[0]}</div> : null}
+          {qhead ?? (k ? <div className={"kchip " + k[1]}>{k[0]}</div> : null)}
           {quote}
           {m.attachments.length ? <div className="atts">{m.attachments.map((a) => <AttCard key={a.local_id} a={a} m={m} />)}</div> : null}
           {body}
+          {qopts}
+          {qfoot}
+          {metaLast ? <div className="meta-line" dangerouslySetInnerHTML={{ __html: meta }} /> : null}
         </div>
         {/* beside the bubble, in the empty space, never over its text (user 23:38Z) */}
         {hover ? (

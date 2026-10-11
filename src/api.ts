@@ -172,6 +172,13 @@ export interface Message {
   body: string;
   kind: string | null;
   reply_to: string | null;
+  /** A multi-reply: every message it answers, oldest first (reply_to is the
+   *  first). Absent for an ordinary or single reply. */
+  replies?: string[];
+  /** A question card's preset options (kind "question"); absent: free-response. */
+  question?: QuestionMeta | null;
+  /** The options this message picked on the question cards it answers. */
+  answers?: Answer[];
   sent_at: string | null;
   received_at: string | null;
   created_at: string;
@@ -244,7 +251,31 @@ export interface NewOutgoing {
   body: string;
   kind?: string | null;
   reply_to?: string | null;
+  /** A multi-reply: every message it answers, oldest first (reply_to is the first). */
+  replies?: string[];
+  /** Options picked on question cards; each card is also in `replies`. */
+  answers?: Answer[];
   attachments?: NewAttachment[];
+}
+
+/** A question card's preset options: pick one, or (multiple) one or more. */
+export interface QuestionMeta {
+  options: string[];
+  multiple: boolean;
+}
+
+/** The options picked on one question card. */
+export interface Answer {
+  question: string;
+  picked: string[];
+}
+
+/** A chat's unsent answers (they survive a restart, user 2026-10-11 22:42Z):
+ *  the messages the next message replies to, and the options picked on
+ *  question cards (card id to labels). */
+export interface DraftAnswers {
+  replies: string[];
+  picks: Record<string, string[]>;
 }
 
 /** A device using this identity, as a mail hub v2.0 lists it. */
@@ -416,6 +447,8 @@ export const tauriApi = {
   loadOlder: (peer: string) => invoke<OlderPage>("hc_load_older", { peer }),
   message: (id: string) => invoke<Message | null>("hc_message", { id }),
   send: (msg: NewOutgoing) => invoke<void>("hc_send", { msg }),
+  draftAnswers: (peer: string) => invoke<DraftAnswers | null>("hc_draft_answers", { peer }),
+  setDraftAnswers: (peer: string, answers: DraftAnswers) => invoke<void>("hc_set_draft_answers", { peer, answers }),
   retry: (id: string) => invoke<void>("hc_retry", { id }),
   removeAttachment: (messageId: string, localId: string) => invoke<void>("hc_remove_attachment", { messageId, localId }),
   cancelTransfer: (localId: string) => invoke<void>("hc_cancel_transfer", { localId }),

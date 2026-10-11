@@ -3,6 +3,7 @@
 // once and re-reads only what an `hc` event says changed; transfer progress
 // is kept apart so a progress tick re-renders only the file card it concerns.
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { forgetDraftAnswers } from "./answers";
 import { api, type ChatSummary, type Contact, type HcEvent, type Message, type NewOutgoing, type OlderPage, type SendRoute, type State, type TransferView } from "../api";
 import { errText } from "./native";
 
@@ -291,6 +292,7 @@ export function setOnboarding(on: boolean) { set({ onboarding: on }); }
  *  belonged to the old one and load the new one, like a fresh sign-in. */
 export async function reloadAfterSwitch(): Promise<void> {
   preparations.clear(); preparationChanged();
+  forgetDraftAnswers();
   transfers.clear(); tsubs.forEach((f) => f());
   active.clear(); activeChanged();
   set({ chats: [], directory: [], byAddr: new Map(), drafts: {}, onboarding: false, chatsReady: false });

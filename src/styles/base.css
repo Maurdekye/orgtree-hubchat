@@ -288,3 +288,35 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .chip.hubchip.pick:hover, .chip.hubchip.pick.on { color: var(--ink-strong); border-color: var(--faint); }
 .chip.hubchip.pinned { color: var(--accent-text); border-color: var(--accent-soft); background: var(--accent-soft); }
 .sysnote .link { font-size: inherit; }
+
+/* multi-reply (user 2026-10-11 13:18Z): a reply to several messages shows
+   their quotes stacked; a reply to question cards says what it answered */
+.quotes { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 6px; }
+.quotes .quote { margin: 0; }
+.quote-more { align-self: flex-start; background: none; border: 0; padding: 1px 2px; font: inherit; font-size: 12.5px; color: var(--accent-text); cursor: pointer; }
+.msg.out .quote-more { color: inherit; opacity: .85; }
+.quote .q-ans { font-size: 12px; font-weight: 600; }
+.quote .q-ans.stale { font-weight: 400; font-style: italic; opacity: .75; }
+
+/* question cards: the header says how to answer, the options wait in the
+   composer until the next message goes */
+.bubble.qcard { min-width: 260px; }
+.qhead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 1px 0 5px; }
+.qhead .kchip { margin: 0; }
+.q-hint, .q-state { background: none; border: 0; padding: 0; font: inherit; font-size: 12px; color: var(--accent-text); cursor: pointer; text-align: left; }
+.q-hint:hover, .q-state:hover { text-decoration: underline; }
+.q-state { color: var(--dim); }
+.q-state.answered { color: var(--ok); }
+.q-opts { display: flex; flex-direction: column; gap: 5px; margin: 7px 0 3px; }
+.q-opt { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 36px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: inherit; font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
+.q-opt:hover:not(:disabled) { border-color: var(--accent); }
+.q-opt.on { border-color: var(--accent); background: var(--accent-soft); }
+.q-opt:disabled { cursor: default; }
+.q-opt:disabled:not(.on) { opacity: .6; }
+.q-mark { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--faint); }
+.q-opts.multi .q-mark { border-radius: 4px; }
+.q-opt.on .q-mark { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+.q-mark .ic { width: 13px; height: 13px; }
+.q-l { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.q-note { font-size: 12px; color: var(--dim); margin: 2px 0 0; }
+.comp-meta .skipnote { color: var(--warn); }

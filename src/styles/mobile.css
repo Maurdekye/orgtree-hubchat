@@ -374,3 +374,15 @@
 .fchips.dir-f .fchip { flex: none; white-space: nowrap; }
 /* the app's version beside the chat list's title (user 2026-10-09 07:42Z) */
 .appbar .title .ver { margin-left: 8px; font: 400 12.5px/1 var(--font); color: var(--faint); letter-spacing: 0; }
+
+/* multi-reply: the reply chips and the picked answers waiting in the composer */
+.replybar.multi { align-items: flex-start; }
+.replybar.multi .rb-item { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.replybar.multi .rb-item .rb-txt { flex: 1; min-width: 0; }
+.replybar.multi .rb-item .icon-btn { width: 32px; height: 32px; }
+.replybar .rb-more { align-self: flex-start; font-size: 13px; padding: 2px 0; }
+.ansrow { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 4px 6px; }
+.anschip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 34px; padding: 0 2px 0 10px; border-radius: 17px; background: var(--accent-soft); font-size: 13px; }
+.anschip .ic { width: 16px; height: 16px; color: var(--accent-text); flex: none; }
+.anschip .aq { color: var(--dim); }
+.anschip .icon-btn { flex: none; }

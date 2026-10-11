@@ -11,6 +11,9 @@ import { copyText, errText } from "../lib/native";
 import { displayName, hubByUrl, hubName, hubStatusText, kindInfo, kindOf, limitFor, msgTime, peerHubs, presence, preview, viaHub } from "../lib/peers";
 import { scanSetup } from "../lib/setup";
 import { refreshChats, useMessages, useSendRoute, useSnap } from "../lib/store";
+import { replyIds } from "../lib/replies";
+import { cardOf, cardStates, answerNotes } from "../lib/questions";
+import { clearDraftAnswers, loadDraftAnswers, pick, removeReply, setReplies, unpick, useDraftAnswers } from "../lib/answers";
 import { toast } from "../lib/toast";
 import { Composer, type ComposerApi } from "./Composer";
 import { HubHelpLink } from "./HubHelp";
@@ -44,8 +47,12 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   const name = displayName(c, peer);
   const kind = kindOf(c);
   const { msgs, loaded, reload, more, loadingOlder, loadOlder, unreachable, retryOlder } = useMessages(peer);
-  const [replyTo, setReplyTo] = useState<Message | null>(null);
-  const [sel, setSel] = useState<string | null>(null);
+  // what the next message answers: the messages it replies to and the
+  // options picked on question cards, kept per chat across restarts
+  const pending = useDraftAnswers(peer);
+  useEffect(() => { void loadDraftAnswers(peer); }, [peer]);
+  // selected messages, in the order they were picked (Android long-press, desktop Ctrl+click)
+  const [sel, setSel] = useState<string[]>([]);
   // desktop keyboard: the message Shift+Tab has highlighted (R replies to it)
   const [hl, setHl] = useState<string | null>(null);
   const hlRef = useRef(hl);
@@ -56,7 +63,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   const [far, setFar] = useState(false);
   const newMark = useRef<{ peer: string; id: string | null } | null>(null);
 
-  useEffect(() => { setReplyTo(null); setSel(null); setHl(null); pinned.current = true; }, [peer]);
+  useEffect(() => { setSel([]); setHl(null); pinned.current = true; }, [peer]);
 
   // Scan setup code: where linking this address with the org stands (a
   // chat-level note, hubchat-opus 11:38Z), read again as messages come
@@ -78,16 +85,41 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
 
   // reply quotes: from this chat, else fetched once by id
   const byId = useMemo(() => new Map(msgs.map((m) => [m.id, m])), [msgs]);
+  const pos = useMemo(() => new Map(msgs.map((m, i) => [m.id, i])), [msgs]);
   useEffect(() => {
-    const missing = msgs.filter((m) => m.reply_to && !byId.has(m.reply_to) && !(m.reply_to in extra)).map((m) => m.reply_to!);
+    const want = [...msgs.flatMap(replyIds), ...pending.replies, ...Object.keys(pending.picks)];
+    const missing = [...new Set(want)].filter((id) => !byId.has(id) && !(id in extra));
     if (!missing.length) return;
     let live = true;
     Promise.all(missing.map((id) => api.message(id).then((r) => [id, r] as const, () => [id, null] as const))).then((rs) => {
       if (live) setExtra((x) => ({ ...x, ...Object.fromEntries(rs) }));
     });
     return () => { live = false; };
-  }, [msgs, byId, extra]);
+  }, [msgs, byId, extra, pending]);
   const quoted = (id: string | null) => (id ? byId.get(id) ?? extra[id] : undefined);
+  // a multi-reply's quotes, made once per change so the bubbles stay memoized
+  const quoteLists = useMemo(() => {
+    const out = new Map<string, (Message | null | undefined)[]>();
+    for (const m of msgs) { const ids = replyIds(m); if (ids.length > 1) out.set(m.id, ids.map((id) => byId.get(id) ?? extra[id])); }
+    return out;
+  }, [msgs, byId, extra]);
+  // question cards: each one's state, and what each reply did to them
+  const cards = useMemo(() => cardStates(msgs), [msgs]);
+  const notes = useMemo(() => answerNotes(msgs, cards), [msgs, cards]);
+  const replies = useMemo(() => pending.replies.map((id) => byId.get(id) ?? extra[id]).filter((m): m is Message => !!m), [pending.replies, byId, extra]);
+  // picks wait only on open cards: one answered meanwhile (say on another
+  // device) drops them
+  const picked = useMemo(() => Object.entries(pending.picks).flatMap(([id, labels]) => {
+    const m = byId.get(id) ?? extra[id], card = m ? cardOf(m) : null;
+    if (!m || !card || m.outgoing || (cards.get(id)?.st ?? "open") !== "open") return [];
+    const l = card.options.filter((o) => labels.includes(o));
+    return l.length ? [{ card: m, labels: l }] : [];
+  }), [pending.picks, byId, extra, cards]);
+  useEffect(() => {
+    const done = Object.keys(pending.picks).filter((id) => (cards.get(id)?.st ?? "open") !== "open");
+    if (done.length) unpick(peer, done);
+  }, [cards, pending.picks, peer]);
+  const onPick = useCallback((m: Message, label: string) => { const card = cardOf(m); if (card) pick(peer, m.id, label, card.multiple); }, [peer]);
 
   // keep pinned to the newest message while at the bottom
   useLayoutEffect(() => {
@@ -96,7 +128,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
     if (nm && pinned.current === true && el.dataset.opened !== peer) { el.scrollTop = Math.max(0, nm.offsetTop - 120); pinned.current = false; }
     else if (pinned.current) el.scrollTop = el.scrollHeight;
     el.dataset.opened = peer;
-  }, [msgs, loaded, peer, replyTo]);
+  }, [msgs, loaded, peer, replies]);
   useEffect(() => {
     const el = tl.current; if (!el || !window.ResizeObserver) return;
     const ro = new ResizeObserver(() => { if (pinned.current) el.scrollTop = el.scrollHeight; });
@@ -165,10 +197,15 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
     if (el) { jumpTo.current = null; pinned.current = false; flash(el, false); }
   }, [msgs]);
   const del = useCallback((m: Message) => {
-    api.deleteMessage(m.id).then(() => { reload(); void refreshChats(); setSel(null); }, (e) => toast(errText(e)));
+    api.deleteMessage(m.id).then(() => { reload(); void refreshChats(); setSel([]); }, (e) => toast(errText(e)));
   }, [reload]);
-  const reply = useCallback((m: Message) => { setReplyTo(m); setSel(null); }, []);
-  const info = useCallback((m: Message) => { setSel(null); onInfo(m); }, [onInfo]);
+  // Reply answers one message, as before; the selection's Reply answers all
+  // of it, oldest first (user 2026-10-11 13:18Z)
+  // (the box takes the focus only then: replies saved from before don't open the keyboard)
+  const reply = useCallback((m: Message) => { setReplies(peer, [m.id]); setSel([]); comp.current?.focus(); }, [peer]);
+  const toggleSel = useCallback((m: Message) => setSel((s) => (s.includes(m.id) ? s.filter((x) => x !== m.id) : [...s, m.id])), []);
+  const replySel = () => { const ids = msgs.filter((m) => sel.includes(m.id)).map((m) => m.id); if (ids.length) setReplies(peer, ids); setSel([]); comp.current?.focus(); };
+  const info = useCallback((m: Message) => { setSel([]); onInfo(m); }, [onInfo]);
 
   // ------------------------------------- desktop: Shift+Tab walks the bubbles
   // (user 2026-10-09 08:38Z). From the message box the first Shift+Tab
@@ -195,6 +232,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
     if (platform !== "desktop") return;
     if (e.nativeEvent.isComposing || e.ctrlKey || e.altKey || e.metaKey) return;
     const t = e.target as HTMLElement, cur = hlRef.current;
+    if (!cur && e.key === "Escape" && sel.length) { e.preventDefault(); e.stopPropagation(); setSel([]); return; }
     if (!cur) {
       // the default order would go to the attach button: never from here
       if (e.key === "Tab" && e.shiftKey && t.matches(".composer textarea")) {
@@ -295,8 +333,8 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
     }
     const first = !prev || prev.outgoing !== m.outgoing || t - msgTime(prev) > GROUP_GAP || (!m.outgoing && !!m.kind && CHIP_KINDS.has(m.kind));
     rows.push(
-      <MessageView key={m.id} m={m} first={first} peerName={name} peerKind={kind} quoted={quoted(m.reply_to)} hover={platform === "desktop"} selected={sel === m.id} highlighted={hl === m.id}
-        onReply={reply} onInfo={info} onDelete={del} onJump={jump} onOpenAddr={onOpenAddr} />,
+      <MessageView key={m.id} m={m} first={first} peerName={name} peerKind={kind} quoted={quoted(m.reply_to)} quotes={quoteLists.get(m.id)} card={cards.get(m.id)} picks={pending.picks[m.id]} notes={notes.get(m.id)} hover={platform === "desktop"} selected={sel.includes(m.id)} highlighted={hl === m.id}
+        onReply={reply} onSelect={toggleSel} onPick={onPick} onInfo={info} onDelete={del} onJump={jump} onOpenAddr={onOpenAddr} />,
     );
     prev = m;
     if (setup?.reply_id === m.id) rows.push(setupNote(setup, platform));
@@ -331,7 +369,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
       if (!msg || t.closest("button, a, .att-file, .quote")) return;
       const id = msg.dataset.id!;
       gesture.current = { id, row: msg.querySelector(".row") as HTMLElement, ic: msg.querySelector(".swipe-ic"), x: e.clientX, y: e.clientY, dx: 0, swiping: false, done: false,
-        lp: setTimeout(() => { const g = gesture.current; if (g && !g.swiping) { g.done = true; setSel(id); } }, 450) };
+        lp: setTimeout(() => { const g = gesture.current; if (g && !g.swiping) { g.done = true; setSel((s) => (s.includes(id) ? s : [...s, id])); } }, 450) };
     },
     onPointerMove: (e: React.PointerEvent) => {
       const g = gesture.current; if (!g) return;
@@ -345,9 +383,10 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
     onClick: (e: React.MouseEvent) => {
       // the click that ends a long-press (or a swipe) is not a tap
       if (suppressClick.current) { suppressClick.current = false; return; }
-      if (!sel || (e.target as HTMLElement).closest("button, a")) return;
+      if (!sel.length || (e.target as HTMLElement).closest("button, a")) return;
       const msg = (e.target as HTMLElement).closest(".msg") as HTMLElement | null;
-      if (msg) setSel(sel === msg.dataset.id ? null : msg.dataset.id!);
+      const m = msg ? byId.get(msg.dataset.id!) : undefined;
+      if (m) toggleSel(m);
     },
   } : {};
   function endGesture() {
@@ -357,7 +396,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
     g.row.style.transition = "transform .18s"; g.row.style.transform = "";
     if (g.ic) g.ic.style.opacity = "0";
     setTimeout(() => { g.row.style.transition = ""; }, 200);
-    if (g.swiping && g.dx > 56) { const m = byId.get(g.id); if (m) setReplyTo(m); }
+    if (g.swiping && g.dx > 56) { const m = byId.get(g.id); if (m) reply(m); }
     gesture.current = null;
   }
 
@@ -367,21 +406,24 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   const comp = useRef<ComposerApi>(null);
   const conv = useRef<HTMLElement>(null);
   const dragging = useFileDrop(conv, platform === "desktop" && !off, (paths) => comp.current?.addFiles(paths));
-  const composer = <Composer ref={comp} peer={peer} c={c} hubs={hubs} replyTo={replyTo} onCancelReply={() => setReplyTo(null)} onSent={() => { pinned.current = true; reload(); }} off={off} />;
+  const composer = <Composer ref={comp} peer={peer} c={c} hubs={hubs} replies={replies} picked={picked} cards={cards} pos={pos} onRemoveReply={(id) => removeReply(peer, id)} onUnpick={(id) => unpick(peer, [id])} onCancelReply={() => setReplies(peer, [])}
+    onSent={() => { clearDraftAnswers(peer); pinned.current = true; reload(); }} off={off} />;
   const jumpBtn = <button className={"jump" + (far ? "" : " hide")} onClick={toBottom} title="Jump to the newest message" aria-label="Jump to the newest message"><Icon name="arrow_down" /></button>;
   const copyAddr = () => copyText("@net:" + peer, "Address copied");
 
   if (platform === "android") {
-    const selMsg = sel ? byId.get(sel) : undefined;
+    const selMsg = sel.length === 1 ? byId.get(sel[0]) : undefined;
     return (
       <div className="scr" role="main">
-        {selMsg ? (
+        {sel.length ? (
           <div className="appbar select">
-            <button className="icon-btn" onClick={() => setSel(null)} aria-label="Cancel"><Icon name="close" /></button>
-            <div className="title">1 selected</div>
-            <button className="icon-btn" onClick={() => reply(selMsg)} aria-label="Reply"><Icon name="reply" /></button>
-            <button className="icon-btn" onClick={() => { void copyText(selMsg.body, "Copied"); setSel(null); }} aria-label="Copy"><Icon name="copy" /></button>
-            <button className="icon-btn" onClick={() => info(selMsg)} aria-label="Message info"><Icon name="info" /></button>
+            <button className="icon-btn" onClick={() => setSel([])} aria-label="Cancel"><Icon name="close" /></button>
+            <div className="title">{sel.length} selected</div>
+            <button className="icon-btn" onClick={replySel} aria-label="Reply"><Icon name="reply" /></button>
+            {selMsg ? <>
+              <button className="icon-btn" onClick={() => { void copyText(selMsg.body, "Copied"); setSel([]); }} aria-label="Copy"><Icon name="copy" /></button>
+              <button className="icon-btn" onClick={() => info(selMsg)} aria-label="Message info"><Icon name="info" /></button>
+            </> : null}
           </div>
         ) : (
           <div className="appbar">
@@ -438,6 +480,14 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
         {jumpBtn}
         {dragging ? <DropZone lim={limitFor(c, hubs)} /> : null}
       </div>
+      {sel.length ? (
+        <div className="selbar" role="toolbar" aria-label="Selected messages">
+          <span className="sb-n">{sel.length} selected</span>
+          <span className="sb-hint">Ctrl+click adds or removes a message</span>
+          <button className="btn sm" onClick={replySel}><Icon name="reply" />Reply</button>
+          <button className="icon-btn" onClick={() => setSel([])} title="Clear selection (Esc)" aria-label="Clear selection"><Icon name="close" /></button>
+        </div>
+      ) : null}
       {composer}
       <div className="sr" role="status" aria-live="polite">{said}</div>
     </section>

@@ -27,7 +27,7 @@
 // maya.e71f2b, or with a code starting "SAME" this device's own); nothing is
 // adopted before linkConfirm. A key file opens with any passphrase but
 // "wrong". Hubs on 127.0.0.1 / localhost can't be reached from the "phone".
-import type { Api, LogInfo, SetupLink, SetupState, Attachment, ChatSummary, SendRoute, Contact, HcEvent, HubRow, HubStatus, LinkEvent, LinkLookup, LinkRole, Message, NewOutgoing, OlderPage, ParsedLink, Probe, PushState, Resolved, State } from "../api";
+import type { Api, LogInfo, SetupLink, SetupState, Attachment, ChatSummary, DraftAnswers, SendRoute, Contact, HcEvent, HubRow, HubStatus, LinkEvent, LinkLookup, LinkRole, Message, NewOutgoing, OlderPage, ParsedLink, Probe, PushState, Resolved, State } from "../api";
 import { toast } from "./toast";
 
 const params = new URLSearchParams(location.search);
@@ -47,11 +47,14 @@ const sleep = (n: number) => new Promise((r) => setTimeout(r, n));
 let mockVerbose = false;
 const mockLog = (): LogInfo => ({ active: true, verbose: mockVerbose, default_verbose: false, pinned: false, dir: "C:\\Users\\alex\\AppData\\Roaming\\dev.orgtree.hubchat\\diagnostics\\logs", fallback: false, files: 3, bytes: 1_245_184, max_bytes: 64 * 1024 * 1024, retention_days: 30 });
 
-/** A time `days` ago at hh:mm local. */
+/** A time `days` ago at hh:mm local. One still to come today (a run in the
+ *  small hours) moves into the minutes just before now, in order, so the
+ *  day's messages keep their sequence. */
 function at(days: number, hm: string): number {
   const d = new Date(); d.setDate(d.getDate() - days);
   const [h, m] = hm.split(":").map(Number); d.setHours(h, m, 0, 0);
-  return Math.min(d.getTime(), now() - 60000);
+  const limit = now() - 60000, t = d.getTime();
+  return t <= limit ? t : limit - Math.round((864e5 - (t - limit)) / 60);
 }
 
 const OFFICE = "http://hub.office.lan:7370";
@@ -126,6 +129,9 @@ for (const s of params.getAll("seen")) {
 
 const msgs: Message[] = [];
 const drafts: Record<string, string> = {};
+// unsent answers survive a restart in the app; here a reload stands in for it
+const ANSWERS_KEY = "hubchat-mock-draft-answers";
+const savedAnswers = (): Record<string, DraftAnswers> => { try { return JSON.parse(localStorage.getItem(ANSWERS_KEY) || "{}"); } catch { return {}; } };
 /** Lazy history: per chat, per hub, the messages this device hasn't loaded
  *  (oldest first), and how many of them are unread. */
 const hubOld = new Map<string, Map<string, Message[]>>();
@@ -193,9 +199,13 @@ Let me know if you want me to make these changes on a branch; I can have them re
 if (!onboarding) {
   const OG = "orgtree.alex.7c41d2";
   add(OG, false, at(1, "17:40"), "rc3 is ready: **1,286 tests passed**, 0 failed.\n\n- installer signed\n- Android build green\n- one flaky test quarantined (`net::retry_backoff`)", { kind: "status" });
-  add(OG, true, at(1, "17:42"), "Great. Ship it to the beta channel.");
+  add(OG, false, at(1, "17:41"), "Ship rc3 to the beta channel now?", { id: "q-ship", kind: "question", question: { options: ["Yes, ship it", "Not yet"], multiple: false } });
+  add(OG, true, at(1, "17:42"), "Great. Ship it to the beta channel.", { reply_to: "q-ship", answers: [{ question: "q-ship", picked: ["Yes, ship it"] }] });
   const q = add(OG, false, at(0, "09:12"), "Keep the old log location as a fallback, or switch cleanly?", { kind: "question" });
   add(OG, true, at(0, "09:15"), "Switch cleanly, and put it in the release notes.", { reply_to: q.id });
+  add(OG, false, at(0, "09:22"), "Which channel should rc4 go to?", { id: "q-channel", kind: "question", question: { options: ["Beta", "Stable", "Hold it back"], multiple: false } });
+  add(OG, false, at(0, "09:23"), "Which platforms should I test rc4 on?", { id: "q-platforms", kind: "question", question: { options: ["Windows", "Android", "macOS", "Linux"], multiple: true } });
+  add(OG, false, at(0, "09:24"), "Anything else for the rc4 release notes?", { id: "q-notes", kind: "question" });
   add(OG, false, at(0, "09:20"), "Done. Here is the change:\n```diff\n- let dir = legacy_log_dir();\n+ let dir = app_log_dir();\n```\nSummary attached.", { attachments: [att("rc3-test-summary.txt", 24 * 1024, "remote")] });
   add(OG, true, at(0, "09:31"), "Thanks! Can you also check the updater manifest?", { state: "delivered", read_at: null });
 
@@ -205,8 +215,11 @@ if (!onboarding) {
   add(CC, false, at(0, "08:10"), "Also: @net:research.alex.5b0e9a has benchmark numbers for the throttle, if you want a second opinion.", { seen: false });
 
   const MAYA = "maya.e71f2b";
-  add(MAYA, false, at(1, "16:05"), "Are we still on for the demo on Friday?");
-  add(MAYA, true, at(1, "16:20"), "Yes, 14:00 in the lab.");
+  const mq = add(MAYA, false, at(1, "16:05"), "Are we still on for the demo on Friday?");
+  const ma = add(MAYA, true, at(1, "16:20"), "Yes, 14:00 in the lab.");
+  const mb = add(MAYA, true, at(1, "16:21"), "Bring the demo build on a USB stick too.");
+  const mc = add(MAYA, true, at(1, "16:22"), "And the spare charger: the lab's one is broken.");
+  add(MAYA, false, at(0, "09:58"), "All noted. See you at 14:00 with the stick and the charger.", { reply_to: mq.id, replies: [mq.id, ma.id, mb.id, mc.id] });
   add(MAYA, true, at(0, "10:02"), "I'll bring the Pixel for the Android build.", { state: "sent", fetched_at: null, delivered_at: null, read_at: null });
 
   add("jonas.0b44d1", true, at(2, "11:30"), "Can you send me the hub logs from the lab?", {
@@ -436,6 +449,7 @@ function switchTo(address: string, hubs: string[]): string {
   setHubs(hubs);
   msgs.length = 0;
   for (const k of Object.keys(drafts)) delete drafts[k];
+  localStorage.removeItem(ANSWERS_KEY);
   const first = st.hubs[0]?.url;
   dir = first ? clone(SEED_DIR).filter((c) => c.address !== address).map((c) => ({ ...c, hubs: [first] })) : [];
   if (first) dir.push(contact("alex.3be2c9", "person", { user: "Alex Rivera" }, "Platform team", true, now(), [first]));
@@ -726,6 +740,7 @@ export const mockApi: Api = {
     }
     const m = add(n.peer, true, now(), n.body, {
       id: n.id, kind: n.kind ?? null, reply_to: n.reply_to ?? null, state: "queued", hub: null,
+      replies: n.replies && n.replies.length > 1 ? n.replies : undefined, answers: n.answers?.length ? n.answers : undefined,
       sent_at: null, received_at: null, fetched_at: null, delivered_at: null, read_at: null,
       attachments: (n.attachments || []).map((a) => att(a.name, a.bytes, "pending", { source: a.source, hub_id: null })),
     });
@@ -799,6 +814,12 @@ export const mockApi: Api = {
   deleteChat: async (peer) => { for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].peer === peer) msgs.splice(i, 1); chatEv(peer); },
   draft: async (peer) => drafts[peer] ?? null,
   setDraft: async (peer, body) => { drafts[peer] = body; },
+  draftAnswers: async (peer) => savedAnswers()[peer] ?? null,
+  setDraftAnswers: async (peer, answers) => {
+    const all = savedAnswers();
+    if (answers.replies.length || Object.keys(answers.picks).length) all[peer] = answers; else delete all[peer];
+    localStorage.setItem(ANSWERS_KEY, JSON.stringify(all));
+  },
   saveRecovery: async (dest) => dest || "Downloads/hubchat-recovery-alex.txt",
   devices: async () => ({ this_device: "hc-mock-pc", devices: [
     { device_id: "hc-mock-pc", name: "HOME-PC", created_at: null, last_seen: null, online: true },

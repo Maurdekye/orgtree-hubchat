@@ -1,13 +1,16 @@
-// The composer: per-chat drafts, reply bar, attachments (up to 10, picked or
-// dropped on the chat) and a size check against the hub's limit before
-// anything is sent.
+// The composer: per-chat drafts, the messages it replies to (one, or several),
+// options picked on question cards, attachments (up to 10, picked or dropped
+// on the chat) and a size check against the hub's limit before anything is
+// sent.
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { api, newId, type Contact, type HubStatus, type Message, type NewAttachment } from "../api";
 import { Icon } from "../lib/icons";
 import { bytes, isLong, MAX_FILES, num, utf8Len } from "../lib/format";
 import { isImage, pastedImages, pastedName, thumbable, useFilePreview } from "../lib/images";
 import { errText, pickFiles } from "../lib/native";
-import { displayName, limitFor, preview } from "../lib/peers";
+import { displayName, limitFor, msgTime, preview } from "../lib/peers";
+import { foldAt } from "../lib/replies";
+import { cardOf, type CardState } from "../lib/questions";
 import { noteDraft, usePreparation, getPreparation, prepareSend, clearPreparation } from "../lib/store";
 import { usePlatform } from "./ui";
 
@@ -15,7 +18,16 @@ interface Props {
   peer: string;
   c: Contact | undefined;
   hubs: HubStatus[];
-  replyTo: Message | null;
+  /** What the message replies to, oldest first. */
+  replies: Message[];
+  /** Options picked on open question cards. */
+  picked: { card: Message; labels: string[] }[];
+  cards: Map<string, CardState>;
+  /** Where each loaded message sits in the chat, oldest first. */
+  pos: Map<string, number>;
+  onRemoveReply: (id: string) => void;
+  onUnpick: (cardId: string) => void;
+  /** Esc or the reply bar's close: reply to nothing. */
   onCancelReply: () => void;
   onSent: () => void;
   ref?: Ref<ComposerApi>;
@@ -53,11 +65,12 @@ function AttThumb({ a, onRemove, disabled }: { a: NewAttachment; onRemove: () =>
   );
 }
 
-export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref, off }: Props) {
+export function Composer({ peer, c, hubs, replies, picked, cards, pos, onRemoveReply, onUnpick, onCancelReply, onSent, ref, off }: Props) {
   const platform = usePlatform();
   const [text, setText] = useState("");
   const [atts, setAtts] = useState<NewAttachment[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [allReplies, setAllReplies] = useState(false);
   const preparation = usePreparation(peer);
   const sending = preparation?.phase === "preparing";
   const ta = useRef<HTMLTextAreaElement>(null);
@@ -77,7 +90,6 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref, o
       if (saveT.current) { clearTimeout(saveT.current); saveT.current = null; void api.setDraft(peer, textRef.current).catch(() => {}); }
     };
   }, [peer]);
-  useEffect(() => { if (replyTo) ta.current?.focus(); }, [replyTo]);
   useEffect(() => {
     if (preparation?.phase !== "queued") return;
     setText(""); setAtts([]); setErr(null);
@@ -105,7 +117,13 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref, o
   const total = utf8Len(text) + atts.reduce((n, a) => n + a.bytes, 0);
   const over = lim ? total > lim.bytes : false;
   const overNote = lim ? "This message is " + bytes(total) + ". Hub " + lim.hub.name + " takes up to " + bytes(lim.bytes) + " per message, text and files together." : "";
-  const can = (!!text.trim() || atts.length > 0) && !over && !sending;
+  // a message may go with no text when it answers or skips a question card
+  // (user 2026-10-11 22:42Z): a picked option answers even without text, a
+  // plain reply to an open card with no text skips it
+  const openCard = (m: Message) => !!cardOf(m) && !m.outgoing && (cards.get(m.id)?.st ?? "open") === "open";
+  const skips = replies.filter((r) => openCard(r) && !picked.some((p) => p.card.id === r.id)).length;
+  const answersCard = picked.length > 0 || skips > 0;
+  const can = (!!text.trim() || atts.length > 0 || answersCard) && !over && !sending;
 
   const attsRef = useRef(atts);
   attsRef.current = atts;
@@ -144,17 +162,55 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref, o
   const send = async () => {
     if (!can) { if (over) setErr(overNote); return; }
     if (saveT.current) { clearTimeout(saveT.current); saveT.current = null; }
-    await prepareSend({ id: newId(), peer, body: text.trim(), reply_to: replyTo?.id ?? preparation?.message.reply_to ?? null, attachments: atts });
+    // every card answered is also replied to; the whole set goes oldest first
+    const all = [...replies];
+    for (const p of picked) if (!all.some((r) => r.id === p.card.id)) all.push(p.card);
+    all.sort((a, b) => (pos.get(a.id) ?? -1) - (pos.get(b.id) ?? -1) || msgTime(a) - msgTime(b));
+    const ids = all.map((r) => r.id), prev = preparation?.message;
+    await prepareSend({
+      id: newId(), peer, body: text.trim(), attachments: atts,
+      reply_to: ids[0] ?? prev?.reply_to ?? null,
+      replies: ids.length > 1 ? ids : ids.length ? undefined : prev?.replies,
+      answers: picked.length ? picked.map((p) => ({ question: p.card.id, picked: p.labels })) : ids.length ? undefined : prev?.answers,
+    });
   };
 
-  const who = replyTo ? (replyTo.outgoing ? "yourself" : displayName(c, peer)) : "";
+  const one = replies.length === 1 ? replies[0] : null;
+  const who = one ? (one.outgoing ? "yourself" : displayName(c, peer)) : "";
+  const fold = foldAt(replies.length), folded = !allReplies && fold < replies.length;
   const top = (
     <>
-      {replyTo ? (
+      {one ? (
         <div className="replybar">
           {platform === "desktop" ? <Icon name="reply" className="lead" /> : null}
-          <div className="rb-t"><span className="rb-who">{platform === "android" ? <Icon name="reply" style={{ width: 16, height: 16 }} /> : null}Replying to {who}</span><span className="rb-txt" dir="auto">{preview(replyTo)}</span></div>
+          <div className="rb-t"><span className="rb-who">{platform === "android" ? <Icon name="reply" style={{ width: 16, height: 16 }} /> : null}Replying to {who}</span><span className="rb-txt" dir="auto">{preview(one)}</span></div>
           <button className="icon-btn" disabled={sending} onClick={onCancelReply} title="Cancel reply (Esc)" aria-label="Cancel reply"><Icon name="close" /></button>
+        </div>
+      ) : replies.length ? (
+        <div className="replybar multi">
+          {platform === "desktop" ? <Icon name="reply" className="lead" /> : null}
+          <div className="rb-t">
+            <span className="rb-who">{platform === "android" ? <Icon name="reply" style={{ width: 16, height: 16 }} /> : null}Replying to {replies.length} messages</span>
+            {(folded ? replies.slice(0, fold) : replies).map((r) => (
+              <span className="rb-item" key={r.id}>
+                <span className="rb-txt" dir="auto"><b>{r.outgoing ? "You" : displayName(c, peer)}:</b> {preview(r)}</span>
+                <button className="icon-btn" disabled={sending} onClick={() => onRemoveReply(r.id)} title="Don't reply to this one" aria-label={"Don't reply to: " + preview(r).slice(0, 60)}><Icon name="close" /></button>
+              </span>
+            ))}
+            {folded ? <button className="link rb-more" onClick={() => setAllReplies(true)}>and {replies.length - fold} more</button> : null}
+          </div>
+          <button className="icon-btn" disabled={sending} onClick={onCancelReply} title="Cancel reply (Esc)" aria-label="Cancel reply"><Icon name="close" /></button>
+        </div>
+      ) : null}
+      {picked.length ? (
+        <div className="ansrow" aria-label="Answers to send">
+          {picked.map((p) => (
+            <span className="anschip" key={p.card.id} title={preview(p.card)}>
+              <Icon name="check_circle" />
+              <span className="ell"><span className="aq" dir="auto">{preview(p.card)}</span> <b dir="auto">{p.labels.join(", ")}</b></span>
+              <button className="icon-btn" disabled={sending} onClick={() => onUnpick(p.card.id)} title="Remove this answer" aria-label={"Remove the answer to: " + preview(p.card).slice(0, 60)}><Icon name="close" /></button>
+            </span>
+          ))}
         </div>
       ) : null}
       {atts.length ? (
@@ -175,18 +231,19 @@ export function Composer({ peer, c, hubs, replyTo, onCancelReply, onSent, ref, o
     ? <span style={{ color: "var(--bad)" }}>{overNote}</span>
     : <>
         {platform === "desktop" ? <span><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line</span> : null}
+        {skips && !text.trim() && !atts.length ? <span className="skipnote">Sending with no text skips {skips === 1 ? "the question" : skips + " questions"} you reply to</span> : null}
         {isLong(text) ? <span className="count">{num(text.length)} characters · shows collapsed</span> : null}
       </>;
   const row = (
     <div className="comp-row">
       <div className="comp-box">
         <button className="icon-btn" disabled={sending} onClick={attach} title="Attach files" aria-label="Attach files"><Icon name="attach" /></button>
-        <textarea disabled={sending} ref={ta} rows={1} value={text} spellCheck dir="auto" aria-label={"Message " + displayName(c, peer)} placeholder={"Message " + displayName(c, peer)}
+        <textarea disabled={sending} ref={ta} rows={1} value={text} spellCheck dir="auto" aria-label={"Message " + displayName(c, peer)} placeholder={picked.length ? "Add a message (optional)" : "Message " + displayName(c, peer)}
           onChange={(e) => change(e.target.value)}
           onPaste={(e) => { const imgs = pastedImages(e.clipboardData); if (imgs.length) { e.preventDefault(); void paste(imgs); } }}
           onKeyDown={(e) => {
             if (platform === "desktop" && e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); }
-            else if (e.key === "Escape" && replyTo && !sending) { e.stopPropagation(); e.preventDefault(); onCancelReply(); }
+            else if (e.key === "Escape" && replies.length && !sending) { e.stopPropagation(); e.preventDefault(); onCancelReply(); }
           }} />
       </div>
       {/* pressing Send leaves the focus (and Android's keyboard) in the message box */}

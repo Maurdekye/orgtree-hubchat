@@ -467,3 +467,22 @@
 /* with the transfers chip showing, the five header controls overran the panel by 10px */
 .side-head:has(.tb-xfer) { gap: 2px; padding-right: 6px; }
 .side-head .tb-xfer { margin-right: 0; }
+/* multi-reply: selected messages, their bar above the composer, the reply
+   chips and the picked answers waiting in the composer */
+.msg.sel { background: var(--accent-soft); border-radius: 8px; }
+.selbar { display: flex; align-items: center; gap: 10px; max-width: 880px; width: calc(100% - 40px); margin: 0 auto 6px; padding: 5px 6px 5px 14px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line-soft); font-size: 13px; }
+.selbar .sb-n { font-weight: 700; }
+.selbar .sb-hint { color: var(--faint); font-size: 12px; margin-right: auto; }
+.selbar .btn { height: 30px; padding: 0 12px; }
+.replybar.multi { align-items: flex-start; }
+.replybar.multi .rb-item { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.replybar.multi .rb-item .rb-txt { flex: 1; min-width: 0; }
+.replybar.multi .rb-item .icon-btn { width: 24px; height: 24px; }
+.replybar.multi .rb-item .icon-btn .ic { width: 15px; height: 15px; }
+.replybar .rb-more { align-self: flex-start; font-size: 12.5px; }
+.ansrow { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.anschip { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 30px; padding: 0 4px 0 10px; border-radius: 8px; background: var(--accent-soft); font-size: 12.5px; }
+.anschip .ic { width: 16px; height: 16px; color: var(--accent-text); flex: none; }
+.anschip .aq { color: var(--dim); }
+.anschip .icon-btn { width: 24px; height: 24px; flex: none; }
+.anschip .icon-btn .ic { width: 15px; height: 15px; color: var(--dim); }
