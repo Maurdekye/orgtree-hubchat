@@ -209,6 +209,7 @@ pub struct Engine {
     send_writers: Mutex<std::collections::HashSet<String>>,
     download_publication: tokio::sync::Mutex<()>,
     file_slots: Arc<transfer_slots::TransferSlots>,
+    preview_slots: tokio::sync::Semaphore,
     read_receipts: std::sync::atomic::AtomicBool,
     /// This installation's (device_id, device_name) for v2 sync.
     device: Mutex<(String, String)>,
@@ -250,6 +251,7 @@ impl Engine {
             send_writers: Mutex::new(std::collections::HashSet::new()),
             download_publication: tokio::sync::Mutex::new(()),
             file_slots: Arc::new(transfer_slots::TransferSlots::default()),
+            preview_slots: tokio::sync::Semaphore::new(2),
             read_receipts: std::sync::atomic::AtomicBool::new(true),
             active: std::sync::atomic::AtomicBool::new(false),
             suspended: tokio::sync::watch::channel(false).0,
@@ -2127,13 +2129,13 @@ impl Engine {
         {
             return Err(Error::Cancelled);
         }
-        // Previews share the same file budget as explicit saves and uploads.
-        // Waiting never reserves the other hub's slot, and suspension/shutdown
-        // cancels both a queued preview and an in-flight HTTP request.
+        // Pictures remain responsive while large files are sent or saved.
+        // Bound preview traffic separately; suspension/shutdown cancels both
+        // a queued preview and an in-flight HTTP request.
         let slot = tokio::select! {
             biased;
             _ = suspended.changed() => return Err(Error::Cancelled),
-            result = stop.run(async { Ok(self.file_slots.acquire(&hub).await) }) => result?,
+            result = stop.run(async { self.preview_slots.acquire().await.map_err(|_| Error::Cancelled) }) => result?,
         };
         if let Some(dir) = dest.parent() {
             tokio::fs::create_dir_all(dir).await?;

@@ -569,7 +569,7 @@ mod tests {
         .unwrap();
     }
     #[tokio::test]
-    async fn previews_share_file_slots_and_stop_when_suspended_or_shutdown() {
+    async fn previews_use_independent_bounded_lane_and_stop_when_suspended_or_shutdown() {
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(Store::open_in_memory().unwrap());
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -577,7 +577,10 @@ mod tests {
         let lid = attach(&store, &url, 3);
         let e = fixture(store.clone(), dir.path(), &url);
         let dest = dir.path().join("preview.png");
-        let reserved = e.file_slots.try_acquire(&url).unwrap();
+        let file_one = e.file_slots.try_acquire(&url).unwrap();
+        let file_two = e.file_slots.try_acquire("another-hub").unwrap();
+        let first = e.preview_slots.try_acquire().unwrap();
+        let second = e.preview_slots.try_acquire().unwrap();
         let preview = e.fetch_preview("message", &lid, &dest);
         tokio::pin!(preview);
         assert!(
@@ -590,15 +593,8 @@ mod tests {
                 .await
                 .is_err()
         );
-        drop(reserved);
-        // Two unrelated hubs also consume the global budget.
-        let first = e.file_slots.try_acquire("other-one").unwrap();
-        let second = e.file_slots.try_acquire("other-two").unwrap();
-        assert!(
-            tokio::time::timeout(Duration::from_millis(40), &mut preview)
-                .await
-                .is_err()
-        );
+        // Releasing one preview slot starts HTTP even though both file slots
+        // (including this same hub) remain occupied throughout the request.
         drop(first);
         let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
@@ -640,9 +636,12 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert!(e.file_slots.try_acquire(&url).is_some());
+        assert_eq!(e.preview_slots.available_permits(), 2);
+        assert!(e.file_slots.try_acquire("third-hub").is_none());
+        drop(file_one);
+        drop(file_two);
         e.set_suspended(false);
-        let reserved = e.file_slots.try_acquire(&url).unwrap();
+        let reserved = e.preview_slots.try_acquire_many(2).unwrap();
         let waiting = e.fetch_preview("message", &lid, &dest);
         tokio::pin!(waiting);
         assert!(
