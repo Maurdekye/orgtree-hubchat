@@ -29,9 +29,61 @@ fn private_partial(root: &Path, path: &Path) -> bool {
             .symlink_metadata()
             .is_ok_and(|m| m.file_type().is_symlink())
 }
+// Scan names in bounded keyset pages without retaining an unbounded directory
+// listing. A persisted cursor also advances past recent and unrelated entries.
+fn discover_orphans(root: &Path, store: &Store) -> Result<()> {
+    let after = store.meta("download.gc.cursor")?.unwrap_or_default();
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    let mut names = std::collections::BTreeSet::new();
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name > after {
+            names.insert(name);
+            if names.len() > 32 {
+                names.pop_last();
+            }
+        }
+    }
+    for name in &names {
+        let path = root.join(name);
+        if !private_partial(root, &path) {
+            continue;
+        }
+        let Ok(meta) = path.symlink_metadata() else {
+            continue;
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        if meta
+            .modified()
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .is_some_and(|age| age.as_secs() >= 86400)
+        {
+            store.queue_orphan_partial(&path.to_string_lossy())?;
+        }
+    }
+    store.set_meta(
+        "download.gc.cursor",
+        if names.len() == 32 {
+            names.last().unwrap()
+        } else {
+            ""
+        },
+    )
+}
 impl Engine {
     pub(super) async fn clean_downloads(&self, now: u64) {
         let root = self.host.download_dir().join(".hubchat-downloads");
+        let scan_root = root.clone();
+        let store = self.store.clone();
+        let _ = tokio::task::spawn_blocking(move || discover_orphans(&scan_root, &store)).await;
         if let Ok(rows) = self.store.stale_downloads(now) {
             for (id, old) in rows {
                 // Advance even skipped writers so a busy head cannot starve later jobs.

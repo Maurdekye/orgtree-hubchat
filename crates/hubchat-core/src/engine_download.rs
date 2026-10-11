@@ -1099,6 +1099,37 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn orphan_scan_pages_old_files_and_preserves_referenced_recent_and_unrelated_bytes() {
+        let dir=tempfile::tempdir().unwrap();let root=dir.path().join(".hubchat-downloads");
+        std::fs::create_dir(&root).unwrap();
+        let old=std::time::SystemTime::now()-Duration::from_secs(90000);
+        let create=|path:&std::path::Path,age:bool| {
+            std::fs::write(path,b"keep or collect").unwrap();
+            if age {std::fs::File::options().write(true).open(path).unwrap().set_times(std::fs::FileTimes::new().set_modified(old)).unwrap();}
+        };
+        let mut abandoned=Vec::new();
+        for _ in 0..70 {
+            let path=root.join(format!("{}.part",uuid::Uuid::new_v4().simple()));
+            create(&path,true);abandoned.push(path);
+        }
+        let unrelated=root.join("notes.txt");create(&unrelated,true);
+        let recent=root.join(format!("{}.part",uuid::Uuid::new_v4().simple()));create(&recent,false);
+        let referenced=root.join(format!("{}.part",uuid::Uuid::new_v4().simple()));create(&referenced,true);
+        let db=dir.path().join("db");let store=Arc::new(Store::open(&db).unwrap());
+        let lid=attach(&store,"http://127.0.0.1:9",3);
+        store.begin_download(&lid,&referenced.to_string_lossy(),"unused").unwrap();
+        let e=fixture(store.clone(),dir.path(),"http://127.0.0.1:9");
+        e.clean_downloads(0).await;
+        assert!(abandoned.iter().filter(|p|p.exists()).count()>=38,"only32 names scanned per pass");
+        drop(e);drop(store);
+        let store=Arc::new(Store::open(&db).unwrap());
+        let e=fixture(store.clone(),dir.path(),"http://127.0.0.1:9");
+        for _ in 0..3 {e.clean_downloads(0).await;}
+        assert!(abandoned.iter().all(|p|!p.exists()));
+        for kept in [unrelated,recent,referenced] {assert_eq!(std::fs::read(kept).unwrap(),b"keep or collect");}
+    }
+
+    #[tokio::test]
     async fn partial_cleanup_is_bounded_skips_writers_and_survives_deleted_messages() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join(".hubchat-downloads");
@@ -1135,6 +1166,12 @@ mod tests {
         assert_eq!(expired.checkpoint.confirmed,0);
         assert_eq!(expired.state,"cancelled","cleanup does not revive user cancellation");
         assert!(expired.error.unwrap().contains("expired"));
+        store.queue_download_job(&attachments[1].local_id,"unused","unused").unwrap();
+        let restarted=store.begin_download(&attachments[1].local_id,"unused","unused").unwrap();
+        assert!(store.message("message").unwrap().unwrap().attachments.iter().find(|a|a.local_id==attachments[1].local_id).unwrap().download.as_ref().unwrap().restarted,"restart explanation survives admission and begin");
+        store.download_checkpoint(&attachments[1].local_id,restarted.attempt,&DownloadCheckpoint {confirmed:1,validator:Some("new".into()),updated_ms:at+30001}).unwrap();
+        assert!(!store.message("message").unwrap().unwrap().attachments.iter().find(|a|a.local_id==attachments[1].local_id).unwrap().download.as_ref().unwrap().restarted);
+
         // A cascading message delete records cleanup even while its writer stops.
         store.delete_message("message").unwrap();
         e.clean_downloads(at+60002).await;

@@ -82,7 +82,7 @@ impl Store {
         attempt: i64,
         cp: &DownloadCheckpoint,
     ) -> Result<()> {
-        let changed=self.with(|c|c.execute("UPDATE download_jobs SET confirmed=?,validator=?,updated_ms=? WHERE local_id=? AND attempt=? AND state='running'",params![cp.confirmed,cp.validator,cp.updated_ms,id,attempt]))?;
+        let changed=self.with(|c|c.execute("UPDATE download_jobs SET restarted=CASE WHEN ?1>0 THEN 0 ELSE restarted END,confirmed=?1,validator=?2,updated_ms=?3 WHERE local_id=? AND attempt=? AND state='running'",params![cp.confirmed,cp.validator,cp.updated_ms,id,attempt]))?;
         if changed == 0 {
             Err(Error::Cancelled)
         } else {

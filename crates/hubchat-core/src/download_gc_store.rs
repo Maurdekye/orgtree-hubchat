@@ -24,9 +24,12 @@ impl Store {
     ) -> Result<bool> {
         self.with(|c|{
             let tx=c.transaction()?;
-            let n=tx.execute("UPDATE download_jobs SET partial=?1,confirmed=0,validator=NULL,updated_ms=?2,cleanup_at=?2,digest=NULL,error='Partial download expired; restarting from zero' WHERE local_id=?3 AND partial=?4 AND updated_ms<=?5 AND state NOT IN ('publishing','exporting','done')",params![new,now,id,old,now.saturating_sub(86400000)])?;
+            let n=tx.execute("UPDATE download_jobs SET partial=?1,confirmed=0,restarted=1,validator=NULL,updated_ms=?2,cleanup_at=?2,digest=NULL,error='Partial download expired; restarting from zero' WHERE local_id=?3 AND partial=?4 AND updated_ms<=?5 AND state NOT IN ('publishing','exporting','done')",params![new,now,id,old,now.saturating_sub(86400000)])?;
             tx.commit()?;Ok(n>0)
         })
+    }
+    pub(crate) fn queue_orphan_partial(&self, path: &str) -> Result<()> {
+        self.with(|c|c.execute("INSERT OR IGNORE INTO download_gc(path,local_id) SELECT ?1,'orphan:'||?1 WHERE NOT EXISTS(SELECT 1 FROM download_jobs WHERE partial=?1)",[path]).map(|_|()))
     }
     pub(crate) fn download_gc_due(&self, now: u64) -> Result<Vec<(String, String)>> {
         self.with(|c|{

@@ -214,6 +214,8 @@ CREATE TRIGGER download_partial_replaced AFTER UPDATE OF partial ON download_job
  INSERT OR IGNORE INTO download_gc(path,local_id) VALUES(OLD.partial,OLD.local_id);
 END;
 "#,
+    // 9: explain a zero-offset restart until fresh bytes are confirmed.
+    r#"ALTER TABLE download_jobs ADD COLUMN restarted INTEGER NOT NULL DEFAULT 0;"#,
 ];
 
 pub struct Store {
@@ -231,6 +233,7 @@ pub struct Hub {
 /// Durable public download state; no private paths or validators.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct DownloadStatus {
+    pub restarted: bool,
     pub state: String,
     pub confirmed: u64,
     pub retry_at: u64,
@@ -1225,7 +1228,7 @@ impl Store {
                 })?
                 .collect::<rusqlite::Result<_>>()?;
             let mut st = c.prepare(
-                "SELECT a.local_id, a.hub_id, a.hub, a.name, a.bytes, a.source, a.local_path, a.state, a.error, a.source_sha256, a.staged_path, j.state, j.confirmed, j.retry_at, j.error, a.upload_confirmed FROM attachments a LEFT JOIN download_jobs j ON j.local_id=a.local_id
+                "SELECT a.local_id, a.hub_id, a.hub, a.name, a.bytes, a.source, a.local_path, a.state, a.error, a.source_sha256, a.staged_path, j.state, j.confirmed, j.retry_at, j.error, a.upload_confirmed, j.restarted FROM attachments a LEFT JOIN download_jobs j ON j.local_id=a.local_id
                  WHERE a.message_id=? ORDER BY a.position",
             )?;
             for m in &mut msgs {
@@ -1234,7 +1237,7 @@ impl Store {
                         Ok(Attachment {
                             upload_confirmed: r.get(15)?,
                             download: match r.get::<_, Option<String>>(11)? {
-                                Some(state) => Some(DownloadStatus {state, confirmed:r.get(12)?, retry_at:r.get(13)?, error:r.get(14)?}),
+                                Some(state) => Some(DownloadStatus {restarted:r.get(16)?,state, confirmed:r.get(12)?, retry_at:r.get(13)?, error:r.get(14)?}),
                                 None => None,
                             },
                             local_id: r.get(0)?,
