@@ -107,6 +107,7 @@ mod tests {
     }
     fn store()->Store { let s=Store::open_in_memory().unwrap();s.set_meta("identity.address","me").unwrap();s }
     fn roster(s:&Store,hub:&str,identity:&str) {
+        s.add_hub(hub,hub).unwrap();
         let entry=serde_json::from_value(serde_json::json!({"slug":"peer","kind":"person","org_name":identity,"picture_owner":identity})).unwrap();
         s.upsert_roster(hub,&[entry]).unwrap();
     }
