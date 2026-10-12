@@ -516,11 +516,24 @@ fn prune_with(dir: &Path, active: Option<&Path>, now: SystemTime, keep_for: Dura
 /// it, then a fresh file under the same name); never by count.
 pub struct LogFile {
     path: PathBuf,
+    /// Where archives are made (the file's own folder); a field so a test can break it.
+    archive_dir: PathBuf,
     file: std::fs::File,
     size: u64,
     max: u64,
     roll_at: SystemTime,
+    /// The current content is already in an archive and only the fresh file is
+    /// missing: nothing is written (the archive would be repeated) until it is made.
+    archived: bool,
+    /// After a failed rollover the next attempt waits until then (a rollover
+    /// compresses the whole file, so it is not retried on every line).
+    retry_at: SystemTime,
+    /// Lines turned away since the file last could not roll over.
+    dropped: u64,
 }
+
+/// How long a failed rollover waits before the next try.
+const ROLL_RETRY: Duration = Duration::from_secs(60);
 
 impl LogFile {
     pub fn open(path: PathBuf) -> std::io::Result<LogFile> {
@@ -530,18 +543,29 @@ impl LogFile {
     fn open_with(path: PathBuf, max: u64) -> std::io::Result<LogFile> {
         let file = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
         let size = file.metadata().map(|m| m.len()).unwrap_or(0);
-        Ok(LogFile { path, file, size, max, roll_at: SystemTime::now() + Duration::from_secs(24 * 3600) })
+        let archive_dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        Ok(LogFile {
+            path,
+            archive_dir,
+            file,
+            size,
+            max,
+            roll_at: SystemTime::now() + Duration::from_secs(24 * 3600),
+            archived: false,
+            retry_at: SystemTime::UNIX_EPOCH,
+            dropped: 0,
+        })
     }
 
-    fn roll(&mut self) {
-        let _ = self.file.flush();
-        let archive = self.path.with_file_name(format!(
+    /// Gzip the file beside itself as `<name>.<32 hex>.gz`.
+    fn archive(&self) -> std::io::Result<()> {
+        let archive = self.archive_dir.join(format!(
             "{}.{:032x}.gz",
             self.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
             rand::random::<u128>()
         ));
         let tmp = archive.with_extension("gz.tmp");
-        let ok = (|| -> std::io::Result<()> {
+        let done = (|| -> std::io::Result<()> {
             let mut src = std::fs::File::open(&self.path)?;
             let dst = std::fs::File::create(&tmp)?;
             let mut enc = flate2::write::GzEncoder::new(dst, flate2::Compression::fast());
@@ -551,28 +575,66 @@ impl LogFile {
             Ok(())
         })();
         let _ = std::fs::remove_file(&tmp);
-        if ok.is_ok() {
-            // a failed archive keeps the original: never destroy the log we meant to keep.
-            // The fresh file is opened for append like the first one: `emergency` also
-            // appends, and a plain write handle would overwrite its lines.
-            let fresh = std::fs::File::create(&self.path)
-                .and_then(|_| std::fs::OpenOptions::new().create(true).append(true).open(&self.path));
-            if let Ok(f) = fresh {
-                self.file = f;
-                self.size = 0;
+        done
+    }
+
+    /// Archive the file and start a fresh one under the same name. A failed
+    /// archive keeps the original (never destroy the log we meant to keep) and
+    /// a failed fresh file keeps it too; either way the answer is false and
+    /// `write` takes nothing that would not fit.
+    fn roll(&mut self) -> bool {
+        let _ = self.file.flush();
+        if !self.archived {
+            if self.archive().is_err() {
+                self.retry_at = SystemTime::now() + ROLL_RETRY;
+                return false;
             }
+            self.archived = true;
         }
+        // The fresh file is opened for append like the first one: `emergency` also
+        // appends, and a plain write handle would overwrite its lines.
+        let fresh = std::fs::File::create(&self.path)
+            .and_then(|_| std::fs::OpenOptions::new().create(true).append(true).open(&self.path));
+        let Ok(f) = fresh else {
+            self.retry_at = SystemTime::now() + ROLL_RETRY;
+            return false;
+        };
+        self.file = f;
+        self.size = 0;
+        self.archived = false;
         self.roll_at = SystemTime::now() + Duration::from_secs(24 * 3600);
         if let Some(dir) = self.path.parent() {
             prune(dir, Some(&self.path));
         }
+        true
     }
 }
 
 impl std::io::Write for LogFile {
+    /// A line that does not fit and cannot be made to fit by a rollover is
+    /// dropped and counted: a file that cannot roll over stays within its limit
+    /// instead of growing past it (and past the folder's budget, which never
+    /// removes the active file). It reports the line written so the writer
+    /// thread does not retry it. The first write after a rollover says how many
+    /// were dropped.
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if self.size > 0 && (self.size + buf.len() as u64 > self.max || SystemTime::now() >= self.roll_at) {
+        let now = SystemTime::now();
+        let note = (self.dropped > 0).then(|| {
+            format!("{:<8} [{}] T- {} log lines were dropped: the file could not be rolled over\n", "WARNING", timestamp(), self.dropped)
+        });
+        let need = buf.len() as u64 + note.as_ref().map_or(0, |n| n.len() as u64);
+        let full = self.size + need > self.max;
+        if self.size > 0 && (full || now >= self.roll_at || self.archived) && now >= self.retry_at {
             self.roll();
+        }
+        if self.archived || (self.size > 0 && self.size + need > self.max) {
+            self.dropped = self.dropped.saturating_add(1);
+            return Ok(buf.len());
+        }
+        if let Some(note) = note {
+            self.file.write_all(note.as_bytes())?;
+            self.size += note.len() as u64;
+            self.dropped = 0;
         }
         self.file.write_all(buf)?;
         self.size += buf.len() as u64;
@@ -1322,5 +1384,99 @@ mod tests {
         assert!(file.contains("hunter2") && file.contains("the backup didn't open"), "{file}");
         diag::set_verbose(was);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn archives(dir: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "gz")).collect()
+    }
+
+    fn gz_text(p: &Path) -> String {
+        use std::io::Read as _;
+        let mut s = String::new();
+        flate2::read::GzDecoder::new(std::fs::File::open(p).unwrap()).read_to_string(&mut s).unwrap();
+        s
+    }
+
+    #[test]
+    fn a_rollover_that_cannot_archive_keeps_the_original_stays_within_its_limit_and_recovers() {
+        let dir = temp("stuck");
+        let path = dir.join("2026-10-12_01-02-03.log");
+        let mut f = LogFile::open_with(path.clone(), 256).unwrap();
+        // archives cannot be made: nothing can be created below a plain file
+        let real = f.archive_dir.clone();
+        let blocker = dir.join("not-a-folder");
+        std::fs::write(&blocker, "x").unwrap();
+        f.archive_dir = blocker.join("archives");
+        f.write_all(&[b'a'; 200]).unwrap();
+        f.write_all(&[b'c'; 20]).unwrap(); // fits: still written
+        for _ in 0..50 {
+            f.write_all(&[b'b'; 200]).unwrap(); // does not fit and cannot roll over: turned away
+        }
+        f.flush().unwrap();
+        let mut kept = vec![b'a'; 200];
+        kept.extend([b'c'; 20]);
+        assert_eq!(std::fs::read(&path).unwrap(), kept, "the original is kept and the file did not grow");
+        assert!(archives(&dir).is_empty(), "no archive and no partial one");
+        assert!(!std::fs::read_dir(&dir).unwrap().flatten().any(|e| e.file_name().to_string_lossy().ends_with(".tmp")));
+        assert_eq!(f.dropped, 50);
+        assert!(f.retry_at > SystemTime::now(), "the failed rollover is not retried on every line");
+        // the folder works again: after the wait the next write archives, starts fresh and says what it dropped
+        f.archive_dir = real;
+        f.retry_at = SystemTime::UNIX_EPOCH;
+        f.write_all(b"after recovery\n").unwrap();
+        f.flush().unwrap();
+        let made = archives(&dir);
+        assert_eq!(made.len(), 1, "{made:?}");
+        assert!(owned(&made[0].file_name().unwrap().to_string_lossy()));
+        assert_eq!(gz_text(&made[0]), String::from_utf8(kept).unwrap(), "the archive holds everything that was kept");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(" 50 log lines were dropped") && text.ends_with("after recovery\n"), "{text}");
+        assert!(text.len() as u64 <= 256 && f.dropped == 0, "{text}");
+    }
+
+    #[test]
+    fn a_fresh_file_that_cannot_be_made_after_archiving_takes_nothing_and_archives_once() {
+        let dir = temp("stuck-fresh");
+        let path = dir.join("2026-10-12_01-02-03.log");
+        let mut f = LogFile::open_with(path.clone(), 256).unwrap();
+        f.write_all(&[b'a'; 200]).unwrap();
+        // a read-only file: it can be archived, but not started over
+        let set = |ro: bool| {
+            let mut p = std::fs::metadata(&path).unwrap().permissions();
+            p.set_readonly(ro);
+            std::fs::set_permissions(&path, p).unwrap();
+        };
+        set(true);
+        for _ in 0..5 {
+            f.write_all(&[b'b'; 200]).unwrap();
+            f.retry_at = SystemTime::UNIX_EPOCH; // try again at once, as often as the lines come
+        }
+        f.write_all(b"tiny\n").unwrap(); // even a line that would fit waits: the content is already archived
+        assert_eq!(archives(&dir).len(), 1, "archived once, not once per line");
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 200, "the original stays, untouched");
+        assert!(f.archived && f.dropped == 6);
+        set(false);
+        f.retry_at = SystemTime::UNIX_EPOCH;
+        f.write_all(b"back\n").unwrap();
+        f.flush().unwrap();
+        assert_eq!(archives(&dir).len(), 1, "no second archive of the same content");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(" 6 log lines were dropped") && text.ends_with("back\n") && !text.contains("aaaa"), "{text}");
+        assert!(!f.archived);
+    }
+
+    #[test]
+    fn a_healthy_rollover_still_rolls_without_dropping_anything() {
+        let dir = temp("healthy");
+        let path = dir.join("2026-10-12_01-02-03.log");
+        let mut f = LogFile::open_with(path.clone(), 256).unwrap();
+        f.write_all(&[b'a'; 200]).unwrap();
+        f.write_all(&[b'b'; 200]).unwrap(); // does not fit: rolls over
+        f.flush().unwrap();
+        assert_eq!(f.dropped, 0);
+        assert_eq!(std::fs::read(&path).unwrap(), vec![b'b'; 200]);
+        let made = archives(&dir);
+        assert_eq!(made.len(), 1);
+        assert_eq!(gz_text(&made[0]), "a".repeat(200));
     }
 }
