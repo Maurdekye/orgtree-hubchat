@@ -40,7 +40,7 @@ mod tests {
     }
     const ID: &str = "bb05866b-b96c-46c0-ae3f-236b3dd65fa2";
     const PEER: &str = "pat.abcdef";
-    fn engine(store: Arc<Store>, me: Identity) -> Engine {
+    fn engine(store: Arc<Store>, me: Identity) -> Arc<Engine> {
         Engine::new(store, me, Profile::default(), Arc::new(SilentHost))
     }
 
