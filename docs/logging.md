@@ -57,7 +57,7 @@ hubchat-logs-sonnet and rig-opus, 2026-10-11]
 | 256 000 queued lines, lossy | 16 384 queued lines, lossy | smaller process, same "never block the app, never grow" |
 | Line cap 8 KB | 8 KB per line and 40 lines per event | same cap; Hubchat also bounds an event's line count |
 | Console mirror (INFO and up, 500 chars) | development builds only (`HUBCHAT_LOG_CONSOLE=1` forces it) | a release build has no console |
-| `codex-kills.log`: a small durable record flushed before a dangerous act | `identity-log.txt` (`keylog.rs`): the durable record of identity-key events, each line also written to the log | the Hubchat event whose loss costs most is losing the key |
+| `codex-kills.log`: a small durable record flushed before a dangerous act | `identity-log.txt` (`keylog.rs`): the durable record of identity-key events; the log gets the same events only as fixed phrases (`keylog::Fact`), never the file's line | the Hubchat event whose loss costs most is losing the key; the file's line can carry the key store's own error text, which the log's rules keep out |
 | `crash-reports/` (renderer crashes) + Crashpad | `crash-reports/` (panics), owned by the tray/crash work | separate owner, separate folder |
 | `desktop-windows.jsonl`, `engine-liveness.jsonl`, `ui-open` timings, agent/dog log context | not imported | Orgtree-only process topology and instrumentation |
 | "Open logs folder" button | Settings > Developer > Open logs folder | same |
@@ -77,8 +77,13 @@ WARNING  [2026-10-12 01:36:53.512044] T42 RQ1a2b3c4d ui RESPONSE hub:90ab12cd PO
 - A message with several lines is split into prefixed lines (at most 40 per
   event, then `[…N more lines omitted]`); a line over 8 KB is cut with
   `…[line cut: x.y kb more]`.
-- Events from dependencies and Tauri plugins arrive through the `log` bridge
-  (info and up) with their own target and level; noisy crates are held at `warn`.
+- Events from dependencies and Tauri plugins (a tracing event, or a `log` record
+  through the bridge) keep only their level and source:
+  `WARNING  [...] T- reqwest.connect: [dependency message withheld]`. Their
+  text is free text we did not write and can hold a URL, a host, a path or a
+  header value; only warnings and errors are kept at all. Hubchat's own events
+  are the targets `hubchat_lib`, `hubchat_core`, `call`, `wire`, `cmd` and
+  `keylog`.
 
 ## What is logged
 
@@ -92,9 +97,10 @@ Always (verbose off):
 - permanent send failures (message and peer as tags; the reason stays with the
   message in the UI), upload and download failures (kind only);
 - hub calls that answer 4xx/5xx, fail, or take over 5 s (long polls excepted);
-- identity-key events (the lines `keylog.rs` also writes);
+- identity-key events as fixed phrases (`identity key: the key store has no
+  usable key; no backup`), from the facts in `keylog::Fact`;
 - warnings from the shell (for example a window icon that cannot be set) and
-  from plugins.
+  the level and source of a dependency's warning or error.
 
 Verbose (Developer tab, or a development build) adds:
 
@@ -145,9 +151,22 @@ cleaned up afterwards.
    short secret in free text, a long token of letters only, content in a field
    with an ordinary name. Call sites must not rely on it.
 7. No `Serialize` on a type that holds a secret, and no `Debug` that prints one.
+8. **The identity-key record is mirrored as facts.** `keylog::note(dir, line,
+   &[Fact..])` writes `line` to `identity-log.txt` (the durable file, unchanged:
+   it may hold the key store's or backup's own error text, never the key and
+   never an address) and the facts' fixed phrases to the log. The line itself
+   never reaches the log; add a variant to `Fact`, not a format string.
+9. **A dependency's text is never kept** (see the line format): the layer drops
+   its message and fields and writes level and source, for warnings and errors
+   only. The shell's own warnings use fixed text too (the system's error text
+   for a window icon is not copied).
+10. The stderr fallback of `diag::failure` (no subscriber: Android, tests) prints
+   the same kind, not the error's text.
 
 Tests that hold these rules (they fail if a rule is broken):
 `diag::tests::an_error_kind_is_a_name_from_a_fixed_list_never_the_errors_own_text`,
+`trace::tests::dependency_text_never_reaches_the_log_only_the_level_and_source_of_warnings_and_errors`,
+`trace::tests::the_key_log_reaches_the_log_only_as_fixed_facts_in_both_modes_and_the_file_keeps_its_line`,
 `trace::tests::failures_and_hub_calls_reach_the_log_as_kinds_and_tags_only_in_both_modes`
 (short secrets, long tokens, multiline text, URL variants with credentials,
 queries and fragments, hosts with ports, Windows, UNC and Unix paths, addresses
@@ -166,8 +185,18 @@ and file names, in both verbose modes) and
   ever touched (`identity-log.txt`, `log-salt` and anything foreign stay).
 - The writer is a separate thread behind a bounded, lossy queue (16 384 lines):
   a slow disk drops lines; it never blocks the app and never grows memory.
-- If the log folder cannot be created the log falls back to the temporary
-  folder, and without a writable file the app runs with no log.
+- If `diagnostics/logs` cannot take a file, the log goes to its own folder,
+  `<temporary folder>/hubchat-logs`, with the same file names, so the same
+  pruning and budget apply to it (it is swept at every start, used or not).
+  The Developer page and `Open logs folder` show the folder the log really is
+  in and say that it is a temporary one. With no folder that takes a file, or
+  when another subscriber already owns the process, no log is running: nothing
+  is kept, the page says so, the switch is not offered and `Open logs folder`
+  refuses. The log is reported as running only after a file is open and the
+  subscriber is installed. Tests:
+  `trace::tests::a_folder_that_cannot_be_written_falls_back_to_an_owned_folder_that_is_pruned_and_reported`,
+  `..::the_usual_folder_wins_when_it_works_and_the_fallback_folder_is_still_swept`,
+  `..::with_no_writable_folder_or_no_subscriber_no_log_is_reported_running`.
 
 ## Verbose switch
 
@@ -204,8 +233,13 @@ keeps its start-time name.
 ## Limits
 
 - Android is not changed: no file log, no Developer tab, no subscriber. The
-  core's failures keep going to stderr there (`diag::failure` falls back when no
-  subscriber is set).
+  core's failures go to stderr there as a kind (`diag::failure` falls back when
+  no subscriber is set); before this work they carried the error's text. The
+  new Android-only code paths (`keylog::Fact::PushCleanupFailed`) are not
+  compiled here.
+- `identity-log.txt` is the pre-existing durable record and keeps its lines
+  (including a key store's own error text); it is local, 64 KB, and was not
+  made part of the normal log's contract.
 - `RQ` ids cover work started through `on_core` and synchronous commands. A
   command that is an `async fn` and does not call `on_core` has a `COMMAND`
   line (verbose) but no request span.

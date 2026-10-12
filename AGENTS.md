@@ -124,7 +124,11 @@
   `src-tauri/src/trace.rs` (file, rotation, retention, verbose switch). Log
   tags (`diag::tag`) and error kinds (`diag::err_kind`), never message or file
   bodies, names, addresses, hosts, URLs, keys or error text, in verbose mode
-  too; new logging goes through the `diag` helpers. Logs
+  too; new logging goes through the `diag` helpers. The identity-key file
+  (`keylog::note`) reaches the log only as fixed `Fact` phrases; a dependency's
+  warning keeps its level and source and loses its text. If the diagnostics
+  folder cannot be written the log goes to an owned, pruned temporary folder
+  and the Developer page says so. Logs
   (`diagnostics/logs`) and crash reports (`diagnostics/crash-reports`) are
   separate folders with separate owners. Rotation at 8 MiB and a 64 MiB budget
   are coordinator choices; 30 days follows Orgtree. [decided: coordinator
