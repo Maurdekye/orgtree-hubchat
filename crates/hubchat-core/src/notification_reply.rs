@@ -161,6 +161,72 @@ mod tests {
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
+    fn establish_then_depart(adoption: bool) {
+        use std::sync::{Mutex, atomic::{AtomicUsize, Ordering}};
+        for unreadable in [true, false] {
+            let loader = Arc::new(IdentityLoader::default());
+            if unreadable { loader.attach(|| Ok(false)).unwrap(); }
+            else { assert!(loader.attach(|| Err("synthetic init I/O failure".into())).is_err()); }
+            let store = Arc::new(Store::open_in_memory().unwrap());
+            let a = Identity::generate("alice").unwrap();
+            let key_still_present = a.clone();
+            let active = Arc::new(Mutex::new(None::<Arc<Engine>>));
+            // Explicit recovery/adoption establishment, using the same run path as Core.
+            loader.run(|| active.lock().unwrap().is_some(), || {
+                if adoption { assert!(active.lock().unwrap().is_none()); }
+                store.set_meta("identity.address", &a.address()).unwrap();
+                *active.lock().unwrap() = Some(engine(store.clone(), a));
+                Ok(())
+            }).unwrap();
+            let departing = active.lock().unwrap().take().unwrap();
+            // Leave has taken A but unregister/key deletion are still pending.
+            let calls = Arc::new(AtomicUsize::new(0));
+            let (l, n, s, e) = (loader.clone(), calls.clone(), store.clone(), active.clone());
+            let worker = std::thread::spawn(move || l.attach(|| {
+                n.fetch_add(1, Ordering::SeqCst);
+                *e.lock().unwrap() = Some(engine(s, key_still_present));
+                Ok(true)
+            }));
+            worker.join().unwrap().unwrap();
+            assert_eq!(calls.load(Ordering::SeqCst), 0, "background attach reloaded departing A");
+            assert!(active.lock().unwrap().is_none());
+            departing.shutdown();
+            store.wipe().unwrap();
+            // Completion suppresses automatic loads, not intended B adoption.
+            let b = Identity::generate("bob").unwrap();
+            let owner_b = b.address();
+            loader.run(|| false, || {
+                assert!(active.lock().unwrap().is_none());
+                store.set_meta("identity.address", &owner_b).unwrap();
+                *active.lock().unwrap() = Some(engine(store.clone(), b));
+                Ok(())
+            }).unwrap();
+            let e = active.lock().unwrap().clone().unwrap();
+            assert_eq!(e.me().address(), owner_b);
+            assert_eq!(admit(Some(&e), &owner_b, ID, PEER, "saved"), "queued");
+            assert_eq!(admit(Some(&e), &owner_b, ID, PEER, "saved"), "queued");
+            assert!(!store.queue_notification_reply(&owner_b, ID, PEER, "saved").unwrap());
+        }
+    }
+
+    #[test]
+    fn explicit_recovery_after_incomplete_start_does_not_reload_during_departure() {
+        establish_then_depart(false);
+    }
+
+    #[test]
+    fn adoption_after_incomplete_start_does_not_reload_or_block_next_adoption() {
+        establish_then_depart(true);
+    }
+
+    #[test]
+    fn already_established_engine_completes_incomplete_start() {
+        let loader = IdentityLoader::default();
+        loader.attach(|| Ok(false)).unwrap();
+        loader.run(|| true, || panic!("already established")).unwrap();
+        loader.attach(|| panic!("must not reload after departure")).unwrap();
+    }
+
     #[test]
     fn stopped_engine_retries_but_established_invalid_identity_rejects() {
         let store = Arc::new(Store::open_in_memory().unwrap());
