@@ -480,3 +480,63 @@ async fn retired_generation_cannot_change_replacement_clock_or_policy() {
     assert!(matches!(e.set_hub_enabled(A, false), Err(Error::Cancelled)));
     tokio::task::yield_now().await;
 }
+
+// What the normal log may say about a hub's state (docs/logging.md): the transition and the
+// hub as a tag. What the hub reports about itself is outside text, never repeated.
+#[derive(Clone, Default)]
+struct Captured(Arc<std::sync::Mutex<Vec<String>>>);
+struct Fields(String);
+impl tracing::field::Visit for Fields {
+    fn record_debug(&mut self, f: &tracing::field::Field, v: &dyn std::fmt::Debug) {
+        use std::fmt::Write as _;
+        let _ = write!(self.0, "{}={:?} ", f.name(), v);
+    }
+}
+impl tracing::Subscriber for Captured {
+    fn enabled(&self, _: &tracing::Metadata<'_>) -> bool { true }
+    fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id { tracing::span::Id::from_u64(1) }
+    fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+    fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+    fn event(&self, e: &tracing::Event<'_>) {
+        let mut v = Fields(String::new());
+        e.record(&mut v);
+        self.0.lock().unwrap().push(format!("{} {}", e.metadata().target(), v.0));
+    }
+    fn enter(&self, _: &tracing::span::Id) {}
+    fn exit(&self, _: &tracing::span::Id) {}
+}
+
+#[tokio::test]
+async fn a_hub_state_change_reaches_the_log_without_what_the_hub_said_about_itself() {
+    let poison = "2.0 pw=hunter2 user@private.lan https://u:p@hub.office.lan:7370/x?token=s3cr3t\nsecond line";
+    let e = engine();
+    let (_client, stop) = attach(&e, A);
+    let was = crate::diag::verbose();
+    for verbose in [false, true] {
+        crate::diag::set_verbose(verbose);
+        let seen = Captured::default();
+        tracing::subscriber::with_default(seen.clone(), || {
+            // a hub that answers with a hostile version and error text, then recovers
+            e.set_status_for(A, &stop, |s| {
+                s.state = HubState::Connecting;
+                s.version = Some(poison.into());
+                s.error = Some(poison.into());
+            });
+            e.set_status_for(A, &stop, |s| {
+                s.state = HubState::Connected;
+                s.version = Some(poison.into());
+            });
+        });
+        let all = seen.0.lock().unwrap().join("\n");
+        for leak in ["hunter2", "private", "s3cr3t", "office", "second line", "2.0", "software", "token", "u:p"] {
+            assert!(!all.contains(leak), "verbose={verbose}: {leak} reached the log:\n{all}");
+        }
+        assert_eq!(seen.0.lock().unwrap().len(), 2, "one line per state change:\n{all}");
+        assert!(all.contains("Connected -> Connecting") && all.contains("Connecting -> Connected"), "{all}");
+        assert!(all.contains("hub hub:"), "the hub shows as a tag:\n{all}");
+        // the UI still has what the hub said
+        let status = e.hubs.lock().unwrap().get(A).unwrap().status.clone();
+        assert_eq!(status.version.as_deref(), Some(poison));
+    }
+    crate::diag::set_verbose(was);
+}

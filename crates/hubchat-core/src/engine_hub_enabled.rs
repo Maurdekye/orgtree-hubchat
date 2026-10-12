@@ -46,16 +46,18 @@ impl Engine {
                     let from = h.status.state.clone();
                     f(&mut h.status);
                     if from != h.status.state {
-                        moved = Some((from, h.status.state.clone(), h.status.version.clone()));
+                        moved = Some((from, h.status.state.clone()));
                     }
                     before != format!("{:?}", h.status)
                 }
                 None => false,
             }
         };
-        if let Some((from, to, version)) = moved {
-            // the state only (the error text stays with the status the UI shows)
-            tracing::info!("hub {}: {from:?} -> {to:?} (hub software {})", crate::diag::tag("hub", url), version.as_deref().unwrap_or("unknown"));
+        if let Some((from, to)) = moved {
+            // The state only. What the hub reports about itself (its software version, its
+            // answer text) is not ours to repeat: it is free text from outside, and the UI
+            // keeps it in the status.
+            tracing::info!("hub {}: {from:?} -> {to:?}", crate::diag::tag("hub", url));
         }
         if changed { self.host.event(Event::Hub { url: url.into() }); }
     }
