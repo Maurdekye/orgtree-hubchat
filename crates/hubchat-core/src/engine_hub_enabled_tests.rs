@@ -89,7 +89,7 @@ async fn ordinary_and_notification_admission_keep_waiting_without_route() {
     assert!(e.queue_notification_reply(&e.me.address(), &reply, PEER, "reply").unwrap());
     assert!(!e.queue_notification_reply(&e.me.address(), &reply, PEER, "reply").unwrap());
     assert_eq!(e.store.queued().unwrap().len(), 2);
-    assert_eq!(e.chat(PEER, 20, None, None).unwrap().len(), 2);
+    assert_eq!(e.chat(PEER, None, None, 20).unwrap().len(), 2);
 }
 
 #[tokio::test]
