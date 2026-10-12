@@ -8,6 +8,69 @@ impl Host for FirstSendHost {
     fn download_dir(&self) -> PathBuf { PathBuf::new() }
 }
 
+// The candidate closure is the production boundary between remote/history
+// reads and persistence. Barriers schedule a real admission in that gap.
+#[tokio::test]
+async fn stale_history_readers_cannot_raise_ordinary_or_notification_admission_floors() {
+    for notification in [false, true] {
+        for had_numeric in [false, true] {
+            let store = Arc::new(Store::open_in_memory().unwrap());
+            let me = Identity::generate("first-send-race").unwrap();
+            let owner = me.address();
+            store.set_meta("identity.address", &owner).unwrap();
+            let engine = Engine::new(store.clone(), me, Profile::default(), Arc::new(FirstSendHost(Mutex::new(vec![]))));
+            let peer = "pat.abcdef";
+            let key = format!("history.floor.{peer}");
+            let candidate = unix_ms() + 60_000;
+            connect(&engine, candidate);
+            if had_numeric { store.set_meta(&key,&(candidate + 60_000).to_string()).unwrap(); }
+            let ready = Arc::new(std::sync::Barrier::new(2));
+            let resume = Arc::new(std::sync::Barrier::new(2));
+            let reader = {
+                let engine = engine.clone(); let ready = ready.clone(); let resume = resume.clone();
+                std::thread::spawn(move || engine.history_floor_with(peer, || {
+                    ready.wait(); resume.wait(); Ok(Some(candidate as i64))
+                }).unwrap())
+            };
+            ready.wait();
+            let id = uuid::Uuid::new_v4().to_string();
+            if notification {
+                assert!(engine.queue_notification_reply(&owner,&id,peer,"local accepted").unwrap());
+            } else {
+                engine.send(NewOutgoing { id: id.clone(), peer: peer.into(), body: "local accepted".into(), kind: None, reply_to: None, attachments: vec![] }).await.unwrap();
+            }
+            let row = store.message(&id).unwrap().unwrap();
+            let committed = store.meta(&key).unwrap();
+            resume.wait();
+            let returned = reader.join().unwrap();
+            assert_eq!(store.meta(&key).unwrap(), committed,"notification={notification}, old numeric={had_numeric}: stale writer must retain winning admission");
+            assert!(returned.is_none_or(|f| f <= row.created_at),"reader must return its merged winner, not its stale candidate");
+            assert_eq!(engine.chat(peer,None,None,50).unwrap().len(),1);
+            assert_eq!(store.queued().unwrap().len(),1);
+            if notification {
+                assert!(!engine.queue_notification_reply(&owner,&id,peer,"replay").unwrap());
+                assert_eq!(store.meta(&key).unwrap(), committed);
+            }
+        }
+    }
+}
+
+#[test]
+fn stale_numeric_reader_preserves_a_concurrent_all_sentinel_and_returns_no_filter() {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let engine = Engine::new(store.clone(), Identity::generate("first-send-race").unwrap(), Profile::default(), Arc::new(FirstSendHost(Mutex::new(vec![]))));
+    let peer = "pat.abcdef";
+    let key = format!("history.floor.{peer}");
+    let candidate = unix_ms() as i64;
+    store.set_meta(&key,&(candidate + 1).to_string()).unwrap();
+    let returned = engine.history_floor_with(peer, || {
+        store.set_meta(&key,"all").unwrap();
+        Ok(Some(candidate))
+    }).unwrap();
+    assert_eq!(store.meta(&key).unwrap().as_deref(),Some("all"));
+    assert!(returned.is_none());
+}
+
 fn connect(engine: &Engine, start: u64) {
     let addr = HubAddress::parse("127.0.0.1:7999").unwrap();
     let url = addr.to_string();

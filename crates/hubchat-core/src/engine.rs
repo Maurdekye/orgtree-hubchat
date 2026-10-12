@@ -1246,6 +1246,10 @@ impl Engine {
     /// back (its messages fill in when it is back), and the floor never
     /// rises again: what was on screen stays.
     pub fn history_floor(&self, peer: &str) -> Result<Option<String>> {
+        self.history_floor_with(peer, || self.floor_now(peer))
+    }
+
+    fn history_floor_with(&self, peer: &str, candidate: impl FnOnce() -> Result<Option<i64>>) -> Result<Option<String>> {
         let key = format!("history.floor.{peer}");
         // "all": the chat once showed everything, so it always will (a hub
         // that was down doesn't bring a floor back when it reconnects)
@@ -1254,7 +1258,7 @@ impl Engine {
             return Ok(None);
         }
         let shown: Option<i64> = shown.and_then(|v| v.parse().ok());
-        let floor = match (self.floor_now(peer)?, shown) {
+        let floor = match (candidate()?, shown) {
             (Some(n), Some(s)) => Some(n.min(s)),
             (n, _) => n,
         };
