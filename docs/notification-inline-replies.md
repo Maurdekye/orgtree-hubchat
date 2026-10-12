@@ -92,10 +92,11 @@ missing-engine rejection behavior in the production payload/admission helpers.
 Controlled tests failed all three new assertions (six existing tests passed):
 a delayed A event sampled B after the shared scratch store was wiped/adopted,
 and unavailable-engine/cold-init-failure calls returned rejected instead of
-retry. Corrected source passes all11 focused core tests. The barrier-controlled
+retry. Final corrected source passes all12 focused core tests. The barrier-controlled
 production-helper test also covers core publication before engine availability,
 two concurrent cold attaches, an injected failed initial load, one eventual
-engine load and exactly-once durable UUID admission. It verifies that a later
+engine load and exactly-once durable UUID admission. An unreadable key leaves
+the shell/lost-key UI available while remaining retryable. It verifies that a later
 attach does not reload the key after a deliberate departure.
 
 These are measured component schedules using production helpers and scratch
@@ -103,3 +104,19 @@ SQLite; they do not invoke Tauri's global CORE, Android JNI, Keystore or an
 actual WorkManager process. Shell/JNI wiring is checked separately by source
 review and the assigned Android-target compiler. The delayed callback preserves
 A as its action owner; Engine B rejects it and creates no outgoing row.
+
+Measured final source2b804c6: `cargo test --locked -j2 -p hubchat-core
+notification_reply -- --nocapture` passed12/12 (128 filtered), compilation20.47s.
+`cargo check --locked -j2 -p hubchat --lib --target aarch64-linux-android`
+passed warning-free using installed NDK27.3.13750724 Android24 clang/ar
+(arm64-v8a), initial dependency check3m07s and final changed-source check3.93s.
+No Android library link, APK build or device action was performed.
+
+Standalone Kotlin API compilation passed with unrelated dependencies stubbed;
+all8 policy checks passed, including unready/repeated attempts retaining the
+sole handoff until completion and a transient attach exception retaining it
+without admission/network work. The actual worker calls the tested handoff
+completion helper. Evidence is in the author D rig evidence folder; build
+logs/output stay under the reserved author C root. Machine locks were released
+after every bounded run. Owned build output measured10,707,725,723bytes, below
+the100GB cleanup threshold.
