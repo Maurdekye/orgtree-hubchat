@@ -157,13 +157,13 @@ where
     tokio::spawn(tracing::Instrument::instrument(fut, request("engine")))
 }
 
-/// A failure worth a warning: `what` and the error's kind. Without a
-/// subscriber (Android, tests) it goes to stderr as it did before the log
-/// existed, so that platform loses nothing.
+/// A failure worth a warning: `what` and the error's kind, never its text. Without
+/// a subscriber (Android, tests) the same line goes to stderr, so that platform
+/// still hears of it.
 pub fn failure(what: &str, e: &Error) {
     tracing::warn!("{what}: {}", err_kind(e));
     if !tracing::dispatcher::has_been_set() {
-        eprintln!("{what}: {e}");
+        eprintln!("{what}: {}", err_kind(e));
     }
 }
 
