@@ -75,6 +75,7 @@ impl HubClient {
         progress: Option<Progress>,
         cancel: CancelFlag,
     ) -> Result<DownloadCheckpoint> {
+        self.session_work(async {
         cancel
             .run(async {
                 let mut state = spec.checkpoint;
@@ -188,5 +189,6 @@ impl HubClient {
                 Ok(state)
             })
             .await
+        }).await
     }
 }

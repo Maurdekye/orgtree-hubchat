@@ -630,13 +630,12 @@ impl HubClient {
         progress: Option<Progress>,
         cancel: CancelFlag,
     ) -> Result<u64> {
-        self.session_work(async {
         let part = dest.with_extension(match dest.extension() {
             Some(e) => format!("{}.part", e.to_string_lossy()),
             None => "part".into(),
         });
         let stop = cancel.clone();
-        let result = stop
+        let result = self.session_work(stop
             .run(async {
                 let resp = self
                     .http
@@ -666,8 +665,7 @@ impl HubClient {
                 out.sync_data().await?;
                 drop(out);
                 Ok(done)
-            })
-            .await;
+            })).await;
         match result {
             Ok(done) => {
                 // The complete flushed file now wins the cancellation race.
@@ -676,13 +674,12 @@ impl HubClient {
                 Ok(done)
             }
             Err(e) => {
-                if matches!(e, Error::Cancelled) {
+                if matches!(e, Error::Cancelled | Error::FilePaused) {
                     let _ = tokio::fs::remove_file(&part).await;
                 }
                 Err(e)
             }
         }
-        }).await
     }
 
     pub(crate) async fn post_json<B: Serialize + ?Sized, R: serde::de::DeserializeOwned>(

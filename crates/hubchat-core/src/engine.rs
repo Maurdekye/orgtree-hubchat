@@ -1549,7 +1549,7 @@ impl Engine {
 
     /// The scheduler has reserved a file slot when this message needs one.
     async fn send_one_on(&self, id: &str, (url,client,max):(String,HubClient,u64)) -> Result<bool> {
-        if client.session_cancelled() || !self.store.hub_enabled(&url)? { return Ok(false); }
+        if client.session_cancelled() { return Ok(false); }
         let (m,_writer)={
             let mut writers=self.send_writers.lock().unwrap();
             // A duplicate launch is handled without changing the active worker's queue state.
