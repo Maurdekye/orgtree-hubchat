@@ -303,8 +303,8 @@ mod tests {
     fn the_plain_text_part_goes_only_when_it_fits() {
         let body = "Which one?\n\nPick one:\n1. A\n2. B";
         let at = body.find("\n\nPick").unwrap();
-        let (shown, m) = incoming(body, Some("question"), None, Some(&json!({"question": {"options": ["A", "B"]}, "fallback": [at, body.len()]})));
-        assert_eq!(shown, "Which one?");
+        let (text, m) = incoming(body, Some("question"), None, Some(&json!({"question": {"options": ["A", "B"]}, "fallback": [at, body.len()]})));
+        assert_eq!(text, "Which one?");
         assert_eq!(m.question.unwrap().options.len(), 2);
         // a range in the middle, past the end or inside a character is ignored
         assert_eq!(without("abcdef", (1, 3)), None);
@@ -330,8 +330,8 @@ mod tests {
         assert_eq!(meta["answers"], json!([{"question": "c1", "picked": ["Beta"]}]));
         assert_eq!(meta["fallback"], json!([0, body.len()]));
         // what the receiver makes of it: no text, the same replies and picks
-        let (shown, m) = incoming(&body, None, Some("c1"), Some(&meta));
-        assert_eq!(shown, "");
+        let (text, m) = incoming(&body, None, Some("c1"), Some(&meta));
+        assert_eq!(text, "");
         assert_eq!(m.replies.len(), 3);
         assert_eq!(m.answers, picks);
         // a single skip carries meta, so "Skipped" isn't read as the answer's text

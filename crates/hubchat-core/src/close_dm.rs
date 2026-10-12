@@ -121,7 +121,8 @@ mod tests {
         let path = dir.path().join("scratch.db");
         let s = Store::open(&path).unwrap(); setup(&s); drop(s);
         let c = rusqlite::Connection::open(&path).unwrap();
-        c.execute_batch("DROP TABLE closed_dms; PRAGMA user_version=14;").unwrap(); drop(c);
+        // a real version-14 store: without 15 (closed_dms) or 16 (meta, draft_answers)
+        c.execute_batch("DROP TABLE closed_dms; DROP TABLE draft_answers; ALTER TABLE messages DROP COLUMN meta; PRAGMA user_version=14;").unwrap(); drop(c);
         let s = Store::open(&path).unwrap();
         assert_eq!(s.chats().unwrap().len(), 1);
         s.close_dm(PEER).unwrap(); drop(s);

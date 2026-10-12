@@ -61,4 +61,31 @@ mod tests {
         let many = DraftAnswers { replies: vec!["m".into(); MAX_HELD + 1], picks: BTreeMap::new() };
         assert!(s.set_draft_answers("pat.4d5e6f", &many).is_err());
     }
+
+    #[test]
+    fn migration_16_keeps_version_15_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.sqlite3");
+        let env: Envelope = serde_json::from_value(serde_json::json!({
+            "id": "old", "from": "pat.4d5e6f", "to": "me.000000", "body": "> asked
+kept", "reply_to": "q1",
+            "received_at": "2026-10-11T10:00:00.000Z", "attachments": [{"id": "f1", "name": "kept.txt", "bytes": 4}]
+        }))
+        .unwrap();
+        {
+            let s = Store::open(&path).unwrap();
+            s.add_hub("http://scratch.invalid:7370", "t0").unwrap();
+            s.insert_incoming("http://scratch.invalid:7370", &env, "t1").unwrap();
+        }
+        // a real version-15 store: no meta column, no draft_answers
+        let c = rusqlite::Connection::open(&path).unwrap();
+        c.execute_batch("DROP TABLE draft_answers; ALTER TABLE messages DROP COLUMN meta; PRAGMA user_version=15;").unwrap();
+        drop(c);
+        let s = Store::open(&path).unwrap();
+        let m = s.message("old").unwrap().unwrap();
+        assert_eq!((m.body.as_str(), m.reply_to.as_deref(), m.attachments[0].name.as_str()), ("kept", Some("q1"), "kept.txt"));
+        assert!(m.qa.is_empty());
+        s.set_draft_answers("pat.4d5e6f", &DraftAnswers { replies: vec!["old".into()], picks: BTreeMap::new() }).unwrap();
+        assert_eq!(s.draft_answers("pat.4d5e6f").unwrap().unwrap().replies, ["old"]);
+    }
 }
