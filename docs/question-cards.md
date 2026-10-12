@@ -105,6 +105,39 @@ Later messages leave the card as it is. Hubchat marks their note on that card
 both send; whichever the hub received first counts, on every device. The
 asker receives both messages, in that same order.
 
+## Verification (2026-10-12)
+
+Measured on Hubchat `hubchat-opus/questions` (on main `0a1bdde`), the mail
+hub's `hubchat-opus/hub-meta` (on `6a883ad`) and Orgtree's
+`hubchat-opus/question-options` (on rust-engine `cf7668e`). Every cargo step
+ran under the machine build lock inside Orgtree's kernel Job runner.
+
+- **Core:** `cargo test --locked -j2 -p hubchat-core --lib` passes 209 of 209.
+  The question tests check the option rules, untrusted `meta` part by part,
+  the plain-text part left out only when it fits, what older clients read
+  and the 4096-byte limit; the saved-answer tests check unsent answers across
+  a reopen and migration 16 from a real version-15 store.
+- **Round trip:** `tests/questions_v2.rs` against the hub branch's own binary
+  (scratch port, throwaway PostgreSQL 18): cards written as Orgtree writes
+  them arrive as cards on two devices without the plain list; one empty
+  reply answers two cards by picks and skips the third; the hub carries the
+  plain text, `reply_to` and the `meta`; the other device gets the same
+  replies, picks and receipt time; a single plain reply goes out as before.
+- **Desktop shell:** `cargo check --locked -j2 -p hubchat` passes with no
+  warning. Clippy reports nothing in this work.
+- **Interface:** `tools/verify-questions.ps1` (Orgtree's
+  `apps/desktop/renderer/tests/joblimit.ps1`, 4096 MB, 300 s) passes 37 of 37
+  checks against the browser mock at desktop and phone widths, dark and
+  light. Five of them call `cardStates` directly and pin the settling order;
+  each must give the same result whatever order the messages are listed in.
+- **Mail hub:** with a throwaway PostgreSQL 18, `message_meta`,
+  `people_and_replies`, `profile_pictures`, `hub_suite`, `sync`, `history`,
+  `lazy_history` and `long_messages` pass. Clippy reports nothing in this work.
+- **Orgtree:** the `net::cards` unit tests pass, and the rig proof
+  `question-options.mjs` (17 checks) delivers cards through the real sender
+  to a hosted hub with the `meta` feature and reads them as a person
+  registered over HTTP.
+
 ## Limits
 
 - On a hub without `meta`, the structure doesn't travel. A multi-reply
@@ -115,3 +148,12 @@ asker receives both messages, in that same order.
   asks to split it.
 - Orgtree delivers an answer to agents as the plain-text version, with the
   first card quoted. It doesn't track whether its cards are settled.
+- Not run: an Android build, an emulator or a device, the installed app, a
+  live hub or chat. The browser proof drives the mock API (`src/lib/mock.ts`),
+  not the Tauri commands: `hc_send`, `hc_draft_answers` and
+  `hc_set_draft_answers` compile and were compared with `src/api.ts` by
+  reading. Long-press selection was driven with mouse events at phone width,
+  not by touch.
+- Settling is the same on every device for answers that crossed one hub. A
+  chat whose answers arrive over two different hubs orders them by each hub's
+  own clock; that case was not run.
