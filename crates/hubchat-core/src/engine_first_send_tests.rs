@@ -10,10 +10,7 @@ impl Host for FirstSendHost {
 
 // The candidate closure is the production boundary between remote/history
 // reads and persistence. Barriers schedule a real admission in that gap.
-#[tokio::test]
-async fn stale_history_readers_cannot_raise_ordinary_or_notification_admission_floors() {
-    for notification in [false, true] {
-        for had_numeric in [false, true] {
+async fn stale_schedule(notification: bool, had_numeric: bool) {
             let store = Arc::new(Store::open_in_memory().unwrap());
             let me = Identity::generate("first-send-race").unwrap();
             let owner = me.address();
@@ -51,9 +48,16 @@ async fn stale_history_readers_cannot_raise_ordinary_or_notification_admission_f
                 assert!(!engine.queue_notification_reply(&owner,&id,peer,"replay").unwrap());
                 assert_eq!(store.meta(&key).unwrap(), committed);
             }
-        }
-    }
 }
+
+#[tokio::test]
+async fn stale_reader_ordinary_absent() { stale_schedule(false,false).await; }
+#[tokio::test]
+async fn stale_reader_ordinary_numeric() { stale_schedule(false,true).await; }
+#[tokio::test]
+async fn stale_reader_notification_absent() { stale_schedule(true,false).await; }
+#[tokio::test]
+async fn stale_reader_notification_numeric() { stale_schedule(true,true).await; }
 
 #[test]
 fn stale_numeric_reader_preserves_a_concurrent_all_sentinel_and_returns_no_filter() {
@@ -180,3 +184,4 @@ fn local_boundary_is_atomic_monotone_and_does_not_change_historical_or_closed_dm
     assert!(s.chats().unwrap().is_empty(), "local admission must not reopen a closed DM");
     assert_eq!(s.chat(peer,None,None,50).unwrap().len(),4);
 }
+
