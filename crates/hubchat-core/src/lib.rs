@@ -24,3 +24,4 @@ mod staging;
 pub mod download;
 
 pub mod notification_reply;
+pub mod pictures;
