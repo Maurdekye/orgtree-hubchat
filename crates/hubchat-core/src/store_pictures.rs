@@ -106,6 +106,47 @@ mod tests {
         from_png(revision,bytes,1).unwrap()
     }
     fn store()->Store { let s=Store::open_in_memory().unwrap();s.set_meta("identity.address","me").unwrap();s }
+    fn roster(s:&Store,hub:&str,identity:&str) {
+        let entry=serde_json::from_value(serde_json::json!({"slug":"peer","kind":"person","org_name":identity,"picture_owner":identity})).unwrap();
+        s.upsert_roster(hub,&[entry]).unwrap();
+    }
+    fn scoped(mut record:PictureRecord,identity:&str)->PictureRecord {
+        let mut v=serde_json::to_value(&record).unwrap();v["picture_owner"]=serde_json::json!(identity);
+        record=serde_json::from_value(v).unwrap();record
+    }
+    #[test]
+    fn picture_reused_address_does_not_inherit_bytes_or_high_water_or_late_response() {
+        let s=store();let a="a".repeat(64);let b="b".repeat(64);
+        roster(&s,"hub-a",&a);
+        let old=scoped(image(format!("{:020}-{}",99,"1".repeat(32))),&a);
+        assert!(s.merge_picture("me","peer",&old).unwrap());
+        s.remove_roster("hub-a",&["peer".into()]).unwrap();assert!(s.directory().unwrap().is_empty());
+        roster(&s,"hub-a",&b);assert_eq!(s.directory().unwrap()[0].org_name,b);
+        assert!(s.picture("peer").unwrap().is_none(),"new owner inherited old pixels");
+        assert!(s.directory().unwrap()[0].picture.is_none(),"new owner inherited high-water metadata");
+        assert!(!s.merge_picture("me","peer",&old).unwrap(),"late previous owner was admitted");
+        let fresh=scoped(image(next_revision(None).unwrap()),&b);
+        assert!(s.merge_picture("me","peer",&fresh).unwrap());
+        assert_eq!(s.picture("peer").unwrap(),Some(fresh));
+    }
+    #[test]
+    fn picture_same_identity_rejoin_retains_removal_high_water() {
+        let s=store();let a="a".repeat(64);roster(&s,"hub-a",&a);
+        let old=scoped(image(next_revision(None).unwrap()),&a);
+        let gone=scoped(PictureRecord::removed(next_revision(Some(&old.meta)).unwrap()),&a);
+        s.merge_picture("me","peer",&old).unwrap();s.observe_picture("me","peer",&gone.meta).unwrap();
+        s.remove_roster("hub-a",&["peer".into()]).unwrap();roster(&s,"hub-a",&a);
+        assert!(!s.merge_picture("me","peer",&old).unwrap());assert_eq!(s.picture("peer").unwrap(),Some(gone));
+    }
+    #[test]
+    fn picture_conflicting_hub_owners_fall_back_without_combining_versions() {
+        let s=store();let a="a".repeat(64);let b="b".repeat(64);roster(&s,"hub-a",&a);
+        let old=scoped(image(next_revision(None).unwrap()),&a);s.merge_picture("me","peer",&old).unwrap();
+        roster(&s,"hub-b",&b);
+        assert!(s.picture("peer").unwrap().is_none());assert!(s.directory().unwrap()[0].picture.is_none());
+        assert!(!s.merge_picture("me","peer",&old).unwrap());
+        s.remove_roster("hub-b",&["peer".into()]).unwrap();assert_eq!(s.picture("peer").unwrap(),Some(old));
+    }
     #[test]
     fn removal_observation_blocks_late_fetch_and_automatic_replay() {
         let s=store(); let a=image(next_revision(None).unwrap());
