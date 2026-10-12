@@ -25,7 +25,7 @@ await act(async()=>{await store.startStore();});
 const root=createRoot(document.getElementById('root'));
 await act(async()=>{root.render(createElement(Conversation,{peer,onBack:()=>{},onInfo:()=>{},onOpenAddr:()=>{},onContact:()=>{}}));});
 await act(async()=>{await new Promise(r=>setTimeout(r,20));});
-const checks=[];const check=(name,ok)=>{checks.push({name,ok});console.log(`${ok?'PASS':'FAIL'} ${name}`);};
+const checks=[];const check=(name,ok)=>{ok=!!ok;checks.push({name,ok});console.log(`${ok?'PASS':'FAIL'} ${name}`);};
 check('empty desktop conversation',document.querySelectorAll('.msg').length===0&&!!document.querySelector('.chat-start'));
 const ta=document.querySelector('textarea');
 await act(async()=>{Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(ta,'first outgoing');ta.dispatchEvent(new Event('input',{bubbles:true}));});
@@ -38,7 +38,9 @@ check('empty state removed',!document.querySelector('.chat-start'));
 check('queued delivery remains truthful',!!document.querySelector('[aria-label="Waiting"]')||document.querySelector('.tick')?.getAttribute('aria-label')?.includes('Queued'));
 await act(async()=>{root.unmount();});
 fs.writeFileSync(process.env.HUBCHAT_RENDERER_EVIDENCE,JSON.stringify({checks},null,2));
-dom.window.close();process.exit(process.env.HUBCHAT_PROOF_PHASE==='red' ? (checks.filter(c=>!c.ok).length===3?0:1) : (checks.every(c=>c.ok)?0:1));
+const failed=checks.filter(c=>!c.ok).map(c=>c.name).sort();
+const expected=['first queued bubble visible without native event or inbound','empty state removed','queued delivery remains truthful'].sort();
+dom.window.close();process.exit(process.env.HUBCHAT_PROOF_PHASE==='red' ? (JSON.stringify(failed)===JSON.stringify(expected)?0:1) : (checks.every(c=>c.ok)?0:1));
 
 
 

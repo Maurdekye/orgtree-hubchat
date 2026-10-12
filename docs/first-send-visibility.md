@@ -24,6 +24,14 @@ delivery states, chronological paging, sender wakes and Close DM visibility
 remain governed by their existing paths; there is no new send or polling path.
 No migration is needed.
 
+The round1 review found that the pre-existing history reader could overwrite
+an admission's lower boundary after reading stale metadata. All production
+writers now share a short atomic merge against the current persisted value.
+Remote/history candidates are computed outside the connection lock; the reader
+filters using the returned winner, including a concurrently established `all`,
+instead of its stale candidate. There is no engine-wide lock or transaction
+across remote work.
+
 ## Measured verification
 
 - Native predecessor `db32a93`: both first-send controls fail. The persisted
@@ -67,3 +75,25 @@ Never run the renderer script outside the contained verifier.
 
 Independent source review and coordinator integration remain required. No app,
 APK, device, live data, real chat send, install or release verification was done.
+
+## Round2 concurrency correction
+
+Predecessor `2060db5` extracts the original reader behind a candidate closure
+without changing its behavior. Barriers pause that real reader, commit a real
+ordinary or notification admission on another thread, then resume it. All four
+combinations (absent/numeric prior floor, ordinary/notification) overwrite the
+admission on the predecessor. A fifth controlled interleaving loses the `all`
+sentinel. The four original first-send controls still pass there: measured red
+is four passing and five failing tests, not a failure of compilation or setup.
+
+Correction `9b9e802` passes all nine focused tests. Each reader returns a floor
+that allows its accepted row; subsequent actual `Engine::chat` reloads show one
+queued row. Notification UUID replay stays consumed without a duplicate or
+boundary mutation. All 154 core unit tests pass after the correction, including
+the original notification/identity and Close DM controls. These are deterministic
+production-component schedules, not a Tauri/WebView race reproduction or proof
+of the user's runtime cause.
+
+The contained renderer receipts now serialize all checks as explicit booleans;
+red mode requires the exact three expected failing names. Original round1
+receipts remain retained separately from the round2 evidence.

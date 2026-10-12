@@ -4,7 +4,10 @@
   their queue transaction, lowering (never raising) the lazy-history boundary.
   Historical hub imports must not establish this boundary; preserve `all`,
   paging, actual delivery state and closed DM visibility. Notification reply
-  admission shares the same helper. [verified: store.rs, store_notification_reply.rs,
+  admission and history readers share a short atomic monotone merge; readers
+  compute candidates outside the connection lock and filter using the returned
+  winning value, preserving `all` despite concurrent admissions.
+  [verified: engine.rs, store.rs, store_notification_reply.rs,
   engine_first_send_tests.rs; proof and limits: docs/first-send-visibility.md]
 
 - 2026-10-11: Close DM is persistent device-local visibility. Preserve every
