@@ -35,5 +35,46 @@ async fn accepted_first_send_is_visible_below_lazy_history_floor_without_inbound
     assert_eq!(persisted.len(), 1, "admitted once in the durable outbox");
     assert_eq!(persisted[0].state, "queued", "no fabricated delivery");
     assert!(host.0.lock().unwrap().iter().any(|e| matches!(e, Event::Chat { peer: p } if p == peer)));
-    assert_eq!(engine.chat(peer, None, None, 50).unwrap().iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), [id.as_str()], "the command/event re-read must display the accepted row without inbound traffic");
+    let visible = engine.chat(peer, None, None, 50).unwrap();
+    if let Ok(path) = std::env::var("HUBCHAT_FIRST_SEND_FIXTURE") {
+        std::fs::write(path, serde_json::to_vec_pretty(&serde_json::json!({"peer":peer,"persisted":persisted,"visible":visible})).unwrap()).unwrap();
+    }
+    assert_eq!(visible.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), [id.as_str()], "the command/event re-read must display the accepted row without inbound traffic");
+    for state in ["sending", "failed", "sent", "delivered"] {
+        store.set_state(&id, state, (state == "failed").then_some("synthetic offline failure")).unwrap();
+        let page = engine.chat(peer, None, None, 50).unwrap();
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].state, state);
+    }
+    let second = uuid::Uuid::new_v4().to_string();
+    engine.send(NewOutgoing { id: second.clone(), peer: peer.into(), body: "second outgoing".into(), kind: None, reply_to: Some(id.clone()), attachments: vec![] }).await.unwrap();
+    let page = engine.chat(peer, None, None, 50).unwrap();
+    assert_eq!(page.len(), 2);
+    assert!(page.iter().any(|m| m.id == id) && page.iter().any(|m| m.id == second));
+    assert_eq!(engine.chat(peer, None, Some((&page[0].created_at, &page[0].id)), 50).unwrap(), page);
+}
+
+#[test]
+fn local_boundary_is_atomic_monotone_and_does_not_change_historical_or_closed_dms() {
+    let s = Store::open_in_memory().unwrap();
+    let peer = "pat.abcdef";
+    let key = format!("history.floor.{peer}");
+    let msg = NewOutgoing { id: "local".into(), peer: peer.into(), body: "accepted".into(), kind: None, reply_to: None, attachments: vec![] };
+    s.queue_outgoing(&msg,"2026-10-12T09:30:00.000Z").unwrap();
+    let original = s.meta(&key).unwrap();
+    assert!(original.is_some(), "admission records visibility before any later lazy sync");
+    assert!(s.queue_outgoing(&msg,"2026-10-12T09:00:00.000Z").is_err());
+    assert_eq!(s.meta(&key).unwrap(), original, "duplicate admission rolls back the boundary too");
+    let second = NewOutgoing { id: "later".into(), ..msg.clone() };
+    s.queue_outgoing(&second,"2026-10-12T09:40:00.000Z").unwrap();
+    assert_eq!(s.meta(&key).unwrap(), original, "later sends never raise the boundary");
+    s.set_meta(&key,"all").unwrap();
+    let third = NewOutgoing { id: "third".into(), ..msg.clone() };
+    s.queue_outgoing(&third,"2026-10-12T09:50:00.000Z").unwrap();
+    assert_eq!(s.meta(&key).unwrap().as_deref(), Some("all"));
+    s.close_dm(peer).unwrap();
+    let fourth = NewOutgoing { id: "fourth".into(), ..msg };
+    s.queue_outgoing(&fourth,"2026-10-12T10:00:00.000Z").unwrap();
+    assert!(s.chats().unwrap().is_empty(), "local admission must not reopen a closed DM");
+    assert_eq!(s.chat(peer,None,None,50).unwrap().len(),4);
 }
