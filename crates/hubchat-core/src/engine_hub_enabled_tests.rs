@@ -33,6 +33,62 @@ fn attach(e: &Engine, url: &str) -> (HubClient, CancelFlag) {
 }
 
 #[test]
+fn link_start_cold_retained_disabled_refuses_before_engine_lookup() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("retained.sqlite");
+    {
+        let s = Store::open(&path).unwrap();
+        s.add_hub(A, "saved").unwrap();
+        s.set_hub_enabled(A, false).unwrap();
+    }
+    let s = Store::open(&path).unwrap();
+    let looked_up = std::cell::Cell::new(false);
+    let result = crate::link::start_client(&s, HubAddress::parse(A).unwrap(), || {
+        looked_up.set(true);
+        None // Missing/unreadable key: retained store, no engine.
+    });
+    assert!(result.is_err(), "a retained disabled hub must not get an unbound client");
+    assert!(!looked_up.get(), "saved policy must be resolved before engine availability");
+    assert_eq!(s.hubs().unwrap().len(), 1);
+    assert!(!s.hub_enabled(A).unwrap());
+}
+
+#[test]
+fn link_start_saved_enabled_without_runtime_refuses() {
+    let e = engine();
+    assert!(crate::link::start_client(&e.store, HubAddress::parse(A).unwrap(), || None).is_err());
+    assert!(crate::link::start_client(&e.store, HubAddress::parse(A).unwrap(), || Some(e.clone())).is_err());
+    assert!(e.store.hub_enabled(A).unwrap());
+}
+
+#[test]
+fn link_start_unsaved_cold_setup_does_not_require_engine() {
+    let e = engine();
+    let url = "http://127.0.0.1:7999";
+    let looked_up = std::cell::Cell::new(false);
+    let client = crate::link::start_client(&e.store, HubAddress::parse(url).unwrap(), || {
+        looked_up.set(true);
+        None
+    }).unwrap();
+    assert!(!client.session_cancelled());
+    assert!(!looked_up.get(), "genuinely unsaved setup needs no engine");
+    assert_eq!(e.store.hubs().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn link_start_saved_client_retains_runtime_cancellation() {
+    let e = engine();
+    let (_, stop) = attach(&e, A);
+    let client = crate::link::start_client(&e.store, HubAddress::parse(A).unwrap(), || Some(e.clone())).unwrap();
+    assert!(!client.session_cancelled());
+    stop.cancel();
+    assert!(client.session_cancelled(), "linking must use the originating runtime token");
+    assert!(matches!(client.register(&e.me, &Profile::default()).await, Err(Error::FilePaused)));
+    assert!(crate::link::start_client(&e.store, HubAddress::parse(A).unwrap(), || Some(e.clone())).is_err(),
+        "an already canceled runtime must not be selected");
+}
+
+#[test]
 fn saved_policy_defaults_enabled_preserves_data_and_does_not_reenable_on_add() {
     let e = engine();
     e.store.set_draft(PEER, "draft").unwrap();

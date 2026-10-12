@@ -24,6 +24,20 @@ use sha2::{Digest, Sha256};
 
 use crate::{Error, Identity, Result};
 
+/// Select the transport for temporary new-device linking before any network work.
+pub fn start_client(
+    store: &crate::store::Store,
+    address: crate::HubAddress,
+    engine: impl FnOnce() -> Option<std::sync::Arc<crate::engine::Engine>>,
+) -> Result<crate::HubClient> {
+    match engine() {
+        Some(e) if store.hubs()?.iter().any(|h| h.url == address.as_str()) =>
+            e.hub_client(address.as_str()).ok_or_else(|| Error::Invalid(
+                "Enable this saved hub on this device before linking.".into())),
+        _ => Ok(crate::HubClient::new(address)),
+    }
+}
+
 /// The identity and what travels with it.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Bundle {

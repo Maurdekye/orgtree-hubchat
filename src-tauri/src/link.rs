@@ -263,10 +263,7 @@ pub async fn hc_link_start<R2: Runtime>(
         None => link::new_link_code(),
     };
     let temp = link::link_identity(&code).map_err(s)?;
-    let client = match c.engine() {
-        Ok(e) if c.store.hubs().map_err(s)?.iter().any(|h| h.url == addr.as_str()) => e.hub_client(addr.as_str()).ok_or("Enable this saved hub on this device before linking.")?,
-        _ => HubClient::new(addr.clone()),
-    };
+    let client = link::start_client(&c.store, addr.clone(), || c.engine().ok()).map_err(s)?;
     let profile = Profile {
         kind: "chat".into(),
         org_name: if device_name.trim().is_empty() {
