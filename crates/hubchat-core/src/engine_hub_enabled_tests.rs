@@ -159,6 +159,30 @@ async fn received_link_unsaved_uncancelled_setup_publishes_once() {
 }
 
 #[tokio::test]
+async fn received_link_spawned_discovery_and_commit_refuse_cancelled_generations() {
+    for replace_listener in [false, true] {
+        let e = engine();
+        let (client, _) = attach(&e, A);
+        let stop = CancelFlag::default();
+        let reception = crate::link::Reception::new(client, stop.clone());
+        let child = reception.clone();
+        if replace_listener { stop.cancel(); } else { e.set_hub_enabled(A, false).unwrap(); }
+        let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let copy = requests.clone();
+        // Same production guard used inside EACH spawned probe's request,
+        // even if its parent JoinSet has not yet polled cancellation.
+        assert!(tokio::spawn(async move { child.work(async {
+            copy.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }).await }).await.unwrap().is_err());
+        assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let mut published = false;
+        assert!(reception.commit(|| { published = true; }).is_none());
+        assert!(!published);
+    }
+}
+
+#[tokio::test]
 async fn link_start_saved_client_retains_runtime_cancellation() {
     let e = engine();
     let (_, stop) = attach(&e, A);
