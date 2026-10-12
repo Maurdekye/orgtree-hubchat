@@ -395,7 +395,14 @@ async fn probe_inner(input: &str, name: Option<&str>, limit: Duration,
         Err(e) => return Probe::Invalid { error: s(e) },
     };
     let url = addr.to_string();
-    let client = HubClient::new(addr);
+    let client = if reception.is_some() {
+        // A received bundle can name other saved hubs as well as its origin.
+        // Keep each destination's saved policy and token, plus the origin guard.
+        match core::get().and_then(|c| hubchat_core::link::start_client(&c.store, addr, || c.engine().ok()).map_err(s)) {
+            Ok(client) => client,
+            Err(error) => return Probe::Unreachable { url, error },
+        }
+    } else { HubClient::new(addr) };
     let request = async {
         match reception {
             Some(reception) => reception.work(client.healthz()).await,

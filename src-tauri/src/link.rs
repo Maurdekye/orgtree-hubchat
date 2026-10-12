@@ -310,8 +310,9 @@ pub async fn hc_link_start<R2: Runtime>(
             if t0.elapsed() > LINK_TTL {
                 break Some(LinkEvent::Expired);
             }
-            let p = match client.poll(&temp, 20).await {
+            let p = match reception.work(client.poll(&temp, 20)).await {
                 Ok(p) => p,
+                Err(_) if stop.is_cancelled() || client.session_cancelled() => break None,
                 Err(_) => {
                     tokio::time::sleep(Duration::from_secs(3)).await;
                     continue;
