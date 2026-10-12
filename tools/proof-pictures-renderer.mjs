@@ -14,7 +14,7 @@ for(const key of ['window','document','navigator','HTMLElement','HTMLInputElemen
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 const {api,store,Avatar,PictureEditor,act,createElement,createRoot}=await import(pathToFileURL(path.join(out,'entry.mjs')));
 const owner='scratch.123456',peer='pat.abcdef';
-const meta={revision:'00000000000000000001-00000000000000000000000000000001',sha256:'a'.repeat(64),width:1,height:1,bytes:68};
+const meta={picture_owner:'1'.repeat(64),revision:'00000000000000000001-00000000000000000000000000000001',sha256:'a'.repeat(64),width:1,height:1,bytes:68};
 const record={...meta,data:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j2ioAAAAASUVORK5CYII='};
 let state={me:{address:owner,name:'Scratch',id:'scratch',picture:meta},hubs:[],platform:'desktop'};
 let resolvePicture,calls=0,removed=null;
@@ -26,6 +26,15 @@ await act(async()=>{root.render(createElement(Avatar,{kind:'person',name:'Pat Pe
 check('initials remain while image loads',document.querySelector('.av').textContent==='PP'&&!document.querySelector('.av img'));
 await act(async()=>{resolvePicture(record);});
 check('eligible identity picture displayed',document.querySelector('.av img')?.getAttribute('src')?.startsWith('data:image/png;base64,'));
+await act(async()=>{root.render(createElement(Avatar,{kind:'person',name:'New Owner',size:40,address:peer,picture:null}));});
+check('new address owner with no picture uses fallback',!document.querySelector('.av img')&&document.querySelector('.av').textContent==='NO');
+await act(async()=>{root.render(createElement(Avatar,{kind:'person',name:'New Owner',size:40,address:peer,picture:{...meta,picture_owner:'2'.repeat(64)}}));});
+check('same revision and hash do not reuse previous owner renderer cache',!document.querySelector('.av img'));
+await act(async()=>{resolvePicture(record);});
+check('late old peer identity bytes are rejected',!document.querySelector('.av img'));
+await act(async()=>{root.render(createElement(Avatar,{kind:'person',name:'Third Owner',size:40,address:peer,picture:{...meta,picture_owner:'3'.repeat(64)}}));});
+await act(async()=>{resolvePicture({...record,picture_owner:'3'.repeat(64)});});
+check('matching new peer identity may display its independent picture',!!document.querySelector('.av img'));
 await act(async()=>{root.render(createElement(Avatar,{kind:'person',name:'Pat Peer',size:40,address:peer,picture:{...meta,revision:'00000000000000000002-00000000000000000000000000000002',sha256:null}}));});
 check('removal immediately restores initials',!document.querySelector('.av img')&&document.querySelector('.av').textContent==='PP');
 const before=calls;

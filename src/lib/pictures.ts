@@ -15,8 +15,9 @@ export function usePicture(peer: string | undefined, meta: PictureMeta | null | 
   const owner = snap.state?.me?.address ?? null;
   const revision = meta?.revision;
   const hash = meta?.sha256;
+  const identity = meta?.picture_owner ?? null;
   const hubs = snap.state?.hubs.map(h => h.url + ":" + h.state).join("|") ?? "";
-  const key = owner && peer && revision && hash ? JSON.stringify([owner, peer, revision, hash]) : null;
+  const key = owner && peer && revision && hash ? JSON.stringify([owner, peer, identity, revision, hash]) : null;
   const [shown, setShown] = useState<{ key: string; src: string } | null>(null);
   scope(owner);
   useEffect(() => {
@@ -26,7 +27,7 @@ export function usePicture(peer: string | undefined, meta: PictureMeta | null | 
     let promise = pending.get(key);
     if (!promise) {
       promise = api.picture(peer).then(p => {
-        if (!p?.data || p.revision !== revision || p.sha256 !== hash || getSnap().state?.me?.address !== owner) return null;
+        if (!p?.data || (p.picture_owner ?? null) !== identity || p.revision !== revision || p.sha256 !== hash || getSnap().state?.me?.address !== owner) return null;
         const src = "data:image/png;base64," + p.data;
         scope(owner);
         cache.set(key, src);
@@ -37,6 +38,6 @@ export function usePicture(peer: string | undefined, meta: PictureMeta | null | 
     }
     promise.then(src => { if (live && src && getSnap().state?.me?.address === owner) setShown({ key, src }); });
     return () => { live = false; };
-  }, [key, peer, revision, hash, owner, hubs]);
+  }, [key, peer, identity, revision, hash, owner, hubs]);
   return key && shown?.key === key ? shown.src : null;
 }

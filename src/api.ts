@@ -43,7 +43,7 @@ export interface Me {
   picture?: PictureMeta | null;
 }
 
-export interface PictureMeta { revision: string; sha256: string | null; width: number; height: number; bytes: number }
+export interface PictureMeta { picture_owner?: string | null; revision: string; sha256: string | null; width: number; height: number; bytes: number }
 export interface PictureRecord extends PictureMeta { data: string | null }
 export interface PictureCrop { x: number; y: number; size: number }
 
