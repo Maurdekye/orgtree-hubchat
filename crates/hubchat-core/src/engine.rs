@@ -2315,6 +2315,10 @@ fn unique_path(dir: &std::path::Path, name: &str) -> PathBuf {
 }
 
 #[cfg(test)]
+#[path = "engine_first_send_tests.rs"]
+mod first_send_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
