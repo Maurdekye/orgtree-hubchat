@@ -7,7 +7,8 @@
 // 2. An install is running (the tray's): the banner shows it and starts no
 //    second one; when it fails, the banner can be used again (not stuck).
 //
-//   npx vite --port 14731 --strictPort      (in another shell)
+//   npx vite --host 127.0.0.1 --port 14731 --strictPort   (in another shell;
+//   without --host, "localhost" may answer on IPv6 only)
 //   node tools/proof-update-races.mjs http://127.0.0.1:14731 <shots-dir>
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';

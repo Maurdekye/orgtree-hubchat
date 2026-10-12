@@ -7,7 +7,8 @@
 //   update offers Restart to update, and an install shows "Downloading the
 //   update…" and then its failure.
 //
-//   npx vite --port 14731 --strictPort      (in another shell)
+//   npx vite --host 127.0.0.1 --port 14731 --strictPort   (in another shell;
+//   without --host, "localhost" may answer on IPv6 only)
 //   node tools/proof-tray-settings.mjs http://127.0.0.1:14731 <shots-dir>
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
