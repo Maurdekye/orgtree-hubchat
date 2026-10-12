@@ -67,9 +67,16 @@ and needed compilation may run; publishing remains prohibited. Resumed exact
 The startup control now passes on the corrected source while e66940e fails it.
 Earlier source-specific receipts and intermediate failures remain preserved.
 
-Native adapter/library compilation for the latest saved-hub linking/door guards
-is queued under the shared build lock. Its result and changed linking-path proof
-remain outstanding; no final verification/review-ready claim is made yet. The
-renderer proof is unchanged by these Rust-only additions. No native linking,
-WebView, Android runtime, APK, device, live-message or release validation is
-claimed. Independent review and coordinator integration remain required.
+Native adapter/library checking on source1ae640c passed without warnings:
+`cargo check --locked -j2 -p hubchat --lib --target aarch64-linux-android`,
+Android/API24/NDK27,12.08s compiler12.141s wrapper. This compiles the command and
+saved-hub linking/door guards. The cancellation helpers have measured core
+controls; the complete Tauri link/door workflow has not been executed. Source
+review confirms link bundles export addresses, not local enable flags.
+
+The renderer proof is unchanged by these Rust-only additions. Evidence is in
+`hub-enable-regression-70b2719.log`, `hub-enable-red-e66940e.log`,
+`hub-enable-android-1ae640c.log` and `hub-enable-renderer.json` in the author's
+isolated evidence folder. No native linking, IPC, WebView, Android runtime,
+APK, device, live-message or release validation is claimed. Independent review
+and coordinator integration remain required.
