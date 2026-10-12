@@ -1,5 +1,20 @@
 # Hubchat development invariants
 
+- 2026-10-12: Question cards and multi-reply travel in an additive, bounded
+  message `meta` (hub feature `meta`, at most 4096 bytes) with a plain-text
+  version in the body for older hubs and clients; never repurpose `reply_to`
+  or `thread_id`. Received `meta` is untrusted: `questions::incoming` checks
+  each part on its own and keeps only what passes. A card settles once, on
+  the first answer or empty-body skip from the other side in hub order
+  (received_at, then id; unsent after, in writing order); later replies never
+  revise it, its sender cannot withdraw it, and unanswered cards stay open
+  (no automatic skip). Unsent replies and picks persist per chat (migration
+  16 `draft_answers`, wiped with the identity). A migration test that fakes
+  an older store must remove every later migration's changes.
+  [decided: user 2026-10-11 13:01-13:27Z, 22:42-22:44Z; verified: questions.rs,
+  store_questions.rs, engine.rs, lib/questions.ts; contract, measured proof
+  and limits: docs/question-cards.md]
+
 - 2026-10-12: Poll, sync snapshot/upsert/remove/online, and setup roster refresh
   admit complete roster/provenance plus picture metadata under the originating
   session_commit guard. An early cancellation check alone is insufficient.
