@@ -420,6 +420,18 @@ impl Store {
         })
     }
 
+    /// Merge a history reader's candidate against current committed visibility.
+    /// `None` means every locally held row may show. Compute candidates before
+    /// calling this; only the bounded meta read/write holds the connection.
+    pub(crate) fn merge_history_floor(&self, peer: &str, candidate: Option<i64>) -> Result<Option<i64>> {
+        self.with(|c| {
+            let tx = c.transaction()?;
+            let winner = merge_history_floor(&tx, peer, candidate)?;
+            tx.commit()?;
+            Ok(winner)
+        })
+    }
+
     // ------------------------------------------------------------- hubs
 
     pub fn delete_meta(&self, key: &str) -> Result<()> {
@@ -1336,13 +1348,23 @@ fn show_local_outgoing(tx: &rusqlite::Transaction<'_>, peer: &str, at: &str) -> 
     let Some(ms) = humantime::parse_rfc3339_weak(at).ok()
         .and_then(|t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).ok())
         .and_then(|d| i64::try_from(d.as_millis()).ok()) else { return Ok(()); };
+    merge_history_floor(tx, peer, Some(ms))?;
+    Ok(())
+}
+
+fn merge_history_floor(tx: &rusqlite::Transaction<'_>, peer: &str, candidate: Option<i64>) -> rusqlite::Result<Option<i64>> {
     let key = format!("history.floor.{peer}");
     let old: Option<String> = tx.query_row("SELECT value FROM meta WHERE key=?", [&key], |r| r.get(0)).optional()?;
-    if old.as_deref() == Some("all") || old.as_deref().and_then(|v| v.parse::<i64>().ok()).is_some_and(|n| n <= ms) {
-        return Ok(());
+    let winner = if old.as_deref() == Some("all") {
+        None
+    } else {
+        candidate.map(|n| old.as_deref().and_then(|v| v.parse::<i64>().ok()).map_or(n, |s| s.min(n)))
+    };
+    let value = winner.map_or_else(|| "all".to_owned(), |n| n.to_string());
+    if old.as_deref() != Some(value.as_str()) {
+        tx.execute("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![key,value])?;
     }
-    tx.execute("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![key, ms.to_string()])?;
-    Ok(())
+    Ok(winner)
 }
 
 /// Each of `hubs` still in the store owes the delete of the ids `ids_sql`

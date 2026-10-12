@@ -1253,21 +1253,13 @@ impl Engine {
         let key = format!("history.floor.{peer}");
         // "all": the chat once showed everything, so it always will (a hub
         // that was down doesn't bring a floor back when it reconnects)
-        let shown = self.store.meta(&key)?;
-        if shown.as_deref() == Some("all") {
+        if self.store.meta(&key)?.as_deref() == Some("all") {
             return Ok(None);
         }
-        let shown: Option<i64> = shown.and_then(|v| v.parse().ok());
-        let floor = match (candidate()?, shown) {
-            (Some(n), Some(s)) => Some(n.min(s)),
-            (n, _) => n,
-        };
-        match floor {
-            Some(f) if Some(f) != shown => self.store.set_meta(&key, &f.to_string())?,
-            Some(_) => {}
-            // unset or a time before: either way it is everything from now on
-            None => self.store.set_meta(&key, "all")?,
-        }
+        // Remote/history reads finish outside the connection lock. Admission
+        // may lower the floor meanwhile: filter using the atomic merge winner.
+        let candidate = candidate()?;
+        let floor = self.store.merge_history_floor(peer, candidate)?;
         Ok(floor.and_then(|ms| {
             let st = SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(u64::try_from(ms).ok()?))?;
             Some(humantime::format_rfc3339_millis(st).to_string())
