@@ -101,6 +101,19 @@ async fn discovery_positive_enabled_and_unsaved_preflight() {
 }
 
 #[tokio::test]
+async fn discovery_positive_door_enabled_destination_and_unsaved_alias() {
+    let hub = discovery_hub().await;
+    let e = engine();
+    let (origin, _) = attach(&e, A);
+    let requests = discovery(&e).with_origin(crate::link::Reception::new(origin, CancelFlag::default()));
+    assert!(requests.door_health(HubAddress::parse(&hub.url).unwrap()).await.unwrap().ok);
+    e.store.add_hub(&hub.url, "scratch").unwrap();
+    attach(&e, &hub.url);
+    assert!(requests.door_health(HubAddress::parse(&hub.url).unwrap()).await.unwrap().ok);
+    assert_eq!(hub.requests.load(std::sync::atomic::Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
 async fn discovery_delayed_door_child_stops_after_origin_cancel() {
     let hub = discovery_hub().await;
     let e = engine();
