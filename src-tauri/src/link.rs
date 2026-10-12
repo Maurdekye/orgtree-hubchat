@@ -327,8 +327,14 @@ pub async fn hc_link_start<R2: Runtime>(
                 // Hubs that keep history (v2) would keep our copy of the
                 // sealed identity: delete it (older hubs answer 404).
                 let cleanup = async {
-                    if !ids.is_empty() { let _ = client.ack(&temp, &ids).await; }
-                    let _ = client.delete_message(&temp, &id).await;
+                    if !ids.is_empty() {
+                        if let Err(e @ (hubchat_core::Error::Cancelled | hubchat_core::Error::FilePaused)) = client.ack(&temp, &ids).await {
+                            return Err(e);
+                        }
+                    }
+                    if let Err(e @ (hubchat_core::Error::Cancelled | hubchat_core::Error::FilePaused)) = client.delete_message(&temp, &id).await {
+                        return Err(e);
+                    }
                     Ok(())
                 };
                 let _ = reception.complete(cleanup, async { Ok(arrived(bundle, &via, &aliases, &reception).await) }, |arrival| {
