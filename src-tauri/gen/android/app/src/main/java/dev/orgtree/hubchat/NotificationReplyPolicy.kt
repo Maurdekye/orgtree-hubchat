@@ -18,8 +18,8 @@ internal fun runReplyWork(
   return try {
     attach()
     when (queue()) {
-    "queued" -> { queued(); if (check()) ReplyWorkOutcome.COMPLETE else ReplyWorkOutcome.RETRY }
-    "rejected" -> ReplyWorkOutcome.REJECTED
+      "queued" -> { queued(); if (check()) ReplyWorkOutcome.COMPLETE else ReplyWorkOutcome.RETRY }
+      "rejected" -> ReplyWorkOutcome.REJECTED
       else -> ReplyWorkOutcome.RETRY
     }
   } catch (_: Exception) { ReplyWorkOutcome.RETRY }
@@ -29,4 +29,3 @@ internal fun runReplyWork(
 internal fun finishReplyHandoff(outcome: ReplyWorkOutcome, remove: () -> Unit) {
   if (outcome != ReplyWorkOutcome.RETRY) remove()
 }
-

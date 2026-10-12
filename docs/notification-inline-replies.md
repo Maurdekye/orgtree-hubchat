@@ -6,6 +6,11 @@ action using Android RemoteInput. Normal notification taps still open that chat;
 the group summary opens Hubchat, and transfer failure notifications keep their
 existing behavior. This change does not add a mobile platform.
 
+Both incoming hub paths capture the producing engine identity in the incoming
+event. The shell passes that immutable owner through the Android bridge into
+the reply Intent and sealed handoff; a delayed old-account event cannot acquire
+a new account owner from mutable current metadata.
+
 The reply action names the account and chat in its explicit base Intent URI,
 with a unique notification token. Only its broadcast PendingIntent is mutable,
 so Android can attach RemoteInput; the tap PendingIntent remains immutable.
@@ -35,7 +40,14 @@ and delivery receipts continue through the existing sender. A text reply is an
 ordinary chat message, without an attachment or an inferred quote target.
 
 Notification status says **Reply queued**, never claims delivery without a hub
-receipt. Admission rejection directs the user to open the chat and check their
+receipt. Unavailable core/engine, stopped-engine and bridge failures return retry and
+retain the sealed text. Core publication can precede key loading: concurrent
+cold attaches serialize that load, and a failed attempt can be retried. A
+successful cold initialization is latched so later attaches do not reload a
+departing key during an intentional identity switch. Unreadable keys keep startup
+retryable. Only established invalid input or identity is a permanent rejection.
+
+Admission rejection directs the user to open the chat and check their
 reply. Updates match the original notification token and share the posting/clear
 lock, so a newer incoming notification or read receipt is not overwritten.
 
@@ -68,3 +80,26 @@ new incoming mail during reply, read-receipt dismissal and identity changes.
 
 Android API references: [direct reply](https://developer.android.com/develop/ui/compose/notifications/create-notification)
 and [WorkManager requests](https://developer.android.com/develop/background-work/background-tasks/persistent/getting-started/define-work).
+
+## Corrective review proof (2026-10-12)
+
+Reconciled with main6c606c0: migration14 was already present; retained DM15,
+both wipe entries, both module declarations and Close DM invariants. No
+question migration16 change.
+
+The extracted predecessor eb7589e retained the original owner-sampling and
+missing-engine rejection behavior in the production payload/admission helpers.
+Controlled tests failed all three new assertions (six existing tests passed):
+a delayed A event sampled B after the shared scratch store was wiped/adopted,
+and unavailable-engine/cold-init-failure calls returned rejected instead of
+retry. Corrected source passes all11 focused core tests. The barrier-controlled
+production-helper test also covers core publication before engine availability,
+two concurrent cold attaches, an injected failed initial load, one eventual
+engine load and exactly-once durable UUID admission. It verifies that a later
+attach does not reload the key after a deliberate departure.
+
+These are measured component schedules using production helpers and scratch
+SQLite; they do not invoke Tauri's global CORE, Android JNI, Keystore or an
+actual WorkManager process. Shell/JNI wiring is checked separately by source
+review and the assigned Android-target compiler. The delayed callback preserves
+A as its action owner; Engine B rejects it and creates no outgoing row.
