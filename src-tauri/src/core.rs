@@ -14,7 +14,7 @@ use hubchat_core::Identity;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
-use crate::keylog;
+use crate::keylog::{self, Fact};
 use crate::secrets::Loaded;
 
 /// What only the platform can do.
@@ -587,7 +587,7 @@ impl Core {
     fn forget_push(&self) {
         #[cfg(target_os = "android")]
         if self.platform().set_push(false, "").is_err() {
-            keylog::note(&self.dir, "push cleanup failed while discarding the identity; continuing");
+            keylog::note(&self.dir, "push cleanup failed while discarding the identity; continuing", &[Fact::PushCleanupFailed]);
         }
     }
 
@@ -604,7 +604,7 @@ impl Core {
         crate::secrets::forget_identity(&self.dir)?;
         self.store.wipe().map_err(|e| e.to_string())?;
         *self.key_lost.lock().unwrap() = None;
-        keylog::note(&self.dir, "started over: the local data of the lost identity was removed");
+        keylog::note(&self.dir, "started over: the local data of the lost identity was removed", &[Fact::StartedOver]);
         Ok(())
     }
 
@@ -626,7 +626,7 @@ impl Core {
         e.shutdown();
         crate::secrets::forget_identity(&self.dir)?;
         self.store.wipe().map_err(|e| e.to_string())?;
-        keylog::note(&self.dir, "left this identity: key and local data forgotten");
+        keylog::note(&self.dir, "left this identity: key and local data forgotten", &[Fact::LeftIdentity]);
         self.host.platform.status("Switching identity");
         Ok(())
     }
@@ -649,13 +649,13 @@ impl Core {
         if must_wipe(owner.as_deref(), self.had_identity(), &me.address(), brand_new) {
             self.forget_push();
             self.store.wipe().map_err(|e| e.to_string())?;
-            keylog::note(&self.dir, "another identity's local data was removed before taking this one");
+            keylog::note(&self.dir, "another identity's local data was removed before taking this one", &[Fact::OtherLocalDataRemoved]);
         }
         for (k, v) in meta {
             self.store.set_meta(k, v).map_err(|e| e.to_string())?;
         }
         crate::secrets::save_identity(&self.dir, &me)?;
-        keylog::note(&self.dir, if brand_new { "key saved: a new identity" } else { "key saved: an identity brought to this device" });
+        keylog::note(&self.dir, if brand_new { "key saved: a new identity" } else { "key saved: an identity brought to this device" }, &[if brand_new { Fact::KeySavedNew } else { Fact::KeySavedBrought }]);
         self.start_with(me)?;
         Ok(())
     }

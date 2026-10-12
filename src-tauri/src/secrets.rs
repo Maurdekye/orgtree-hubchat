@@ -10,7 +10,7 @@ use std::path::Path;
 
 use hubchat_core::Identity;
 
-use crate::keylog;
+use crate::keylog::{self, Fact};
 
 #[cfg(desktop)]
 const SERVICE: &str = "dev.orgtree.hubchat";
@@ -55,29 +55,34 @@ enum Main {
 
 /// The key, from the main copy or else the backup (start-up and Try again).
 pub fn load_identity(dir: &Path) -> Loaded {
-    let (why, failed) = match load_main(dir) {
+    // The key log file keeps the full line (the stores' own words); the normal
+    // log gets only the facts (keylog::Fact).
+    let (why, failed, main) = match load_main(dir) {
         Main::Found(me) => {
-            let backup = keep_backup(dir, &me).map_or(String::new(), |b| format!("; {b}"));
-            keylog::note(dir, &format!("key found in {STORE}{backup}"));
+            let (backup, facts) = match keep_backup(dir, &me) {
+                Some((text, fact)) => (format!("; {text}"), vec![Fact::KeyFound, fact]),
+                None => (String::new(), vec![Fact::KeyFound]),
+            };
+            keylog::note(dir, &format!("key found in {STORE}{backup}"), &facts);
             return Loaded::Found(me);
         }
-        Main::Missing(why) => (why, false),
-        Main::Failed(why) => (why, true),
+        Main::Missing(why) => (why, false, Fact::StoreHasNoKey),
+        Main::Failed(why) => (why, true, Fact::StoreDidNotAnswer),
     };
     match backup::load(dir) {
         Ok(Some(text)) => {
             if let Some(me) = decode(&text) {
-                let back = match save_main(dir, &me) {
-                    Ok(()) => format!("put back into {STORE}"),
-                    Err(e) => format!("{STORE} refused it back ({e}); running from the backup"),
+                let (back, fact) = match save_main(dir, &me) {
+                    Ok(()) => (format!("put back into {STORE}"), Fact::PutBackInStore),
+                    Err(e) => (format!("{STORE} refused it back ({e}); running from the backup"), Fact::StoreRefusedItBack),
                 };
-                keylog::note(dir, &format!("{why}; key restored from Hubchat's backup, {back}"));
+                keylog::note(dir, &format!("{why}; key restored from Hubchat's backup, {back}"), &[main, Fact::RestoredFromBackup, fact]);
                 return Loaded::Restored(me);
             }
-            keylog::note(dir, &format!("{why}; Hubchat's backup is damaged"));
+            keylog::note(dir, &format!("{why}; Hubchat's backup is damaged"), &[main, Fact::BackupDamaged]);
         }
-        Ok(None) => keylog::note(dir, &format!("{why}; no backup")),
-        Err(e) => keylog::note(dir, &format!("{why}; the backup didn't open ({e})")),
+        Ok(None) => keylog::note(dir, &format!("{why}; no backup"), &[main, Fact::NoBackup]),
+        Err(e) => keylog::note(dir, &format!("{why}; the backup didn't open ({e})"), &[main, Fact::BackupUnreadable]),
     }
     if failed {
         Loaded::Unreadable
@@ -91,7 +96,7 @@ pub fn load_identity(dir: &Path) -> Loaded {
 pub fn save_identity(dir: &Path, me: &Identity) -> Result<(), String> {
     save_main(dir, me)?;
     if let Err(e) = write_backup(dir, me) {
-        keylog::note(dir, &e);
+        keylog::note(dir, &e, &[Fact::BackupNotWritten]);
     }
     Ok(())
 }
@@ -105,8 +110,9 @@ pub fn forget_identity(dir: &Path) -> Result<(), String> {
 /// While the main copy has the key, the backup holds that same key or none:
 /// an older Hubchat made none, and one left from another identity (when a
 /// new key's backup couldn't be written) must never come back in its place.
-/// Says what it did, for the key log.
-fn keep_backup(dir: &Path, me: &Identity) -> Option<String> {
+/// Says what it did, for the key log: the file's line and the fact the normal
+/// log may repeat.
+fn keep_backup(dir: &Path, me: &Identity) -> Option<(String, Fact)> {
     let found = match backup::load(dir) {
         Ok(Some(text)) if text.trim() == encode(me) => return None,
         Ok(Some(_)) => "the backup held another key".to_string(),
@@ -115,8 +121,8 @@ fn keep_backup(dir: &Path, me: &Identity) -> Option<String> {
         Err(e) => format!("the backup didn't open ({e})"),
     };
     Some(match write_backup(dir, me) {
-        Ok(()) => format!("{found}; a new one was written"),
-        Err(e) => format!("{found}; {e}"),
+        Ok(()) => (format!("{found}; a new one was written"), Fact::BackupWritten),
+        Err(e) => (format!("{found}; {e}"), Fact::BackupNotWritten),
     })
 }
 
@@ -366,13 +372,13 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("hubchat-backup-kept-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let (me, other) = (Identity::generate("pat").unwrap(), Identity::generate("alex").unwrap());
-        assert!(keep_backup(&dir, &me).unwrap().starts_with("there was no backup; a new one"));
+        assert!(keep_backup(&dir, &me).unwrap().0.starts_with("there was no backup; a new one"));
         assert_eq!(keep_backup(&dir, &me), None, "the same key: left alone");
         backup::save(&dir, &encode(&other)).unwrap();
-        assert!(keep_backup(&dir, &me).unwrap().starts_with("the backup held another key; a new one"));
+        assert!(keep_backup(&dir, &me).unwrap().0.starts_with("the backup held another key; a new one"));
         assert_eq!(backup::load(&dir).unwrap().as_deref(), Some(encode(&me).as_str()));
         std::fs::write(dir.join("identity-backup.dpapi"), b"not sealed").unwrap();
-        assert!(keep_backup(&dir, &me).unwrap().starts_with("the backup didn't open"));
+        assert!(keep_backup(&dir, &me).unwrap().0.starts_with("the backup didn't open"));
         assert_eq!(backup::load(&dir).unwrap().as_deref(), Some(encode(&me).as_str()));
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -20,7 +20,12 @@
 //! error text). This layer is a second net with known holes (a short secret in
 //! free text is not recognisable), not a reason to pass content: fields named
 //! like a secret print as `*****`, long token-like strings print as `<token>`, a
-//! line is cut at 8 KB and an event at 40 lines.
+//! line is cut at 8 KB and an event at 40 lines. A dependency's own warning or
+//! error (it arrives as a tracing event or through the `log` bridge) keeps only
+//! its level and source; its text is free text we did not write and is never kept.
+//! When the diagnostics folder cannot be written the log goes to a folder of its
+//! own in the temporary folder (same file names, same pruning) and the Developer
+//! page says so; with no folder at all nothing is kept and the page says that.
 
 use std::borrow::Cow;
 use std::fmt::Write as _;
@@ -182,6 +187,17 @@ fn timestamp() -> String {
 fn dotted(target: &str) -> String {
     let t = target.strip_prefix("hubchat_core::").or_else(|| target.strip_prefix("hubchat_lib::")).unwrap_or(target);
     t.replace("::", ".")
+}
+
+/// What a dependency's warning or error leaves in the log in place of its text.
+const WITHHELD: &str = "[dependency message withheld]";
+
+/// Events from Hubchat's own code (module paths of the two crates and the
+/// fixed targets the helpers use). Anything else is a dependency, whether it
+/// reached the subscriber as a tracing event or through the `log` bridge.
+fn ours_target(target: &str) -> bool {
+    let root = target.split("::").next().unwrap_or(target);
+    matches!(root, "call" | "wire" | "cmd" | "keylog" | "hubchat" | "hubchat_lib" | "hubchat_core")
 }
 
 fn level_name(l: &Level) -> &'static str {
@@ -367,8 +383,16 @@ where
         // an event from the `log` crate (the plugins) reports its own target and level
         let normalized = event.normalized_metadata();
         let meta = normalized.as_ref().unwrap_or_else(|| event.metadata());
+        // a dependency's message is free text we did not write (URLs, hosts, paths,
+        // header values): only its level and source are kept, and only warnings and errors
+        let foreign = !ours_target(meta.target());
+        if foreign && *meta.level() > Level::WARN {
+            return;
+        }
         let mut g = EventGrab::default();
-        event.record(&mut g);
+        if !foreign {
+            event.record(&mut g);
+        }
         let ours = meta.target() == "call";
         let bare = ours || matches!(meta.target(), "wire" | "cmd");
         let mut msg = String::with_capacity(g.message.len() + 64);
@@ -380,6 +404,9 @@ where
         if !bare {
             msg.push_str(&dotted(meta.target()));
             msg.push_str(": ");
+        }
+        if foreign {
+            msg.push_str(WITHHELD);
         }
         msg.push_str(&g.message);
         msg.push_str(&g.fields);
@@ -560,8 +587,12 @@ impl std::io::Write for LogFile {
 
 static STARTED: AtomicBool = AtomicBool::new(false);
 static APP_DATA: OnceLock<PathBuf> = OnceLock::new();
+/// Where the running log really is (the fallback folder when the usual one
+/// could not be written). Unset until a file is open and our subscriber is
+/// installed.
 static LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
 static ACTIVE: OnceLock<PathBuf> = OnceLock::new();
+static FALLBACK: OnceLock<bool> = OnceLock::new();
 static GUARDS: Mutex<Vec<tracing_appender::non_blocking::WorkerGuard>> = Mutex::new(Vec::new());
 
 /// The device's salt for identifier tags: kept beside the logs so a tag means
@@ -578,47 +609,85 @@ fn load_salt(diagnostics: &Path) -> [u8; 16] {
     salt
 }
 
-/// Start the log: `<logs dir>/<start time>.log`. Never fails the app: with no
-/// writable folder the events are simply not kept. Answers the file's path.
-#[cfg_attr(not(desktop), allow(dead_code))]
-pub fn init(app_data: &Path, logs_dir: &Path) -> Option<PathBuf> {
-    use tracing_subscriber::prelude::*;
-    if STARTED.swap(true, Ordering::SeqCst) {
-        return ACTIVE.get().cloned();
+/// Where logs go when the diagnostics folder cannot be written: a folder of
+/// their own in the temporary folder, named and pruned like the usual one
+/// (`owned`), so its files age out and `Open logs folder` shows only them.
+fn fallback_dir() -> PathBuf {
+    std::env::temp_dir().join("hubchat-logs")
+}
+
+fn make_dir(dir: &Path, private: bool) -> std::io::Result<()> {
+    let mut b = std::fs::DirBuilder::new();
+    b.recursive(true);
+    #[cfg(unix)]
+    if private {
+        use std::os::unix::fs::DirBuilderExt;
+        b.mode(0o700);
     }
-    let _ = APP_DATA.set(app_data.to_path_buf());
-    let _ = LOG_DIR.set(logs_dir.to_path_buf());
-    let _ = std::fs::create_dir_all(logs_dir);
-    if let Some(root) = logs_dir.parent() {
-        diag::set_salt(load_salt(root));
-    }
-    let want = effective(app_data);
-    diag::set_verbose(want);
-    let path = logs_dir.join(format!("{}.log", chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")));
-    prune(logs_dir, Some(&path));
-    // the chosen folder, else the temporary one, else no file at all
-    let opened = LogFile::open(path.clone())
-        .map(|f| (f, path.clone()))
-        .or_else(|_| {
-            let tmp = std::env::temp_dir().join("hubchat.log");
-            LogFile::open(tmp.clone()).map(|f| (f, tmp))
-        })
-        .map_err(|e| eprintln!("hubchat: no log file can be opened: {e}"))
-        .ok();
-    let path = opened.as_ref().map(|(_, p)| p.clone()).unwrap_or(path);
-    let file = opened.map(|(f, _)| f);
-    let (file_sink, mut guards): (Arc<dyn Sink>, Vec<_>) = match file {
-        Some(f) => {
-            let (w, guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
-                .buffered_lines_limit(QUEUE_LINES)
-                .lossy(true)
-                .thread_name("hubchat-log")
-                .finish(f);
-            (Arc::new(Nb(w)), vec![guard])
+    #[cfg(not(unix))]
+    let _ = private;
+    b.create(dir)
+}
+
+/// An open log file and where it really is.
+struct Opened {
+    file: LogFile,
+    path: PathBuf,
+    dir: PathBuf,
+    fallback: bool,
+}
+
+/// The first folder that takes a new `<stamp>.log`: `primary`, else `fallback`,
+/// else none (the app runs without a log). Each tried folder is pruned first;
+/// the fallback folder is also pruned when it is not needed, so what an earlier
+/// failed start left there ages out.
+fn open_log(primary: &Path, fallback: &Path, stamp: &str) -> Option<Opened> {
+    for (dir, is_fallback) in [(primary, false), (fallback, true)] {
+        if make_dir(dir, is_fallback).is_err() {
+            continue;
         }
-        None => (Arc::new(Discard), Vec::new()),
+        let path = dir.join(format!("{stamp}.log"));
+        prune(dir, Some(&path));
+        if let Ok(file) = LogFile::open(path.clone()) {
+            if !is_fallback {
+                prune(fallback, None);
+            }
+            return Some(Opened { file, path, dir: dir.to_path_buf(), fallback: is_fallback });
+        }
+    }
+    None
+}
+
+/// What `begin` hands back: a log that is open and installed.
+struct Begun {
+    path: PathBuf,
+    dir: PathBuf,
+    fallback: bool,
+    guards: Vec<tracing_appender::non_blocking::WorkerGuard>,
+}
+
+/// Open the log file (the usual folder, else the fallback) and give the layer
+/// that writes it to `install`, which answers whether it took. `None` means no
+/// log is running: no folder took a file, or `install` refused (another
+/// subscriber owns the process); then nothing is kept and the empty file made
+/// here is removed where the system lets it.
+fn begin(
+    logs_dir: &Path,
+    fallback: &Path,
+    install: impl FnOnce(HubchatLayer, tracing_subscriber::EnvFilter) -> bool,
+) -> Option<Begun> {
+    let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    let Some(Opened { file, path, dir, fallback: used_fallback }) = open_log(logs_dir, fallback, &stamp) else {
+        eprintln!("hubchat: no folder takes a log file; running without one");
+        return None;
     };
-    let _ = ACTIVE.set(path.clone());
+    let (w, guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
+        .buffered_lines_limit(QUEUE_LINES)
+        .lossy(true)
+        .thread_name("hubchat-log")
+        .finish(file);
+    let file_sink: Arc<dyn Sink> = Arc::new(Nb(w));
+    let mut guards = vec![guard];
     let console: Option<Arc<dyn Sink>> = if cfg!(debug_assertions) || std::env::var("HUBCHAT_LOG_CONSOLE").is_ok_and(|v| v == "1") {
         let (w, guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
             .lossy(true)
@@ -632,14 +701,51 @@ pub fn init(app_data: &Path, logs_dir: &Path) -> Option<PathBuf> {
     let filter = tracing_subscriber::EnvFilter::try_from_env("HUBCHAT_LOG").unwrap_or_else(|_| {
         tracing_subscriber::EnvFilter::new("info,tao=warn,wry=warn,tauri=warn,reqwest=warn,hyper=warn,hyper_util=warn,h2=warn,rustls=warn")
     });
-    let layer = HubchatLayer::new(file_sink, console);
-    if tracing_subscriber::registry().with(layer.with_filter(filter)).try_init().is_err() {
-        return None; // another subscriber owns the process (a test); keep its
+    if !install(HubchatLayer::new(file_sink, console), filter) {
+        drop(guards);
+        if std::fs::metadata(&path).is_ok_and(|m| m.len() == 0) {
+            let _ = std::fs::remove_file(&path);
+        }
+        return None;
     }
+    Some(Begun { path, dir, fallback: used_fallback, guards })
+}
+
+/// Start the log: `<logs dir>/<start time>.log`, else the same name in the
+/// fallback folder. Never fails the app: with no writable folder, or when
+/// another subscriber owns the process, nothing is kept, `Open logs folder`
+/// says so and the Developer page reports the log as not running. Answers the
+/// file's path.
+#[cfg_attr(not(desktop), allow(dead_code))]
+pub fn init(app_data: &Path, logs_dir: &Path) -> Option<PathBuf> {
+    start(app_data, logs_dir, &fallback_dir())
+}
+
+fn start(app_data: &Path, logs_dir: &Path, fallback: &Path) -> Option<PathBuf> {
+    use tracing_subscriber::prelude::*;
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return ACTIVE.get().cloned();
+    }
+    let _ = APP_DATA.set(app_data.to_path_buf());
+    if let Some(root) = logs_dir.parent() {
+        let _ = std::fs::create_dir_all(root);
+        diag::set_salt(load_salt(root));
+    }
+    let want = effective(app_data);
+    let begun = begin(logs_dir, fallback, |layer, filter| tracing_subscriber::registry().with(layer.with_filter(filter)).try_init().is_ok());
+    let Some(Begun { path, dir, fallback: used_fallback, guards }) = begun else {
+        diag::set_verbose(false);
+        return None;
+    };
+    diag::set_verbose(want);
     // the plugins talk through the `log` crate: take their messages in (info and up).
     // `try_init` may have installed the bridge already; the level is set either way.
     let _ = tracing_log::LogTracer::builder().with_max_level(log::LevelFilter::Info).init();
     log::set_max_level(log::LevelFilter::Info);
+    // from here the log is running, in the folder it really got
+    let _ = LOG_DIR.set(dir.clone());
+    let _ = FALLBACK.set(used_fallback);
+    let _ = ACTIVE.set(path.clone());
     GUARDS.lock().unwrap_or_else(|p| p.into_inner()).extend(guards);
     tracing::info!(
         pid = std::process::id(),
@@ -650,23 +756,20 @@ pub fn init(app_data: &Path, logs_dir: &Path) -> Option<PathBuf> {
         file = %path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default(),
         "hubchat starting"
     );
+    if used_fallback {
+        tracing::warn!("the diagnostics folder could not be written: this log is in the temporary folder");
+    }
     tracing::info!("verbose logging {}", if want { "on" } else { "off" });
     // a daily sweep for a process that is never restarted
-    let (sweep, active) = (logs_dir.to_path_buf(), path.clone());
+    let active = path.clone();
     std::thread::Builder::new()
         .name("hubchat-log-retention".into())
         .spawn(move || loop {
             std::thread::sleep(Duration::from_secs(24 * 3600));
-            prune(&sweep, Some(&active));
+            prune(&dir, Some(&active));
         })
         .ok();
     Some(path)
-}
-
-struct Discard;
-
-impl Sink for Discard {
-    fn put(&self, _: &[u8]) {}
 }
 
 /// Flush what is queued and stop the writer threads (the app is exiting).
@@ -727,7 +830,10 @@ pub struct LogInfo {
     pub default_verbose: bool,
     /// `HUBCHAT_LOG_VERBOSE` fixes the switch for this run
     pub pinned: bool,
+    /// the folder the running log really is in (empty when none is running)
     pub dir: String,
+    /// the usual folder could not be written: the log is in a temporary folder
+    pub fallback: bool,
     pub files: usize,
     pub bytes: u64,
     pub max_bytes: u64,
@@ -745,14 +851,20 @@ fn usage(dir: &Path) -> (usize, u64) {
 }
 
 fn info() -> LogInfo {
-    let dir = LOG_DIR.get().cloned().unwrap_or_default();
-    let (files, bytes) = usage(&dir);
+    info_of(LOG_DIR.get().map(PathBuf::as_path), ACTIVE.get().is_some(), FALLBACK.get().copied().unwrap_or(false))
+}
+
+/// What the page reports, from where the running log is (`dir` is None when
+/// no log is running: then nothing is counted and nothing is opened).
+fn info_of(dir: Option<&Path>, active: bool, fallback: bool) -> LogInfo {
+    let (files, bytes) = dir.map_or((0, 0), usage);
     LogInfo {
-        active: ACTIVE.get().is_some(),
-        verbose: diag::verbose(),
+        active,
+        verbose: active && diag::verbose(),
         default_verbose: diag::dev_build(),
         pinned: pinned().is_some(),
-        dir: dir.to_string_lossy().into_owned(),
+        dir: dir.map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(),
+        fallback: active && fallback,
         files,
         bytes,
         max_bytes: MAX_TOTAL_BYTES,
@@ -770,6 +882,9 @@ pub fn hc_log_info() -> LogInfo {
 pub fn hc_set_verbose_logging(on: bool) -> Result<LogInfo, String> {
     if pinned().is_some() {
         return Err("HUBCHAT_LOG_VERBOSE fixes verbose logging for this run.".into());
+    }
+    if ACTIVE.get().is_none() {
+        return Err("Logging is not running on this device.".into());
     }
     let app_data = APP_DATA.get().ok_or_else(|| "Logging is not running on this device.".to_string())?;
     write_setting(app_data, on).map_err(|e| format!("Could not save the setting: {e}"))?;
@@ -1033,10 +1148,11 @@ mod tests {
         let old = logs.join("2020-01-01_00-00-00.log");
         std::fs::write(&old, "old").unwrap();
         std::fs::OpenOptions::new().write(true).open(&old).unwrap().set_modified(SystemTime::now() - Duration::from_secs(40 * 24 * 3600)).unwrap();
-        let path = init(&app_data, &logs).expect("the log starts in a scratch folder");
+        let path = start(&app_data, &logs, &app_data.join("tmp-hubchat-logs")).expect("the log starts in a scratch folder");
         tracing::info!("proof line {}", diag::tag("peer", "maya.lin_2.0a1b2c"));
         tracing::warn!(target: "wire", "RESPONSE {} POST /api/send 403 [1.000 ms]", diag::tag("hub", "http://hub.office.lan:7370"));
-        assert!(hc_log_info().active && hc_log_info().files >= 1);
+        let info = hc_log_info();
+        assert!(info.active && info.files >= 1 && !info.fallback && Path::new(&info.dir) == logs, "{}", info.dir);
         // the Developer switch writes its file and flips the setting at once
         if pinned().is_none() {
             let info = hc_set_verbose_logging(true).unwrap();
@@ -1058,5 +1174,147 @@ mod tests {
         assert!(logs.join("notes.txt").exists(), "a foreign file stays");
         assert_eq!(std::fs::read_to_string(app_data.join("diagnostics").join(SALT_FILE)).unwrap().trim().len(), 32);
         let _ = std::fs::remove_dir_all(&app_data);
+    }
+
+    /// A "folder" that cannot be made: a plain file sits where its parent should be.
+    fn blocked(root: &Path, name: &str) -> PathBuf {
+        let f = root.join(name);
+        std::fs::write(&f, "not a folder").unwrap();
+        f.join("logs")
+    }
+
+    fn age(p: &Path, days: u64) {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(p)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(days * 24 * 3600))
+            .unwrap();
+    }
+
+    #[test]
+    fn a_folder_that_cannot_be_written_falls_back_to_an_owned_folder_that_is_pruned_and_reported() {
+        let root = temp("fallback");
+        let primary = blocked(&root, "diagnostics");
+        let fb = root.join("tmp-hubchat-logs");
+        std::fs::create_dir_all(&fb).unwrap();
+        // what an earlier failed start left there: an old log, an old archive, a foreign file
+        let old_log = fb.join("2020-01-01_00-00-00.log");
+        let old_gz = fb.join(format!("2020-01-01_00-00-00.log.{:032x}.gz", 7u128));
+        for p in [&old_log, &old_gz] {
+            std::fs::write(p, "old").unwrap();
+            age(p, 40);
+        }
+        std::fs::write(fb.join("notes.txt"), "mine").unwrap();
+        let o = open_log(&primary, &fb, "2026-10-12_01-02-03").expect("the fallback takes the log");
+        assert!(o.fallback && o.dir == fb && o.path == fb.join("2026-10-12_01-02-03.log"), "{:?}", o.path);
+        assert!(owned(&o.path.file_name().unwrap().to_string_lossy()), "the fallback file is one this log owns");
+        assert!(!old_log.exists() && !old_gz.exists(), "old fallback logs and archives are pruned");
+        assert!(fb.join("notes.txt").exists(), "a foreign file stays");
+        // the page reports where the log really is, not the folder that was asked for
+        let info = info_of(Some(&o.dir), true, o.fallback);
+        assert!(info.active && info.fallback && Path::new(&info.dir) == fb && info.files == 1, "{}", info.dir);
+        // an archive the fallback file rolls into is owned: it counts, and it ages out
+        let mut f = LogFile::open_with(o.path.clone(), 64).unwrap();
+        f.write_all(&[b'x'; 60]).unwrap();
+        f.write_all(&[b'y'; 60]).unwrap(); // past the limit: rolls
+        let archives: Vec<PathBuf> =
+            std::fs::read_dir(&fb).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "gz")).collect();
+        assert_eq!(archives.len(), 1, "{archives:?}");
+        assert!(owned(&archives[0].file_name().unwrap().to_string_lossy()), "{archives:?}");
+        assert_eq!(info_of(Some(&fb), true, true).files, 2, "the file and its archive");
+        age(&archives[0], 40);
+        prune(&fb, Some(&o.path));
+        assert!(!archives[0].exists(), "an old archive in the fallback folder is pruned");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_usual_folder_wins_when_it_works_and_the_fallback_folder_is_still_swept() {
+        let root = temp("usual");
+        let (primary, fb) = (root.join("diagnostics").join("logs"), root.join("tmp-hubchat-logs"));
+        std::fs::create_dir_all(&fb).unwrap();
+        let old = fb.join("2020-01-01_00-00-00.log");
+        std::fs::write(&old, "old").unwrap();
+        age(&old, 40);
+        let o = open_log(&primary, &fb, "2026-10-12_01-02-03").unwrap();
+        assert!(!o.fallback && o.dir == primary && o.path.starts_with(&primary));
+        assert!(!old.exists(), "what an earlier fallback start left ages out");
+        let info = info_of(Some(&o.dir), true, o.fallback);
+        assert!(!info.fallback && Path::new(&info.dir) == primary);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn with_no_writable_folder_or_no_subscriber_no_log_is_reported_running() {
+        let root = temp("none");
+        let (a, b) = (blocked(&root, "a"), blocked(&root, "b"));
+        assert!(open_log(&a, &b, "2026-10-12_01-02-03").is_none(), "neither folder takes a file");
+        assert!(begin(&a, &b, |_, _| panic!("there is no file, so no layer")).is_none());
+        let off = info_of(None, false, true);
+        assert!(!off.active && !off.verbose && !off.fallback && off.dir.is_empty() && off.files == 0 && off.bytes == 0);
+        // a file opens but the subscriber is refused (another one owns the process)
+        let ok = root.join("ok");
+        assert!(begin(&ok, &b, |_, _| false).is_none(), "not running when the layer is refused");
+        // and when it is taken, the folder that took the file is the one reported
+        let taken = begin(&ok, &b, |_, _| true).expect("running when the layer is taken");
+        assert!(!taken.fallback && taken.dir == ok && taken.path.starts_with(&ok));
+        drop(taken);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn dependency_text_never_reaches_the_log_only_the_level_and_source_of_warnings_and_errors() {
+        let l = lines(|| {
+            tracing::error!(target: "reqwest::connect", url = POISON, "error sending request for url ({})", POISON);
+            tracing::warn!(target: "tauri_plugin_updater::updater", "check failed: {}", POISON);
+            tracing::info!(target: "tauri", "info from a dependency: {}", POISON);
+            tracing::debug!(target: "hyper::proto", "{}", POISON);
+            let bridged = |level, target: &str| {
+                tracing_log::format_trace(&log::Record::builder().level(level).target(target).args(format_args!("{POISON}")).build()).unwrap()
+            };
+            bridged(log::Level::Error, "tao::platform_impl");
+            bridged(log::Level::Warn, "wry::webview");
+            bridged(log::Level::Info, "tauri_plugin_notification");
+            tracing::warn!("our own line is kept");
+            tracing::warn!(target: "hubchat_core::engine", "hub {}: refused", diag::tag("hub", "http://hub.office.lan:7370"));
+        });
+        let all = l.join("\n");
+        for leak in LEAKS {
+            assert!(!all.contains(leak), "{leak} leaked:\n{all}");
+        }
+        assert_eq!(l.len(), 6, "info and below from dependencies are dropped:\n{all}");
+        assert!(l[0].starts_with("ERROR") && l[0].ends_with("reqwest.connect: [dependency message withheld]"), "{all}");
+        assert!(l[1].starts_with("WARNING") && l[1].ends_with("tauri_plugin_updater.updater: [dependency message withheld]"), "{all}");
+        assert!(l[2].starts_with("ERROR") && l[2].ends_with("tao.platform_impl: [dependency message withheld]"), "{all}");
+        assert!(l[3].starts_with("WARNING") && l[3].ends_with("wry.webview: [dependency message withheld]"), "{all}");
+        assert!(l[4].ends_with("our own line is kept") && l[5].contains("engine: hub hub:") && l[5].ends_with(": refused"), "{all}");
+    }
+
+    #[test]
+    fn the_key_log_reaches_the_log_only_as_fixed_facts_in_both_modes_and_the_file_keeps_its_line() {
+        use crate::keylog::{self, Fact};
+        let _turn = VERBOSITY.lock().unwrap_or_else(|p| p.into_inner());
+        let was = diag::verbose();
+        let dir = temp("keylog");
+        for verbose in [false, true] {
+            diag::set_verbose(verbose);
+            let l = lines(|| {
+                keylog::note(&dir, &format!("{POISON}; the backup didn't open ({POISON})"), &[Fact::StoreHasNoKey, Fact::BackupUnreadable]);
+                keylog::note(&dir, &format!("key found in Credential Manager; {POISON}"), &[Fact::KeyFound, Fact::BackupNotWritten]);
+            });
+            let all = l.join("\n");
+            for leak in LEAKS {
+                assert!(!all.contains(leak), "verbose={verbose}: {leak} leaked:\n{all}");
+            }
+            assert_eq!(l.len(), 2, "one line per event:\n{all}");
+            assert!(l[0].ends_with("keylog: identity key: the key store has no usable key; the backup did not open"), "{all}");
+            assert!(l[1].ends_with("keylog: identity key: key found in the key store; backup could not be written"), "{all}");
+        }
+        // the durable file is unchanged: it keeps the whole line, newest last
+        let file = std::fs::read_to_string(dir.join("identity-log.txt")).unwrap();
+        assert!(file.contains("hunter2") && file.contains("the backup didn't open"), "{file}");
+        diag::set_verbose(was);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

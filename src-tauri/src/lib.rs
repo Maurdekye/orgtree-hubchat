@@ -462,8 +462,9 @@ pub fn run() {
                 #[cfg(windows)]
                 if let Some(window) = app.get_webview_window("main") {
                     // Preserve the native resource mask for Task Manager.
-                    if let Err(error) = windows_icon::install(&window) {
-                        tracing::warn!("could not set native window icons: {error}");
+                    // (the system's error text stays out of the log: docs/logging.md)
+                    if windows_icon::install(&window).is_err() {
+                        tracing::warn!("could not set native window icons");
                     }
                 }
                 let downloads = app
