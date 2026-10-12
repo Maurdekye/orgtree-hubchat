@@ -67,11 +67,11 @@ class NotificationReplyWorker(context: Context, params: WorkerParameters) : Work
         check = { ConnectionService.checkNow(45) },
         queued = { NotificationReplies.status(applicationContext, target, "Reply queued") },
       )
+      finishReplyHandoff(outcome) { file.delete() }
       when (outcome) {
-        ReplyWorkOutcome.COMPLETE -> { file.delete(); Result.success() }
+        ReplyWorkOutcome.COMPLETE -> Result.success()
         ReplyWorkOutcome.REJECTED -> {
           NotificationReplies.status(applicationContext, target, "Open chat to check your reply.")
-          file.delete()
           Result.failure()
         }
         else -> Result.retry()

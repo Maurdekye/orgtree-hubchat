@@ -30,5 +30,22 @@ fun main() {
   case("bridge failure retries without claims") {
     check(runReplyWork({}, { "" }, { error("must not send") }, { error("must not claim queued") }) == ReplyWorkOutcome.RETRY)
   }
+  case("unready core keeps sole handoff until eventual completion") {
+    var saved = true
+    var attempts = 0
+    var checks = 0
+    repeat(3) {
+      val result = runReplyWork({}, { attempts++; if (attempts < 3) "retry" else "queued" }, { checks++; true }, {})
+      finishReplyHandoff(result) { saved = false }
+      check(saved == (attempts < 3))
+    }
+    check(!saved && checks == 1)
+  }
+  case("temporary attach exception retains text without attempting admission") {
+    var saved = true
+    val result = runReplyWork({ throw java.io.IOException("synthetic") }, { error("no admission") }, { error("no check") }, {})
+    finishReplyHandoff(result) { saved = false }
+    check(result == ReplyWorkOutcome.RETRY && saved)
+  }
   println("$passed checks passed")
 }

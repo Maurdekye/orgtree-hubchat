@@ -15,10 +15,18 @@ internal fun runReplyWork(
   check: () -> Boolean,
   queued: () -> Unit,
 ): ReplyWorkOutcome {
-  attach()
-  return when (queue()) {
+  return try {
+    attach()
+    when (queue()) {
     "queued" -> { queued(); if (check()) ReplyWorkOutcome.COMPLETE else ReplyWorkOutcome.RETRY }
     "rejected" -> ReplyWorkOutcome.REJECTED
-    else -> ReplyWorkOutcome.RETRY
-  }
+      else -> ReplyWorkOutcome.RETRY
+    }
+  } catch (_: Exception) { ReplyWorkOutcome.RETRY }
 }
+
+/** Only durable completion or an established rejection may remove saved text. */
+internal fun finishReplyHandoff(outcome: ReplyWorkOutcome, remove: () -> Unit) {
+  if (outcome != ReplyWorkOutcome.RETRY) remove()
+}
+

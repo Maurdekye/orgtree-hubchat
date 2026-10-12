@@ -4,8 +4,15 @@ use crate::{engine::{Engine, Event}, store::Store, Error};
 /// Core publication precedes key loading so startup callbacks can find the core.
 /// Concurrent attaches serialize loading; a failed load never latches readiness.
 #[derive(Default)]
-pub struct IdentityLoader(std::sync::Mutex<()>);
+pub struct IdentityLoader(std::sync::Mutex<bool>);
 impl IdentityLoader {
+    /// Successful cold initialization is latched; later attachments must not
+    /// reload a key in the middle of an intentional identity departure.
+    pub fn attach(&self, load: impl FnOnce() -> std::result::Result<(), String>) -> std::result::Result<(), String> {
+        let mut complete = self.0.lock().map_err(|_| "Identity startup is unavailable; retry".to_string())?;
+        if !*complete { load()?; *complete = true; }
+        Ok(())
+    }
     pub fn run(&self, ready: impl FnOnce() -> bool, load: impl FnOnce() -> std::result::Result<(), String>) -> std::result::Result<(), String> {
         let _guard = self.0.lock().map_err(|_| "Identity startup is unavailable; retry".to_string())?;
         if ready() { Ok(()) } else { load() }
@@ -110,13 +117,13 @@ mod tests {
         let owner = me.address();
         store.set_meta("identity.address", &owner).unwrap();
         let published = Arc::new((IdentityLoader::default(), Mutex::new(None::<Arc<Engine>>)));
-        assert!(published.0.run(|| false, || Err("injected startup I/O failure".into())).is_err());
+        assert!(published.0.attach(|| Err("injected startup I/O failure".into())).is_err());
         assert_eq!(admit(published.1.lock().unwrap().as_deref(), &owner, ID, PEER, "saved"), "retry");
         let entered = Arc::new(Barrier::new(2));
         let release = Arc::new(Barrier::new(2));
         let loads = Arc::new(AtomicUsize::new(0));
         let (p, e, r, n, s) = (published.clone(), entered.clone(), release.clone(), loads.clone(), store.clone());
-        let first = std::thread::spawn(move || p.0.run(|| p.1.lock().unwrap().is_some(), || {
+        let first = std::thread::spawn(move || p.0.attach(|| {
             e.wait(); r.wait();
             n.fetch_add(1, Ordering::SeqCst);
             *p.1.lock().unwrap() = Some(engine(s, me));
@@ -129,7 +136,7 @@ mod tests {
         let e = second_entered.clone();
         let second = std::thread::spawn(move || {
             e.wait();
-            p.0.run(|| p.1.lock().unwrap().is_some(), || panic!("must not create a second engine"))
+            p.0.attach(|| panic!("must not create a second engine"))
         });
         second_entered.wait();
         release.wait();
@@ -140,6 +147,8 @@ mod tests {
         for _ in 0..2 { assert_eq!(admit(Some(&e), &owner, ID, PEER, "saved"), "queued"); }
         assert_eq!(store.message(ID).unwrap().unwrap().body, "saved");
         assert!(!store.queue_notification_reply(&owner, ID, PEER, "saved").unwrap());
+        *published.1.lock().unwrap() = None; // intentional departure after startup
+        published.0.attach(|| panic!("must not reload the departing key")).unwrap();
     }
 
     #[test]

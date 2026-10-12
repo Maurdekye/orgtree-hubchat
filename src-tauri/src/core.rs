@@ -323,7 +323,7 @@ pub fn get() -> Result<&'static Core, String> {
 /// Create the core once per process (later calls return the existing one).
 pub fn init(dir: PathBuf, platform: Arc<dyn Platform>) -> Result<&'static Core, String> {
     if let Some(c) = CORE.get() {
-        c.load_key()?;
+        c.finish_startup()?;
         return Ok(c);
     }
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -370,11 +370,17 @@ pub fn init(dir: PathBuf, platform: Arc<dyn Platform>) -> Result<&'static Core, 
         Ok(()) => CORE.get().unwrap(),
         Err(_) => CORE.get().unwrap(), // winner may still need its key loaded
     };
-    core.load_key()?;
+    core.finish_startup()?;
     Ok(core)
 }
 
 impl Core {
+    fn finish_startup(&self) -> Result<(), String> {
+        self.identity_load.attach(|| {
+            if self.has_identity() { Ok(()) } else { self.load_key_inner() }
+        })
+    }
+
     pub fn platform(&self) -> &dyn Platform {
         &*self.host.platform
     }
@@ -548,7 +554,7 @@ impl Core {
             unreadable,
         });
         self.host.platform.status("Set up Hubchat to connect");
-        Ok(())
+        if unreadable { Err("The identity key is temporarily unavailable; retry".into()) } else { Ok(()) }
     }
 
     fn start_with(&self, me: Identity) -> Result<(), String> {
