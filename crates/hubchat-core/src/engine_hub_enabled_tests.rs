@@ -119,3 +119,58 @@ async fn inflight_generation_guard_drops_work_and_returns_resumable_pause() {
     e.set_hub_enabled(A, false).unwrap();
     assert!(matches!(tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap(), Err(Error::FilePaused)));
 }
+
+#[test]
+fn local_toggle_survives_reopen_without_changing_other_device() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("scratch.sqlite");
+    {
+        let s = Store::open(&path).unwrap();
+        s.add_hub(A, "t0").unwrap();
+        s.add_hub(B, "t1").unwrap();
+        s.hub_ok(A, "Office", Some(12345), "ok").unwrap();
+        s.set_hub_enabled(A, false).unwrap();
+    }
+    let reopened = Store::open(&path).unwrap();
+    let h = reopened.hubs().unwrap();
+    assert!(!h[0].enabled);
+    assert_eq!(h[0].name, "Office");
+    assert_eq!(h[0].max_attachment_bytes, Some(12345));
+    assert_eq!(h[0].last_ok_at.as_deref(), Some("ok"));
+    assert!(h[1].enabled);
+    let other_device = Store::open_in_memory().unwrap();
+    other_device.add_hub(A, "same identity, other installation").unwrap();
+    assert!(other_device.hub_enabled(A).unwrap());
+}
+
+#[test]
+fn disabled_pin_waits_but_automatic_uses_enabled_alternative() {
+    let e = engine();
+    for url in [A, B] {
+        let entry = serde_json::from_value::<crate::hub::RosterEntry>(serde_json::json!({ "slug": PEER, "online": true })).unwrap();
+        e.store.set_roster(url, &[entry]).unwrap();
+        attach(&e, url);
+    }
+    e.set_send_hub(PEER, Some(A)).unwrap();
+    e.set_hub_enabled(A, false).unwrap();
+    let r = e.send_route(PEER).unwrap();
+    assert_eq!(r.pinned.as_deref(), Some(A));
+    assert!(r.next.is_none());
+    assert_eq!(r.automatic.as_deref(), Some(B));
+    assert_eq!(r.hubs.len(), 2, "roster knowledge is retained");
+    e.set_send_hub(PEER, None).unwrap();
+    assert_eq!(e.send_route(PEER).unwrap().next.as_deref(), Some(B));
+}
+
+#[tokio::test]
+async fn previously_selected_send_route_cannot_turn_waiting_into_failure() {
+    let e = engine();
+    let (client, _) = attach(&e, A);
+    let id = uuid::Uuid::new_v4().to_string();
+    e.send(NewOutgoing { id: id.clone(), peer: PEER.into(), body: "still waiting".into(), kind: None, reply_to: None, attachments: vec![] }).await.unwrap();
+    e.set_hub_enabled(A, false).unwrap();
+    assert!(!e.send_one_on(&id, (A.into(), client, 1_000_000)).await.unwrap());
+    let row = e.store.message(&id).unwrap().unwrap();
+    assert_eq!(row.state, "queued");
+    assert!(row.error.is_none());
+}
