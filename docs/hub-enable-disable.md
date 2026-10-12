@@ -60,12 +60,16 @@ it. A redundant saved-row condition then broke synthetic runtime fixtures and
 one test was stopped after91.5s; the corrected run above passed all162. These
 failed receipts remain recorded separately and are not counted as passes.
 
-After the gate, only source/audit/docs changed: atomic identity-bound toggle,
-retired-generation clock handling, explicit disabled-hub removal, saved-hub
-link/door guards, and added startup/identity controls have NOT been compiled or
-tested. All verification is paused until coordinator confirms every paused
-Claude task complete; an account reset alone is insufficient. Remaining work:
-run the expanded core controls/regression, native adapter/library checks and
-changed linking-path proofs, then fresh independent review. There is no claim
-of final verification, native linking, WebView, Android runtime, APK, device,
-live-message or release validation.
+The brief10:48Z verification pause was superseded by user10:53Z: focused tests
+and needed compilation may run; publishing remains prohibited. Resumed exact
+70b2719 source passed all164 core tests with a warning-free12.66s compile and
+2.62s run, including the added startup and retired-generation/identity controls.
+The startup control now passes on the corrected source while e66940e fails it.
+Earlier source-specific receipts and intermediate failures remain preserved.
+
+Native adapter/library compilation for the latest saved-hub linking/door guards
+is queued under the shared build lock. Its result and changed linking-path proof
+remain outstanding; no final verification/review-ready claim is made yet. The
+renderer proof is unchanged by these Rust-only additions. No native linking,
+WebView, Android runtime, APK, device, live-message or release validation is
+claimed. Independent review and coordinator integration remain required.
