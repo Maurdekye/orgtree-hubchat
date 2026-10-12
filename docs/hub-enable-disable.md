@@ -111,3 +111,52 @@ measured components, not a complete Tauri/lost-key UI/link network workflow.
 Renderer source is unchanged; earlier16/16 mounted checks remain source-specific,
 and the original TypeScript result remains author-reported. No native link,
 device, appbuild, publication or live action was performed.
+
+## Independent round2 correction
+
+Review ofcd559e5 confirmed the cold selection correction, then found a separate
+source schedule: disable while acknowledging a received different-identity
+bundle was ignored; arrival then used independent discovery clients and could
+write pending review state or emit Review from a cancelled listener. This was
+source-substantiated, not an installed/native network reproduction.
+
+The production listener now uses shared `link::Reception` for the received
+bundle continuation. It guards cleanup and preparation with both the originating
+hub token and listener attempt. Cancellation/paused acknowledgement or deletion
+stops the continuation; non-cancellation cleanup failures still permit review.
+Polling also uses both tokens. Arrival prepares an event and optional bundle;
+it no longer writes global pending state. Each spawned discovery request uses
+the reception guard internally, rather than guarding only its JoinHandle.
+Each candidate also resolves its own saved policy through `start_client`:
+another disabled saved hub cannot be probed through an enabled originating hub.
+
+Pending state and event publication run in one bounded synchronous callback.
+Watch read guards serialize that callback with cancellation's write, for both
+tokens: it finishes before cancellation or is refused afterwards. It holds no
+network future, awaits nothing and never cancels either token in the callback.
+No broad store lock or identity/adoption work is held during publication.
+
+Controlled extraction5a4f79d runs the actual shared continuation with a valid
+different-identity bundle and acknowledgement/discovery barriers: three expected
+failures (post-cancel discovery, pending publication, replaced-listener
+publication), and one positive uncancelled unsaved setup pass. Compiler9.85s,
+tests0.01s. Corrected971618f passes172/172 (8.72s compile/2.62s tests).
+68cb7d7 adds a spawned-child request-envelope and synchronous-publication refusal
+control for BOTH tokens; all173 pass, warning-free7.13s compile/2.62s tests.
+Android/API24/NDK27 library check of final native runtimee02570d is warning-free
+exit0,1.36s compiler/1.414s wrapper. The later documentation landing changes no
+runtime. Earlier nativefa13ba1 check0/2.90s and all previous receipts remain.
+
+Receipts: `hub-enable-received-red-5a4f79d.log`,
+`hub-enable-received-regression-971618f.log`,
+`hub-enable-received-regression-68cb7d7.log`,
+`hub-enable-received-android-fa13ba1.log`,
+`hub-enable-received-android-e02570d.log`.
+The barriers exercise the production continuation/request/publication guards
+with synthetic cleanup/discovery and local pending/event sinks. They do not run
+the entire Tauri listener, actual discovery network, global PENDING or WebView.
+Actual command wiring is source-inspected and Android-compiled. No full native
+link/door/device or installed-app acceptance is claimed. Renderer is unchanged;
+prior16/16 receipts remain and tsc0 remains author-reported without a supplied
+execution log. Fresh final independent round3 is required; no integration or
+publication is performed by the author.

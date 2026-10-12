@@ -45,6 +45,11 @@
   Link-start resolves retained saved policy before engine availability, including
   lost-key recovery. Saved enabled hubs require an active bound client; only
   genuinely unsaved setup may construct an unbound client.
+  Received-link acknowledgement, discovery (including spawned requests) and
+  review publication retain both the originating hub token and listener attempt.
+  Each probe also honors its destination's saved policy. Bounded synchronous
+  pending-state/event publication serializes with cancellation; no late review
+  from a disabled or replaced generation.
   [decided: user via coordinator 2026-10-12; source: store_hub_enabled.rs,
   engine_hub_enabled.rs, hub.rs; verification gate and limits:
   docs/hub-enable-disable.md]
