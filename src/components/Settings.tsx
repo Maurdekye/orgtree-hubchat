@@ -105,6 +105,14 @@ function Profile() {
 function HubRow({ h, now, onRemove }: { h: HubStatus; now: number; onRemove: () => void }) {
   const platform = usePlatform();
   const bad = h.state === "disconnected" || h.state === "refused";
+  const [busy, setBusy] = useState(false);
+  const toggle = async (enabled: boolean) => {
+    if (busy) return;
+    setBusy(true);
+    try { await api.setHubEnabled(h.url, enabled); await refreshState(); await refreshDirectory(); }
+    catch (e) { toast("Couldn't change this hub: " + errText(e)); }
+    finally { setBusy(false); }
+  };
   return (
     <Row icon="dns" t1={h.name}
       t2={<>
@@ -113,6 +121,7 @@ function HubRow({ h, now, onRemove }: { h: HubStatus; now: number; onRemove: () 
         <span className="dim" style={{ fontSize: 12 }}> · hub version {hubVersion(h)} · files up to {bytes(h.max_attachment_bytes)} per message</span>
       </>}
       right={<div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <Switch on={h.state !== "disabled"} disabled={busy} onChange={(v) => void toggle(v)} label={"Enable hub " + h.name} />
         {bad ? <button className="btn" onClick={() => api.retryNow().catch(() => {})}><Icon name="refresh" />{platform === "android" ? "Retry" : "Retry now"}</button> : null}
         <button className="icon-btn" title="Remove hub" aria-label={"Remove hub " + h.name} onClick={onRemove}><Icon name="delete" /></button>
       </div>} />
@@ -151,7 +160,7 @@ function Hubs() {
         </Card>
       </Sec>
       <Sec title="How sending picks a hub">
-        <div className={"help" + (platform === "android" ? " pad" : "")}>When someone is on more than one of your hubs, Hubchat sends through a connected hub that lists them. Their address is the same everywhere.</div>
+        <div className={"help" + (platform === "android" ? " pad" : "")}>When someone is on more than one of your hubs, Hubchat sends through an enabled, connected hub that lists them. Disabled hubs keep their settings and history on this device. Messages pinned to one wait until you enable it. Their address is the same everywhere.</div>
       </Sec>
       {rm ? (
         <Confirm title={"Remove hub " + rm.name + "?"} okLabel="Remove hub" danger busy={busy} onOk={remove} onCancel={() => setRm(null)}>
@@ -609,7 +618,7 @@ export function SettingsList({ onOpen, onBack }: { onOpen: (t: SetTab) => void; 
           <div className="t"><div className="n">{me.name || me.id}</div><div className="a"><Addr a={me.address} net /></div></div>
           <button className="icon-btn" onClick={(e) => { e.stopPropagation(); void copyText("@net:" + me.address, "Address copied"); }} aria-label="Copy address"><Icon name="copy" /></button>
         </div>
-        <Row icon="dns" t1="Hubs" t2={hs.text} right={<>{snap.state!.hubs.some((h) => h.state !== "connected") ? warn : null}{chev}</>} onClick={() => onOpen("hubs")} />
+        <Row icon="dns" t1="Hubs" t2={hs.text} right={<>{snap.state!.hubs.some((h) => h.state === "disconnected" || h.state === "refused") ? warn : null}{chev}</>} onClick={() => onOpen("hubs")} />
         <Row icon="phone" t1="Devices" t2="Link a device · key file" right={chev} onClick={() => onOpen("devices")} />
         <Row icon="bell" t1="Notifications" t2={snap.state!.push?.active ? "UnifiedPush" : snap.state!.stay_connected === false ? "Checks every 15 minutes" : "Connected in the background"} right={chev} onClick={() => onOpen("notifications")} />
         <Row icon="key" t1="Recovery words" t2={snap.state!.recovery_saved ? "Saved" : <span style={{ color: "var(--warn)" }}>Not saved yet</span>} right={<>{snap.state!.recovery_saved ? null : warn}{chev}</>} onClick={() => onOpen("recovery")} />

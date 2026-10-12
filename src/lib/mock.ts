@@ -331,8 +331,10 @@ setInterval(() => {
   }
 }, 1000);
 function reconnect(h: HubStatus) {
+  if (h.state === "disabled") return;
   h.state = "connecting"; h.retry_at_ms = null; hubEv(h.url);
   setTimeout(() => {
+    if (h.state !== "connecting") return;
     if ((h.url === LAB || /10\.0\.0\.7|unreach|10\.0\.9\./.test(h.url)) && !(h.url === LAB && now() >= labUpAt)) { h.state = "disconnected"; h.error = "connection refused (os error 10061)"; h.retry_at_ms = now() + 16000; }
     else { h.state = "connected"; h.error = null; }
     hubEv(h.url);
@@ -651,6 +653,14 @@ export const mockApi: Api = {
       setTimeout(() => { dir = clone(SEED_DIR).map((c) => ({ ...c, hubs: [url] })); emit({ type: "directory" }); }, 1300);
     }
     return url;
+  },
+  setHubEnabled: async (url, enabled) => {
+    const hub = st.hubs.find((h) => h.url === url);
+    if (!hub) throw "no such hub";
+    hub.state = enabled ? "connecting" : "disabled";
+    hub.error = null; hub.retry_at_ms = null;
+    if (enabled) reconnect(hub);
+    hubEv(url); emit({ type: "directory" });
   },
   removeHub: async (url) => {
     await sleep(300); st.hubs = st.hubs.filter((h) => h.url !== url);

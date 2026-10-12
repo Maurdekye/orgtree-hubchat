@@ -414,6 +414,16 @@ pub fn hc_add_hub(input: String) -> R<String> {
 }
 
 #[tauri::command]
+pub fn hc_set_hub_enabled(url: String, enabled: bool) -> R<()> {
+    let c = core::get()?;
+    let e = c.engine()?;
+    let _guard = c.rt.enter();
+    e.set_hub_enabled(&url, enabled).map_err(s)?;
+    c.platform().refresh_push();
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn hc_remove_hub(url: String, unregister: bool) -> R<()> {
     let e = engine()?;
     on_core(async move { e.remove_hub(&url, unregister).await.map_err(s) }).await?;

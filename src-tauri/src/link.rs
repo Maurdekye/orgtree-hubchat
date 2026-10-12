@@ -564,17 +564,12 @@ fn forget_link_address(code: &str, delay: Duration) {
     let (Ok(c), Ok(temp)) = (core::get(), link::link_identity(code)) else {
         return;
     };
-    let hubs: Vec<String> = c
-        .store
-        .hubs()
-        .map(|v| v.into_iter().map(|h| h.url).collect())
-        .unwrap_or_default();
+    let Ok(engine) = c.engine() else { return; };
+    let hubs: Vec<HubClient> = engine.hub_statuses().iter().filter_map(|h| engine.hub_client(&h.url)).collect();
     c.rt.spawn(async move {
         tokio::time::sleep(delay).await;
-        for h in hubs {
-            if let Ok(addr) = HubAddress::parse(&h) {
-                let _ = HubClient::new(addr).unregister(&temp).await;
-            }
+        for client in hubs {
+            let _ = client.unregister(&temp).await;
         }
     });
 }

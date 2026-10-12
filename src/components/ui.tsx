@@ -57,8 +57,8 @@ export function Tick({ m }: { m: Message }) {
   return <span className={"tick " + t.cls} title={t.label} role="img" aria-label={t.label}><Icon name={t.ic} /></span>;
 }
 
-export function Switch({ on, onChange, label }: { on: boolean; onChange: (v: boolean) => void; label: string }) {
-  return <button className={"switch" + (on ? " on" : "")} role="switch" aria-checked={on} aria-label={label} onClick={() => onChange(!on)} />;
+export function Switch({ on, onChange, label, disabled = false }: { on: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean }) {
+  return <button className={"switch" + (on ? " on" : "")} role="switch" disabled={disabled} aria-checked={on} aria-label={label} onClick={() => onChange(!on)} />;
 }
 
 /** A QR code of `text` (an address), drawn by the qrcode package. */

@@ -61,7 +61,7 @@ export function limitFor(c: Contact | undefined, hubs: HubStatus[]): { hub: HubS
   const v = viaHub(c, hubs);
   if (v) return { hub: v, bytes: v.max_attachment_bytes };
   const pool = hubs.filter((h) => h.state === "connected");
-  const list = pool.length ? pool : hubs;
+  const list = pool.length ? pool : hubs.filter((h) => h.state !== "disabled");
   if (!list.length) return null;
   const h = list.reduce((a, b) => (b.max_attachment_bytes < a.max_attachment_bytes ? b : a));
   return { hub: h, bytes: h.max_attachment_bytes };
@@ -96,6 +96,9 @@ export function tickInfo(m: Message): { ic: IconName; cls: TickCls; label: strin
 
 export interface HubSummary { state: "ok" | "partial" | "busy" | "down" | "none"; text: string }
 export function hubSummary(hubs: HubStatus[]): HubSummary {
+  const disabled = hubs.filter((h) => h.state === "disabled").length;
+  hubs = hubs.filter((h) => h.state !== "disabled");
+  if (!hubs.length && disabled) return { state: "none", text: "All hubs disabled" };
   const n = hubs.length; const c = hubs.filter((h) => h.state === "connected").length;
   if (!n) return { state: "none", text: "No hubs" };
   if (c === n) return { state: "ok", text: n === 1 ? "Connected to " + hubs[0].name : n + " hubs connected" };
@@ -106,6 +109,7 @@ export function hubSummary(hubs: HubStatus[]): HubSummary {
 
 /** "Connected", "Connecting…", "Can't reach this hub · retrying in 8 s", the refusal. */
 export function hubStatusText(h: HubStatus, now: number): string {
+  if (h.state === "disabled") return "Disabled on this device";
   if (h.state === "connected") return "Connected";
   if (h.state === "connecting") return "Connecting…";
   if (h.state === "refused") return "Refused" + (h.error ? ": " + h.error : "");

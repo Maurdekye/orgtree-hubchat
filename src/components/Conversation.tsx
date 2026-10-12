@@ -311,7 +311,9 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   if (waiting && route?.pinned && !route.next) {
     // a pinned hub that can't reach them: say why, never switch on our own
     const pin = hubName(hubs, route.pinned);
-    const why = hubByUrl(hubs, route.pinned)?.state !== "connected"
+    const why = hubByUrl(hubs, route.pinned)?.state === "disabled"
+      ? <>Messages to {name} wait until you enable hub {pin} on this device.</>
+      : hubByUrl(hubs, route.pinned)?.state !== "connected"
       ? <>Messages to {name} wait until hub {pin} is back.</>
       : <>Messages to {name} wait: hub {pin} doesn't list them.</>;
     rows.push(<div className="sysnote" key="pinwait"><Icon name="schedule" />{why} <button className="link" onClick={() => api.setSendHub(peer, null).catch((e) => toast(errText(e)))}>Use Automatic</button></div>);
@@ -396,8 +398,8 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
         )}
         {down ? (
           <div className={"strip warn" + (down.state === "refused" ? " bad" : "")}>
-            <Icon name="warning" /><span><b>{down.state === "connecting" ? "Connecting to " + down.name + "…" : "Can't reach hub " + down.name}</b>{down.state === "disconnected" ? " · " + hubStatusText(down, now).replace("Can't reach this hub · ", "") : down.state === "refused" ? " · " + (down.error || "refused") : ""}</span>
-            {down.state === "disconnected" ? <HubHelpLink /> : null}{down.state !== "connecting" ? <button className="link" onClick={() => api.retryNow()}>Retry</button> : null}
+            <Icon name="warning" /><span><b>{down.state === "disabled" ? down.name + " is disabled on this device" : down.state === "connecting" ? "Connecting to " + down.name + "…" : "Can't reach hub " + down.name}</b>{down.state === "disconnected" ? " · " + hubStatusText(down, now).replace("Can't reach this hub · ", "") : down.state === "refused" ? " · " + (down.error || "refused") : ""}</span>
+            {down.state === "disconnected" ? <HubHelpLink /> : null}{down.state === "disabled" ? <button className="link" onClick={() => api.setHubEnabled(down.url, true).catch((e) => toast(errText(e)))}>Enable</button> : down.state !== "connecting" ? <button className="link" onClick={() => api.retryNow()}>Retry</button> : null}
           </div>
         ) : null}
         <FileBackgroundBanner />

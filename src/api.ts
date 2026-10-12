@@ -8,7 +8,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 
-export type HubState = "connecting" | "connected" | "refused" | "disconnected";
+export type HubState = "connecting" | "connected" | "refused" | "disconnected" | "disabled";
 
 export interface HubStatus {
   url: string;
@@ -356,6 +356,7 @@ export const tauriApi = {
   /** A link's hub under each address it names: the likeliest that answers as `name`. */
   probeLinkHubs: (hubs: string[], name: string | null) => invoke<Probe>("hc_probe_link_hubs", { hubs, name }),
   addHub: (input: string) => invoke<string>("hc_add_hub", { input }),
+  setHubEnabled: (url: string, enabled: boolean) => invoke<void>("hc_set_hub_enabled", { url, enabled }),
   removeHub: (url: string, unregister: boolean) => invoke<void>("hc_remove_hub", { url, unregister }),
   retryNow: () => invoke<void>("hc_retry_now"),
 

@@ -393,6 +393,7 @@ pub fn run() {
             commands::hc_probe_link_hubs,
             commands::hc_add_hub,
             commands::hc_remove_hub,
+            commands::hc_set_hub_enabled,
             commands::hc_retry_now,
             commands::hc_directory,
             commands::hc_resolve,

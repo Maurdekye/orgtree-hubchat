@@ -51,7 +51,7 @@ function Choices({ peer, route, who, onDone }: { peer: string; route: SendRoute;
       {route.hubs.map(({ url, online }) => {
         const at: HubAt = hubByUrl(hubs, url)?.state !== "connected" ? "down" : online ? "online" : "offline";
         return row(url, route.pinned === url, hubName(hubs, url),
-          at === "down" ? "Can't reach this hub" : who + (online ? " is online here" : " is offline here"),
+          hubByUrl(hubs, url)?.state === "disabled" ? "Disabled on this device" : at === "down" ? "Can't reach this hub" : who + (online ? " is online here" : " is offline here"),
           () => pick(url), at);
       })}
     </>

@@ -39,7 +39,7 @@ export function NewChatResults({ q, r, onOpen, onDirectory }: { q: string; r: Re
   const platform = usePlatform();
   const hubs = snap.state?.hubs || [];
   const up = hubs.filter((h) => h.state === "connected");
-  const down = hubs.filter((h) => h.state !== "connected");
+  const down = hubs.filter((h) => h.state !== "connected" && h.state !== "disabled");
   const names = (l: typeof hubs) => l.map((h, i) => <span key={h.url}>{i ? " and " : ""}<b style={{ display: "inline" }}>{h.name}</b></span>);
   const started = (a: string) => snap.chats.some((c) => c.peer === a);
   // the Directory's own list and counts (no waiting link addresses, not you)
