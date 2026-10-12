@@ -742,6 +742,12 @@ fn start(app_data: &Path, logs_dir: &Path, fallback: &Path) -> Option<PathBuf> {
     // `try_init` may have installed the bridge already; the level is set either way.
     let _ = tracing_log::LogTracer::builder().with_max_level(log::LevelFilter::Info).init();
     log::set_max_level(log::LevelFilter::Info);
+    // the panic hook (crash.rs) leaves one pointer line in this file
+    #[cfg(desktop)]
+    crate::crash::note_panics_in(emergency);
+    // Restart Hubchat skips the Exit event: flush the file first
+    #[cfg(desktop)]
+    crate::tray::before_restart(shutdown);
     // from here the log is running, in the folder it really got
     let _ = LOG_DIR.set(dir.clone());
     let _ = FALLBACK.set(used_fallback);
@@ -789,7 +795,7 @@ fn emergency_text(line: &str) -> String {
 /// for the panic hook, which runs just before a release build aborts and would
 /// lose a queued line. Never panics; does nothing before `init`. The caller
 /// passes a pointer (a report's file name, a source line), never a payload.
-#[allow(dead_code)] // called by the panic hook (crash.rs) once both branches land
+#[allow(dead_code)] // the desktop panic hook (crash.rs) calls it; Android has none
 pub fn emergency(line: &str) {
     let Some(path) = ACTIVE.get() else { return };
     let text = emergency_text(line);

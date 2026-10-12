@@ -214,9 +214,10 @@ preference. [decided: coordinator contract with rig-opus, 2026-10-11]
 only one in the process; after it saves its report it calls `trace::emergency`,
 which appends one pointer line (report name, thread, source line, never the
 payload) straight to the active file, because a release build aborts after the
-hook and would lose a queued line. The two branches join with one line in
-`trace::init`, `crate::crash::note_panics_in(emergency);`, which can only be
-added where both modules exist.
+hook and would lose a queued line. The two modules join in
+`trace::init`: `crate::crash::note_panics_in(emergency)` registers the pointer
+line, and `crate::tray::before_restart(shutdown)` makes Restart Hubchat (which
+skips the Exit event) flush the file before it restarts.
 
 ## Reading a log
 
