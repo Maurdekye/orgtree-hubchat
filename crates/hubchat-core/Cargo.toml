@@ -24,7 +24,7 @@ bip39 = "2"
 chacha20poly1305 = "0.10"
 humantime = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
-image = { version = "=0.25.6", default-features = false, features = ["png", "jpeg", "webp"] }
+image = { version = "=0.25.9", default-features = false, features = ["png", "jpeg", "webp"] }
 png = "0.17"
 
 [dev-dependencies]

@@ -62,5 +62,9 @@
   Removals keep metadata after cache eviction. Native decoding accepts bounded
   static PNG/JPEG/WebP and emits stripped square PNG; no renderer remote URL.
   Existing meta storage preserves question-card migration16 reservation.
-  [verified: pictures.rs, picture_image.rs, store_pictures.rs; foundation only,
-  client transport/editor composition remains under development]
+  Picture HTTP is authenticated, bounded, nonredirecting and concurrent with
+  mail inside the active session. Own Profile uses the shared native decoder;
+  shared avatars never fetch chat-identity pictures. See docs/profile-pictures.md
+  for exact protocol, migration reservation and measured checkpoint limits.
+  [verified: pictures.rs, picture_image.rs, store_pictures.rs, engine_pictures.rs,
+  hub_pictures.rs, PictureEditor.tsx, ui.tsx]

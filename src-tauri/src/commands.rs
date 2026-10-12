@@ -39,6 +39,7 @@ pub struct Me {
     address: String,
     name: String,
     about: String,
+    picture: Option<hubchat_core::pictures::PictureMeta>,
 }
 
 #[derive(Serialize)]
@@ -79,6 +80,7 @@ pub fn hc_state() -> R<State> {
             address: e.me().address(),
             name: meta(c, "profile.name"),
             about: meta(c, "profile.about"),
+            picture: c.store.picture_meta(&e.me().address()).ok().flatten(),
         }),
         recovery_saved: meta(c, "recovery.saved") == "yes",
         read_receipts: meta(c, "settings.read_receipts") != "off",
@@ -190,6 +192,42 @@ pub async fn hc_set_profile(name: String, about: String) -> R<()> {
     c.store.set_meta("profile.about", about.trim()).map_err(s)?;
     let e = engine()?;
     on_core(async move { e.set_profile(name.trim(), about.trim()).await.map_err(s) }).await
+}
+
+#[tauri::command]
+pub async fn hc_picture(peer:String) -> R<Option<hubchat_core::pictures::PictureRecord>> {
+    let e=engine()?;
+    on_core(async move { e.picture(&peer).await.map_err(s) }).await
+}
+
+#[tauri::command]
+pub async fn hc_picture_preview(data:String) -> R<hubchat_core::picture_image::Preview> {
+    // Decode off the UI/core runtime. A small semaphore bounds simultaneous
+    // untrusted image allocations on mobile as well as desktop.
+    static SLOTS:tokio::sync::Semaphore=tokio::sync::Semaphore::const_new(1);
+    let permit=SLOTS.acquire().await.map_err(s)?;
+    let result=tauri::async_runtime::spawn_blocking(move || {
+        let bytes=hubchat_core::picture_image::decode_input(&data).map_err(s)?;
+        hubchat_core::picture_image::preview(&bytes).map_err(s)
+    }).await.map_err(s)?;
+    drop(permit);
+    result
+}
+
+#[tauri::command]
+pub async fn hc_set_picture(owner:String,data:Option<String>,crop:Option<hubchat_core::picture_image::Crop>) -> R<hubchat_core::pictures::PictureRecord> {
+    let e=engine()?;
+    static SLOTS:tokio::sync::Semaphore=tokio::sync::Semaphore::const_new(1);
+    let permit=SLOTS.acquire().await.map_err(s)?;
+    let result=tauri::async_runtime::spawn_blocking(move || {
+        let normalized=data.map(|data| {
+            let bytes=hubchat_core::picture_image::decode_input(&data).map_err(s)?;
+            hubchat_core::picture_image::normalize(&bytes,crop.unwrap_or_default()).map_err(s)
+        }).transpose()?;
+        e.edit_picture(&owner,normalized).map_err(s)
+    }).await.map_err(s)?;
+    drop(permit);
+    result
 }
 
 /// Settings › Notifications: notify at all, show the message text, sound.

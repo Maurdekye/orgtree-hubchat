@@ -213,6 +213,7 @@ pub struct Engine {
     hubs: Mutex<HashMap<String, HubRuntime>>,
     queue_changed: Notify,
     body_changed: Notify,
+    picture_changed: tokio::sync::watch::Sender<()>,
     /// Set by shutdown(): the sender stops; hub tasks were stopped one by one.
     stopped: std::sync::atomic::AtomicBool,
     transfers: Mutex<HashMap<String, CancelFlag>>,
@@ -258,6 +259,7 @@ impl Engine {
             hubs: Mutex::new(HashMap::new()),
             queue_changed: Notify::new(),
             body_changed: Notify::new(),
+            picture_changed: tokio::sync::watch::channel(()).0,
             stopped: std::sync::atomic::AtomicBool::new(false),
             transfers: Mutex::new(HashMap::new()),
             send_writers: Mutex::new(std::collections::HashSet::new()),
@@ -872,9 +874,22 @@ impl Engine {
             s.version = health.version.clone();
         });
         self.queue_changed.notify_one();
+        // Optional image requests run concurrently and are dropped with this
+        // session; a slow image hub never holds up mail admission/polling.
+        if health.supports("profile_pictures") {
+            tokio::select! {
+                result=self.mail_session(client,url,stop,&profile,&health)=>result,
+                _=self.picture_session(client)=>Ok(()),
+            }
+        } else {
+            self.mail_session(client,url,stop,&profile,&health).await
+        }
+    }
+
+    async fn mail_session(&self, client:&HubClient,url:&str,stop:&CancelFlag,profile:&Profile,health:&crate::hub::Health)->Result<()> {
         if health.supports("sync") {
             return self
-                .sync_session(client, url, stop, &profile, &health.features)
+                .sync_session(client, url, stop, profile, &health.features)
                 .await;
         }
         let mut registered_again = false;
@@ -901,6 +916,8 @@ impl Engine {
                 self.set_status_for(url, stop, |s| s.version = v);
             }
             self.store.set_roster(url, &p.roster)?;
+            self.observe_pictures(&p.roster)?;
+            self.picture_changed.send_replace(());
             self.host.event(Event::Directory);
             for r in &p.receipts {
                 self.store.apply_receipt(r)?;
@@ -1042,6 +1059,8 @@ impl Engine {
             }
             let start_ms: Option<i64> = self.store.meta(&start_key)?.and_then(|v| v.parse().ok());
             let mut dir_changed = false;
+            self.observe_pictures(&r.roster)?;
+            self.picture_changed.send_replace(());
             if first_page && !r.roster.is_empty() {
                 self.store.set_roster(url, &r.roster)?;
                 dir_changed = true;
@@ -2442,3 +2461,5 @@ mod hub_enabled_tests;
 #[cfg(test)]
 #[path = "engine_hub_disabled_start_test.rs"]
 mod hub_disabled_start_test;
+#[path = "engine_pictures.rs"]
+mod engine_pictures;

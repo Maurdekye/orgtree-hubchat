@@ -362,6 +362,7 @@ pub struct Contact {
     pub online: bool,
     pub last_seen: Option<String>,
     pub hubs: Vec<String>,
+    pub picture: Option<crate::pictures::PictureMeta>,
 }
 
 fn db(e: rusqlite::Error) -> Error {
@@ -511,7 +512,7 @@ impl Store {
     pub fn directory(&self) -> Result<Vec<Contact>> {
         self.with(|c| {
             let mut st = c.prepare(
-                "SELECT address, kind, org_name, username, blurb, online, last_seen, hub FROM roster ORDER BY address, hub",
+                "SELECT r.address, r.kind, r.org_name, r.username, r.blurb, r.online, r.last_seen, r.hub, p.value FROM roster r LEFT JOIN meta p ON p.key='picture.meta.' || r.address ORDER BY r.address, r.hub",
             )?;
             let mut out: Vec<Contact> = Vec::new();
             let rows = st.query_map([], |r| {
@@ -524,10 +525,12 @@ impl Store {
                     r.get::<_, bool>(5)?,
                     r.get::<_, Option<String>>(6)?,
                     r.get::<_, String>(7)?,
+                    r.get::<_, Option<String>>(8)?,
                 ))
             })?;
             for row in rows {
-                let (address, kind, org_name, username, blurb, online, last_seen, hub) = row?;
+                let (address, kind, org_name, username, blurb, online, last_seen, hub, raw_picture) = row?;
+                let picture=if matches!(kind.as_str(),"person"|"org") { raw_picture.and_then(|s|serde_json::from_str::<crate::pictures::PictureMeta>(&s).ok()).filter(crate::pictures::PictureMeta::valid) } else {None};
                 match out.last_mut() {
                     Some(c) if c.address == address => {
                         c.online |= online;
@@ -536,7 +539,7 @@ impl Store {
                         }
                         c.hubs.push(hub);
                     }
-                    _ => out.push(Contact { address, kind, org_name, username, blurb, online, last_seen, hubs: vec![hub] }),
+                    _ => out.push(Contact { address, kind, org_name, username, blurb, online, last_seen, hubs: vec![hub], picture }),
                 }
             }
             Ok(out)
@@ -1636,6 +1639,7 @@ mod tests {
             online,
             last_seen: None,
             kind: "chat".into(),
+            picture: None,
         };
         s.set_roster("http://a:7370", &[e(false)]).unwrap();
         s.set_roster("http://b:7370", &[e(true)]).unwrap();

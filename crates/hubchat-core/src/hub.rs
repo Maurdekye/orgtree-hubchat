@@ -99,6 +99,9 @@ impl std::fmt::Display for HubAddress {
 
 // ---------------------------------------------------------------- wire types
 
+#[path = "hub_pictures.rs"]
+mod hub_pictures;
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Health {
     pub ok: bool,
@@ -175,6 +178,8 @@ pub struct RosterEntry {
     pub last_seen: Option<String>,
     #[serde(default)]
     pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture: Option<crate::pictures::PictureMeta>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

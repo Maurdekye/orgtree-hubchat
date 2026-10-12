@@ -28,6 +28,15 @@ fn owner_matches(c: &Connection, owner: &str) -> rusqlite::Result<bool> {
 }
 
 impl Store {
+    pub fn picture_eligible(&self, peer:&str)->Result<bool> {
+        self.with(|c|c.query_row("SELECT EXISTS(SELECT 1 FROM roster WHERE address=? AND kind IN ('person','org'))",[peer],|r|r.get(0)))
+    }
+    pub fn picture_ack(&self,owner:&str,key:&str,revision:&str)->Result<()> {
+        self.with(|c| { let tx=c.transaction()?;
+            if owner_matches(&tx,owner)? { tx.execute("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[key,revision])?; }
+            tx.commit()
+        })
+    }
     pub fn picture_meta(&self, peer: &str) -> Result<Option<PictureMeta>> { self.with(|c|read_meta(c,peer)) }
 
     /// Missing data means absent/evicted, never a synthetic removal.
