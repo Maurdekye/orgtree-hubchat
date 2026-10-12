@@ -7,7 +7,7 @@ use std::time::Duration;
 use hubchat_core::engine::{Engine, HubStatus};
 use hubchat_core::hub::Health;
 use hubchat_core::store::{ChatSummary, Contact, Message, NewOutgoing};
-use hubchat_core::{recovery, HubAddress, HubClient, Identity};
+use hubchat_core::{recovery, HubAddress, Identity};
 use serde::Serialize;
 
 use crate::core::{self, Core};
@@ -395,21 +395,11 @@ async fn probe_inner(input: &str, name: Option<&str>, limit: Duration,
         Err(e) => return Probe::Invalid { error: s(e) },
     };
     let url = addr.to_string();
-    let client = if reception.is_some() {
-        // A received bundle can name other saved hubs as well as its origin.
-        // Keep each destination's saved policy and token, plus the origin guard.
-        match core::get().and_then(|c| hubchat_core::link::start_client(&c.store, addr, || c.engine().ok()).map_err(s)) {
-            Ok(client) => client,
-            Err(error) => return Probe::Unreachable { url, error },
-        }
-    } else { HubClient::new(addr) };
-    let request = async {
-        match reception {
-            Some(reception) => reception.work(client.healthz()).await,
-            None => client.healthz().await,
-        }
+    let requests = match discovery_context(reception) {
+        Ok(requests) => requests,
+        Err(error) => return Probe::Unreachable { url, error },
     };
-    let r: Result<Result<Health, _>, _> = tokio::time::timeout(limit, request).await;
+    let r: Result<Result<Health, _>, _> = tokio::time::timeout(limit, requests.health(addr)).await;
     match r {
         Err(_) => Probe::Unreachable {
             url,
@@ -431,6 +421,14 @@ async fn probe_inner(input: &str, name: Option<&str>, limit: Duration,
         Ok(Err(hubchat_core::Error::NotAHub(e))) => Probe::NotAHub { url, error: e },
         Ok(Err(e)) => Probe::Unreachable { url, error: s(e) },
     }
+}
+
+pub(crate) fn discovery_context(origin: Option<hubchat_core::link::Reception>) -> R<hubchat_core::link::Discovery> {
+    let c = core::get()?;
+    let requests = hubchat_core::link::Discovery::new(move |address| {
+        hubchat_core::link::start_client(&c.store, address, || c.engine().ok())
+    });
+    Ok(match origin { Some(origin) => requests.with_origin(origin), None => requests })
 }
 
 #[tauri::command]
@@ -847,7 +845,8 @@ pub struct SetupReach {
 pub async fn hc_setup_check(hub: String, hubname: String) -> R<SetupReach> {
     let addr = HubAddress::parse(&hub).map_err(s)?;
     on_core(async move {
-        let r = tokio::time::timeout(Duration::from_secs(5), HubClient::new(addr).healthz()).await;
+        let requests = discovery_context(None)?;
+        let r = tokio::time::timeout(Duration::from_secs(5), requests.health(addr)).await;
         Ok(match r {
             Ok(Ok(h)) if h.ok => {
                 if h.name != hubname {

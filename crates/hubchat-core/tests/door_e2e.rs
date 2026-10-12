@@ -18,19 +18,20 @@ async fn a_real_hub_names_its_door() {
         return;
     };
     let hub = HubAddress::parse(&hub).unwrap().to_string();
+    let requests = hubchat_core::link::Discovery::new(|a| Ok(HubClient::new(a)));
     let door = HubClient::new(HubAddress::parse(&hub).unwrap())
         .healthz()
         .await
         .unwrap()
         .door
         .expect("the hub names no door: is phone access on?");
-    let d = find_door(&hub, &[], &DOOR_PORTS, T).await;
+    let d = find_door(&hub, &[], &DOOR_PORTS, T, &requests).await;
     assert_eq!(d, Door::Found { port: door.port, on: vec!["127.0.0.1".parse().unwrap()] });
     // the door answers on loopback only, so the QR names just the hub
-    assert_eq!(qr_hubs(&hub, Some("home-pc.invalid"), &[], &d, T).await, vec![hub.clone()]);
+    assert_eq!(qr_hubs(&hub, Some("home-pc.invalid"), &[], &d, T, &requests).await, vec![hub.clone()]);
 
     if let Ok(off) = std::env::var("HUBCHAT_DOOR_OFF_HUB") {
         let off = HubAddress::parse(&off).unwrap().to_string();
-        assert_eq!(find_door(&off, &[], &DOOR_PORTS, T).await, Door::Off);
+        assert_eq!(find_door(&off, &[], &DOOR_PORTS, T, &requests).await, Door::Off);
     }
 }

@@ -427,10 +427,12 @@ async fn aliases_for(hub: &str, host: Option<&str>, ips: &[std::net::IpAddr], cl
     let (h, name, i) = (hub.to_string(), host.map(str::to_string), ips.to_vec());
     let run = async move {
         let fallback = (link::hub_aliases(&h, name.as_deref(), &i, None), false);
+        let origin = client.as_ref().map(|client| link::Reception::new(client.clone(), CancelFlag::default()));
+        let Ok(requests) = crate::commands::discovery_context(origin) else { return fallback; };
         let work = async {
             let t = Duration::from_secs(2);
-            let d = door::find_door(&h, &i, &door::DOOR_PORTS, t).await;
-            (door::qr_hubs(&h, name.as_deref(), &i, &d, t).await, d == Door::Off)
+            let d = door::find_door(&h, &i, &door::DOOR_PORTS, t, &requests).await;
+            (door::qr_hubs(&h, name.as_deref(), &i, &d, t, &requests).await, d == Door::Off)
         };
         match client {
             Some(client) => client.session_work(async { Ok(work.await) }).await.unwrap_or(fallback),

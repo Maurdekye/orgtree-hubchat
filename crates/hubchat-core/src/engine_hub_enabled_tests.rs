@@ -32,6 +32,119 @@ fn attach(e: &Engine, url: &str) -> (HubClient, CancelFlag) {
     (client, stop)
 }
 
+struct DiscoveryHub {
+    url: String,
+    requests: Arc<std::sync::atomic::AtomicUsize>,
+    task: tokio::task::JoinHandle<()>,
+}
+impl Drop for DiscoveryHub { fn drop(&mut self) { self.task.abort(); } }
+async fn discovery_hub() -> DiscoveryHub {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let requests = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let copy = requests.clone();
+    let task = tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            let mut buffer = [0u8; 2048];
+            if stream.read(&mut buffer).await.unwrap_or(0) == 0 { continue; }
+            copy.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let body = r#"{"ok":true,"name":"discovery-proof","orgs":0,"features":["door"]}"#;
+            let response = format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
+            let _ = stream.write_all(response.as_bytes()).await;
+        }
+    });
+    DiscoveryHub { url, requests, task }
+}
+fn discovery(e: &Arc<Engine>) -> crate::link::Discovery {
+    let e = e.clone();
+    crate::link::Discovery::new(move |address| crate::link::start_client(&e.store, address, || Some(e.clone())))
+}
+async fn disabled_preflight() {
+    let hub = discovery_hub().await;
+    let e = engine();
+    e.store.add_hub(&hub.url, "scratch").unwrap();
+    e.store.set_hub_enabled(&hub.url, false).unwrap();
+    let result = discovery(&e).health(HubAddress::parse(&hub.url).unwrap()).await;
+    assert!(result.is_err(), "saved disabled preflight must refuse");
+    assert_eq!(hub.requests.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn discovery_preflight_saved_disabled_refuses() { disabled_preflight().await; }
+#[tokio::test]
+async fn discovery_setup_saved_disabled_refuses() { disabled_preflight().await; }
+
+#[tokio::test]
+async fn discovery_enabled_saved_preflight_cancels_delayed_request() {
+    let hub = discovery_hub().await;
+    let e = engine();
+    e.store.add_hub(&hub.url, "scratch").unwrap();
+    attach(&e, &hub.url);
+    let requests = discovery(&e);
+    let request = requests.health(HubAddress::parse(&hub.url).unwrap());
+    e.set_hub_enabled(&hub.url, false).unwrap();
+    assert!(request.await.is_err());
+    assert_eq!(hub.requests.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn discovery_positive_enabled_and_unsaved_preflight() {
+    let hub = discovery_hub().await;
+    let e = engine();
+    let requests = discovery(&e);
+    assert!(requests.health(HubAddress::parse(&hub.url).unwrap()).await.unwrap().ok);
+    e.store.add_hub(&hub.url, "scratch").unwrap();
+    attach(&e, &hub.url);
+    assert!(requests.health(HubAddress::parse(&hub.url).unwrap()).await.unwrap().ok);
+    assert_eq!(hub.requests.load(std::sync::atomic::Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn discovery_delayed_door_child_stops_after_origin_cancel() {
+    let hub = discovery_hub().await;
+    let e = engine();
+    let (client, _) = attach(&e, A);
+    let requests = discovery(&e).with_origin(crate::link::Reception::new(client, CancelFlag::default()));
+    let release = Arc::new(Notify::new());
+    let gate = release.clone();
+    let address = HubAddress::parse(&hub.url).unwrap();
+    // A queued discovery child whose parent has not yet processed cancellation.
+    let child = tokio::spawn(async move {
+        gate.notified().await;
+        requests.door_health(address).await
+    });
+    e.set_hub_enabled(A, false).unwrap();
+    release.notify_one();
+    assert!(tokio::time::timeout(Duration::from_secs(1), child).await.unwrap().unwrap().is_err());
+    assert_eq!(hub.requests.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn discovery_door_saved_disabled_destination_refuses() {
+    let hub = discovery_hub().await;
+    let e = engine();
+    let (client, _) = attach(&e, A);
+    e.store.add_hub(&hub.url, "scratch").unwrap();
+    e.store.set_hub_enabled(&hub.url, false).unwrap();
+    let requests = discovery(&e).with_origin(crate::link::Reception::new(client, CancelFlag::default()));
+    assert!(requests.door_health(HubAddress::parse(&hub.url).unwrap()).await.is_err());
+    assert_eq!(hub.requests.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn discovery_direct_door_and_qr_refuse_disabled_origin() {
+    let hub = discovery_hub().await;
+    let e = engine();
+    e.store.add_hub(&hub.url, "scratch").unwrap();
+    let (client, _) = attach(&e, &hub.url);
+    let requests = discovery(&e).with_origin(crate::link::Reception::new(client, CancelFlag::default()));
+    e.set_hub_enabled(&hub.url, false).unwrap();
+    let door = crate::door::find_door(&hub.url, &[], &[], Duration::from_secs(1), &requests).await;
+    let _ = crate::door::qr_hubs(&hub.url, None, &[], &door, Duration::from_secs(1), &requests).await;
+    assert_eq!(hub.requests.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
 #[test]
 fn link_start_cold_retained_disabled_refuses_before_engine_lookup() {
     let dir = tempfile::tempdir().unwrap();

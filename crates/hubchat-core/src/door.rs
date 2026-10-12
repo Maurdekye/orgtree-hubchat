@@ -23,7 +23,8 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 use crate::hub::Health;
-use crate::{HubAddress, HubClient};
+use crate::HubAddress;
+use crate::link::Discovery;
 
 /// The ports looked for when the hub doesn't name its door.
 pub const DOOR_PORTS: [u16; 2] = [7371, 7378];
@@ -41,7 +42,7 @@ pub enum Door {
 /// Find the door of `hub` (a loopback address; anything else is Unknown).
 /// `ips`: this device's addresses; `ports`: where to look when the hub
 /// doesn't say (DOOR_PORTS); `limit`: per /healthz.
-pub async fn find_door(hub: &str, ips: &[IpAddr], ports: &[u16], limit: Duration) -> Door {
+pub async fn find_door(hub: &str, ips: &[IpAddr], ports: &[u16], limit: Duration, requests: &Discovery) -> Door {
     if !crate::link::is_loopback_hub(hub) {
         return Door::Unknown;
     }
@@ -49,7 +50,7 @@ pub async fn find_door(hub: &str, ips: &[IpAddr], ports: &[u16], limit: Duration
         return Door::Unknown;
     };
     let own_port = url::Url::parse(addr.as_str()).ok().and_then(|u| u.port());
-    let Ok(Ok(me)) = tokio::time::timeout(limit, HubClient::new(addr).healthz()).await else {
+    let Ok(Ok(me)) = tokio::time::timeout(limit, requests.door_health(addr)).await else {
         return Door::Unknown;
     };
     let mut hosts: Vec<IpAddr> = vec![Ipv4Addr::LOCALHOST.into()];
@@ -60,7 +61,7 @@ pub async fn find_door(hub: &str, ips: &[IpAddr], ports: &[u16], limit: Duration
         };
         if let Ok(bind) = d.bind.parse::<IpAddr>() {
             let at: Vec<IpAddr> = if bind.is_unspecified() { hosts.clone() } else { vec![bind] };
-            let on = answering(&me, at.iter().map(|ip| (*ip, d.port)).collect(), limit).await;
+            let on = answering(&me, at.iter().map(|ip| (*ip, d.port)).collect(), limit, requests).await;
             if !on.is_empty() {
                 return Door::Found { port: d.port, on: on.into_iter().map(|(ip, _)| ip).collect() };
             }
@@ -72,7 +73,7 @@ pub async fn find_door(hub: &str, ips: &[IpAddr], ports: &[u16], limit: Duration
         .filter(|p| Some(**p) != own_port)
         .flat_map(|p| hosts.iter().map(move |ip| (*ip, *p)))
         .collect();
-    let found = answering(&me, tries, limit).await;
+    let found = answering(&me, tries, limit, requests).await;
     let Some(port) = ports.iter().find(|p| found.iter().any(|(_, fp)| fp == *p)) else {
         return Door::Unknown;
     };
@@ -89,8 +90,8 @@ pub async fn find_door(hub: &str, ips: &[IpAddr], ports: &[u16], limit: Duration
 /// the door's port if it answers there too, then `hub` itself for a second
 /// app on this device. Otherwise the hub's aliases as they are.
 /// An advertised door that answers as the same hub goes before all of them.
-pub async fn qr_hubs(hub: &str, hostname: Option<&str>, ips: &[IpAddr], door: &Door, limit: Duration) -> Vec<String> {
-    qr_hubs_with(hub, hostname, ips, door, limit, false).await
+pub async fn qr_hubs(hub: &str, hostname: Option<&str>, ips: &[IpAddr], door: &Door, limit: Duration, requests: &Discovery) -> Vec<String> {
+    qr_hubs_with(hub, hostname, ips, door, limit, false, requests).await
 }
 
 /// qr_hubs; `loopback`: an advertised loopback address counts too (the
@@ -102,6 +103,7 @@ async fn qr_hubs_with(
     door: &Door,
     limit: Duration,
     loopback: bool,
+    requests: &Discovery,
 ) -> Vec<String> {
     let Ok(addr) = HubAddress::parse(hub) else {
         return vec![hub.to_string()];
@@ -109,16 +111,16 @@ async fn qr_hubs_with(
     // no door runs, so there is no outside address to look up
     let me = match door {
         Door::Off => None,
-        _ => match tokio::time::timeout(limit, HubClient::new(addr.clone()).healthz()).await {
+        _ => match tokio::time::timeout(limit, requests.door_health(addr.clone())).await {
             Ok(Ok(me)) => Some(me),
             _ => None,
         },
     };
-    let mut out = guessed(&addr, hostname, ips, door, me.as_ref(), limit).await;
+    let mut out = guessed(&addr, hostname, ips, door, me.as_ref(), limit, requests).await;
     let told = me.as_ref().and_then(|me| Some((me, me.door.as_ref()?.advertise.as_deref()?)));
     if let Some((me, a)) = told.and_then(|(me, t)| Some((me, advertised(t)?))) {
         // no other device can use a loopback address
-        if (loopback || !crate::link::is_loopback_hub(a.as_str())) && same_hub(me, a.clone(), limit).await {
+        if (loopback || !crate::link::is_loopback_hub(a.as_str())) && same_hub(me, a.clone(), limit, requests).await {
             out.retain(|h| h != a.as_str());
             out.insert(0, a.to_string());
         }
@@ -135,6 +137,7 @@ async fn guessed(
     door: &Door,
     me: Option<&Health>,
     limit: Duration,
+    requests: &Discovery,
 ) -> Vec<String> {
     let hub = addr.as_str();
     let Door::Found { port, on } = door else {
@@ -146,7 +149,7 @@ async fn guessed(
     let host = hostname.map(|h| h.trim().to_ascii_lowercase()).filter(|h| !h.is_empty());
     if let Some(h) = host.and_then(|h| HubAddress::parse(&format!("http://{h}:{port}")).ok()) {
         if let Some(me) = me.filter(|_| !crate::link::is_loopback_hub(h.as_str())) {
-            if same_hub(me, h.clone(), limit).await && !out.contains(&h.to_string()) {
+            if same_hub(me, h.clone(), limit, requests).await && !out.contains(&h.to_string()) {
                 out.insert(out.len().saturating_sub(1), h.to_string());
             }
         }
@@ -176,8 +179,8 @@ pub fn is_tailnet(ip: &IpAddr) -> bool {
 }
 
 /// Whether `a` answers /healthz as the hub `me` (same name and address count).
-async fn same_hub(me: &Health, a: HubAddress, limit: Duration) -> bool {
-    match tokio::time::timeout(limit, HubClient::new(a).healthz()).await {
+async fn same_hub(me: &Health, a: HubAddress, limit: Duration, requests: &Discovery) -> bool {
+    match tokio::time::timeout(limit, requests.door_health(a)).await {
         Ok(Ok(h)) => h.name == me.name && h.orgs == me.orgs,
         _ => false,
     }
@@ -190,14 +193,15 @@ const GRACE: Duration = Duration::from_millis(750);
 
 /// Which of `at` answer /healthz as the hub `me` (same name and address
 /// count), all at once; in the order given.
-async fn answering(me: &Health, at: Vec<(IpAddr, u16)>, limit: Duration) -> Vec<(IpAddr, u16)> {
+async fn answering(me: &Health, at: Vec<(IpAddr, u16)>, limit: Duration, requests: &Discovery) -> Vec<(IpAddr, u16)> {
     let mut tries = tokio::task::JoinSet::new();
     for (i, (ip, port)) in at.iter().copied().enumerate() {
         let Ok(a) = HubAddress::parse(&SocketAddr::new(ip, port).to_string()) else {
             continue;
         };
         let me = me.clone();
-        tries.spawn(async move { same_hub(&me, a, limit).await.then_some(i) });
+        let requests = requests.clone();
+        tries.spawn(async move { same_hub(&me, a, limit, &requests).await.then_some(i) });
     }
     let mut ok: Vec<usize> = Vec::new();
     let mut until: Option<tokio::time::Instant> = None;
@@ -223,6 +227,18 @@ async fn answering(me: &Health, at: Vec<(IpAddr, u16)>, limit: Duration) -> Vec<
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    // Isolated fake hubs have no saved configuration or originating runtime.
+    fn requests() -> Discovery { Discovery::new(|a| Ok(crate::HubClient::new(a))) }
+    async fn find_door(h: &str, ips: &[IpAddr], ports: &[u16], limit: Duration) -> Door {
+        super::find_door(h, ips, ports, limit, &requests()).await
+    }
+    async fn qr_hubs(h: &str, host: Option<&str>, ips: &[IpAddr], d: &Door, limit: Duration) -> Vec<String> {
+        super::qr_hubs(h, host, ips, d, limit, &requests()).await
+    }
+    async fn qr_hubs_with(h: &str, host: Option<&str>, ips: &[IpAddr], d: &Door, limit: Duration, loopback: bool) -> Vec<String> {
+        super::qr_hubs_with(h, host, ips, d, limit, loopback, &requests()).await
+    }
 
     /// A fake hub: answers every request with `body` as /healthz JSON.
     async fn fake(body: String) -> u16 {

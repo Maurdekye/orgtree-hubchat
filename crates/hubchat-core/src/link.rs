@@ -91,6 +91,34 @@ impl Reception {
     }
 }
 
+/// Request context for preflight/setup and door discovery. The resolver is
+/// evaluated for every candidate, when its actual request is first polled.
+#[derive(Clone)]
+pub struct Discovery {
+    resolve: std::sync::Arc<dyn Fn(crate::HubAddress) -> Result<crate::HubClient> + Send + Sync>,
+    origin: Option<Reception>,
+}
+
+impl Discovery {
+    pub fn new(resolve: impl Fn(crate::HubAddress) -> Result<crate::HubClient> + Send + Sync + 'static) -> Self {
+        Self { resolve: std::sync::Arc::new(resolve), origin: None }
+    }
+
+    pub fn with_origin(mut self, origin: Reception) -> Self { self.origin = Some(origin); self }
+
+    pub async fn health(&self, address: crate::HubAddress) -> Result<crate::hub::Health> {
+        let client = if self.origin.is_some() { (self.resolve)(address)? } else { crate::HubClient::new(address) };
+        match &self.origin {
+            Some(origin) => origin.work(client.healthz()).await,
+            None => client.healthz().await,
+        }
+    }
+
+    pub async fn door_health(&self, address: crate::HubAddress) -> Result<crate::hub::Health> {
+        crate::HubClient::new(address).healthz().await
+    }
+}
+
 /// The identity and what travels with it.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Bundle {
