@@ -21,6 +21,7 @@ impl Store {
             if consumed == 0 { return Ok(false); }
             let at = now();
             tx.execute("INSERT INTO messages(id,peer,outgoing,body,sent_at,created_at,state) VALUES(?,?,1,?,?,?,'queued')", params![id, peer, body, at, at]).map_err(db)?;
+            show_local_outgoing(&tx, peer, &at).map_err(db)?;
             tx.commit().map_err(db)?;
             Ok(true)
         }

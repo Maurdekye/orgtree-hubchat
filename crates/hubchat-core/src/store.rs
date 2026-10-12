@@ -598,6 +598,7 @@ impl Store {
                     params![uuid::Uuid::new_v4().simple().to_string(), msg.id, i as i64, a.name, a.bytes, a.source, digests.get(i), paths.get(i)],
                 )?;
             }
+            show_local_outgoing(&tx, &msg.peer, now)?;
             tx.commit()
         })
     }
@@ -1326,6 +1327,22 @@ impl Store {
             Ok(msgs)
         })
     }
+}
+
+/// A locally accepted row is already part of this device's visible history.
+/// Commit its boundary with admission, so a later lazy-sync start or a clock
+/// rollback cannot hide it. Hub-synced historical outgoing rows do not call this.
+fn show_local_outgoing(tx: &rusqlite::Transaction<'_>, peer: &str, at: &str) -> rusqlite::Result<()> {
+    let Some(ms) = humantime::parse_rfc3339_weak(at).ok()
+        .and_then(|t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).ok())
+        .and_then(|d| i64::try_from(d.as_millis()).ok()) else { return Ok(()); };
+    let key = format!("history.floor.{peer}");
+    let old: Option<String> = tx.query_row("SELECT value FROM meta WHERE key=?", [&key], |r| r.get(0)).optional()?;
+    if old.as_deref() == Some("all") || old.as_deref().and_then(|v| v.parse::<i64>().ok()).is_some_and(|n| n <= ms) {
+        return Ok(());
+    }
+    tx.execute("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![key, ms.to_string()])?;
+    Ok(())
 }
 
 /// Each of `hubs` still in the store owes the delete of the ids `ids_sql`
