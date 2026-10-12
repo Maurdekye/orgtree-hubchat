@@ -9,9 +9,12 @@ pub const MAX_BYTES: usize = 256 * 1024;
 pub const MAX_INPUT_BYTES: usize = 5 * 1024 * 1024;
 pub const MAX_PIXELS: u64 = 16_000_000;
 pub const MAX_WIRE_BYTES: usize = MAX_BYTES * 4 / 3 + 4096;
+pub fn valid_owner(s:&str)->bool { s.len()==64 && s.bytes().all(|c|c.is_ascii_digit()||(b'a'..=b'f').contains(&c)) }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct PictureMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture_owner: Option<String>,
     pub revision: String,
     pub sha256: Option<String>,
     pub width: u32,
@@ -43,6 +46,7 @@ pub fn next_revision(observed: Option<&PictureMeta>) -> Result<String> {
 }
 impl PictureMeta {
     pub fn valid(&self) -> bool {
+        if self.picture_owner.as_deref().is_some_and(|s|!valid_owner(s)) { return false; }
         if revision_counter(&self.revision).is_none() { return false; }
         match &self.sha256 {
             None => self.bytes==0 && self.width==0 && self.height==0,
@@ -53,7 +57,7 @@ impl PictureMeta {
 }
 impl PictureRecord {
     pub fn removed(revision: String) -> Self {
-        Self{meta:PictureMeta{revision,sha256:None,width:0,height:0,bytes:0},data:None}
+        Self{meta:PictureMeta{picture_owner:None,revision,sha256:None,width:0,height:0,bytes:0},data:None}
     }
     /// Verify transport size and hash before decoding or displaying any image.
     pub fn decoded(&self) -> Result<Option<Vec<u8>>> {
@@ -100,7 +104,7 @@ pub fn validate_png(bytes: &[u8], size: u32) -> Result<()> {
 
 pub fn from_png(revision: String, bytes: Vec<u8>, size: u32) -> Result<PictureRecord> {
     validate_png(&bytes,size)?;
-    Ok(PictureRecord{meta:PictureMeta{revision,sha256:Some(hex::encode(Sha256::digest(&bytes))),width:size,height:size,bytes:bytes.len() as u32},data:Some(B64.encode(bytes))})
+    Ok(PictureRecord{meta:PictureMeta{picture_owner:None,revision,sha256:Some(hex::encode(Sha256::digest(&bytes))),width:size,height:size,bytes:bytes.len() as u32},data:Some(B64.encode(bytes))})
 }
 
 #[cfg(test)]

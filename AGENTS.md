@@ -1,5 +1,12 @@
 # Hubchat development invariants
 
+- 2026-10-12: Peer picture bytes/high-water marks bind to hub-reported opaque
+  identity provenance, not reusable addresses. Per-hub roster ownership updates
+  atomically; absent/conflicting owners use fallback. Retain same-owner removal
+  history across departure and reject old-owner native/renderer completions.
+  [verified: store_pictures.rs, store.rs, hub_pictures.rs, lib/pictures.ts;
+  contract/tests: docs/profile-pictures.md]
+
 - 2026-10-12: Picture HTTP and response-body reads use the bound hub session;
   picture/ack/roster admission uses its short generation commit guard. Disabled
   clients stay cancelled after re-enable. [verified: hub_pictures.rs,

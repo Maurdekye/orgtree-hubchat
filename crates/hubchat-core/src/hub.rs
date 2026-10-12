@@ -166,6 +166,8 @@ pub struct Profile {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct RosterEntry {
     pub slug: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture_owner: Option<String>,
     #[serde(default)]
     pub org_name: String,
     #[serde(default)]

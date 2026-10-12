@@ -31,6 +31,22 @@ identity wipe deletes the whole namespace. Owner checks inside transactions
 refuse late old-engine results after identity adoption. A removal clears bytes
 as soon as metadata arrives, before another fetch can finish.
 
+Peer cache and high-water keys include the hub-issued `picture_owner`, a
+domain-separated digest of the full identity fingerprint and address, never the
+raw authentication fingerprint. Roster snapshots/upserts atomically record each
+hub/address's ownership token in existing meta storage. Directory projection and
+peer cache reads resolve that provenance; missing or conflicting hub owners use
+fallback instead of mixing identities. Retained history is not erased on roster
+departure: the same identity rejoining retains removal protection, while another
+identity at that address starts its own independent version history. Legacy
+unscoped peer entries are never read as trusted new-owner state.
+
+Authenticated picture replies carry the same token. Native admission compares
+it with the current roster provenance under the store lock. The renderer cache
+key and completion check include it as well. A late previous-owner response
+cannot populate a new owner's cache, even with matching revision/hash. Own local
+edits retain their existing identity-adoption guard and do not need a peer token.
+
 Hub capability `profile_pictures` gates a picture future inside the existing
 active session. It runs concurrently with mail polling and drops with the session.
 Initial authenticated GET learns newer state before POST. Subsequent publication
@@ -80,3 +96,15 @@ late image/ack/roster admission. The latter exercises the production admission
 helper directly; it does not claim a scheduled whole-app race. Renderer runs,
 including bundling, used kernel Job memory/deadline containment. No Android
 library/device/WebView build or pixel acceptance was performed for this feature.
+
+Round1 correction: native predecessor proof measured14 passes/2 failures for
+different-owner address reuse and conflicting multi-hub owners (an earlier
+fixture missing its hub foreign-key row is separately recorded, not a defect
+reproduction). Corrected focused native tests17/17 pass, including same-owner
+tombstone reconnect, independent lower new-owner revisions, late old responses,
+same-owner multi-hub sharing and differing-owner fallback. One actual TCP/native
+Engine test rejects a picture response whose owner differs from the current
+roster, then accepts a matching one. Mounted renderer15/15, Windows command
+library check and TypeScript pass. These are component fixtures, not physical
+linked devices or a full deployed registration-to-render exercise. Earlier194
+core-suite receipt predates this correction and is not a current broad-suite run.

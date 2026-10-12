@@ -1058,7 +1058,6 @@ impl Engine {
             }
             let start_ms: Option<i64> = self.store.meta(&start_key)?.and_then(|v| v.parse().ok());
             let mut dir_changed = false;
-            self.observe_pictures_for(client,&r.roster)?;
             if first_page && !r.roster.is_empty() {
                 self.store.set_roster(url, &r.roster)?;
                 dir_changed = true;
@@ -1070,6 +1069,7 @@ impl Engine {
                 self.store.remove_roster(url, &r.roster_removed)?;
                 dir_changed = true;
             }
+            self.observe_pictures_for(client,&r.roster)?;
             if let Some(online) = &r.online {
                 self.store.set_online(url, online)?;
                 dir_changed = true;

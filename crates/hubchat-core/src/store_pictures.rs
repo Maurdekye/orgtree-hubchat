@@ -4,6 +4,34 @@ use super::*;
 use crate::pictures::{PictureMeta, PictureRecord, next_revision};
 
 fn key(part: &str, peer: &str) -> String { format!("picture.{part}.{peer}") }
+pub(super) fn roster_owner(c:&Connection,hub:&str,e:&RosterEntry)->rusqlite::Result<()> {
+    let k=format!("picture.peer.{hub}\n{}",e.slug);
+    if let Some(token)=e.picture_owner.as_deref().filter(|s|crate::pictures::valid_owner(s)) {
+        c.execute("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![k,token])?;
+    } else { c.execute("DELETE FROM meta WHERE key=?",[k])?; }
+    Ok(())
+}
+// Unknown or conflicting hub provenance means unavailable, not a guessed owner.
+fn peer_scope(c:&Connection,peer:&str)->rusqlite::Result<Option<String>> {
+    if owner_matches(c,peer)? { return Ok(Some(peer.to_string())); }
+    let mut st=c.prepare("SELECT p.value FROM roster r LEFT JOIN meta p ON p.key='picture.peer.' || r.hub || char(10) || r.address WHERE r.address=?")?;
+    let rows=st.query_map([peer],|r|r.get::<_,Option<String>>(0))?;
+    let mut token=None;
+    for row in rows {
+        let Some(value)=row?.filter(|s|crate::pictures::valid_owner(s)) else {return Ok(None)};
+        if token.as_ref().is_some_and(|old|old!=&value) {return Ok(None)}
+        token=Some(value);
+    }
+    Ok(token.map(|token|format!("{peer}\n{token}")))
+}
+fn admitted_peer(c:&Connection,peer:&str,meta:&PictureMeta)->rusqlite::Result<Option<String>> {
+    let Some(scope)=peer_scope(c,peer)? else {return Ok(None)};
+    let expected=scope.split_once('\n').map(|(_,token)|token);
+    Ok((expected==meta.picture_owner.as_deref()).then_some(scope))
+}
+pub(super) fn visible_meta(c:&Connection,peer:&str)->rusqlite::Result<Option<PictureMeta>> {
+    match peer_scope(c,peer)? {Some(scope)=>read_meta(c,&scope),None=>Ok(None)}
+}
 fn read_meta(c: &Connection, peer: &str) -> rusqlite::Result<Option<PictureMeta>> {
     let raw: Option<String> = c.query_row("SELECT value FROM meta WHERE key=?",[key("meta",peer)],|r|r.get(0)).optional()?;
     Ok(raw.and_then(|s|serde_json::from_str::<PictureMeta>(&s).ok()).filter(PictureMeta::valid))
@@ -37,11 +65,13 @@ impl Store {
             tx.commit()
         })
     }
-    pub fn picture_meta(&self, peer: &str) -> Result<Option<PictureMeta>> { self.with(|c|read_meta(c,peer)) }
+    pub fn picture_meta(&self, peer: &str) -> Result<Option<PictureMeta>> { self.with(|c|visible_meta(c,peer)) }
 
     /// Missing data means absent/evicted, never a synthetic removal.
     pub fn picture(&self, peer: &str) -> Result<Option<PictureRecord>> {
         self.with(|c| {
+            let Some(scope)=peer_scope(c,peer)? else {return Ok(None)};
+            let peer=scope.as_str();
             let Some(meta)=read_meta(c,peer)? else { return Ok(None) };
             let data=c.query_row("SELECT value FROM meta WHERE key=?",[key("data",peer)],|r|r.get::<_,String>(0)).optional()?;
             if meta.sha256.is_some() && data.is_none() { return Ok(None); }
@@ -55,7 +85,8 @@ impl Store {
         self.with(|c| {
             let tx=c.transaction()?;
             if !owner_matches(&tx,owner)? { return Ok(false); }
-            let changed=save_meta(&tx,peer,meta)?;
+            let Some(scope)=admitted_peer(&tx,peer,meta)? else {return Ok(false)};
+            let changed=save_meta(&tx,&scope,meta)?;
             tx.commit()?;
             Ok(changed)
         })
@@ -68,6 +99,8 @@ impl Store {
         self.with(|c| {
             let tx=c.transaction()?;
             if !owner_matches(&tx,owner)? { return Ok(false); }
+            let Some(scope)=admitted_peer(&tx,peer,&record.meta)? else {return Ok(false)};
+            let peer=scope.as_str();
             if let Some(old)=read_meta(&tx,peer)? {
                 if old.revision>record.meta.revision || (old.revision==record.meta.revision && old!=record.meta) { return Ok(false); }
             }
@@ -105,7 +138,7 @@ mod tests {
         { let mut enc=png::Encoder::new(&mut bytes,1,1); enc.set_color(png::ColorType::Rgba); enc.set_depth(png::BitDepth::Eight); enc.write_header().unwrap().write_image_data(&[1,2,3,255]).unwrap(); }
         from_png(revision,bytes,1).unwrap()
     }
-    fn store()->Store { let s=Store::open_in_memory().unwrap();s.set_meta("identity.address","me").unwrap();s }
+    fn store()->Store { let s=Store::open_in_memory().unwrap();s.set_meta("identity.address","me").unwrap();roster(&s,"hub-a",&"a".repeat(64));s }
     fn roster(s:&Store,hub:&str,identity:&str) {
         s.add_hub(hub,hub).unwrap();
         let entry=serde_json::from_value(serde_json::json!({"slug":"peer","kind":"person","org_name":identity,"picture_owner":identity})).unwrap();
@@ -143,6 +176,7 @@ mod tests {
     fn picture_conflicting_hub_owners_fall_back_without_combining_versions() {
         let s=store();let a="a".repeat(64);let b="b".repeat(64);roster(&s,"hub-a",&a);
         let old=scoped(image(next_revision(None).unwrap()),&a);s.merge_picture("me","peer",&old).unwrap();
+        roster(&s,"hub-b",&a);assert_eq!(s.picture("peer").unwrap(),Some(old.clone()));
         roster(&s,"hub-b",&b);
         assert!(s.picture("peer").unwrap().is_none());assert!(s.directory().unwrap()[0].picture.is_none());
         assert!(!s.merge_picture("me","peer",&old).unwrap());
@@ -150,9 +184,9 @@ mod tests {
     }
     #[test]
     fn removal_observation_blocks_late_fetch_and_automatic_replay() {
-        let s=store(); let a=image(next_revision(None).unwrap());
+        let s=store(); let a=scoped(image(next_revision(None).unwrap()),&"a".repeat(64));
         assert!(s.merge_picture("me","peer",&a).unwrap());
-        let b=PictureRecord::removed(next_revision(Some(&a.meta)).unwrap());
+        let b=scoped(PictureRecord::removed(next_revision(Some(&a.meta)).unwrap()),&"a".repeat(64));
         assert!(s.observe_picture("me","peer",&b.meta).unwrap());
         assert!(!s.merge_picture("me","peer",&a).unwrap());
         assert_eq!(s.picture("peer").unwrap(),Some(b));
@@ -170,18 +204,24 @@ mod tests {
     }
     #[test]
     fn equal_revision_conflicts_do_not_replace_metadata_or_pixels() {
-        let s=store(); let a=image(next_revision(None).unwrap());
+        let s=store(); let a=scoped(image(next_revision(None).unwrap()),&"a".repeat(64));
         s.merge_picture("me","peer",&a).unwrap();
-        let b=PictureRecord::removed(a.meta.revision.clone());
+        let b=scoped(PictureRecord::removed(a.meta.revision.clone()),&"a".repeat(64));
         assert!(!s.merge_picture("me","peer",&b).unwrap());
         assert_eq!(s.picture("peer").unwrap(),Some(a));
     }
     #[test]
     fn byte_cache_is_bounded_and_keeps_metadata_and_own_picture() {
         let s=store();let a=image(next_revision(None).unwrap());s.merge_picture("me","me",&a).unwrap();
-        for n in 0..90 { s.merge_picture("me",&format!("peer{n}"),&a).unwrap(); }
+        let peer_image=scoped(a.clone(),&"a".repeat(64));
+        for n in 0..90 {
+            let peer=format!("peer{n}");
+            let entry=serde_json::from_value(serde_json::json!({"slug":peer,"kind":"person","picture_owner":"a".repeat(64)})).unwrap();
+            s.upsert_roster("hub-a",&[entry]).unwrap();
+            s.merge_picture("me",&peer,&peer_image).unwrap();
+        }
         let bytes:i64=s.with(|c|c.query_row("SELECT COUNT(*) FROM meta WHERE key LIKE 'picture.data.%'",[],|r|r.get(0))).unwrap();
         assert_eq!(bytes,81);assert!(s.picture("me").unwrap().is_some());
-        assert!(s.picture("peer0").unwrap().is_none());assert_eq!(s.picture_meta("peer0").unwrap(),Some(a.meta));
+        assert!(s.picture("peer0").unwrap().is_none());assert_eq!(s.picture_meta("peer0").unwrap(),Some(peer_image.meta));
     }
 }

@@ -31,7 +31,11 @@ impl Engine {
         let mut changed=false;
         for e in entries {
             if matches!(e.kind.as_str(),"person"|"org") {
-                if let Some(p)=&e.picture { changed|=self.store.observe_picture(&owner,&e.slug,p)?; }
+                if let Some(p)=&e.picture {
+                    let mut p=p.clone();
+                    p.picture_owner=if e.slug==owner {None} else {e.picture_owner.clone()};
+                    changed|=self.store.observe_picture(&owner,&e.slug,&p)?;
+                }
             }
         }
         if changed { self.host.event(Event::Directory); self.picture_changed.send_replace(()); }
@@ -212,6 +216,19 @@ mod tests {
             requests
         });
         (client,handle)
+    }
+    #[tokio::test]
+    async fn picture_http_owner_must_match_current_roster_before_caching() {
+        let e=engine();let record=image();let a="a".repeat(64);let b="b".repeat(64);
+        let (base,proof)=hub(vec![serde_json::json!({"picture":record,"picture_owner":a}),serde_json::json!({"picture":record,"picture_owner":b})]).await;
+        let client=attach(&e,base);let url=client.address().to_string();
+        let entry=serde_json::from_value(serde_json::json!({"slug":"peer.aaaaaa","kind":"person","picture_owner":b})).unwrap();
+        e.store.set_roster(&url,&[entry]).unwrap();
+        assert!(e.picture("peer.aaaaaa").await.unwrap().is_none());
+        assert!(e.store.picture("peer.aaaaaa").unwrap().is_none());
+        let received=e.picture("peer.aaaaaa").await.unwrap().unwrap();
+        assert_eq!(received.meta.picture_owner.as_deref(),Some(b.as_str()));
+        assert_eq!(proof.await.unwrap().len(),2);e.shutdown();
     }
     #[tokio::test]
     async fn picture_reconnect_learns_removal_before_publish_and_relays_it_to_stale_hub() {

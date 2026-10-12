@@ -502,6 +502,7 @@ impl Store {
                 )?;
                 for e in entries {
                     st.execute(params![e.slug, hub, e.kind, e.org_name, e.username, e.blurb, e.online, e.last_seen])?;
+                    store_pictures::roster_owner(&tx,hub,e)?;
                 }
             }
             tx.commit()
@@ -512,7 +513,7 @@ impl Store {
     pub fn directory(&self) -> Result<Vec<Contact>> {
         self.with(|c| {
             let mut st = c.prepare(
-                "SELECT r.address, r.kind, r.org_name, r.username, r.blurb, r.online, r.last_seen, r.hub, p.value FROM roster r LEFT JOIN meta p ON p.key='picture.meta.' || r.address ORDER BY r.address, r.hub",
+                "SELECT r.address, r.kind, r.org_name, r.username, r.blurb, r.online, r.last_seen, r.hub FROM roster r ORDER BY r.address, r.hub",
             )?;
             let mut out: Vec<Contact> = Vec::new();
             let rows = st.query_map([], |r| {
@@ -525,12 +526,11 @@ impl Store {
                     r.get::<_, bool>(5)?,
                     r.get::<_, Option<String>>(6)?,
                     r.get::<_, String>(7)?,
-                    r.get::<_, Option<String>>(8)?,
                 ))
             })?;
             for row in rows {
-                let (address, kind, org_name, username, blurb, online, last_seen, hub, raw_picture) = row?;
-                let picture=if matches!(kind.as_str(),"person"|"org") { raw_picture.and_then(|s|serde_json::from_str::<crate::pictures::PictureMeta>(&s).ok()).filter(crate::pictures::PictureMeta::valid) } else {None};
+                let (address, kind, org_name, username, blurb, online, last_seen, hub) = row?;
+                let picture=if matches!(kind.as_str(),"person"|"org") { store_pictures::visible_meta(c,&address)? } else {None};
                 match out.last_mut() {
                     Some(c) if c.address == address => {
                         c.online |= online;
@@ -1190,6 +1190,7 @@ impl Store {
                 )?;
                 for e in entries {
                     st.execute(params![e.slug, hub, e.kind, e.org_name, e.username, e.blurb, e.online, e.last_seen])?;
+                    store_pictures::roster_owner(&tx,hub,e)?;
                 }
             }
             tx.commit()
@@ -1632,6 +1633,7 @@ mod tests {
             s.add_hub(h, "t0").unwrap();
         }
         let e = |online| RosterEntry {
+            picture_owner: None,
             slug: "maya.111111".into(),
             org_name: String::new(),
             username: "maya".into(),
