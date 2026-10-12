@@ -2430,3 +2430,7 @@ mod engine_hub_enabled;
 #[cfg(test)]
 #[path = "engine_hub_enabled_tests.rs"]
 mod hub_enabled_tests;
+
+#[cfg(test)]
+#[path = "engine_hub_disabled_start_test.rs"]
+mod hub_disabled_start_test;
