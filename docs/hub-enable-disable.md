@@ -32,6 +32,10 @@ delayed temporary-address cleanup and door/address discovery. A disabled saved
 hub cannot be selected for a link offer. New-device linking to a hub not yet
 saved retains its independent setup path. Intentional remove/unregister has an
 explicit cleanup client rather than reusing a cancelled runtime token.
+Link-start resolves saved existence and enabled state before engine lookup.
+Missing/unreadable-key recovery retains saved hubs, so an absent engine cannot
+turn a retained hub into unsaved setup. Disabled saved hubs refuse immediately;
+enabled saved hubs require an available, uncancelled bound runtime client.
 
 Settings update only after the command succeeds, disable the switch while its
 command is pending, preserve it after failure, and refresh state/directory.
@@ -52,8 +56,9 @@ by that suspended control. Corrected execution of this added control is pending.
 The real shared settings component was mounted in desktop and Android platform
 contexts with a synthetic command adapter:16/16 checks passed. Bundling and DOM
 execution used the existing repository kernel Job with1536MB/60s limits. A full
-renderer TypeScript no-emit check passed in the same containment using installed
-dependencies in place. Neither proof exercises native IPC or a device.
+renderer TypeScript no-emit exit0 was author-reported in the same containment
+using installed dependencies in place; a separate execution log was not supplied
+for independent review. Neither proof exercises native IPC or a device.
 
 An earlier broad core run exposed a nested-future stack overflow; boxing fixed
 it. A redundant saved-row condition then broke synthetic runtime fixtures and
@@ -80,3 +85,29 @@ The renderer proof is unchanged by these Rust-only additions. Evidence is in
 isolated evidence folder. No native linking, IPC, WebView, Android runtime,
 APK, device, live-message or release validation is claimed. Independent review
 and coordinator integration remain required.
+
+## Independent round1 correction
+
+Review of22de53c found a source-substantiated cold lost-key linking bypass:
+the old engine-first match constructed an unbound client without looking at
+retained saved policy when no engine existed. No device reproduction was claimed.
+The command now calls the shared production `link::start_client` helper, whose
+policy lookup precedes its lazy engine lookup and all registration/discovery.
+
+At extracted predecessorbc760c9, all four new helper controls fail: cold reopened
+disabled policy is bypassed, saved enabled/no-engine receives an unbound client,
+an already-cancelled runtime is selected, and unsaved setup unnecessarily queries
+engine availability. The last is an ordering control, not an unsafe network claim.
+Correctedb49e7db passes all168 core tests (including the four added controls),
+warning-free2.67s compile and2.62s tests. Bound-client registration after token
+cancellation returns FilePaused without contacting a hub. Existing164 controls
+remain green. Android/API24/NDK27 native library check onb49e7db is warning-free
+exit0 in1.76s (1.812s wrapper); it compiles the actual command/helper call.
+
+Receipts: `hub-enable-link-red-bc760c9.log`,
+`hub-enable-link-regression-b49e7db.log`, `hub-enable-android-b49e7db.log`.
+The cold retained store/absent-engine selection and copied-token controls are
+measured components, not a complete Tauri/lost-key UI/link network workflow.
+Renderer source is unchanged; earlier16/16 mounted checks remain source-specific,
+and the original TypeScript result remains author-reported. No native link,
+device, appbuild, publication or live action was performed.

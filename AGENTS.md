@@ -42,6 +42,9 @@
   Automatic may use enabled alternatives. Copied network clients retain their
   originating cancellation token; late status/clock callbacks cannot change a
   replacement runtime. Only intentional removal unregisters. No migration16.
+  Link-start resolves retained saved policy before engine availability, including
+  lost-key recovery. Saved enabled hubs require an active bound client; only
+  genuinely unsaved setup may construct an unbound client.
   [decided: user via coordinator 2026-10-12; source: store_hub_enabled.rs,
   engine_hub_enabled.rs, hub.rs; verification gate and limits:
   docs/hub-enable-disable.md]
