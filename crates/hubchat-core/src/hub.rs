@@ -351,8 +351,13 @@ impl HubClient {
     pub(crate) fn bind_stop(mut self, stop: CancelFlag) -> Self { self.session_stop = stop; self }
     pub(crate) fn detached(mut self) -> Self { self.session_stop = CancelFlag::default(); self }
     pub(crate) fn session_cancelled(&self) -> bool { self.session_stop.is_cancelled() }
-    pub(crate) async fn session_work<T>(&self, work: impl std::future::Future<Output=Result<T>>) -> Result<T> {
-        self.session_stop.run(work).await.map_err(|e| if self.session_cancelled() { Error::FilePaused } else { e })
+    pub(crate) fn session_work<'a, T: 'a>(&'a self, work: impl std::future::Future<Output=Result<T>> + 'a) -> impl std::future::Future<Output=Result<T>> + 'a {
+        // Box before constructing the guard future: nested upload/control calls
+        // must not multiply large inline future frames on worker stacks.
+        let work = Box::pin(work);
+        async move {
+            self.session_stop.run(work).await.map_err(|e| if self.session_cancelled() { Error::FilePaused } else { e })
+        }
     }
 
     pub fn address(&self) -> &HubAddress {
