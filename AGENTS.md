@@ -2,8 +2,8 @@
 
 - 2026-10-12: Picture preview/save share one native decoder slot, retained
   inside blocking decoding even if its async caller is cancelled. Image bytes
-  must not appear in diagnostics. This source-only cancellation hardening
-  awaits verification after the user's build/test pause is lifted.
+  must not appear in diagnostics. Native command compilation passes; permit
+  lifetime under forced cancellation remains a source-inspected property.
   [verified from source: `src-tauri/src/commands.rs`; limits:
   `docs/profile-pictures.md`]
 

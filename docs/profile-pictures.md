@@ -46,22 +46,27 @@ before integration; its author owns that separate feature.
 Nine focused native tests pass for normalization/bounds, replay/removal ordering,
 byte-cache size, identity guards, actual native HTTP reconnect and two-hub relay.
 The relay fixture checks the POST body after a newer removal is read, rather than
-only checking local state. Eight mounted renderer checks pass for the shared
+only checking local state. Eleven mounted renderer checks pass for the shared
 avatar/editor through synthetic native commands. Native Hubchat library check
 passes including command registration; frontend TypeScript noEmit passes using
 existing dependencies. These are component/bridge compilation proofs, not an
 installed desktop, Android WebView, device, live hub or pixel acceptance run.
 
 Image0.25.9 is pinned to preserve declared Rust1.85 compatibility (0.25.10 requires
-1.88). Native command check includes0.25.9; the focused tests recorded at this
-checkpoint used0.25.6 and require the final dependency-composed rerun. Organization
-settings publication and final independent review are still pending. No release
-or deployment is authorized by these results.
+1.88). Both the native command check and the final nine focused core tests now
+include0.25.9; earlier0.25.6 receipts remain separate. The added renderer cases
+exercise native-preview display, passing original bytes/changed square crop to
+Save, and rejecting a late preview after an owner change. Organization settings
+publication is a separate Orgtree landing. Final independent review and saved-hub
+cancellation composition are still pending. No release or deployment is
+authorized by these results.
 
 At 10:48Z on 2026-10-12 the user paused every build/check/test until the
 coordinator confirms completion of paused Claude work. Later source-only
 hardening shares one decoder permit between preview and save and moves it into
 the blocking closure, so cancelled callers cannot release a still-running
-decoder's slot. That change has not been compiled or tested. Saved-hub session
-cancellation composition, final dependency checks and independent review remain
-required; the existing receipts do not establish a verified final tip.
+decoder's slot. The user superseded the pause at10:53Z, allowing focused tests
+again but no publication. The slot change now compiles through the actual
+native command library; forced-cancellation runtime behavior is source-inferred.
+Saved-hub session cancellation composition and independent review remain
+required; these receipts do not establish the final composed tip.
