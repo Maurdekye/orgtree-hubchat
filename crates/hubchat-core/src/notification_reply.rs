@@ -8,9 +8,9 @@ pub struct IdentityLoader(std::sync::Mutex<bool>);
 impl IdentityLoader {
     /// Successful cold initialization is latched; later attachments must not
     /// reload a key in the middle of an intentional identity departure.
-    pub fn attach(&self, load: impl FnOnce() -> std::result::Result<(), String>) -> std::result::Result<(), String> {
+    pub fn attach(&self, load: impl FnOnce() -> std::result::Result<bool, String>) -> std::result::Result<(), String> {
         let mut complete = self.0.lock().map_err(|_| "Identity startup is unavailable; retry".to_string())?;
-        if !*complete { load()?; *complete = true; }
+        if !*complete { *complete = load()?; }
         Ok(())
     }
     pub fn run(&self, ready: impl FnOnce() -> bool, load: impl FnOnce() -> std::result::Result<(), String>) -> std::result::Result<(), String> {
@@ -127,7 +127,7 @@ mod tests {
             e.wait(); r.wait();
             n.fetch_add(1, Ordering::SeqCst);
             *p.1.lock().unwrap() = Some(engine(s, me));
-            Ok(())
+            Ok(true)
         }));
         entered.wait(); // published core, but no engine while the first attach loads
         assert_eq!(admit(published.1.lock().unwrap().as_deref(), &owner, ID, PEER, "saved"), "retry");
@@ -149,6 +149,16 @@ mod tests {
         assert!(!store.queue_notification_reply(&owner, ID, PEER, "saved").unwrap());
         *published.1.lock().unwrap() = None; // intentional departure after startup
         published.0.attach(|| panic!("must not reload the departing key")).unwrap();
+    }
+
+    #[test]
+    fn unreadable_key_is_retryable_without_failing_shell_attachment() {
+        let loader = IdentityLoader::default();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        loader.attach(|| { calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst); Ok(false) }).unwrap();
+        loader.attach(|| { calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst); Ok(true) }).unwrap();
+        loader.attach(|| panic!("successful load should be latched")).unwrap();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
     #[test]

@@ -377,7 +377,7 @@ pub fn init(dir: PathBuf, platform: Arc<dyn Platform>) -> Result<&'static Core, 
 impl Core {
     fn finish_startup(&self) -> Result<(), String> {
         self.identity_load.attach(|| {
-            if self.has_identity() { Ok(()) } else { self.load_key_inner() }
+            if self.has_identity() { Ok(true) } else { self.load_key_inner() }
         })
     }
 
@@ -535,16 +535,16 @@ impl Core {
     /// Read the key and start (start-up, and Try again on the lost-key
     /// screen); without one, note whether this device had an identity.
     pub fn load_key(&self) -> Result<(), String> {
-        self.identity_load.run(|| self.has_identity(), || self.load_key_inner())
+        self.identity_load.run(|| self.has_identity(), || self.load_key_inner().map(|_| ()))
     }
 
-    fn load_key_inner(&self) -> Result<(), String> {
+    fn load_key_inner(&self) -> Result<bool, String> {
         let unreadable = match crate::secrets::load_identity(&self.dir) {
-            Loaded::Found(me) => return self.start_with(me),
+            Loaded::Found(me) => return self.start_with(me).map(|_| true),
             Loaded::Restored(me) => {
                 // the UI says so once (dismissed: key_restored_seen)
                 self.store.set_meta("key.restored", "yes").map_err(|e| e.to_string())?;
-                return self.start_with(me);
+                return self.start_with(me).map(|_| true);
             }
             Loaded::Missing => false,
             Loaded::Unreadable => true,
@@ -554,7 +554,8 @@ impl Core {
             unreadable,
         });
         self.host.platform.status("Set up Hubchat to connect");
-        if unreadable { Err("The identity key is temporarily unavailable; retry".into()) } else { Ok(()) }
+        // Keep the lost-key UI available while a later cold attach retries the key.
+        Ok(!unreadable)
     }
 
     fn start_with(&self, me: Identity) -> Result<(), String> {
