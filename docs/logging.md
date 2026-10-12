@@ -65,7 +65,7 @@ hubchat-logs-sonnet and rig-opus, 2026-10-11]
 ## Line format
 
 ```text
-INFO     [2026-10-12 01:36:53.394512] T42 RQ1a2b3c4d engine hub: Connecting -> Connected (hub software 2.0.1)
+INFO     [2026-10-12 01:36:53.394512] T42 RQ1a2b3c4d engine hub hub:90ab12cd: Connecting -> Connected
 INFO     [2026-10-12 01:36:53.406871] T42 RQ1a2b3c4d ui EX5e6f7a8b engine.send(msg=msg:3fa1c2d4, hub=hub:90ab12cd)
 WARNING  [2026-10-12 01:36:53.512044] T42 RQ1a2b3c4d ui RESPONSE hub:90ab12cd POST /api/send 403 [105.113 ms]
 ```
@@ -91,7 +91,9 @@ Always (verbose off):
 
 - startup (`hubchat starting`: pid, version, build, OS, log file name without
   its folder) and shutdown; the verbose state;
-- hub state changes (`Connecting -> Connected`) and the hub's software version;
+- hub state changes (`Connecting -> Connected`, the hub as a tag); what a hub
+  reports about itself (its software version, the text of its answers) is not
+  logged, the UI keeps it in the hub's status;
 - session failures with their **kind** (`unreachable:timeout`, `hub-403`,
   `not-a-hub`, …) and the retry delay;
 - permanent send failures (message and peer as tags; the reason stays with the
@@ -124,7 +126,9 @@ cleaned up afterwards.
 1. **Not passed in, in any mode**: the key, the recovery words, the
    `X-Org-Auth` value, message and file bodies, previews, display names, file
    names, attachment paths, push endpoints, request queries, hub URLs, error
-   text.
+   text, and anything a hub says about itself (its software version, the detail
+   of its answers): it is free text from outside, so it is not copied, and a
+   "version" is not validated into a safe-looking string either.
 2. **Identifiers are pseudonymous tags**: `diag::tag(kind, value)` gives
    `peer:3fa1c2d4`, `hub:90ab12cd`, `msg:…` from SHA-256 over a per-device random
    salt, truncated to 32 bits. The same value has the same tag in every file on
@@ -165,6 +169,9 @@ cleaned up afterwards.
 
 Tests that hold these rules (they fail if a rule is broken):
 `diag::tests::an_error_kind_is_a_name_from_a_fixed_list_never_the_errors_own_text`,
+`engine_hub_enabled_tests::a_hub_state_change_reaches_the_log_without_what_the_hub_said_about_itself`
+(a hostile version and error text through the real status update, captured at the
+subscriber, in both verbose modes),
 `trace::tests::dependency_text_never_reaches_the_log_only_the_level_and_source_of_warnings_and_errors`,
 `trace::tests::the_key_log_reaches_the_log_only_as_fixed_facts_in_both_modes_and_the_file_keeps_its_line`,
 `trace::tests::failures_and_hub_calls_reach_the_log_as_kinds_and_tags_only_in_both_modes`
@@ -185,6 +192,17 @@ and file names, in both verbose modes) and
   ever touched (`identity-log.txt`, `log-salt` and anything foreign stay).
 - The writer is a separate thread behind a bounded, lossy queue (16 384 lines):
   a slow disk drops lines; it never blocks the app and never grows memory.
+- A file that cannot be rolled over stays within its limit. If the archive
+  cannot be made (or the fresh file cannot be started after archiving) the
+  original is kept untouched, a line that would not fit is dropped and counted,
+  and the next attempt waits 60 s (a rollover compresses the whole file). If the
+  content was already archived and only the fresh file is missing, nothing is
+  written (the archive is not repeated) until it can be. The first line after
+  recovery says how many were dropped. Without this the active file, which the
+  budget never removes, would grow past 8 MiB and past 64 MiB. Tests:
+  `trace::tests::a_rollover_that_cannot_archive_keeps_the_original_stays_within_its_limit_and_recovers`,
+  `..::a_fresh_file_that_cannot_be_made_after_archiving_takes_nothing_and_archives_once`,
+  `..::a_healthy_rollover_still_rolls_without_dropping_anything`.
 - If `diagnostics/logs` cannot take a file, the log goes to its own folder,
   `<temporary folder>/hubchat-logs`, with the same file names, so the same
   pruning and budget apply to it (it is swept at every start, used or not).

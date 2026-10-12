@@ -128,7 +128,9 @@
   (`keylog::note`) reaches the log only as fixed `Fact` phrases; a dependency's
   warning keeps its level and source and loses its text. If the diagnostics
   folder cannot be written the log goes to an owned, pruned temporary folder
-  and the Developer page says so. Logs
+  and the Developer page says so. A hub's own words (its version, its answers)
+  are never logged, and a log file that cannot roll over drops lines instead of
+  growing past its limit. Logs
   (`diagnostics/logs`) and crash reports (`diagnostics/crash-reports`) are
   separate folders with separate owners. Rotation at 8 MiB and a 64 MiB budget
   are coordinator choices; 30 days follows Orgtree. [decided: coordinator
