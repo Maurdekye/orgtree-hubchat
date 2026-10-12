@@ -75,6 +75,89 @@ fn link_start_unsaved_cold_setup_does_not_require_engine() {
     assert_eq!(e.store.hubs().unwrap().len(), 2);
 }
 
+async fn received_link_cancel_schedule(discovery_barrier: bool, replace_listener: bool) {
+    let e = engine();
+    let (client, _) = attach(&e, A);
+    let stop = CancelFlag::default();
+    let reception = crate::link::Reception::new(client, stop.clone());
+    let incoming = Identity::generate("received-link-proof").unwrap();
+    assert_ne!(incoming.address(), e.me.address());
+    let bundle = crate::link::Bundle { id: incoming.id().into(), secret: incoming.secret().into(),
+        name: "scratch".into(), about: String::new(), hubs: vec![A.into()], recovery_saved: false };
+    let started = Arc::new(Notify::new());
+    let resume = Arc::new(Notify::new());
+    let discoveries = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let events = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let pending = Arc::new(Mutex::new(None::<crate::link::Bundle>));
+    let (started2, resume2, discoveries2, events2, pending2) =
+        (started.clone(), resume.clone(), discoveries.clone(), events.clone(), pending.clone());
+    let task = tokio::spawn(async move {
+        let cleanup = async {
+            if !discovery_barrier {
+                // Controlled acknowledgement/delete boundary after a valid bundle.
+                started2.notify_one();
+                resume2.notified().await;
+                return Err(Error::FilePaused);
+            }
+            Ok(())
+        };
+        let review = async {
+            discoveries2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if discovery_barrier {
+                started2.notify_one();
+                resume2.notified().await;
+            }
+            Ok(bundle)
+        };
+        reception.complete(cleanup, review, |bundle| {
+            *pending2.lock().unwrap() = Some(bundle);
+            events2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }).await
+    });
+    started.notified().await;
+    if replace_listener { stop.cancel(); } else { e.set_hub_enabled(A, false).unwrap(); }
+    resume.notify_one();
+    let result = tokio::time::timeout(Duration::from_secs(1), task).await.unwrap().unwrap();
+    assert_eq!(discoveries.load(std::sync::atomic::Ordering::SeqCst), usize::from(discovery_barrier),
+        "cancelled acknowledgement must not begin discovery");
+    assert!(pending.lock().unwrap().is_none(), "cancelled reception must not replace PENDING");
+    assert_eq!(events.load(std::sync::atomic::Ordering::SeqCst), 0, "no late Review event");
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn received_link_disable_during_ack_stops_discovery_and_publication() {
+    received_link_cancel_schedule(false, false).await;
+}
+
+#[tokio::test]
+async fn received_link_disable_during_discovery_stops_publication() {
+    received_link_cancel_schedule(true, false).await;
+}
+
+#[tokio::test]
+async fn received_link_replaced_listener_stops_publication() {
+    received_link_cancel_schedule(true, true).await;
+}
+
+#[tokio::test]
+async fn received_link_unsaved_uncancelled_setup_publishes_once() {
+    let client = HubClient::new(HubAddress::parse("http://127.0.0.1:7999").unwrap());
+    let reception = crate::link::Reception::new(client, CancelFlag::default());
+    let me = Identity::generate("positive-link-proof").unwrap();
+    let address = me.address();
+    let bundle = crate::link::Bundle { id: me.id().into(), secret: me.secret().into(), name: String::new(),
+        about: String::new(), hubs: vec![A.into()], recovery_saved: false };
+    let mut pending = None;
+    let mut events = 0;
+    // Non-cancellation cleanup failure still permits a legitimate review.
+    reception.complete(async { Err(Error::Unreachable("synthetic cleanup".into())) }, async { Ok(bundle) }, |b| {
+        pending = Some(b); events += 1;
+    }).await.unwrap();
+    assert_eq!(pending.unwrap().identity().unwrap().address(), address);
+    assert_eq!(events, 1);
+}
+
 #[tokio::test]
 async fn link_start_saved_client_retains_runtime_cancellation() {
     let e = engine();

@@ -107,17 +107,22 @@ fn adopt(bundle: Bundle, hubs: Vec<String>) -> R<String> {
 /// disk) while the user reviews its hubs: each tried here, under the
 /// addresses the link suggests (`via`: where this device reached the link's
 /// hub; `aliases`: what the link called it).
-async fn arrived(bundle: Bundle, via: &str, aliases: &[String]) -> LinkEvent {
+struct Arrival {
+    event: LinkEvent,
+    pending: Option<Bundle>,
+}
+
+async fn arrived(bundle: Bundle, via: &str, aliases: &[String]) -> Arrival {
     let current = core::get()
         .ok()
         .and_then(|c| c.engine().ok())
         .map(|e| e.me().address());
     let to = match bundle.identity() {
         Ok(me) => me.address(),
-        Err(e) => return LinkEvent::Failed { error: s(e) },
+        Err(e) => return Arrival { event: LinkEvent::Failed { error: s(e) }, pending: None },
     };
     if current.as_deref() == Some(to.as_str()) {
-        return LinkEvent::Same { address: to };
+        return Arrival { event: LinkEvent::Same { address: to }, pending: None };
     }
     let mut set = tokio::task::JoinSet::new();
     for (i, (theirs, candidates)) in link::review_hubs(&bundle.hubs, via, aliases)
@@ -180,13 +185,12 @@ async fn arrived(bundle: Bundle, via: &str, aliases: &[String]) -> LinkEvent {
         })
         .collect();
     let name = bundle.name.clone();
-    *PENDING.lock().unwrap() = Some(bundle);
-    LinkEvent::Review {
+    Arrival { pending: Some(bundle), event: LinkEvent::Review {
         from: current,
         to,
         name,
         hubs: rows,
-    }
+    } }
 }
 
 /// What a link brought, until the user confirms or drops it. Memory only.
@@ -290,6 +294,7 @@ pub async fn hc_link_start<R2: Runtime>(
     let aliases = aliases.unwrap_or_default();
     let alias_client = client.clone();
     c.rt.spawn(async move {
+        let reception = link::Reception::new(client.clone(), stop.clone());
         let t0 = Instant::now();
         let _ = app.emit(
             "hc-link",
@@ -317,15 +322,21 @@ pub async fn hc_link_start<R2: Runtime>(
                     .ok()
                     .map(|b| (m.id.clone(), b))
             });
-            if !ids.is_empty() {
-                let _ = client.ack(&temp, &ids).await;
-            }
             if let Some((id, bundle)) = found {
                 // Hubs that keep history (v2) would keep our copy of the
                 // sealed identity: delete it (older hubs answer 404).
-                let _ = client.delete_message(&temp, &id).await;
-                break Some(arrived(bundle, &via, &aliases).await);
+                let cleanup = async {
+                    if !ids.is_empty() { let _ = client.ack(&temp, &ids).await; }
+                    let _ = client.delete_message(&temp, &id).await;
+                    Ok(())
+                };
+                let _ = reception.complete(cleanup, async { Ok(arrived(bundle, &via, &aliases).await) }, |arrival| {
+                    if let Some(bundle) = arrival.pending { *PENDING.lock().unwrap() = Some(bundle); }
+                    let _ = app.emit("hc-link", arrival.event);
+                }).await;
+                break None;
             }
+            if !ids.is_empty() { let _ = client.ack(&temp, &ids).await; }
         };
         let _ = client.unregister(&temp).await;
         if let Some(ev) = outcome {

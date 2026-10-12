@@ -45,6 +45,36 @@ pub fn start_client(
         .ok_or_else(|| Error::Invalid("This saved hub is unavailable; restore the identity and connect it before linking.".into()))
 }
 
+/// A received bundle belongs to both its hub runtime and its listener attempt.
+#[derive(Clone)]
+pub struct Reception {
+    client: crate::HubClient,
+    listener: crate::hub::CancelFlag,
+}
+
+impl Reception {
+    pub fn new(client: crate::HubClient, listener: crate::hub::CancelFlag) -> Self {
+        Self { client, listener }
+    }
+
+    pub fn complete<'a, T: 'a>(
+        &'a self,
+        cleanup: impl std::future::Future<Output = Result<()>> + 'a,
+        review: impl std::future::Future<Output = Result<T>> + 'a,
+        publish: impl FnOnce(T) + 'a,
+    ) -> impl std::future::Future<Output = Result<()>> + 'a {
+        let cleanup = Box::pin(cleanup);
+        let review = Box::pin(review);
+        async move {
+            let _ = (&self.client, &self.listener);
+            let _ = cleanup.await;
+            let prepared = review.await?;
+            publish(prepared);
+            Ok(())
+        }
+    }
+}
+
 /// The identity and what travels with it.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Bundle {
