@@ -236,8 +236,10 @@ keeps its start-time name.
 - Android is not changed: no file log, no Developer tab, no subscriber. The
   core's failures go to stderr there as a kind (`diag::failure` falls back when
   no subscriber is set); before this work they carried the error's text. The
-  new Android-only code paths (`keylog::Fact::PushCleanupFailed`) are not
-  compiled here.
+  Android-only paths this work touches (`keylog::Fact::PushCleanupFailed`, the
+  Android branches of `secrets.rs` and `core.rs`) pass `cargo check -p hubchat
+  --lib --target aarch64-linux-android` (2026-10-12, NDK 27.3.13750724, no
+  warnings); nothing was linked, packaged or run on Android.
 - `identity-log.txt` is the pre-existing durable record and keeps its lines
   (including a key store's own error text); it is local, 64 KB, and was not
   made part of the normal log's contract.
