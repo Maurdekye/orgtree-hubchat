@@ -1,5 +1,10 @@
 # Hubchat development invariants
 
+- 2026-10-12: Picture HTTP and response-body reads use the bound hub session;
+  picture/ack/roster admission uses its short generation commit guard. Disabled
+  clients stay cancelled after re-enable. [verified: hub_pictures.rs,
+  engine_pictures.rs; tests and limits: docs/profile-pictures.md]
+
 - 2026-10-12: Picture preview/save share one native decoder slot, retained
   inside blocking decoding even if its async caller is cancelled. Image bytes
   must not appear in diagnostics. Native command compilation passes; permit

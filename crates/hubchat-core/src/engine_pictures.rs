@@ -4,6 +4,28 @@ use super::*;
 use crate::pictures::PictureRecord;
 
 impl Engine {
+    pub(crate) fn observe_pictures_for(&self, client:&HubClient, entries:&[crate::hub::RosterEntry])->Result<()> {
+        client.session_commit(|| {
+            self.observe_pictures(entries)?;
+            self.picture_changed.send_replace(());
+            Ok(())
+        }).ok_or(Error::FilePaused)?
+    }
+
+    /// A completed response may race disable before its local effects. Keep
+    /// the short store/event publication in the originating generation guard.
+    fn admit_picture(&self, client:&HubClient, peer:&str, record:&PictureRecord, ack:Option<&str>)->Result<()> {
+        client.session_commit(|| {
+            if self.stopped.load(std::sync::atomic::Ordering::Relaxed) { return Err(Error::Cancelled); }
+            let owner=self.me.address();
+            if self.store.merge_picture(&owner,peer,record)? {
+                self.host.event(Event::Directory);
+                self.picture_changed.send_replace(());
+            }
+            if let Some(key)=ack { self.store.picture_ack(&owner,key,&record.meta.revision)?; }
+            Ok(())
+        }).ok_or(Error::FilePaused)?
+    }
     pub(crate) fn observe_pictures(&self, entries:&[crate::hub::RosterEntry])->Result<()> {
         let owner=self.me.address();
         let mut changed=false;
@@ -22,14 +44,13 @@ impl Engine {
         let ack_key=format!("picture.ack.{}",client.address());
         if initial || (self.store.picture_meta(&owner)?.is_some() && self.store.picture(&owner)?.is_none()) {
             if let Some(remote)=client.picture(&self.me,&owner).await? {
-                if self.store.merge_picture(&owner,&owner,&remote)? { self.host.event(Event::Directory); self.picture_changed.send_replace(()); }
+                self.admit_picture(client,&owner,&remote,None)?;
             }
         }
         let Some(local)=self.store.picture(&owner)? else { return Ok(()) };
         if !initial && self.store.meta(&ack_key)?.as_deref()==Some(&local.meta.revision) { return Ok(()); }
         let winning=client.set_picture(&self.me,&local).await?;
-        if self.store.merge_picture(&owner,&owner,&winning)? { self.host.event(Event::Directory); self.picture_changed.send_replace(()); }
-        self.store.picture_ack(&owner,&ack_key,&winning.meta.revision)?;
+        self.admit_picture(client,&owner,&winning,Some(&ack_key))?;
         Ok(())
     }
     pub(crate) async fn picture_session(&self, client:&HubClient) {
@@ -54,6 +75,7 @@ impl Engine {
     }
     /// On-demand bytes from active capable hubs, checked against latest metadata.
     pub async fn picture(&self, peer:&str)->Result<Option<PictureRecord>> {
+        if self.stopped.load(std::sync::atomic::Ordering::Relaxed) { return Err(Error::Cancelled); }
         let owner=self.me.address();
         if peer!=owner && !self.store.picture_eligible(peer)? { return Ok(None); }
         if let Some(p)=self.store.picture(peer)? { return Ok(Some(p)); }
@@ -64,7 +86,7 @@ impl Engine {
         for client in hubs {
             if peer!=owner && !reaching.iter().any(|(url,_)|url==client.address().as_str()) { continue; }
             if let Ok(Some(remote))=client.picture(&self.me,peer).await {
-                self.store.merge_picture(&owner,peer,&remote)?;
+                self.admit_picture(&client,peer,&remote,None)?;
                 if let Some(p)=self.store.picture(peer)? { return Ok(Some(p)); }
             }
         }
@@ -92,6 +114,80 @@ mod tests {
         let mut bytes=Vec::new();
         {let mut p=png::Encoder::new(&mut bytes,1,1);p.set_color(png::ColorType::Rgba);p.set_depth(png::BitDepth::Eight);p.write_header().unwrap().write_image_data(&[1,2,3,255]).unwrap();}
         from_png(next_revision(None).unwrap(),bytes,1).unwrap()
+    }
+    fn attach(e:&Engine, base:HubClient)->HubClient {
+        let stop=CancelFlag::default();let client=base.bind_stop(stop.clone());let url=client.address().to_string();
+        e.store.add_hub(&url,"picture-proof").unwrap();
+        e.hubs.lock().unwrap().insert(url.clone(),HubRuntime {
+            client:client.clone(),stop,retry_now:Arc::new(Notify::new()),kick:Arc::new(Notify::new()),
+            status:HubStatus {url,name:"picture-proof".into(),state:HubState::Connected,error:None,retry_at_ms:None,
+                max_attachment_bytes:1_000_000,features:vec!["profile_pictures".into()],version:None,
+                answered_ms:None,waiting_since_ms:None,clock_offset_ms:None},
+        });
+        client
+    }
+
+    #[tokio::test]
+    async fn picture_disabled_clones_refuse_get_post_and_reenabled_generation_works() {
+        let e=engine();e.set_suspended(true);let record=image();
+        let (base,proof)=hub(vec![serde_json::json!({"picture":record}),serde_json::json!({"picture":record})]).await;
+        let client=attach(&e,base);let url=client.address().to_string();
+        e.set_hub_enabled(&url,false).unwrap();
+        assert!(matches!(client.picture(&e.me,&e.me.address()).await,Err(Error::FilePaused)));
+        assert!(matches!(client.set_picture(&e.me,&record).await,Err(Error::FilePaused)));
+        e.set_hub_enabled(&url,true).unwrap();
+        let fresh=e.hub_client(&url).unwrap();
+        assert!(matches!(client.picture(&e.me,&e.me.address()).await,Err(Error::FilePaused)));
+        assert_eq!(fresh.picture(&e.me,&e.me.address()).await.unwrap(),Some(record.clone()));
+        assert_eq!(fresh.set_picture(&e.me,&record).await.unwrap(),record);
+        let requests=proof.await.unwrap();assert_eq!(requests.len(),2);assert_eq!(requests[0].0,"GET");assert_eq!(requests[1].0,"POST");
+        e.shutdown();
+    }
+
+    async fn stalled_picture_request(post:bool) {
+        let e=engine();let record=image();let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr=HubAddress::parse(&format!("http://{}",listener.local_addr().unwrap())).unwrap();
+        let client=attach(&e,HubClient::new(addr));let url=client.address().to_string();
+        let arrived=Arc::new(Notify::new());let reached=arrived.clone();
+        let server=tokio::spawn(async move {
+            let (mut socket,_)=listener.accept().await.unwrap();let mut buffer=[0;8192];let mut bytes=Vec::new();
+            let split=loop {let n=socket.read(&mut buffer).await.unwrap();assert!(n>0);bytes.extend_from_slice(&buffer[..n]);if let Some(at)=bytes.windows(4).position(|w|w==b"\r\n\r\n") {break at+4;}};
+            let headers=String::from_utf8_lossy(&bytes[..split]).to_string();
+            assert!(headers.starts_with(if post {"POST "} else {"GET "}));
+            let len=headers.lines().find_map(|l|l.to_ascii_lowercase().strip_prefix("content-length:").map(|n|n.trim().parse::<usize>().unwrap())).unwrap_or(0);
+            while bytes.len()<split+len {let n=socket.read(&mut buffer).await.unwrap();assert!(n>0);bytes.extend_from_slice(&buffer[..n]);}
+            socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 200\r\n\r\n{").await.unwrap();
+            reached.notify_one();std::future::pending::<()>().await;
+        });
+        let request={let e=e.clone();tokio::spawn(async move {if post {client.set_picture(&e.me,&record).await.map(Some)} else {client.picture(&e.me,&e.me.address()).await}})};
+        tokio::time::timeout(Duration::from_secs(2),arrived.notified()).await.unwrap();
+        e.set_hub_enabled(&url,false).unwrap();
+        let result=tokio::time::timeout(Duration::from_secs(1),request).await.unwrap().unwrap();
+        assert!(matches!(result,Err(Error::FilePaused)));
+        assert!(e.store.picture(&e.me.address()).unwrap().is_none());
+        server.abort();let _=server.await;e.shutdown();
+    }
+    #[tokio::test]
+    async fn picture_get_body_is_cancelled_after_disabled_runtime() {stalled_picture_request(false).await;}
+    #[tokio::test]
+    async fn picture_post_ack_body_is_cancelled_after_disabled_runtime() {stalled_picture_request(true).await;}
+
+    #[tokio::test]
+    async fn picture_completed_old_generation_cannot_publish_pixels_ack_or_roster() {
+        let e=engine();let owner=e.me.address();let record=image();
+        let base=HubClient::new(HubAddress::parse("http://127.0.0.1:7996").unwrap());
+        let old=attach(&e,base.clone());let url=base.address().to_string();
+        e.set_hub_enabled(&url,false).unwrap();
+        let ack="picture.ack.proof";
+        assert!(matches!(e.admit_picture(&old,&owner,&record,Some(ack)),Err(Error::FilePaused)));
+        let entry:crate::hub::RosterEntry=serde_json::from_value(serde_json::json!({"slug":"peer.aaaaaa","kind":"person","picture":record.meta})).unwrap();
+        assert!(matches!(e.observe_pictures_for(&old,&[entry]),Err(Error::FilePaused)));
+        assert!(e.store.picture(&owner).unwrap().is_none());assert!(e.store.meta(ack).unwrap().is_none());
+        assert!(e.store.picture_meta("peer.aaaaaa").unwrap().is_none());
+        let fresh=attach(&e,base);
+        e.admit_picture(&fresh,&owner,&record,Some(ack)).unwrap();
+        assert_eq!(e.store.picture(&owner).unwrap(),Some(record.clone()));assert_eq!(e.store.meta(ack).unwrap(),Some(record.meta.revision));
+        e.shutdown();
     }
     async fn hub(answers:Vec<serde_json::Value>)->(HubClient,tokio::task::JoinHandle<Vec<(String,serde_json::Value)>>) {
         let l=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

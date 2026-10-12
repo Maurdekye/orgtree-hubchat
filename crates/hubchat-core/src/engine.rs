@@ -916,8 +916,7 @@ impl Engine {
                 self.set_status_for(url, stop, |s| s.version = v);
             }
             self.store.set_roster(url, &p.roster)?;
-            self.observe_pictures(&p.roster)?;
-            self.picture_changed.send_replace(());
+            self.observe_pictures_for(client,&p.roster)?;
             self.host.event(Event::Directory);
             for r in &p.receipts {
                 self.store.apply_receipt(r)?;
@@ -1059,8 +1058,7 @@ impl Engine {
             }
             let start_ms: Option<i64> = self.store.meta(&start_key)?.and_then(|v| v.parse().ok());
             let mut dir_changed = false;
-            self.observe_pictures(&r.roster)?;
-            self.picture_changed.send_replace(());
+            self.observe_pictures_for(client,&r.roster)?;
             if first_page && !r.roster.is_empty() {
                 self.store.set_roster(url, &r.roster)?;
                 dir_changed = true;

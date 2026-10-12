@@ -24,14 +24,18 @@ async fn picture_answer(response:reqwest::Response)->Result<Option<PictureRecord
 }
 impl HubClient {
     pub async fn picture(&self, me:&Identity, peer:&str)->Result<Option<PictureRecord>> {
+        self.session_work(async {
         let response=http().get(self.addr.join("/api/profile-picture")).query(&[("slug",peer)])
             .header("X-Org-Auth",me.auth_header()).send().await?;
         picture_answer(response).await
+        }).await
     }
     pub async fn set_picture(&self, me:&Identity, record:&PictureRecord)->Result<PictureRecord> {
+        self.session_work(async {
         record.decoded()?;
         let response=http().post(self.addr.join("/api/profile-picture")).header("X-Org-Auth",me.auth_header())
             .json(&serde_json::json!({"slug":me.address(),"picture":record})).send().await?;
         picture_answer(response).await?.ok_or_else(||Error::Invalid("Missing picture acknowledgement".into()))
+        }).await
     }
 }
