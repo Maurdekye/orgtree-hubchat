@@ -17,7 +17,18 @@ async fn accepted_first_send_is_visible_below_lazy_history_floor_without_inbound
     // A remembered hub boundary ahead of local time (e.g. clock rollback).
     // This is controlled state, not a reproduction of the reported device.
     let future = unix_ms() + 60_000;
-    store.set_meta(&format!("history.floor.{peer}"), &future.to_string()).unwrap();
+    let addr = HubAddress::parse("127.0.0.1:7999").unwrap();
+    let url = addr.to_string();
+    store.set_meta(&start_key(&url), &future.to_string()).unwrap();
+    engine.hubs.lock().unwrap().insert(url.clone(), HubRuntime {
+        client: HubClient::new(addr),
+        status: HubStatus { url, name: "scratch-only".into(), state: HubState::Connected,
+            error: None, retry_at_ms: None, max_attachment_bytes: 1_000_000,
+            features: vec!["lazy_history".into()], version: None,
+            answered_ms: None, waiting_since_ms: None, clock_offset_ms: Some(0) },
+        retry_now: Arc::new(Notify::new()), kick: Arc::new(Notify::new()), stop: CancelFlag::default(),
+    });
+    assert!(engine.chat(peer, None, None, 50).unwrap().is_empty());
     let id = uuid::Uuid::new_v4().to_string();
     engine.send(NewOutgoing { id: id.clone(), peer: peer.into(), body: "first outgoing".into(), kind: None, reply_to: None, attachments: vec![] }).await.unwrap();
     let persisted = store.chat(peer, None, None, 50).unwrap();
