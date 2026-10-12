@@ -13,9 +13,13 @@ impl IdentityLoader {
         if !*complete { *complete = load()?; }
         Ok(())
     }
-    pub fn run(&self, ready: impl FnOnce() -> bool, load: impl FnOnce() -> std::result::Result<(), String>) -> std::result::Result<(), String> {
-        let _guard = self.0.lock().map_err(|_| "Identity startup is unavailable; retry".to_string())?;
-        if ready() { Ok(()) } else { load() }
+    /// Explicit recovery/adoption always remains allowed. Only an established
+    /// engine completes initialization; false/error cannot latch or clear it.
+    pub fn run(&self, ready: impl FnOnce() -> bool, load: impl FnOnce() -> std::result::Result<bool, String>) -> std::result::Result<(), String> {
+        let mut complete = self.0.lock().map_err(|_| "Identity startup is unavailable; retry".to_string())?;
+        let established = ready() || load()?;
+        *complete |= established;
+        Ok(())
     }
 }
 
@@ -176,7 +180,7 @@ mod tests {
                 if adoption { assert!(active.lock().unwrap().is_none()); }
                 store.set_meta("identity.address", &a.address()).unwrap();
                 *active.lock().unwrap() = Some(engine(store.clone(), a));
-                Ok(())
+                Ok(true)
             }).unwrap();
             let departing = active.lock().unwrap().take().unwrap();
             // Leave has taken A but unregister/key deletion are still pending.
@@ -199,7 +203,7 @@ mod tests {
                 assert!(active.lock().unwrap().is_none());
                 store.set_meta("identity.address", &owner_b).unwrap();
                 *active.lock().unwrap() = Some(engine(store.clone(), b));
-                Ok(())
+                Ok(true)
             }).unwrap();
             let e = active.lock().unwrap().clone().unwrap();
             assert_eq!(e.me().address(), owner_b);
@@ -225,6 +229,27 @@ mod tests {
         loader.attach(|| Ok(false)).unwrap();
         loader.run(|| true, || panic!("already established")).unwrap();
         loader.attach(|| panic!("must not reload after departure")).unwrap();
+    }
+
+    #[test]
+    fn incomplete_explicit_attempts_do_not_latch_or_clear_completion() {
+        let loader = IdentityLoader::default();
+        loader.attach(|| Ok(false)).unwrap();
+        loader.run(|| false, || Ok(false)).unwrap(); // missing/unreadable key
+        let mut attempted = false;
+        loader.attach(|| { attempted = true; Ok(false) }).unwrap();
+        assert!(attempted);
+        assert!(loader.run(|| false, || Err("synthetic failure".into())).is_err());
+        attempted = false;
+        loader.attach(|| { attempted = true; Ok(false) }).unwrap();
+        assert!(attempted);
+        loader.run(|| false, || Ok(true)).unwrap(); // genuine establishment
+        loader.run(|| false, || Ok(false)).unwrap();
+        assert!(loader.run(|| false, || Err("synthetic later failure".into())).is_err());
+        loader.attach(|| panic!("non-success must not clear established completion")).unwrap();
+        let mut adoption = false;
+        loader.run(|| false, || { adoption = true; Ok(true) }).unwrap();
+        assert!(adoption); // completion never blocks an intentional adoption
     }
 
     #[test]

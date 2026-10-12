@@ -535,7 +535,7 @@ impl Core {
     /// Read the key and start (start-up, and Try again on the lost-key
     /// screen); without one, note whether this device had an identity.
     pub fn load_key(&self) -> Result<(), String> {
-        self.identity_load.run(|| self.has_identity(), || self.load_key_inner().map(|_| ()))
+        self.identity_load.run(|| self.has_identity(), || self.load_key_inner())
     }
 
     fn load_key_inner(&self) -> Result<bool, String> {
@@ -555,7 +555,7 @@ impl Core {
         });
         self.host.platform.status("Set up Hubchat to connect");
         // Keep the lost-key UI available while a later cold attach retries the key.
-        Ok(!unreadable)
+        Ok(false)
     }
 
     fn start_with(&self, me: Identity) -> Result<(), String> {
@@ -636,7 +636,7 @@ impl Core {
     /// data that belongs to another identity goes first (user 2026-10-10:
     /// a new identity must never inherit the old one's chats and hubs).
     pub fn adopt_identity(&self, me: Identity, brand_new: bool, meta: &[(&str, &str)]) -> Result<(), String> {
-        self.identity_load.run(|| false, || self.adopt_identity_inner(me, brand_new, meta))
+        self.identity_load.run(|| false, || self.adopt_identity_inner(me, brand_new, meta).map(|_| true))
     }
 
     fn adopt_identity_inner(&self, me: Identity, brand_new: bool, meta: &[(&str, &str)]) -> Result<(), String> {
