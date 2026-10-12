@@ -139,11 +139,12 @@ impl crate::core::Platform for AndroidPlatform {
     }
     /// The sound follows Android's own settings for the Messages channel
     /// (the design has no sound switch on Android).
-    fn notify(&self, title: &str, body: &str, peer: &str, _sound: bool) {
+    fn notify(&self, title: &str, body: &str, peer: &str, sound: bool) {
+        self.notify_incoming("", title, body, peer, sound);
+    }
+    fn notify_incoming(&self, owner: &str, title: &str, body: &str, peer: &str, _sound: bool) {
         if let Some(j) = JNI.get() {
-            let owner = crate::core::get().ok()
-                .and_then(|c| c.store.meta("identity.address").ok().flatten()).unwrap_or_default();
-            call(&j.service, "notifyMessage", &[title, body, peer, &owner], false);
+            call(&j.service, "notifyMessage", &[title, body, peer, owner], false);
         }
     }
     fn notify_transfer(&self, notice:&hubchat_core::store::TransferFailure,title:&str,body:&str,_sound:bool)->std::io::Result<()> {
@@ -327,14 +328,10 @@ fn notification_reply(mut env: JNIEnv, owner: JString, id: JString, peer: JStrin
         let id = env.get_string(&id).map(String::from).map_err(|_| ())?;
         let peer = env.get_string(&peer).map(String::from).map_err(|_| ())?;
         let body = env.get_string(&body).map(String::from).map_err(|_| ())?;
-        let c = crate::core::get().map_err(|_| ())?;
-        let e = c.engine().map_err(|_| ())?;
-        let _admission = c.file_admission(body.len() as u64 > hubchat_core::engine::BODY_INLINE_MAX);
-        match e.queue_notification_reply(&owner, &id, &peer, &body) {
-            Ok(_) => Ok("queued"),
-            Err(hubchat_core::Error::Invalid(_)) => Ok("rejected"),
-            Err(_) => Ok("retry"),
-        }
+        let c = crate::core::get().ok();
+        let e = c.and_then(|c| c.engine().ok());
+        let _admission = c.map(|c| c.file_admission(body.len() as u64 > hubchat_core::engine::BODY_INLINE_MAX));
+        Ok(hubchat_core::notification_reply::admit(e.as_deref(), &owner, &id, &peer, &body))
     })().unwrap_or("rejected");
     env.new_string(result).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
 }

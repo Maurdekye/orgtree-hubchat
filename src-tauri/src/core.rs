@@ -22,6 +22,11 @@ pub trait Platform: Send + Sync + 'static {
     /// Show a message notification (title = sender, body = preview).
     /// `sound`: play the notification sound (Settings › Notifications).
     fn notify(&self, title: &str, body: &str, peer: &str, sound: bool);
+    /// Incoming notifications retain the identity of the producing engine.
+    fn notify_incoming(&self, owner: &str, title: &str, body: &str, peer: &str, sound: bool) {
+        let _ = owner;
+        self.notify(title, body, peer, sound);
+    }
     /// A local transfer failure uses its own replacement key, separate from
     /// incoming-message notifications which disappear when a chat is read.
     fn notify_transfer(&self, notice:&hubchat_core::store::TransferFailure, title:&str, body:&str, sound:bool) -> std::io::Result<()> {
@@ -273,19 +278,9 @@ impl Host for ShellHost {
                 && self.open_chat.lock().unwrap().as_deref() == Some(peer.as_str());
             // `quiet`: another of our devices was in use when it came
             if !showing && !quiet && self.notify_on.load(Ordering::Relaxed) {
-                let title = self
-                    .store
-                    .display_name(peer)
-                    .ok()
-                    .flatten()
-                    .unwrap_or_else(|| peer.clone());
-                let body = if self.notify_text.load(Ordering::Relaxed) {
-                    preview.clone()
-                } else {
-                    "New message".to_string()
-                };
-                self.platform
-                    .notify(&title, &body, peer, self.notify_sound.load(Ordering::Relaxed));
+                if let Some(n) = hubchat_core::notification_reply::incoming_notice(&ev, &self.store, self.notify_text.load(Ordering::Relaxed)) {
+                    self.platform.notify_incoming(&n.owner, &n.title, &n.body, &n.peer, self.notify_sound.load(Ordering::Relaxed));
+                }
             }
         }
         // read on any device: its notification goes (user 23:50Z)

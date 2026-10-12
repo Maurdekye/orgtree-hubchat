@@ -918,12 +918,7 @@ impl Engine {
                     self.note_setup_reply(&m.from, &m.id, &m.body);
                     // markdown syntax is for the chat; a notification gets plain words
                     let preview = crate::text::plain_preview(&m.body, 140);
-                    self.host.event(Event::Incoming {
-                        peer: m.from.clone(),
-                        id: m.id.clone(),
-                        preview,
-                        quiet: false,
-                    });
+                    self.host.event(self.incoming_event(m.from.clone(), m.id.clone(), preview, false));
                 }
                 self.host.event(Event::Chat {
                     peer: m.from.clone(),
@@ -1100,12 +1095,7 @@ impl Engine {
                         if fresh && !catching_up {
                             // markdown syntax is for the chat; a notification gets plain words
                             let preview = crate::text::plain_preview(&m.env.body, 140);
-                            self.host.event(Event::Incoming {
-                                peer: m.env.from.clone(),
-                                id: m.env.id.clone(),
-                                preview,
-                                quiet: !r.active.is_empty(),
-                            });
+                            self.host.event(self.incoming_event(m.env.from.clone(), m.env.id.clone(), preview, !r.active.is_empty()));
                         }
                         peers.insert(if incoming {
                             m.env.from.clone()

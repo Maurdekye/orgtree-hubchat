@@ -2,6 +2,9 @@
 use crate::{engine::{Engine, Event, BODY_INLINE_MAX}, Error, Result};
 
 impl Engine {
+    pub fn incoming_event(&self, peer: String, id: String, preview: String, quiet: bool) -> Event {
+        Event::Incoming { peer, id, preview, quiet }
+    }
     /// The account was captured when the notification was posted, never at send time.
     /// Admission is local; routing, delivery and retries remain the sender's job.
     pub fn queue_notification_reply(&self, owner: &str, id: &str, peer: &str, body: &str) -> Result<bool> {

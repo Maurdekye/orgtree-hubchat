@@ -22,3 +22,5 @@ pub use identity::Identity;
 mod staging;
 
 pub mod download;
+
+pub mod notification_reply;
