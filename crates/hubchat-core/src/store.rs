@@ -2077,6 +2077,7 @@ pub(crate) use download_gc_store::ExportCleanup;
 
 #[path = "body_store.rs"]
 mod body_store;
+pub(crate) use body_store::BodyFetch;
 
 #[path = "close_dm.rs"]
 mod close_dm;

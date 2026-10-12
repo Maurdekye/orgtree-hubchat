@@ -47,12 +47,9 @@ impl Engine {
                             continue;
                         };
                         let e = self.clone();
-                        let id = row.id.clone();
-                        let peer = row.peer.clone();
-                        let reply = row.reply;
-                        let meta = crate::questions::Meta::load(row.meta.as_deref());
+                        let fetch = row.clone();
                         let task = workers.spawn(async move {
-                            e.fetch_body(&id, &peer, reply, &meta, &hub, client, stop).await;
+                            e.fetch_body(&fetch, &hub, client, stop).await;
                         });
                         active.insert(task.id(), row.id.clone());
                     }
@@ -88,16 +85,8 @@ impl Engine {
         }
     }
 
-    async fn fetch_body(
-        &self,
-        id: &str,
-        peer: &str,
-        reply: bool,
-        meta: &crate::questions::Meta,
-        hub: &str,
-        client: HubClient,
-        stop: CancelFlag,
-    ) {
+    async fn fetch_body(&self, row: &crate::store::BodyFetch, hub: &str, client: HubClient, stop: CancelFlag) {
+        let (id, peer) = (row.id.as_str(), row.peer.as_str());
         let mut suspended = self.suspended.subscribe();
         if *suspended.borrow_and_update() || self.stopped.load(std::sync::atomic::Ordering::Relaxed)
         {
@@ -110,7 +99,8 @@ impl Engine {
         };
         match result {
             Ok(body) => {
-                let body = crate::questions::shown(&body, reply, meta);
+                // without the reply's quote line, or the plain-text part its meta names
+                let body = crate::questions::shown(&body, row.reply, &crate::questions::Meta::load(row.meta.as_deref()));
                 if self.store.finish_body(id, &body).unwrap_or(false) {
                     self.host.event(Event::Chat { peer: peer.into() });
                 }

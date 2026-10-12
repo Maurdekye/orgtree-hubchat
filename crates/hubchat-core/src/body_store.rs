@@ -1,6 +1,7 @@
 use super::*;
 pub(crate) const BODY_MISSING: &str = "The rest of this message is no longer on the hub.";
 
+#[derive(Clone)]
 pub(crate) struct BodyFetch {
     pub id: String,
     pub peer: String,
