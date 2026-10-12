@@ -195,6 +195,30 @@ try {
     await b.shot(join(out, '09-multireply-phone-dark.png'));
     check('phone: the composer rows fit the screen width', await ev(`[...document.querySelectorAll('.composer .rb-item, .composer .anschip')].every((e) => e.getBoundingClientRect().right <= 390 + 0.5)`));
   }
+  // ----------------------------------------- settling order (the real module)
+  // Two devices can answer one card at once; every device must settle it the
+  // same way (docs/question-cards.md "Settling"), whatever order it lists them in.
+  const { cardStates } = await server.ssrLoadModule('/src/lib/questions.ts');
+  const msg = (o) => ({ peer: 'orgtree', hub: 'h', kind: null, reply_to: null, sent_at: null, received_at: null, created_at: '2026-10-12T10:00:00.000Z',
+    state: 'sent', fetched_at: null, delivered_at: null, read_at: null, error: null, seen: true, attachments: [], outgoing: true, body: '', ...o });
+  const card = msg({ id: 'q', outgoing: false, kind: 'question', body: 'Which channel?', question: { options: ['Beta', 'Stable'], multiple: false }, received_at: '2026-10-12T09:00:00.000Z' });
+  const ans = (id, pick, o = {}) => msg({ id, reply_to: 'q', answers: pick ? [{ question: 'q', picked: [].concat(pick) }] : [], ...o });
+  const settle = (list) => { const s = cardStates([card, ...list]).get('q'); return s.st === 'open' ? 'open' : `${s.st}:${s.by.id}:${s.picked ? s.picked.join('+') : ''}`; };
+  const both = (list, want) => settle(list) === want && settle([...list].reverse()) === want;
+  const T = '2026-10-12T10:00:00.000Z';
+  check('settling: two answers the hub received at the same moment: the lower message id counts, in either list order',
+    both([ans('b-2', 'Beta', { received_at: T }), ans('b-1', 'Stable', { received_at: T })], 'answered:b-1:Stable'));
+  check('settling: the answer the hub received first counts, even when the other was written first',
+    both([ans('a1', 'Beta', { created_at: '2026-10-12T10:00:00.000Z', received_at: '2026-10-12T10:10:00.000Z' }), ans('a2', 'Stable', { created_at: '2026-10-12T10:05:00.000Z', received_at: '2026-10-12T10:06:00.000Z' })], 'answered:a2:Stable'));
+  check('settling: an answer not yet on a hub comes after every answer that is; unsent ones in writing order',
+    both([ans('u1', 'Beta', { created_at: '2026-10-12T08:00:00.000Z', state: 'queued' }), ans('s1', 'Stable', { received_at: T })], 'answered:s1:Stable') &&
+    both([ans('u2', 'Beta', { created_at: '2026-10-12T08:01:00.000Z', state: 'queued' }), ans('u1', 'Stable', { created_at: '2026-10-12T08:00:00.000Z', state: 'queued' })], 'answered:u1:Stable'));
+  check('settling: an empty plain reply first skips the card for good; a later pick is not counted',
+    both([ans('e1', null, { received_at: T }), ans('p1', 'Beta', { received_at: '2026-10-12T10:01:00.000Z' })], 'skipped:e1:'));
+  check("settling: the card's own side can't answer it; a pick that isn't one of its options counts as a plain reply",
+    settle([ans('own', 'Beta', { outgoing: false, received_at: T })]) === 'open' &&
+    settle([ans('x1', 'Nope', { body: 'hello', received_at: T })]) === 'answered:x1:' &&
+    settle([ans('x2', ['Beta', 'Stable'], { received_at: T })]) === 'skipped:x2:');
   check('no console errors or exceptions', b.errors.length === 0);
   if (b.errors.length) console.log(b.errors.join('\n'));
 } catch (e) {
