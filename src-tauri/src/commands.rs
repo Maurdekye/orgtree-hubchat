@@ -328,23 +328,24 @@ const GRACE: Duration = Duration::from_millis(750);
 /// likelier ones still pending get `GRACE` and no more, so an address that a
 /// firewall silently drops cannot hold the result for the whole `limit`.
 pub(crate) async fn probe_first(hubs: Vec<String>, name: Option<String>, limit: Duration) -> Probe {
-    probe_first_inner(hubs, name, limit, None).await
+    probe_first_inner(hubs, name, limit, discovery_context(None)).await
 }
 
 /// Received-link probes retain both their hub generation and listener attempt.
 pub(crate) async fn probe_first_for(hubs: Vec<String>, name: Option<String>, limit: Duration,
     reception: hubchat_core::link::Reception) -> Probe {
-    probe_first_inner(hubs, name, limit, Some(reception)).await
+    probe_first_inner(hubs, name, limit, discovery_context(Some(reception))).await
 }
 
 async fn probe_first_inner(hubs: Vec<String>, name: Option<String>, limit: Duration,
-    reception: Option<hubchat_core::link::Reception>) -> Probe {
+    requests: R<hubchat_core::link::Discovery>) -> Probe {
+    let requests = match requests { Ok(requests) => requests, Err(error) => return Probe::Invalid { error } };
     {
         let mut set = tokio::task::JoinSet::new();
         for (i, h) in hubs.iter().cloned().enumerate() {
             let name = name.clone();
-            let reception = reception.clone();
-            set.spawn(async move { (i, probe_inner(&h, name.as_deref(), limit, reception).await) });
+            let requests = requests.clone();
+            set.spawn(async move { (i, probe_request(&h, name.as_deref(), limit, requests).await) });
         }
         let mut done: Vec<Option<Probe>> = hubs.iter().map(|_| None).collect();
         let connected = |p: &Option<Probe>| matches!(p, Some(Probe::Connected { .. }));
@@ -390,15 +391,20 @@ async fn probe(input: &str, name: Option<&str>, limit: Duration) -> Probe {
 
 async fn probe_inner(input: &str, name: Option<&str>, limit: Duration,
     reception: Option<hubchat_core::link::Reception>) -> Probe {
+    let requests = match discovery_context(reception) {
+        Ok(requests) => requests,
+        Err(error) => return Probe::Invalid { error },
+    };
+    probe_request(input, name, limit, requests).await
+}
+
+async fn probe_request(input: &str, name: Option<&str>, limit: Duration,
+    requests: hubchat_core::link::Discovery) -> Probe {
     let addr = match HubAddress::parse(input) {
         Ok(a) => a,
         Err(e) => return Probe::Invalid { error: s(e) },
     };
     let url = addr.to_string();
-    let requests = match discovery_context(reception) {
-        Ok(requests) => requests,
-        Err(error) => return Probe::Unreachable { url, error },
-    };
     let r: Result<Result<Health, _>, _> = tokio::time::timeout(limit, requests.health(addr)).await;
     match r {
         Err(_) => Probe::Unreachable {
@@ -907,6 +913,13 @@ mod tests {
     use std::time::Instant;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    // Probe-order fixtures have no app Core/saved configuration. Inject only
+    // their synthetic-hub resolver into the actual production request path.
+    async fn probe_first(hubs: Vec<String>, name: Option<String>, limit: Duration) -> Probe {
+        let requests = hubchat_core::link::Discovery::new(|a| Ok(hubchat_core::HubClient::new(a)));
+        super::probe_first_inner(hubs, name, limit, Ok(requests)).await
+    }
 
     /// A fake hub on loopback: answers /healthz as hub `name`.
     async fn hub(name: &'static str) -> String {
