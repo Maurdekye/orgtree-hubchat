@@ -57,3 +57,11 @@ Image0.25.9 is pinned to preserve declared Rust1.85 compatibility (0.25.10 requi
 checkpoint used0.25.6 and require the final dependency-composed rerun. Organization
 settings publication and final independent review are still pending. No release
 or deployment is authorized by these results.
+
+At 10:48Z on 2026-10-12 the user paused every build/check/test until the
+coordinator confirms completion of paused Claude work. Later source-only
+hardening shares one decoder permit between preview and save and moves it into
+the blocking closure, so cancelled callers cannot release a still-running
+decoder's slot. That change has not been compiled or tested. Saved-hub session
+cancellation composition, final dependency checks and independent review remain
+required; the existing receipts do not establish a verified final tip.

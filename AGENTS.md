@@ -1,5 +1,12 @@
 # Hubchat development invariants
 
+- 2026-10-12: Picture preview/save share one native decoder slot, retained
+  inside blocking decoding even if its async caller is cancelled. Image bytes
+  must not appear in diagnostics. This source-only cancellation hardening
+  awaits verification after the user's build/test pause is lifted.
+  [verified from source: `src-tauri/src/commands.rs`; limits:
+  `docs/profile-pictures.md`]
+
 - 2026-10-12: Locally accepted outgoing messages establish visible history in
   their queue transaction, lowering (never raising) the lazy-history boundary.
   Historical hub imports must not establish this boundary; preserve `all`,
