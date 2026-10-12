@@ -57,3 +57,10 @@
   [decided: user via coordinator 2026-10-12; source: store_hub_enabled.rs,
   engine_hub_enabled.rs, hub.rs; verification gate and limits:
   docs/hub-enable-disable.md]
+- 2026-10-12: Picture revisions are logical counter plus operation ID. Only explicit
+  edits mint revisions; metadata and byte cache updates compare them atomically.
+  Removals keep metadata after cache eviction. Native decoding accepts bounded
+  static PNG/JPEG/WebP and emits stripped square PNG; no renderer remote URL.
+  Existing meta storage preserves question-card migration16 reservation.
+  [verified: pictures.rs, picture_image.rs, store_pictures.rs; foundation only,
+  client transport/editor composition remains under development]

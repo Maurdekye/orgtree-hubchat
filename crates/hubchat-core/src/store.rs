@@ -2073,3 +2073,5 @@ mod store_notification_reply;
 
 #[path = "store_hub_enabled.rs"]
 mod store_hub_enabled;
+#[path = "store_pictures.rs"]
+mod store_pictures;

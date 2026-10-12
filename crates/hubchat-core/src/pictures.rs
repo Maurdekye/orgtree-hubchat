@@ -65,11 +65,42 @@ impl PictureRecord {
                 let bytes=B64.decode(data).map_err(|_|invalid())?;
                 if bytes.len()!=self.meta.bytes as usize || hex::encode(Sha256::digest(&bytes))!=*hash
                     || !bytes.starts_with(b"\x89PNG\r\n\x1a\n") { return Err(invalid()); }
+                validate_png(&bytes, self.meta.width)?;
                 Ok(Some(bytes))
             },
             _=>Err(invalid()),
         }
     }
+}
+
+/// The hub contract permits no ancillary metadata or animation chunks.
+pub fn validate_png(bytes: &[u8], size: u32) -> Result<()> {
+    let invalid=||Error::Invalid("Invalid normalized picture".into());
+    if bytes.len()>MAX_BYTES || !bytes.starts_with(b"\x89PNG\r\n\x1a\n") { return Err(invalid()); }
+    let mut at=8usize;
+    let mut ended=false;
+    while at+12<=bytes.len() {
+        let len=u32::from_be_bytes(bytes[at..at+4].try_into().unwrap()) as usize;
+        let end=at.checked_add(12).and_then(|n|n.checked_add(len)).filter(|n|*n<=bytes.len()).ok_or_else(invalid)?;
+        let kind=&bytes[at+4..at+8];
+        if !matches!(kind,b"IHDR"|b"IDAT"|b"IEND") { return Err(invalid()); }
+        at=end;
+        if kind==b"IEND" { ended=true; break; }
+    }
+    if !ended || at!=bytes.len() { return Err(invalid()); }
+    let mut decoder=png::Decoder::new(std::io::Cursor::new(bytes));
+    decoder.set_limits(png::Limits{bytes:2*1024*1024});
+    let mut reader=decoder.read_info().map_err(|_|invalid())?;
+    let i=reader.info();
+    if i.width!=size || i.height!=size || size==0 || size>512 || i.bit_depth!=png::BitDepth::Eight
+        || !matches!(i.color_type,png::ColorType::Rgb|png::ColorType::Rgba) { return Err(invalid()); }
+    reader.next_frame(&mut vec![0;reader.output_buffer_size()]).map_err(|_|invalid())?;
+    Ok(())
+}
+
+pub fn from_png(revision: String, bytes: Vec<u8>, size: u32) -> Result<PictureRecord> {
+    validate_png(&bytes,size)?;
+    Ok(PictureRecord{meta:PictureMeta{revision,sha256:Some(hex::encode(Sha256::digest(&bytes))),width:size,height:size,bytes:bytes.len() as u32},data:Some(B64.encode(bytes))})
 }
 
 #[cfg(test)]

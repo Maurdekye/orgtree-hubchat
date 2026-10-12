@@ -25,3 +25,4 @@ pub mod download;
 
 pub mod notification_reply;
 pub mod pictures;
+pub mod picture_image;
