@@ -2,15 +2,17 @@
 // hubchat-question-messages-carry-preset-answers-y): picking options, saved
 // picks after a reload, answering and skipping in one send, first answer
 // final, desktop Ctrl+click and Android long-press selection, stacked quotes.
-// Usage: node tools/proof-questions.mjs [out dir]
+// Run it only through tools/verify-questions.ps1, which starts it inside the
+// Orgtree kernel Job runner: bundling, the server and Chrome end with the job.
+for (const k of ['HUBCHAT_JOB_CONTAINED', 'HUBCHAT_VITE_CACHE', 'HUBCHAT_PROOF_OUT']) if (!process.env[k]) throw Error('Use tools/verify-questions.ps1; missing ' + k);
 import { createServer } from 'vite';
 import { launch } from './cdp.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const out = process.argv[2] || 'D:/orgtree-work/rig/hubchat-opus/questions';
+const out = process.env.HUBCHAT_PROOF_OUT;
 mkdirSync(out, { recursive: true });
-const server = await createServer({ server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' });
+const server = await createServer({ cacheDir: process.env.HUBCHAT_VITE_CACHE, server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' });
 await server.listen();
 const base = server.resolvedUrls.local[0];
 const b = await launch();
@@ -202,3 +204,4 @@ try {
   console.log(`${checks.filter((c) => c.ok).length}/${checks.length} passed`);
   await b.close(); await server.close();
 }
+process.exit(checks.length && checks.every((c) => c.ok) ? 0 : 1);
