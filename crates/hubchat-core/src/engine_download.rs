@@ -215,7 +215,7 @@ impl Engine {
             .unwrap()
             .get(&hub)
             .map(|h| h.client.clone())
-            .ok_or_else(|| Error::Invalid(format!("hub {hub} was removed")))?;
+            .ok_or_else(|| if self.store.hubs().is_ok_and(|hubs| hubs.iter().any(|h| h.url == hub)) { Error::FilePaused } else { Error::Invalid(format!("hub {hub} was removed")) })?;
         let cancel = CancelFlag::default();
         let dir = self.host.download_dir();
         let partial_dir = dir.join(".hubchat-downloads");

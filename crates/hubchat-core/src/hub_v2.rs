@@ -153,6 +153,7 @@ impl HubClient {
         start_now: bool,
         wait_secs: u64,
     ) -> Result<SyncResult> {
+        self.session_work(async {
         let wait = wait_secs.min(crate::hub::POLL_WAIT_SECS);
         let mut body = serde_json::json!({
             "device_id": device_id,
@@ -166,6 +167,7 @@ impl HubClient {
         }
         self.post_json(me, "/api/sync", &body, Duration::from_secs(wait + 30))
             .await
+        }).await
     }
 
     /// One page of our conversation with `with`, older than `before`
@@ -177,6 +179,7 @@ impl HubClient {
         before: &Before,
         limit: u32,
     ) -> Result<HistoryPage> {
+        self.session_work(async {
         let before = match before {
             Before::Time(ms) => ms.to_string(),
             Before::Cursor(c) => c.clone(),
@@ -194,11 +197,13 @@ impl HubClient {
             .send()
             .await?;
         Ok(check(resp).await?.json().await?)
+        }).await
     }
 
     /// Our chats on this hub, newest first (at most 1000), each with its
     /// newest message and how many of its messages we haven't read.
     pub async fn conversations(&self, me: &Identity) -> Result<Vec<Conversation>> {
+        self.session_work(async {
         #[derive(Deserialize)]
         struct R {
             #[serde(default)]
@@ -212,20 +217,24 @@ impl HubClient {
             .send()
             .await?;
         Ok(check(resp).await?.json::<R>().await?.conversations)
+        }).await
     }
 
     /// This device is in use (true; it counts for 90 s, so repeat it about
     /// every minute) or not any more (false). Hubs with the "active" feature.
     pub async fn set_active(&self, me: &Identity, device_id: &str, active: bool) -> Result<()> {
+        self.session_work(async {
         let body = serde_json::json!({ "device_id": device_id, "active": active });
         let _: serde_json::Value = self
             .post_json(me, "/api/devices/active", &body, Duration::from_secs(20))
             .await?;
         Ok(())
+        }).await
     }
 
     /// The whole body of a long message (sync cut it at 20,000 characters).
     pub async fn message_body(&self, me: &Identity, id: &str, max_bytes: u64) -> Result<String> {
+        self.session_work(async {
         let resp = self
             .http
             .get(
@@ -249,21 +258,27 @@ impl HubClient {
             out.extend_from_slice(&c);
         }
         String::from_utf8(out).map_err(|_| Error::Invalid("message body is not UTF-8".into()))
+        }).await
     }
 
     /// Delete our copy of one message (the other side keeps theirs).
     pub async fn delete_message(&self, me: &Identity, id: &str) -> Result<u64> {
+        self.session_work(async {
         self.delete(me, &format!("/api/messages/{}", urlencode(id)))
             .await
+        }).await
     }
 
     /// Delete our copy of a whole conversation.
     pub async fn delete_conversation(&self, me: &Identity, with: &str) -> Result<u64> {
+        self.session_work(async {
         self.delete(me, &format!("/api/conversations/{}", urlencode(with)))
             .await
+        }).await
     }
 
     async fn delete(&self, me: &Identity, path: &str) -> Result<u64> {
+        self.session_work(async {
         #[derive(Deserialize)]
         struct R {
             #[serde(default)]
@@ -281,10 +296,12 @@ impl HubClient {
             Err(e) if e.status() == Some(404) => Ok(0),
             Err(e) => Err(e),
         }
+        }).await
     }
 
     /// The devices that have synced as this address.
     pub async fn devices(&self, me: &Identity) -> Result<Vec<DeviceEntry>> {
+        self.session_work(async {
         #[derive(Deserialize)]
         struct R {
             devices: Vec<DeviceEntry>,
@@ -297,11 +314,13 @@ impl HubClient {
             .send()
             .await?;
         Ok(check(resp).await?.json::<R>().await?.devices)
+        }).await
     }
 
     /// Upload a long body as a text part (v2, G6); returns its id for
     /// `Outgoing::body_part`.
     pub async fn upload_body(&self, me: &Identity, body: String) -> Result<String> {
+        self.session_work(async {
         #[derive(Deserialize)]
         struct R {
             id: String,
@@ -316,12 +335,14 @@ impl HubClient {
             .send()
             .await?;
         Ok(check(resp).await?.json::<R>().await?.id)
+        }).await
     }
 
     /// Take a device off the address's device list: the plain form, no key
     /// change (user ruling 2026-10-08 22:23Z; Hubchat sets no identity key,
     /// so the hub asks for no rotation).
     pub async fn sign_out_device(&self, me: &Identity, device_id: &str) -> Result<()> {
+        self.session_work(async {
         let resp = self
             .http
             .delete(
@@ -337,6 +358,7 @@ impl HubClient {
             Err(e) if matches!(e.status(), Some(404) | Some(409)) => Ok(()),
             Err(e) => Err(e),
         }
+        }).await
     }
 
     /// Register this device's UnifiedPush capability. Endpoint and auth are
@@ -349,6 +371,7 @@ impl HubClient {
         p256dh: &str,
         auth: &str,
     ) -> Result<()> {
+        self.session_work(async {
         let _: serde_json::Value = self
             .post_json(
                 me,
@@ -361,10 +384,12 @@ impl HubClient {
             )
             .await?;
         Ok(())
+        }).await
     }
 
     /// Idempotently remove this device's push capability from a hub.
     pub async fn unregister_push(&self, me: &Identity, device_id: &str) -> Result<()> {
+        self.session_work(async {
         let response = self
             .http
             .delete(
@@ -381,15 +406,19 @@ impl HubClient {
             Err(e) if e.status() == Some(404) => Ok(()),
             Err(e) => Err(e),
         }
+        }).await
     }
 
     // ---------------------------------------------------- resumable uploads
 
     pub async fn open_upload(&self, me: &Identity, name: &str, bytes: u64) -> Result<UploadState> {
+        self.session_work(async {
         self.open_upload_checked(me, name, bytes, None).await
+        }).await
     }
 
     pub async fn open_upload_checked(&self, me: &Identity, name: &str, bytes: u64, sha256: Option<&str>) -> Result<UploadState> {
+        self.session_work(async {
         self.post_json(
             me,
             "/api/uploads",
@@ -397,9 +426,11 @@ impl HubClient {
             Duration::from_secs(30),
         )
         .await
+        }).await
     }
 
     pub async fn upload_state(&self, me: &Identity, id: &str) -> Result<UploadState> {
+        self.session_work(async {
         let resp = self
             .http
             .get(
@@ -411,6 +442,7 @@ impl HubClient {
             .send()
             .await?;
         Ok(check(resp).await?.json().await?)
+        }).await
     }
 
     /// Send the file from where the upload stands. On a dropped connection
@@ -425,8 +457,10 @@ impl HubClient {
         progress: Option<Progress>,
         cancel: CancelFlag,
     ) -> Result<UploadState> {
+        self.session_work(async {
         self.resume_upload_confirmed(me, upload_id, file, progress, cancel, None)
             .await
+        }).await
     }
 
     /// Send bounded pieces and expose each durable hub acknowledgement. The
@@ -440,6 +474,7 @@ impl HubClient {
         cancel: CancelFlag,
         confirmed: Option<UploadCheckpoint>,
     ) -> Result<UploadState> {
+        self.session_work(async {
         let stop = cancel.clone();
         stop.run(async move {
             let std_file = file.into_std().await;
@@ -466,6 +501,7 @@ impl HubClient {
             }
         })
         .await
+        }).await
     }
 
     async fn resume_once(
@@ -477,6 +513,7 @@ impl HubClient {
         cancel: CancelFlag,
         confirmed: Option<UploadCheckpoint>,
     ) -> Result<UploadState> {
+        self.session_work(async {
         let total = file.metadata().await?.len();
         let mut st = self.upload_state(me, upload_id).await?;
         validate_upload(&st, upload_id, total)?;
@@ -544,6 +581,7 @@ impl HubClient {
             }
             st = result;
         }
+        }).await
     }
 }
 

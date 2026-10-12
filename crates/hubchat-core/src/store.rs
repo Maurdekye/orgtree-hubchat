@@ -269,6 +269,7 @@ pub struct Store {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Hub {
+    pub enabled: bool,
     pub url: String,
     pub name: String,
     pub max_attachment_bytes: Option<u64>,
@@ -453,6 +454,7 @@ impl Store {
             let tx = c.transaction()?;
             tx.execute("DELETE FROM message_hubs WHERE hub=?", [url])?;
             relabel(&tx, url)?;
+            tx.execute("DELETE FROM meta WHERE key=?", [store_hub_enabled::disabled_key(url)])?;
             tx.execute("DELETE FROM hubs WHERE url=?", [url])?;
             tx.commit()
         })
@@ -471,10 +473,11 @@ impl Store {
     pub fn hubs(&self) -> Result<Vec<Hub>> {
         self.with(|c| {
             let mut st = c.prepare(
-                "SELECT url, name, max_attachment_bytes, last_ok_at FROM hubs ORDER BY added_at",
+                "SELECT url, name, max_attachment_bytes, last_ok_at, NOT EXISTS(SELECT 1 FROM meta WHERE key='hub.disabled.'||hubs.url AND value='yes') FROM hubs ORDER BY added_at",
             )?;
             let rows = st.query_map([], |r| {
                 Ok(Hub {
+                    enabled: r.get(4)?,
                     url: r.get(0)?,
                     name: r.get(1)?,
                     max_attachment_bytes: r.get(2)?,
@@ -2067,3 +2070,6 @@ mod body_store;
 mod close_dm;
 #[path = "store_notification_reply.rs"]
 mod store_notification_reply;
+
+#[path = "store_hub_enabled.rs"]
+mod store_hub_enabled;

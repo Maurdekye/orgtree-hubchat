@@ -166,6 +166,7 @@ pub enum HubState {
     /// Reachable but refused us, or not a hub. Needs the user.
     Refused,
     Disconnected,
+    Disabled,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -285,6 +286,7 @@ impl Engine {
     /// Start a task per stored hub plus the sender. Call once, inside a runtime.
     pub fn start(self: &Arc<Self>) -> Result<()> {
         for h in self.store.hubs()? {
+            if !h.enabled { continue; }
             if let Ok(a) = HubAddress::parse(&h.url) {
                 self.spawn_hub(a, h.name, h.max_attachment_bytes);
             }
@@ -467,7 +469,7 @@ impl Engine {
     pub fn add_hub(self: &Arc<Self>, input: &str) -> Result<HubAddress> {
         let addr = HubAddress::parse(input)?;
         self.store.add_hub(addr.as_str(), &now())?;
-        if !self.hubs.lock().unwrap().contains_key(addr.as_str()) {
+        if self.store.hub_enabled(addr.as_str())? && !self.hubs.lock().unwrap().contains_key(addr.as_str()) {
             self.spawn_hub(addr.clone(), String::new(), None);
         }
         Ok(addr)
@@ -477,6 +479,7 @@ impl Engine {
     pub async fn remove_hub(&self, url: &str, unregister: bool) -> Result<()> {
         let rt = self.hubs.lock().unwrap().remove(url);
         if let Some(rt) = rt {
+            let rt = HubRuntime { client: rt.client.detached(), ..rt };
             rt.stop.cancel();
             rt.retry_now.notify_one();
             rt.kick.notify_one();
@@ -700,15 +703,25 @@ impl Engine {
     }
 
     pub fn hub_statuses(&self) -> Vec<HubStatus> {
+        let saved = self.store.hubs().unwrap_or_default();
         let hubs = self.hubs.lock().unwrap();
         let mut v: Vec<_> = hubs.values().map(|h| h.status.clone()).collect();
+        for h in saved.into_iter().filter(|h| !h.enabled) {
+            v.retain(|s| s.url != h.url);
+            v.push(HubStatus { url: h.url, name: h.name, state: HubState::Disabled, error: None,
+                retry_at_ms: None, max_attachment_bytes: h.max_attachment_bytes.unwrap_or(crate::hub::LEGACY_MAX_ATTACHMENT_BYTES),
+                features: Vec::new(), version: None, answered_ms: None, waiting_since_ms: None, clock_offset_ms: None });
+        }
         v.sort_by(|a, b| a.url.cmp(&b.url));
         v
     }
 
     fn spawn_hub(self: &Arc<Self>, addr: HubAddress, name: String, max: Option<u64>) {
+        let mut hubs = self.hubs.lock().unwrap();
+        if self.stopped.load(std::sync::atomic::Ordering::Relaxed) || hubs.contains_key(addr.as_str()) || !self.store.hub_enabled(addr.as_str()).unwrap_or(false) { return; }
+        let stop = CancelFlag::default();
         let rt = HubRuntime {
-            client: HubClient::new(addr.clone()),
+            client: HubClient::new(addr.clone()).bind_stop(stop.clone()),
             status: HubStatus {
                 url: addr.to_string(),
                 name,
@@ -729,7 +742,7 @@ impl Engine {
             },
             retry_now: Arc::new(Notify::new()),
             kick: Arc::new(Notify::new()),
-            stop: CancelFlag::default(),
+            stop,
         };
         let (client, retry, kick, stop) = (
             rt.client.clone(),
@@ -737,26 +750,10 @@ impl Engine {
             rt.kick.clone(),
             rt.stop.clone(),
         );
-        self.hubs.lock().unwrap().insert(addr.to_string(), rt);
+        hubs.insert(addr.to_string(), rt);
+        drop(hubs);
         let me = self.clone();
         tokio::spawn(async move { me.hub_loop(client, retry, kick, stop).await });
-    }
-
-    fn set_status(&self, url: &str, f: impl FnOnce(&mut HubStatus)) {
-        let changed = {
-            let mut hubs = self.hubs.lock().unwrap();
-            match hubs.get_mut(url) {
-                Some(h) => {
-                    let before = format!("{:?}", h.status);
-                    f(&mut h.status);
-                    before != format!("{:?}", h.status)
-                }
-                None => false,
-            }
-        };
-        if changed {
-            self.host.event(Event::Hub { url: url.into() });
-        }
     }
 
     fn connected_hubs(&self) -> Vec<(String, HubClient, u64)> {
@@ -787,7 +784,7 @@ impl Engine {
         let mut suspended = self.suspended.subscribe();
         while !stop.is_cancelled() {
             if *suspended.borrow_and_update() {
-                self.mark(&url, |s| s.waiting_since_ms = None);
+                self.mark_for(&url, &stop, |s| s.waiting_since_ms = None);
                 tokio::select! {
                     _ = suspended.changed() => {},
                     _ = kick.notified() => {},
@@ -795,7 +792,7 @@ impl Engine {
                 continue;
             }
             let outcome = tokio::select! {
-                r = self.session(&client, &url, &stop) => Some(r),
+                r = stop.run(self.session(&client, &url, &stop)) => Some(r),
                 _ = suspended.changed() => None,
                 // a check: start over now (after a freeze the parked request
                 // may be on a connection that is long gone)
@@ -803,7 +800,7 @@ impl Engine {
             };
             let Some(outcome) = outcome else {
                 failures = 0;
-                self.mark(&url, |s| s.waiting_since_ms = None);
+                self.mark_for(&url, &stop, |s| s.waiting_since_ms = None);
                 continue;
             };
             match outcome {
@@ -815,7 +812,7 @@ impl Engine {
                     let refused = matches!(e, Error::NotAHub(_)) || matches!(e.status(), Some(403));
                     let wait = BACKOFF[failures.min(BACKOFF.len() - 1)];
                     failures += 1;
-                    self.set_status(&url, |s| {
+                    self.set_status_for(&url, &stop, |s| {
                         s.state = if refused {
                             HubState::Refused
                         } else {
@@ -831,7 +828,7 @@ impl Engine {
                         _ = kick.notified() => { failures = 0; }
                         _ = suspended.changed() => { failures = 0; }
                     }
-                    self.set_status(&url, |s| {
+                    self.set_status_for(&url, &stop, |s| {
                         s.state = HubState::Connecting;
                         s.retry_at_ms = None;
                     });
@@ -844,7 +841,8 @@ impl Engine {
     async fn session(&self, client: &HubClient, url: &str, stop: &CancelFlag) -> Result<()> {
         let asked = unix_ms();
         let health = client.healthz().await?;
-        self.clock_reading(url, health.now, asked, unix_ms())?;
+        self.clock_reading(url, stop, health.now, asked, unix_ms())?;
+        if stop.is_cancelled() { return Ok(()); }
         let mut profile = self.profile.lock().unwrap().clone();
         // Older hubs store any kind but org/chat as "org": a person registers
         // as "chat" there (coordinator ruling 2026-10-08).
@@ -852,12 +850,13 @@ impl Engine {
             profile.kind = "chat".into();
         }
         client.register(&self.me, &profile).await?;
+        if stop.is_cancelled() { return Ok(()); }
         let max = health.max_attachment_bytes();
         self.store
             .hub_ok(url, &health.name, health.max_attachment_bytes, &now())?;
         self.store.wake_transfer_retries(Some(url))?;
         self.body_changed.notify_one();
-        self.set_status(url, |s| {
+        self.set_status_for(url, stop, |s| {
             s.name = health.name.clone();
             s.state = HubState::Connected;
             s.error = None;
@@ -876,7 +875,7 @@ impl Engine {
         while !stop.is_cancelled() {
             self.send_queued_deletes(client, url, &health.features, unix_ms())
                 .await?;
-            self.mark(url, |s| s.waiting_since_ms = Some(unix_ms()));
+            self.mark_for(url, stop, |s| s.waiting_since_ms = Some(unix_ms()));
             let p = match client.poll(&self.me, crate::hub::POLL_WAIT_SECS).await {
                 Ok(p) => p,
                 Err(e) if e.status() == Some(401) && !registered_again => {
@@ -893,7 +892,7 @@ impl Engine {
             }
             if p.version.is_some() {
                 let v = p.version.clone();
-                self.set_status(url, |s| s.version = v);
+                self.set_status_for(url, stop, |s| s.version = v);
             }
             self.store.set_roster(url, &p.roster)?;
             self.host.event(Event::Directory);
@@ -904,7 +903,7 @@ impl Engine {
                 }
             }
             if p.messages.is_empty() {
-                self.answered(url);
+                self.answered(url, stop);
                 continue;
             }
             let t = now();
@@ -933,26 +932,20 @@ impl Engine {
                 .map(|id| (id.clone(), "delivered", t.clone()))
                 .collect();
             client.receipts(&self.me, &rec).await?;
-            self.answered(url);
+            self.answered(url, stop);
         }
         Ok(())
     }
 
     /// A poll or sync answer is fully taken in.
-    fn answered(&self, url: &str) {
-        self.mark(url, |s| {
+    fn answered(&self, url: &str, stop: &CancelFlag) {
+        self.mark_for(url, stop, |s| {
             s.answered_ms = Some(unix_ms());
             s.waiting_since_ms = None;
         });
     }
 
     /// Change a hub's progress markers: no event (they move on every poll).
-    fn mark(&self, url: &str, f: impl FnOnce(&mut HubStatus)) {
-        if let Some(h) = self.hubs.lock().unwrap().get_mut(url) {
-            f(&mut h.status);
-        }
-    }
-
     /// v2 hubs: every device gets everything through sync (G1), history
     /// included (a first sync starts from the beginning).
     async fn sync_session(
@@ -979,7 +972,7 @@ impl Engine {
             self.send_queued_deletes(client, url, features, unix_ms())
                 .await?;
             let first_page = cursor.is_none();
-            self.mark(url, |s| s.waiting_since_ms = Some(unix_ms()));
+            self.mark_for(url, stop, |s| s.waiting_since_ms = Some(unix_ms()));
             let asked = unix_ms();
             let r = match client
                 .sync(
@@ -1021,11 +1014,11 @@ impl Engine {
             }
             if r.version.is_some() {
                 let v = r.version.clone();
-                self.set_status(url, |s| s.version = v);
+                self.set_status_for(url, stop, |s| s.version = v);
             }
             // a parked answer says nothing about the round trip
             if unix_ms() - asked < 2000 {
-                self.clock_reading(url, r.now, asked, unix_ms())?;
+                self.clock_reading(url, stop, r.now, asked, unix_ms())?;
             }
             if r.reset {
                 self.store.forget_hub_messages(url)?;
@@ -1129,7 +1122,7 @@ impl Engine {
                 if self.store.meta(&chats_key(url))?.is_some() {
                     self.take_chat_list(client, url).await?;
                 }
-                self.answered(url);
+                self.answered(url, stop);
             }
         }
         Ok(())
@@ -1137,13 +1130,13 @@ impl Engine {
 
     /// A hub's `now` against our clock around the request: the offset is
     /// the hub's clock minus ours at the round trip's midpoint.
-    fn clock_reading(&self, url: &str, hub_now: Option<i64>, asked: u64, answered: u64) -> Result<()> {
+    fn clock_reading(&self, url: &str, stop: &CancelFlag, hub_now: Option<i64>, asked: u64, answered: u64) -> Result<()> {
         let Some(hub_now) = hub_now else {
             return Ok(());
         };
         let offset = hub_now - ((asked + answered) / 2) as i64;
         self.store.set_meta(&clock_key(url), &offset.to_string())?;
-        self.mark(url, |s| s.clock_offset_ms = Some(offset));
+        self.mark_for(url, stop, |s| s.clock_offset_ms = Some(offset));
         Ok(())
     }
 
@@ -1556,6 +1549,7 @@ impl Engine {
 
     /// The scheduler has reserved a file slot when this message needs one.
     async fn send_one_on(&self, id: &str, (url,client,max):(String,HubClient,u64)) -> Result<bool> {
+        if client.session_cancelled() || !self.store.hub_enabled(&url)? { return Ok(false); }
         let (m,_writer)={
             let mut writers=self.send_writers.lock().unwrap();
             // A duplicate launch is handled without changing the active worker's queue state.
@@ -2429,3 +2423,10 @@ mod engine_lifecycle;
 
 #[path = "engine_notification_reply.rs"]
 mod engine_notification_reply;
+
+#[path = "engine_hub_enabled.rs"]
+mod engine_hub_enabled;
+
+#[cfg(test)]
+#[path = "engine_hub_enabled_tests.rs"]
+mod hub_enabled_tests;

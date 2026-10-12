@@ -301,6 +301,8 @@ impl CancelFlag {
     pub fn is_cancelled(&self) -> bool {
         *self.0.borrow()
     }
+    pub(crate) fn same(&self, other: &Self) -> bool { Arc::ptr_eq(&self.0, &other.0) }
+
     async fn cancelled(&self) {
         let mut changes = self.0.subscribe();
         loop {
@@ -332,6 +334,7 @@ impl CancelFlag {
 pub struct HubClient {
     addr: HubAddress,
     pub(crate) http: reqwest::Client,
+    session_stop: CancelFlag,
 }
 
 impl HubClient {
@@ -341,7 +344,15 @@ impl HubClient {
             .tcp_keepalive(Duration::from_secs(30))
             .build()
             .expect("http client");
-        Self { addr, http }
+        Self { addr, http, session_stop: CancelFlag::default() }
+    }
+
+    /// Copied clients share the originating runtime cancellation generation.
+    pub(crate) fn bind_stop(mut self, stop: CancelFlag) -> Self { self.session_stop = stop; self }
+    pub(crate) fn detached(mut self) -> Self { self.session_stop = CancelFlag::default(); self }
+    pub(crate) fn session_cancelled(&self) -> bool { self.session_stop.is_cancelled() }
+    pub(crate) async fn session_work<T>(&self, work: impl std::future::Future<Output=Result<T>>) -> Result<T> {
+        self.session_stop.run(work).await.map_err(|e| if self.session_cancelled() { Error::FilePaused } else { e })
     }
 
     pub fn address(&self) -> &HubAddress {
@@ -350,6 +361,7 @@ impl HubClient {
 
     /// Probe: is something there, and is it a mail hub? Unauthenticated.
     pub async fn healthz(&self) -> Result<Health> {
+        self.session_work(async {
         let resp = self
             .http
             .get(self.addr.join("/healthz"))
@@ -369,12 +381,14 @@ impl HubClient {
             return Err(Error::NotAHub("/healthz is not ok".into()));
         }
         Ok(h)
+        }).await
     }
 
     /// Register (or refresh) our address. 403 = the id.tag is held by another
     /// secret, which cannot happen for a tag derived from our own secret
     /// unless the hash prefix collides with someone else's id.
     pub async fn register(&self, me: &Identity, profile: &Profile) -> Result<Registered> {
+        self.session_work(async {
         #[derive(Serialize)]
         struct Req<'a> {
             slug: String,
@@ -392,11 +406,13 @@ impl HubClient {
         };
         self.post_json(me, "/api/register", &req, Duration::from_secs(20))
             .await
+        }).await
     }
 
     /// v2 (G2): change our display name / about line. Only on hubs that
     /// list "profile" in their features.
     pub async fn set_profile(&self, me: &Identity, name: &str, about: &str) -> Result<()> {
+        self.session_work(async {
         let _: serde_json::Value = self
             .post_json(
                 me,
@@ -406,9 +422,11 @@ impl HubClient {
             )
             .await?;
         Ok(())
+        }).await
     }
 
     pub async fn unregister(&self, me: &Identity) -> Result<()> {
+        self.session_work(async {
         let _: serde_json::Value = self
             .post_json(
                 me,
@@ -418,11 +436,13 @@ impl HubClient {
             )
             .await?;
         Ok(())
+        }).await
     }
 
     /// Long poll: returns as soon as there are messages or receipts for us,
     /// or after `wait_secs` (max 55) with just the roster.
     pub async fn poll(&self, me: &Identity, wait_secs: u64) -> Result<PollResult> {
+        self.session_work(async {
         let wait = wait_secs.min(POLL_WAIT_SECS);
         let path = format!("/api/poll?wait={wait}");
         self.post_json(
@@ -432,10 +452,12 @@ impl HubClient {
             Duration::from_secs(wait + 20),
         )
         .await
+        }).await
     }
 
     /// Take custody: the hub stops offering these ids (state -> fetched).
     pub async fn ack(&self, me: &Identity, ids: &[String]) -> Result<u64> {
+        self.session_work(async {
         #[derive(Deserialize)]
         struct R {
             acked: u64,
@@ -449,9 +471,11 @@ impl HubClient {
             )
             .await?;
         Ok(r.acked)
+        }).await
     }
 
     pub async fn send(&self, me: &Identity, msg: &Outgoing) -> Result<SendResult> {
+        self.session_work(async {
         #[derive(Serialize)]
         struct Req<'a> {
             from: String,
@@ -468,11 +492,13 @@ impl HubClient {
             Duration::from_secs(60),
         )
         .await
+        }).await
     }
 
     /// Tell senders we delivered/read their messages. `state` is
     /// "delivered" or "read"; `at` is an ISO timestamp.
     pub async fn receipts(&self, me: &Identity, items: &[(String, &str, String)]) -> Result<u64> {
+        self.session_work(async {
         #[derive(Deserialize)]
         struct R {
             recorded: u64,
@@ -490,9 +516,11 @@ impl HubClient {
             )
             .await?;
         Ok(r.recorded)
+        }).await
     }
 
     pub async fn roster(&self, me: &Identity) -> Result<Vec<RosterEntry>> {
+        self.session_work(async {
         #[derive(Deserialize)]
         struct R {
             roster: Vec<RosterEntry>,
@@ -505,6 +533,7 @@ impl HubClient {
             .send()
             .await?;
         Ok(check(resp).await?.json::<R>().await?.roster)
+        }).await
     }
 
     /// Stream a file to the hub without reading it into memory. Returns the
@@ -517,8 +546,10 @@ impl HubClient {
         progress: Option<Progress>,
         cancel: CancelFlag,
     ) -> Result<AttachmentMeta> {
+        self.session_work(async {
         let file = tokio::fs::File::open(path).await?;
         self.upload(me, file, name, progress, cancel).await
+        }).await
     }
 
     /// Stream an already-open file (on Android: the descriptor behind a
@@ -531,6 +562,7 @@ impl HubClient {
         progress: Option<Progress>,
         cancel: CancelFlag,
     ) -> Result<AttachmentMeta> {
+        self.session_work(async {
         let stop = cancel.clone();
         stop.run(async move {
             let total = file.metadata().await?.len();
@@ -580,6 +612,7 @@ impl HubClient {
             })
         })
         .await
+        }).await
     }
 
     /// Download an attachment to `dest` (written to `dest.part`, renamed when
@@ -592,6 +625,7 @@ impl HubClient {
         progress: Option<Progress>,
         cancel: CancelFlag,
     ) -> Result<u64> {
+        self.session_work(async {
         let part = dest.with_extension(match dest.extension() {
             Some(e) => format!("{}.part", e.to_string_lossy()),
             None => "part".into(),
@@ -643,6 +677,7 @@ impl HubClient {
                 Err(e)
             }
         }
+        }).await
     }
 
     pub(crate) async fn post_json<B: Serialize + ?Sized, R: serde::de::DeserializeOwned>(
@@ -652,6 +687,7 @@ impl HubClient {
         body: &B,
         timeout: Duration,
     ) -> Result<R> {
+        self.session_work(async {
         let resp = self
             .http
             .post(self.addr.join(path))
@@ -661,6 +697,7 @@ impl HubClient {
             .send()
             .await?;
         Ok(check(resp).await?.json::<R>().await?)
+        }).await
     }
 }
 
