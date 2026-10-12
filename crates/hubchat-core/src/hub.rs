@@ -303,6 +303,13 @@ impl CancelFlag {
     }
     pub(crate) fn same(&self, other: &Self) -> bool { Arc::ptr_eq(&self.0, &other.0) }
 
+    /// Short synchronous publication only. The watch read lock serializes this
+    /// action with cancel's send_replace; never await or cancel this flag here.
+    pub(crate) fn while_active<T>(&self, action: impl FnOnce() -> T) -> Option<T> {
+        let cancelled = self.0.borrow();
+        if *cancelled { None } else { Some(action()) }
+    }
+
     async fn cancelled(&self) {
         let mut changes = self.0.subscribe();
         loop {
@@ -351,6 +358,9 @@ impl HubClient {
     pub(crate) fn bind_stop(mut self, stop: CancelFlag) -> Self { self.session_stop = stop; self }
     pub(crate) fn detached(mut self) -> Self { self.session_stop = CancelFlag::default(); self }
     pub fn session_cancelled(&self) -> bool { self.session_stop.is_cancelled() }
+    pub(crate) fn session_commit<T>(&self, action: impl FnOnce() -> T) -> Option<T> {
+        self.session_stop.while_active(action)
+    }
     pub fn session_work<'a, T: 'a>(&'a self, work: impl std::future::Future<Output=Result<T>> + 'a) -> impl std::future::Future<Output=Result<T>> + 'a {
         // Box before constructing the guard future: nested upload/control calls
         // must not multiply large inline future frames on worker stacks.

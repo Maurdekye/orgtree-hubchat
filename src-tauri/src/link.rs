@@ -112,7 +112,7 @@ struct Arrival {
     pending: Option<Bundle>,
 }
 
-async fn arrived(bundle: Bundle, via: &str, aliases: &[String]) -> Arrival {
+async fn arrived(bundle: Bundle, via: &str, aliases: &[String], reception: &link::Reception) -> Arrival {
     let current = core::get()
         .ok()
         .and_then(|c| c.engine().ok())
@@ -129,8 +129,9 @@ async fn arrived(bundle: Bundle, via: &str, aliases: &[String]) -> Arrival {
         .into_iter()
         .enumerate()
     {
+        let reception = reception.clone();
         set.spawn(async move {
-            let p = crate::commands::probe_first(candidates.clone(), None, Duration::from_secs(5)).await;
+            let p = crate::commands::probe_first_for(candidates.clone(), None, Duration::from_secs(5), reception).await;
             let mut key: Option<link::HubKey> = None;
             let row = match p {
                 crate::commands::Probe::Connected {
@@ -296,12 +297,12 @@ pub async fn hc_link_start<R2: Runtime>(
     c.rt.spawn(async move {
         let reception = link::Reception::new(client.clone(), stop.clone());
         let t0 = Instant::now();
-        let _ = app.emit(
+        reception.commit(|| { let _ = app.emit(
             "hc-link",
             LinkEvent::Waiting {
                 expires_in_s: LINK_TTL.as_secs(),
             },
-        );
+        ); });
         let outcome = loop {
             if stop.is_cancelled() || client.session_cancelled() {
                 break None;
@@ -330,7 +331,7 @@ pub async fn hc_link_start<R2: Runtime>(
                     let _ = client.delete_message(&temp, &id).await;
                     Ok(())
                 };
-                let _ = reception.complete(cleanup, async { Ok(arrived(bundle, &via, &aliases).await) }, |arrival| {
+                let _ = reception.complete(cleanup, async { Ok(arrived(bundle, &via, &aliases, &reception).await) }, |arrival| {
                     if let Some(bundle) = arrival.pending { *PENDING.lock().unwrap() = Some(bundle); }
                     let _ = app.emit("hc-link", arrival.event);
                 }).await;
@@ -340,7 +341,7 @@ pub async fn hc_link_start<R2: Runtime>(
         };
         let _ = client.unregister(&temp).await;
         if let Some(ev) = outcome {
-            let _ = app.emit("hc-link", ev);
+            reception.commit(|| { let _ = app.emit("hc-link", ev); });
         }
     });
     let hub = addr.to_string();

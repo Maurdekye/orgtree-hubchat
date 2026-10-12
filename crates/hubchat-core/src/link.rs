@@ -57,6 +57,20 @@ impl Reception {
         Self { client, listener }
     }
 
+    /// Each spawned discovery request uses this guard, not just its JoinHandle.
+    pub fn work<'a, T: 'a>(&'a self, work: impl std::future::Future<Output = Result<T>> + 'a)
+        -> impl std::future::Future<Output = Result<T>> + 'a
+    {
+        let work = Box::pin(work);
+        self.client.session_work(self.listener.run(work))
+    }
+
+    /// A bounded synchronous state/event publication linearizes before either
+    /// cancellation, or is refused after it. No I/O/await/cancel in the callback.
+    pub fn commit<T>(&self, publish: impl FnOnce() -> T) -> Option<T> {
+        self.client.session_commit(|| self.listener.while_active(publish)).flatten()
+    }
+
     pub fn complete<'a, T: 'a>(
         &'a self,
         cleanup: impl std::future::Future<Output = Result<()>> + 'a,
@@ -66,11 +80,13 @@ impl Reception {
         let cleanup = Box::pin(cleanup);
         let review = Box::pin(review);
         async move {
-            let _ = (&self.client, &self.listener);
-            let _ = cleanup.await;
-            let prepared = review.await?;
-            publish(prepared);
-            Ok(())
+            let prepared = self.work(async {
+                // Remote cleanup failures do not lose a legitimate bundle;
+                // cancellation/readiness pauses are never discovery permission.
+                if let Err(e @ (Error::Cancelled | Error::FilePaused)) = cleanup.await { return Err(e); }
+                review.await
+            }).await?;
+            self.commit(|| publish(prepared)).ok_or(Error::Cancelled)
         }
     }
 }

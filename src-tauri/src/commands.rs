@@ -328,11 +328,23 @@ const GRACE: Duration = Duration::from_millis(750);
 /// likelier ones still pending get `GRACE` and no more, so an address that a
 /// firewall silently drops cannot hold the result for the whole `limit`.
 pub(crate) async fn probe_first(hubs: Vec<String>, name: Option<String>, limit: Duration) -> Probe {
+    probe_first_inner(hubs, name, limit, None).await
+}
+
+/// Received-link probes retain both their hub generation and listener attempt.
+pub(crate) async fn probe_first_for(hubs: Vec<String>, name: Option<String>, limit: Duration,
+    reception: hubchat_core::link::Reception) -> Probe {
+    probe_first_inner(hubs, name, limit, Some(reception)).await
+}
+
+async fn probe_first_inner(hubs: Vec<String>, name: Option<String>, limit: Duration,
+    reception: Option<hubchat_core::link::Reception>) -> Probe {
     {
         let mut set = tokio::task::JoinSet::new();
         for (i, h) in hubs.iter().cloned().enumerate() {
             let name = name.clone();
-            set.spawn(async move { (i, probe(&h, name.as_deref(), limit).await) });
+            let reception = reception.clone();
+            set.spawn(async move { (i, probe_inner(&h, name.as_deref(), limit, reception).await) });
         }
         let mut done: Vec<Option<Probe>> = hubs.iter().map(|_| None).collect();
         let connected = |p: &Option<Probe>| matches!(p, Some(Probe::Connected { .. }));
@@ -373,13 +385,24 @@ pub(crate) async fn probe_first(hubs: Vec<String>, name: Option<String>, limit: 
 
 /// /healthz at `input` within `limit`; `name`: the hub that must answer.
 async fn probe(input: &str, name: Option<&str>, limit: Duration) -> Probe {
+    probe_inner(input, name, limit, None).await
+}
+
+async fn probe_inner(input: &str, name: Option<&str>, limit: Duration,
+    reception: Option<hubchat_core::link::Reception>) -> Probe {
     let addr = match HubAddress::parse(input) {
         Ok(a) => a,
         Err(e) => return Probe::Invalid { error: s(e) },
     };
     let url = addr.to_string();
-    let r: Result<Result<Health, _>, _> =
-        tokio::time::timeout(limit, HubClient::new(addr).healthz()).await;
+    let client = HubClient::new(addr);
+    let request = async {
+        match reception {
+            Some(reception) => reception.work(client.healthz()).await,
+            None => client.healthz().await,
+        }
+    };
+    let r: Result<Result<Health, _>, _> = tokio::time::timeout(limit, request).await;
     match r {
         Err(_) => Probe::Unreachable {
             url,
