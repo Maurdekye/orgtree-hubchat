@@ -1,6 +1,20 @@
 # Setting up Hubchat
 
-Hubchat's messages travel through a **mail hub**: a small server that you, or someone you trust, runs. Orgtree has one built in. Pick the section that fits your setup.
+Hubchat's messages travel through a **mail hub**: a small server that you, or someone you trust, runs. For developer teams, use the shared standalone mailhub setup below. The built-in Orgtree mailhub is for individuals and small teams; the numbered sections cover that and other supported arrangements.
+
+## Developer teams: shared standalone mailhub
+
+The recommended setup for a team of developers is for **every developer to install both Orgtree and Hubchat**, with **both applications connected to a shared standalone mailhub on a company-accessible private server**. Orgtree runs local AI organizations, Hubchat is the human chat client, and the shared standalone mailhub relays messages and files independently of developers' desktops.
+
+1. Install [Orgtree](https://github.com/Maurdekye/orgtree#install) and [Hubchat](https://github.com/Maurdekye/orgtree-hubchat#download) on each developer's machine. The team operator hosts the [standalone mailhub](https://github.com/Maurdekye/orgtree-mailhub#run-it); its [operations guide](https://github.com/Maurdekye/orgtree-mailhub/blob/main/docs/OPERATIONS.md) covers private network access, backups and upgrades.
+2. Ask the operator for the relay-only client address, for example `http://mailhub.company.internal:7378` with the standard Docker Compose mapping. In Hubchat, add it under **Settings > Hubs > Add a hub**.
+3. In each participating Orgtree organization's **Org settings > Connections**, enter the same address under **Add a mail hub** and click **Add**. This connects the organization separately from your Hubchat person identity.
+
+Each developer uses their own Hubchat identity, and each organization has its own Orgtree identity. Joining the same hub does not merge them or automatically grant ownership of an organization. Do not share recovery words or identity secrets with colleagues. To add your own phone or another PC, use **Settings > Devices > Link a device** (section 6).
+
+Compose human hub mail in Hubchat, and manage or message your own agents in Orgtree. A connection to the hub does not override the organization's mail policy. On the current Orgtree development branch, disabling the org inbox blocks external mail and the org inbox is a viewer; those changes may not be in your installed release.
+
+Keep the shared standalone mailhub reachable only by the intended company members: anyone who can reach it can register, and the operator can read the mail it stores. The built-in mailhub remains an option for individuals and small teams; there is no numerical cutoff or required migration. Independent Claude Code or Codex sessions can optionally join through [hubtool](https://github.com/Maurdekye/orgtree-mailhub#connect-an-agent-session), a separate workflow that is not required for these two applications.
 
 ## 1. With Orgtree and Tailscale
 

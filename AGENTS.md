@@ -10,6 +10,8 @@
   [verified: engine.rs, store.rs, store_notification_reply.rs,
   engine_first_send_tests.rs; proof and limits: docs/first-send-visibility.md]
 
+- 2026-10-12: Recommend each developer installs Orgtree and Hubchat and connects both to a shared standalone mailhub on a company-accessible private server. Built-in Orgtree mailhub is for individuals and small teams; no numeric cutoff, migration or runtime default change. Keep person/organization identities distinct and hubtool optional. [decided: user 2026-10-12 10:11–10:13Z; guidance: `docs/setup.md`]
+
 - 2026-10-11: Close DM is persistent device-local visibility. Preserve every
   message, attachment, draft, unread state and paging cursor; never call delete
   paths. Fresh live incoming reopens atomically, including messages already read

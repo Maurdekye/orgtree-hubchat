@@ -62,9 +62,31 @@ Get the latest release from the
   tried on a real Linux PC yet. Hubchat keeps your identity key in the desktop
   keyring (GNOME Keyring or KWallet).
 
+## Recommended developer team setup
+
+Each developer installs **Orgtree and Hubchat**, and connects **both** to a
+**shared standalone mailhub on a company-accessible private server**. Orgtree
+runs local AI organizations, Hubchat is the human chat client, and the team hub
+relays their messages and files. Each person keeps their own Hubchat identity;
+each Orgtree organization keeps a separate organization identity.
+
+Ask the team operator for the hub's relay-only address. Add it in Hubchat under
+**Settings > Hubs > Add a hub** and in each participating Orgtree organization's
+**Org settings > Connections > Add a mail hub**. See the
+[team setup guide](docs/setup.md#developer-teams-shared-standalone-mailhub) and
+the [standalone mailhub hosting guide](https://github.com/Maurdekye/orgtree-mailhub/blob/main/docs/OPERATIONS.md).
+
+The **built-in Orgtree mailhub is for individuals and small teams**. A shared
+standalone mailhub runs independently of developers' desktops. These are
+recommendations; other supported setups remain available.
+
 ## Setting up
 
-The easiest way needs Orgtree 4.1.0 or later on your PC, and
+For a developer team, follow the shared standalone mailhub setup above. For
+individuals and small teams using the built-in Orgtree mailhub, the phone setup
+below is a convenient option.
+
+This option needs Orgtree 4.1.0 or later on your PC, and
 [Tailscale](https://tailscale.com/download) on your PC and your phone:
 
 1. In Orgtree, open **App settings › Mail hub › Connect your phone** and
@@ -81,7 +103,8 @@ to your organization, so your agents know that messages from your phone come
 from you. To use the same identity on another phone or PC, link it from
 **Settings › Devices › Link a device**.
 
-The [setup guide](docs/setup.md) covers every way in: Orgtree with
+The [setup guide](docs/setup.md) covers developer teams with a shared standalone
+mailhub, Orgtree with
 Tailscale, home Wi-Fi only, your own VPN, someone else's hub, and adding a
 phone or a PC. The same guide is in the app under **Settings › Help**.
 
@@ -101,11 +124,16 @@ phone or a PC. The same guide is in the app under **Settings › Help**.
 
 ## Getting a mail hub
 
-Hubchat's messages travel through a mail hub. You can run your own, in
-Orgtree or on its own. The app has the same help under **Don't have a mail
-hub?**.
+Hubchat's messages travel through a mail hub. For a developer team, use a
+shared standalone mailhub on a company-accessible private server and connect
+both Orgtree and Hubchat to it. For individuals and small teams, Orgtree's
+built-in mailhub is an option. You can also run a standalone hub for other
+uses. The app has help under **Don't have a mail hub?**.
 
 ### With Orgtree (it has one built in)
+
+This option is for individuals and small teams. The hub runs on the Orgtree
+computer, which must stay available for other devices to reach it.
 
 1. In Orgtree, open **App settings › Mail hub**.
 2. Under **Public access**, turn on **Also serve a relay-only door on port
@@ -120,6 +148,10 @@ could read them all. The relay-only door only relays mail: it has no such
 page, and each person can read only their own.
 
 ### On its own (mail hub v2.0)
+
+This is the shared standalone mailhub recommended for a developer team when
+hosted on a company-accessible private server. Both applications use its
+relay-only address; see the [team setup steps](docs/setup.md#developer-teams-shared-standalone-mailhub).
 
 Get it from [orgtree-mailhub](https://github.com/Maurdekye/orgtree-mailhub).
 In its folder, copy `.env.example` to `.env` and set `HUB_DB_PASSWORD`. For
