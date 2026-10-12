@@ -17,6 +17,7 @@ import { formatCode, LinkDeviceModal, type LinkTab } from "./LinkDevice";
 import { copyWords, downloadWords } from "../lib/recovery";
 import { HubAdder } from "./HubAdder";
 import { HubHelpLink } from "./HubHelp";
+import { PictureEditor } from "./PictureEditor";
 import { GuideBody } from "./Guide";
 import { scanSetup } from "../lib/setup";
 import { Addr, Avatar, Confirm, NoteCard, QR, Switch, pressKeys, useDialogFocus, useNow, usePlatform } from "./ui";
@@ -69,6 +70,7 @@ function Profile() {
             <div><div style={{ font: "600 19px var(--font-display)", color: "var(--ink-strong)" }}>{me.name || me.id}</div><div className="mono dim" style={{ fontSize: 12.5 }}><Addr a={me.address} net /></div></div>
           </div>}
       <Sec>
+        <PictureEditor owner={me.address} hasPicture={!!me.picture?.sha256} />
         <div className="field" style={platform === "android" ? { marginTop: 8 } : undefined}>
           <label htmlFor="pf-name">Display name</label>
           <label className="input"><input id="pf-name" aria-label="Your name" value={name} maxLength={48} onChange={(e) => setName(e.target.value)} /></label>

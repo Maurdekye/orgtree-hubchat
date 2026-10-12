@@ -1,7 +1,9 @@
 // Small shared pieces: platform context, avatar, address, chips, dialogs.
 import { createContext, useContext, useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyEvent, type ReactNode } from "react";
 import QRCode from "qrcode";
-import type { Contact, HubStatus, Message } from "../api";
+import type { Contact, HubStatus, Message, PictureMeta } from "../api";
+import { usePicture } from "../lib/pictures";
+import { useSnap } from "../lib/store";
 import { Icon, type IconName } from "../lib/icons";
 import { initials } from "../lib/format";
 import { displayName, kindInfo, kindOf, presence, splitAddr, tickInfo, type Kind, type PresState } from "../lib/peers";
@@ -12,11 +14,14 @@ export type Platform = "desktop" | "android";
 export const PlatformCtx = createContext<Platform>("desktop");
 export const usePlatform = () => useContext(PlatformCtx);
 
-export function Avatar({ kind, name, size, pres, presTitle }: { kind: Kind | "me"; name: string; size: number; pres?: PresState; presTitle?: string }) {
+export function Avatar({ kind, name, size, pres, presTitle, address, picture }: { kind: Kind | "me"; name: string; size: number; pres?: PresState; presTitle?: string; address?: string; picture?: PictureMeta | null }) {
   const cls = kind === "me" ? "k-me" : kindInfo(kind).cls;
+  const me = useSnap().state?.me;
+  const src = usePicture(kind === "chat" ? undefined : kind === "me" ? me?.address : address, kind === "me" ? me?.picture : picture);
+  const [failed, setFailed] = useState<string | null>(null);
   return (
     <span className={"av s" + size + " " + cls}>
-      {kind === "chat" ? <Icon name="terminal" /> : initials(name)}
+      {src && src !== failed ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "inherit" }} onError={() => setFailed(src)} /> : kind === "chat" ? <Icon name="terminal" /> : initials(name)}
       {pres ? <i className={"pres p-" + pres} title={presTitle} /> : null}
     </span>
   );
@@ -25,7 +30,7 @@ export function Avatar({ kind, name, size, pres, presTitle }: { kind: Kind | "me
 /** Avatar for an address, with presence from the directory. */
 export function PeerAvatar({ address, c, hubs, size, withPres = true }: { address: string; c: Contact | undefined; hubs: HubStatus[]; size: number; withPres?: boolean }) {
   const p = presence(c, hubs);
-  return <Avatar kind={kindOf(c)} name={displayName(c, address)} size={size} pres={withPres ? p.state : undefined} presTitle={p.text} />;
+  return <Avatar kind={kindOf(c)} name={displayName(c, address)} address={address} picture={c?.picture} size={size} pres={withPres ? p.state : undefined} presTitle={p.text} />;
 }
 
 /** maya.<span class="tg">e71f2b</span> */

@@ -315,7 +315,7 @@ function onEvent(e: HcEvent) {
     case "incoming": schedule("chats"); chatChanged(e.peer); break;
     case "file_lifecycle": schedule("state"); schedule("transfers"); break;
     case "hub": schedule("state"); schedule("transfers"); break;
-    case "directory": schedule("dir"); break;
+    case "directory": schedule("dir"); schedule("state"); break;
     case "transfer":
       transfers.set(e.local_id, { done: e.done, total: e.total, upload: e.upload, message_id: e.message_id });
       tsubs.forEach((f) => f());

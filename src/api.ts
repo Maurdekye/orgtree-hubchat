@@ -40,7 +40,12 @@ export interface Me {
   address: string;
   name: string;
   about: string;
+  picture?: PictureMeta | null;
 }
+
+export interface PictureMeta { revision: string; sha256: string | null; width: number; height: number; bytes: number }
+export interface PictureRecord extends PictureMeta { data: string | null }
+export interface PictureCrop { x: number; y: number; size: number }
 
 /** Android: a newer release this phone can install. */
 export interface AppUpdate {
@@ -165,6 +170,7 @@ export interface Contact {
   online: boolean;
   last_seen: string | null;
   hubs: string[];
+  picture?: PictureMeta | null;
 }
 
 /** Where a chat's messages go (the hub picker, hc_send_route). */
@@ -343,6 +349,9 @@ export const tauriApi = {
   recoveryWords: () => invoke<string[]>("hc_recovery_words"),
   recoverySaved: () => invoke<void>("hc_recovery_saved"),
   setProfile: (name: string, about: string) => invoke<void>("hc_set_profile", { name, about }),
+  picture: (peer: string) => invoke<PictureRecord | null>("hc_picture", { peer }),
+  picturePreview: (data: string) => invoke<{ data: string; width: number; height: number }>("hc_picture_preview", { data }),
+  setPicture: (owner: string, data: string | null, crop?: PictureCrop) => invoke<PictureRecord>("hc_set_picture", { owner, data, crop }),
   setReadReceipts: (on: boolean) => invoke<void>("hc_set_read_receipts", { on }),
   setNotifications: (n: NotifySettings) => invoke<void>("hc_set_notifications", { enabled: n.enabled, preview: n.preview, sound: n.sound }),
   setStayConnected: (on: boolean) => invoke<void>("hc_set_stay_connected", { on }),
