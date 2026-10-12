@@ -385,7 +385,7 @@ function Developer() {
     <Sec first>
       <Card>
         <Row icon="terminal" t1="Verbose logging" t2={verbose ?? undefined} right={info && info.active && !info.pinned ? <Switch on={info.verbose} onChange={setVerbose} label="Verbose logging" /> : null} />
-        <Row icon="folder" t1="Open logs folder" t2={info ? (info.files ? info.files + (info.files === 1 ? " file, " : " files, ") + bytes(info.bytes) : "No files yet") + " (up to " + bytes(info.max_bytes) + ", kept " + info.retention_days + " days). Logs stay on this device and are never sent anywhere." : undefined} right={<button className="btn" onClick={() => void openFolder()}><Icon name="folder" />Open</button>} />
+        <Row icon="folder" t1="Open logs folder" t2={info ? (info.files ? info.files + (info.files === 1 ? " file, " : " files, ") + bytes(info.bytes) : "No files yet") + " (up to " + bytes(info.max_bytes) + ", kept " + info.retention_days + " days). Logs stay on this device and are never sent anywhere." + (info.fallback ? " Hubchat could not write to its own folder, so this log is in a temporary folder." : "") : undefined} right={<button className="btn" onClick={() => void openFolder()}><Icon name="folder" />Open</button>} />
       </Card>
     </Sec>
   );

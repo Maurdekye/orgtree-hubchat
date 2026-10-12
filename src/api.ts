@@ -58,6 +58,8 @@ export interface LogInfo {
   /** HUBCHAT_LOG_VERBOSE fixes the switch for this run. */
   pinned: boolean;
   dir: string;
+  /** The usual folder could not be written: the log is in a temporary folder. */
+  fallback: boolean;
   files: number;
   bytes: number;
   max_bytes: number;

@@ -45,7 +45,7 @@ const sleep = (n: number) => new Promise((r) => setTimeout(r, n));
 
 /** Settings › Developer in the mock: a verbose switch and a small log folder. */
 let mockVerbose = false;
-const mockLog = (): LogInfo => ({ active: true, verbose: mockVerbose, default_verbose: false, pinned: false, dir: "C:\\Users\\alex\\AppData\\Roaming\\dev.orgtree.hubchat\\diagnostics\\logs", files: 3, bytes: 1_245_184, max_bytes: 64 * 1024 * 1024, retention_days: 30 });
+const mockLog = (): LogInfo => ({ active: true, verbose: mockVerbose, default_verbose: false, pinned: false, dir: "C:\\Users\\alex\\AppData\\Roaming\\dev.orgtree.hubchat\\diagnostics\\logs", fallback: false, files: 3, bytes: 1_245_184, max_bytes: 64 * 1024 * 1024, retention_days: 30 });
 
 /** A time `days` ago at hh:mm local. */
 function at(days: number, hm: string): number {
