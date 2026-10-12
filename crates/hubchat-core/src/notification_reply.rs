@@ -9,7 +9,9 @@ impl IdentityLoader {
     /// Successful cold initialization is latched; later attachments must not
     /// reload a key in the middle of an intentional identity departure.
     pub fn attach(&self, load: impl FnOnce() -> std::result::Result<bool, String>) -> std::result::Result<(), String> {
-        let mut complete = self.0.lock().map_err(|_| "Identity startup is unavailable; retry".to_string())?;
+        // Android mode-change callbacks can reenter attach during adoption.
+        // Busy attachment must retry, never wait on its own establishment guard.
+        let mut complete = self.0.try_lock().map_err(|_| "Identity startup is busy; retry".to_string())?;
         if !*complete { *complete = load()?; }
         Ok(())
     }
@@ -114,7 +116,7 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_cold_attach_waits_and_failed_load_can_recover() {
+    fn concurrent_cold_attach_retries_and_failed_load_can_recover() {
         use std::sync::{Mutex, atomic::{AtomicUsize, Ordering}};
         let store = Arc::new(Store::open_in_memory().unwrap());
         let me = Identity::generate("alice").unwrap();
@@ -143,9 +145,10 @@ mod tests {
             p.0.attach(|| panic!("must not create a second engine"))
         });
         second_entered.wait();
+        assert!(second.join().unwrap().is_err()); // first load still holds the gate
         release.wait();
         first.join().unwrap().unwrap();
-        second.join().unwrap().unwrap();
+        published.0.attach(|| panic!("completed first load must not run twice")).unwrap();
         assert_eq!(loads.load(Ordering::SeqCst), 1);
         let e = published.1.lock().unwrap().clone().unwrap();
         for _ in 0..2 { assert_eq!(admit(Some(&e), &owner, ID, PEER, "saved"), "queued"); }
@@ -250,6 +253,17 @@ mod tests {
         let mut adoption = false;
         loader.run(|| false, || { adoption = true; Ok(true) }).unwrap();
         assert!(adoption); // completion never blocks an intentional adoption
+    }
+
+    #[test]
+    fn nested_mode_change_attach_retries_without_blocking_establishment() {
+        let loader = IdentityLoader::default();
+        loader.attach(|| Ok(false)).unwrap();
+        loader.run(|| false, || {
+            assert!(loader.attach(|| panic!("must not reload during adoption")).is_err());
+            Ok(true)
+        }).unwrap();
+        loader.attach(|| panic!("successful adoption should be complete")).unwrap();
     }
 
     #[test]

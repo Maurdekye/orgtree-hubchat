@@ -636,7 +636,9 @@ impl Core {
     /// data that belongs to another identity goes first (user 2026-10-10:
     /// a new identity must never inherit the old one's chats and hubs).
     pub fn adopt_identity(&self, me: Identity, brand_new: bool, meta: &[(&str, &str)]) -> Result<(), String> {
-        self.identity_load.run(|| false, || self.adopt_identity_inner(me, brand_new, meta).map(|_| true))
+        self.identity_load.run(|| false, || self.adopt_identity_inner(me, brand_new, meta).map(|_| true))?;
+        self.platform().refresh_push();
+        Ok(())
     }
 
     fn adopt_identity_inner(&self, me: Identity, brand_new: bool, meta: &[(&str, &str)]) -> Result<(), String> {
@@ -655,7 +657,6 @@ impl Core {
         crate::secrets::save_identity(&self.dir, &me)?;
         keylog::note(&self.dir, if brand_new { "key saved: a new identity" } else { "key saved: an identity brought to this device" });
         self.start_with(me)?;
-        self.platform().refresh_push();
         Ok(())
     }
 
