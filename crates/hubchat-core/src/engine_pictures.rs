@@ -4,6 +4,19 @@ use super::*;
 use crate::pictures::PictureRecord;
 
 impl Engine {
+    /// Shared synchronous roster admission for poll, sync and setup refresh.
+    /// `snapshot` preserves poll's empty-snapshot and sync's nonempty-first-page rules.
+    pub(crate) fn admit_roster_batch(&self, client:&HubClient, entries:&[crate::hub::RosterEntry], snapshot:bool, removed:&[String], online:Option<&[String]>)->Result<()> {
+        let url=client.address().as_str();
+        let mut changed=false;
+        if snapshot {self.store.set_roster(url,entries)?;changed=true;}
+        else if !entries.is_empty() {self.store.upsert_roster(url,entries)?;changed=true;}
+        if !removed.is_empty() {self.store.remove_roster(url,removed)?;changed=true;}
+        self.observe_pictures_for(client,entries)?;
+        if let Some(online)=online {self.store.set_online(url,online)?;changed=true;}
+        if changed {self.host.event(Event::Directory);}
+        Ok(())
+    }
     pub(crate) fn observe_pictures_for(&self, client:&HubClient, entries:&[crate::hub::RosterEntry])->Result<()> {
         client.session_commit(|| {
             self.observe_pictures(entries)?;
@@ -230,6 +243,57 @@ mod tests {
         assert_eq!(received.meta.picture_owner.as_deref(),Some(b.as_str()));
         assert_eq!(proof.await.unwrap().len(),2);e.shutdown();
     }
+    // Deterministic native admission schedule: the old worker passes its early
+    // check, pauses, and resumes the exact production batch boundary only after
+    // disable/re-enable and fresh ownership admission. No simulated SQL guard.
+    async fn picture_roster_preemption(mode:u8) {
+        let e=engine();e.set_suspended(true);let a="a".repeat(64);let b="b".repeat(64);let peer="peer.aaaaaa";
+        let old=attach(&e,HubClient::new(HubAddress::parse("http://127.0.0.1:7997").unwrap()));
+        let url=old.address().to_string();
+        let entry=|token:&str,name:&str,picture:Option<crate::pictures::PictureMeta>| -> crate::hub::RosterEntry {
+            serde_json::from_value(serde_json::json!({"slug":peer,"kind":"person","org_name":name,"picture_owner":token,"picture":picture})).unwrap()
+        };
+        let mut pixels=image();pixels.meta.picture_owner=Some(a.clone());
+        let old_entry=entry(&a,"old owner",Some(pixels.meta.clone()));
+        e.admit_roster_batch(&old,&[old_entry.clone()],true,&[],None).unwrap();
+        e.admit_picture(&old,peer,&pixels,None).unwrap();
+        assert!(e.store.picture(peer).unwrap().unwrap().data.is_some());
+        let (arrived_tx,arrived_rx)=std::sync::mpsc::channel();let (resume_tx,resume_rx)=std::sync::mpsc::channel();
+        let worker={let e=e.clone();std::thread::spawn(move || {
+            assert!(!old.session_cancelled());arrived_tx.send(()).unwrap();
+            resume_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            match mode {
+                0|1=>e.admit_roster_batch(&old,&[old_entry],true,&[],None),
+                2=>e.admit_roster_batch(&old,&[old_entry],false,&[],None),
+                _=>e.admit_roster_batch(&old,&[],false,&[peer.into()],Some(&[])),
+            }
+        })};
+        arrived_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        e.set_hub_enabled(&url,false).unwrap();e.set_hub_enabled(&url,true).unwrap();
+        let fresh=e.hub_client(&url).unwrap();
+        let removed=PictureRecord::removed(next_revision(None).unwrap());
+        let fresh_entry=entry(&b,"fresh owner",Some(removed.meta.clone()));
+        e.admit_roster_batch(&fresh,&[fresh_entry.clone()],true,&[],None).unwrap();
+        assert!(e.store.picture(peer).unwrap().unwrap().data.is_none());
+        resume_tx.send(()).unwrap();let result=worker.join().unwrap();
+        assert!(matches!(result,Err(Error::FilePaused)));
+        let rows=e.store.directory().unwrap();assert_eq!(rows.len(),1,"old removal escaped cancellation");
+        assert_eq!(rows[0].org_name,"fresh owner","old roster replaced fresh provenance");
+        assert_eq!(e.store.picture(peer).unwrap().unwrap().meta.picture_owner.as_deref(),Some(b.as_str()));
+        assert!(e.store.picture(peer).unwrap().unwrap().data.is_none());
+        // Positive control through the same mode: a fresh generation still works.
+        if mode==3 {e.admit_roster_batch(&fresh,&[],false,&[peer.into()],Some(&[])).unwrap();assert!(e.store.directory().unwrap().is_empty());}
+        else {let mut updated=fresh_entry;updated.org_name="fresh update".into();e.admit_roster_batch(&fresh,&[updated],mode<2,&[],None).unwrap();assert_eq!(e.store.directory().unwrap()[0].org_name,"fresh update");}
+        e.shutdown();
+    }
+    #[tokio::test]
+    async fn picture_poll_batch_after_early_check_rejects_cancelled_generation() {picture_roster_preemption(0).await;}
+    #[tokio::test]
+    async fn picture_sync_snapshot_after_early_check_rejects_cancelled_generation() {picture_roster_preemption(1).await;}
+    #[tokio::test]
+    async fn picture_sync_upsert_after_early_check_rejects_cancelled_generation() {picture_roster_preemption(2).await;}
+    #[tokio::test]
+    async fn picture_sync_remove_after_early_check_rejects_cancelled_generation() {picture_roster_preemption(3).await;}
     #[tokio::test]
     async fn picture_reconnect_learns_removal_before_publish_and_relays_it_to_stale_hub() {
         let e=engine();let old=image();let owner=e.me.address();e.store.merge_picture(&owner,&owner,&old).unwrap();

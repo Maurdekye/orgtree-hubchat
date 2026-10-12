@@ -619,8 +619,7 @@ impl Engine {
         // A v1 hub sends its roster with the next poll answer, up to a minute
         // away: ask now, so the first message goes through this hub.
         let roster = client.roster(&self.me).await?;
-        self.store.set_roster(&url, &roster)?;
-        self.host.event(Event::Directory);
+        self.admit_roster_batch(&client,&roster,true,&[],None)?;
         if !roster.iter().any(|r| r.slug == link.org) {
             return Err(Error::Invalid(format!("{} isn't on {}'s hub", link.orgname, link.pc)));
         }
@@ -915,9 +914,7 @@ impl Engine {
                 let v = p.version.clone();
                 self.set_status_for(url, stop, |s| s.version = v);
             }
-            self.store.set_roster(url, &p.roster)?;
-            self.observe_pictures_for(client,&p.roster)?;
-            self.host.event(Event::Directory);
+            self.admit_roster_batch(client,&p.roster,true,&[],None)?;
             for r in &p.receipts {
                 self.store.apply_receipt(r)?;
                 if let Some(m) = self.store.message(&r.id)? {
@@ -1057,26 +1054,7 @@ impl Engine {
                 self.start_from(url, r.now)?;
             }
             let start_ms: Option<i64> = self.store.meta(&start_key)?.and_then(|v| v.parse().ok());
-            let mut dir_changed = false;
-            if first_page && !r.roster.is_empty() {
-                self.store.set_roster(url, &r.roster)?;
-                dir_changed = true;
-            } else if !r.roster.is_empty() {
-                self.store.upsert_roster(url, &r.roster)?;
-                dir_changed = true;
-            }
-            if !r.roster_removed.is_empty() {
-                self.store.remove_roster(url, &r.roster_removed)?;
-                dir_changed = true;
-            }
-            self.observe_pictures_for(client,&r.roster)?;
-            if let Some(online) = &r.online {
-                self.store.set_online(url, online)?;
-                dir_changed = true;
-            }
-            if dir_changed {
-                self.host.event(Event::Directory);
-            }
+            self.admit_roster_batch(client,&r.roster,first_page&&!r.roster.is_empty(),&r.roster_removed,r.online.as_deref())?;
             let t = now();
             let mut to_deliver = Vec::new();
             let mut peers = std::collections::BTreeSet::new();
