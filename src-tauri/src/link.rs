@@ -291,6 +291,7 @@ pub async fn hc_link_start<R2: Runtime>(
     let code2 = code.clone();
     let via = addr.to_string();
     let aliases = aliases.unwrap_or_default();
+    let alias_client = client.clone();
     c.rt.spawn(async move {
         let t0 = Instant::now();
         let _ = app.emit(
@@ -300,7 +301,7 @@ pub async fn hc_link_start<R2: Runtime>(
             },
         );
         let outcome = loop {
-            if stop.is_cancelled() {
+            if stop.is_cancelled() || client.session_cancelled() {
                 break None;
             }
             if t0.elapsed() > LINK_TTL {
@@ -336,7 +337,7 @@ pub async fn hc_link_start<R2: Runtime>(
     });
     let hub = addr.to_string();
     let (host, ips) = local_addresses();
-    let (hubs, phone_access_off) = aliases_for(&hub, host.as_deref(), &ips, Some(client.clone())).await;
+    let (hubs, phone_access_off) = aliases_for(&hub, host.as_deref(), &ips, Some(alias_client)).await;
     let qr = LinkUrl {
         code: link::normalize_code(&code).map_err(s)?,
         hubs,
