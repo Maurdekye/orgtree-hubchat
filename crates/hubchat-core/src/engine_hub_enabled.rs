@@ -34,7 +34,7 @@ impl Engine {
         self.hubs.lock().unwrap().get(url).map(|h| h.client.clone())
     }
 
-    fn set_status_for(&self, url: &str, stop: &CancelFlag, f: impl FnOnce(&mut HubStatus)) {
+    pub(super) fn set_status_for(&self, url: &str, stop: &CancelFlag, f: impl FnOnce(&mut HubStatus)) {
         let changed = {
             let mut hubs = self.hubs.lock().unwrap();
             match hubs.get_mut(url).filter(|h| h.stop.same(stop) && !stop.is_cancelled()) {
@@ -45,7 +45,7 @@ impl Engine {
         if changed { self.host.event(Event::Hub { url: url.into() }); }
     }
 
-    fn mark_for(&self, url: &str, stop: &CancelFlag, f: impl FnOnce(&mut HubStatus)) {
+    pub(super) fn mark_for(&self, url: &str, stop: &CancelFlag, f: impl FnOnce(&mut HubStatus)) {
         if let Some(h) = self.hubs.lock().unwrap().get_mut(url).filter(|h| h.stop.same(stop) && !stop.is_cancelled()) {
             f(&mut h.status);
         }
