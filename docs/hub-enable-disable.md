@@ -160,3 +160,75 @@ link/door/device or installed-app acceptance is claimed. Renderer is unchanged;
 prior16/16 receipts remain and tsc0 remains author-reported without a supplied
 execution log. Fresh final independent round3 is required; no integration or
 publication is performed by the author.
+
+## Final findings corrected for coordinator disposition
+
+Final independent round3 found two remaining source-substantiated paths:
+public link/onboarding preflight and setup checks bypassed saved policy when no
+Reception existed, while door discovery guarded only its parent. A delayed
+spawned door request could dispatch before that parent processed cancellation.
+These findings were not native/network reproductions. The three-round loop is
+concluded without approval; no fourth independent round is requested or launched.
+
+All preflight, setup and door health requests now use `link::Discovery`. The
+native factory always supplies the policy-first `start_client` resolver; it
+does not condition saved policy on a Reception. Every candidate resolves current
+saved state when its request is polled. Enabled saved candidates retain their
+active bound token; disabled, cancelled or unavailable saved candidates refuse.
+Only genuinely unsaved candidates receive an independent setup client.
+With an originating Reception, resolution and the actual destination request
+both run inside its hub/listener guard. Door helpers require this context and
+clone it into each spawned same-hub request. Direct initial, hostname and
+advertised-address health requests use the same path. The parent guard remains
+an additional bound, not the request-admission mechanism.
+
+Measured extracted predecessor0621c65 (e437357 plus fixture adapters only): the
+`discovery_` filter executes10 tests,6 expected failures/4 passes in0.04s,
+warning-free14.25s compilation. Six failures cover disabled public preflight,
+disabled setup, enabled saved preflight first polled after disable, a delayed
+door child after origin cancellation, a separately saved disabled destination,
+and the actual direct find_door/qr_hubs path. Positive enabled/unsaved preflight
+and three earlier received-link controls pass. Corrected2714a73 adds a live
+origin positive door control for both enabled destinations and unsaved aliases;
+all181 core tests pass, warning-free13.48s compilation/2.62s tests. Mock hubs
+listen only on ephemeral loopback ports; refusal controls count zero requests
+on corrected code, and positive controls count the expected requests. The
+delayed child uses the exact production Discovery request method, with no
+parent poll available to abort it before admission.
+
+Initial extraction/green compile attempts missed five legacy door fixture
+arguments and executed no tests. Their compile-failure receipts remain
+separate; the adapters were corrected before the measured red/green runs.
+Native commands' existing ordering fixtures now inject a synthetic resolver
+into the same production algorithm rather than requiring a global app Core;
+those native fixture tests were not executed here.
+Final native runtimed2eb78d passes the Android/API24/NDK27 library check without
+warnings,10.83s compiler/10.895s wrapper. Later documentation changes no runtime.
+Receipts: `hub-enable-discovery-red-0621c65.log`,
+`hub-enable-discovery-regression-2714a73.log`,
+`hub-enable-discovery-android-d2eb78d.log` and separate compile-failure logs.
+
+### Finite client-construction and health inventory
+
+Source audit covers all `HubClient::new` and `.healthz()` sites in native and core
+Rust, classifying test sections separately:
+
+| Site | Admission or explicit exception |
+| --- | --- |
+| commands: probeHub, probeLinkHubs, received probe and setupCheck | One policy Discovery factory; every actual candidate uses its health request. No Reception=None bypass. |
+| link: linkStart, aliases_for and linkOffer | Policy-first selection; aliases supply the originating Reception and policy resolver to door requests. Received publication remains guarded. |
+| door: initial health, qr_hubs, same_hub, answering children, hostname and advertised address | Required Discovery context propagated through every direct and spawned request; no direct fresh-client construction in production door code. |
+| core link::start_client | The sole auxiliary fresh-client branch first establishes that the normalized address has no saved row. |
+| Engine::spawn_hub | New client immediately binds the new runtime token under saved-policy/runtime-map admission. |
+| Engine session health and register_push health | Existing bound runtime clones; transport token guard applies. |
+| Engine::remove_hub cleanup | Intentional explicit removal/unregister may detach or construct a cleanup client. Disable never invokes this path. |
+| door, commands, download, transfer, first-send and engine fixtures; door_e2e | Synthetic/test-only unbound resolvers or clients, outside product dispatch. The environment-gated external door test was adapted but not run. |
+
+No remaining product discovery site constructs an unbound client outside the
+genuinely-unsaved policy branch. This is finite source inspection plus the
+measured component schedules, not complete native IPC/WebView/UI/link/door
+device or installed-app acceptance. Previous renderer16/16 receipts remain;
+tsc0 remains author-reported without a supplied execution log. No live service,
+settings/message, app/APK/install/publication or author integration occurred.
+Exact corrections return to coordinator disposition; profile composition stays
+held until coordinator approval.

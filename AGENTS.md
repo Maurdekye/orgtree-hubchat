@@ -50,6 +50,10 @@
   Each probe also honors its destination's saved policy. Bounded synchronous
   pending-state/event publication serializes with cancellation; no late review
   from a disabled or replaced generation.
+  Public preflight/setup probes always resolve saved policy, even without a
+  Reception. Door helpers require a Discovery context; direct and spawned
+  health requests resolve destination policy inside the origin guard. There
+  is no saved-hub diagnostic bypass; unbound test resolvers stay in fixtures.
   [decided: user via coordinator 2026-10-12; source: store_hub_enabled.rs,
   engine_hub_enabled.rs, hub.rs; verification gate and limits:
   docs/hub-enable-disable.md]
