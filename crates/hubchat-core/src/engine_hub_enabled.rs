@@ -7,7 +7,8 @@ impl Engine {
         let url = address.to_string();
         // Serialize policy and runtime changes in the same order as spawn.
         let mut hubs = self.hubs.lock().unwrap();
-        self.store.set_hub_enabled(&url, enabled)?;
+        if self.stopped.load(std::sync::atomic::Ordering::Relaxed) { return Err(Error::Cancelled); }
+        self.store.set_hub_enabled_for(Some(&self.me.address()), &url, enabled)?;
         if !enabled {
             if let Some(rt) = hubs.remove(&url) {
                 rt.stop.cancel();

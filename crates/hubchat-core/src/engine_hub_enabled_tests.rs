@@ -174,3 +174,20 @@ async fn previously_selected_send_route_cannot_turn_waiting_into_failure() {
     assert_eq!(row.state, "queued");
     assert!(row.error.is_none());
 }
+
+#[tokio::test]
+async fn retired_generation_cannot_change_replacement_clock_or_policy() {
+    let e = engine();
+    let (_, stop) = attach(&e, A);
+    e.set_hub_enabled(A, false).unwrap();
+    e.set_hub_enabled(A, true).unwrap();
+    e.store.set_meta(&clock_key(A), "7").unwrap();
+    assert!(matches!(e.clock_reading(A, &stop, Some(100), 0, 0), Err(Error::FilePaused)));
+    assert_eq!(e.store.meta(&clock_key(A)).unwrap().as_deref(), Some("7"));
+    e.store.set_meta("identity.address", "other-owner").unwrap();
+    assert!(e.set_hub_enabled(A, false).is_err());
+    assert!(e.store.hub_enabled(A).unwrap());
+    e.shutdown();
+    assert!(matches!(e.set_hub_enabled(A, false), Err(Error::Cancelled)));
+    tokio::task::yield_now().await;
+}

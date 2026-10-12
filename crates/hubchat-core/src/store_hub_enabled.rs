@@ -16,8 +16,16 @@ impl Store {
     }
 
     pub fn set_hub_enabled(&self, url: &str, enabled: bool) -> Result<()> {
+        self.set_hub_enabled_for(None, url, enabled)
+    }
+
+    pub(crate) fn set_hub_enabled_for(&self, owner: Option<&str>, url: &str, enabled: bool) -> Result<()> {
         self.with(|c| {
             let tx = c.transaction()?;
+            if let Some(owner) = owner {
+                let current: Option<String> = tx.query_row("SELECT value FROM meta WHERE key='identity.address'", [], |r| r.get(0)).optional()?;
+                if current.as_deref() != Some(owner) { return Err(rusqlite::Error::QueryReturnedNoRows); }
+            }
             let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM hubs WHERE url=?)", [url], |r| r.get(0))?;
             if !exists { return Err(rusqlite::Error::QueryReturnedNoRows); }
             if enabled {

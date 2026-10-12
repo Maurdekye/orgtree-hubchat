@@ -263,7 +263,10 @@ pub async fn hc_link_start<R2: Runtime>(
         None => link::new_link_code(),
     };
     let temp = link::link_identity(&code).map_err(s)?;
-    let client = HubClient::new(addr.clone());
+    let client = match c.engine() {
+        Ok(e) if c.store.hubs().map_err(s)?.iter().any(|h| h.url == addr.as_str()) => e.hub_client(addr.as_str()).ok_or("Enable this saved hub on this device before linking.")?,
+        _ => HubClient::new(addr.clone()),
+    };
     let profile = Profile {
         kind: "chat".into(),
         org_name: if device_name.trim().is_empty() {
@@ -333,7 +336,7 @@ pub async fn hc_link_start<R2: Runtime>(
     });
     let hub = addr.to_string();
     let (host, ips) = local_addresses();
-    let (hubs, phone_access_off) = aliases_for(&hub, host.as_deref(), &ips).await;
+    let (hubs, phone_access_off) = aliases_for(&hub, host.as_deref(), &ips, Some(client.clone())).await;
     let qr = LinkUrl {
         code: link::normalize_code(&code).map_err(s)?,
         hubs,
@@ -403,12 +406,19 @@ fn local_addresses() -> (Option<String>, Vec<std::net::IpAddr>) {
 /// one (hubchat_core::door): a Tailscale address the door answered on goes
 /// first (the phone reaches the PC through Tailscale; hubchat-opus 11:50Z).
 /// True with them when the hub says no door runs (phone access is off).
-async fn aliases_for(hub: &str, host: Option<&str>, ips: &[std::net::IpAddr]) -> (Vec<String>, bool) {
+async fn aliases_for(hub: &str, host: Option<&str>, ips: &[std::net::IpAddr], client: Option<HubClient>) -> (Vec<String>, bool) {
     let (h, name, i) = (hub.to_string(), host.map(str::to_string), ips.to_vec());
     let run = async move {
-        let t = Duration::from_secs(2);
-        let d = door::find_door(&h, &i, &door::DOOR_PORTS, t).await;
-        (door::qr_hubs(&h, name.as_deref(), &i, &d, t).await, d == Door::Off)
+        let fallback = (link::hub_aliases(&h, name.as_deref(), &i, None), false);
+        let work = async {
+            let t = Duration::from_secs(2);
+            let d = door::find_door(&h, &i, &door::DOOR_PORTS, t).await;
+            (door::qr_hubs(&h, name.as_deref(), &i, &d, t).await, d == Door::Off)
+        };
+        match client {
+            Some(client) => client.session_work(async { Ok(work.await) }).await.unwrap_or(fallback),
+            None => work.await,
+        }
     };
     match core::get() {
         Ok(c) => match c.rt.spawn(run).await {
@@ -471,17 +481,19 @@ pub async fn hc_link_offer(hub: Option<String>) -> R<LinkOffer> {
         None => statuses
             .iter()
             .find(|h| matches!(h.state, hubchat_core::engine::HubState::Connected))
-            .or_else(|| statuses.first())
+            .or_else(|| statuses.iter().find(|h| h.state != hubchat_core::engine::HubState::Disabled))
             .map(|h| h.url.clone())
             .ok_or("add a hub first: the new device links through one")?,
     };
+    let client = e.hub_client(&hub).ok_or("Enable this saved hub on this device before linking.")?;
     let hub_name = statuses
         .iter()
         .find(|h| h.url == hub)
         .map(|h| h.name.clone())
         .filter(|n| !n.trim().is_empty());
     let (host, ips) = local_addresses();
-    let (hubs, phone_access_off) = aliases_for(&hub, host.as_deref(), &ips).await;
+    let (hubs, phone_access_off) = aliases_for(&hub, host.as_deref(), &ips, Some(client.clone())).await;
+    if client.session_cancelled() { return Err("This hub was disabled while preparing the link.".into()); }
     let code = link::new_link_code();
     let qr = LinkUrl {
         code: link::normalize_code(&code).map_err(s)?,

@@ -495,6 +495,12 @@ impl Engine {
             if unregister {
                 let _ = rt.client.unregister(&self.me).await;
             }
+        } else if unregister && self.store.hubs()?.iter().any(|h| h.url == url) {
+            // Explicit removal is still allowed to unregister a disabled hub;
+            // disabling itself never uses this unbound cleanup client.
+            if let Ok(address) = HubAddress::parse(url) {
+                let _ = HubClient::new(address).unregister(&self.me).await;
+            }
         }
         self.store.remove_hub(url)?;
         self.host.event(Event::Hub { url: url.into() });
@@ -1135,8 +1141,10 @@ impl Engine {
             return Ok(());
         };
         let offset = hub_now - ((asked + answered) / 2) as i64;
+        let mut hubs = self.hubs.lock().unwrap();
+        let Some(h) = hubs.get_mut(url).filter(|h| h.stop.same(stop) && !stop.is_cancelled()) else { return Err(Error::FilePaused); };
         self.store.set_meta(&clock_key(url), &offset.to_string())?;
-        self.mark_for(url, stop, |s| s.clock_offset_ms = Some(offset));
+        h.status.clock_offset_ms = Some(offset);
         Ok(())
     }
 
