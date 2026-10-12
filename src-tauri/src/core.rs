@@ -172,6 +172,7 @@ pub struct Core {
     host: Arc<ShellHost>,
     /// Set while this device had an identity but its key can't be found.
     key_lost: Mutex<Option<KeyLost>>,
+    identity_load: hubchat_core::notification_reply::IdentityLoader,
 }
 
 /// This device had an identity, but its key is gone (user 2026-10-10: Windows
@@ -273,7 +274,7 @@ impl Host for ShellHost {
         if let Ok(c)=get() { c.rt.spawn(async move { c.refresh_file_lifetime(); }); }
     }
     fn event(&self, ev: Event) {
-        if let Event::Incoming { peer, preview, quiet, .. } = &ev {
+        if let Event::Incoming { peer, quiet, .. } = &ev {
             let showing = self.foreground.load(Ordering::Relaxed)
                 && self.open_chat.lock().unwrap().as_deref() == Some(peer.as_str());
             // `quiet`: another of our devices was in use when it came
@@ -322,6 +323,7 @@ pub fn get() -> Result<&'static Core, String> {
 /// Create the core once per process (later calls return the existing one).
 pub fn init(dir: PathBuf, platform: Arc<dyn Platform>) -> Result<&'static Core, String> {
     if let Some(c) = CORE.get() {
+        c.load_key()?;
         return Ok(c);
     }
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -362,10 +364,11 @@ pub fn init(dir: PathBuf, platform: Arc<dyn Platform>) -> Result<&'static Core, 
         rt,
         host,
         key_lost: Mutex::new(None),
+        identity_load: Default::default(),
     };
     let core = match CORE.set(core) {
         Ok(()) => CORE.get().unwrap(),
-        Err(_) => return Ok(CORE.get().unwrap()), // lost a race: use the winner
+        Err(_) => CORE.get().unwrap(), // winner may still need its key loaded
     };
     core.load_key()?;
     Ok(core)
@@ -526,9 +529,10 @@ impl Core {
     /// Read the key and start (start-up, and Try again on the lost-key
     /// screen); without one, note whether this device had an identity.
     pub fn load_key(&self) -> Result<(), String> {
-        if self.has_identity() {
-            return Ok(());
-        }
+        self.identity_load.run(|| self.has_identity(), || self.load_key_inner())
+    }
+
+    fn load_key_inner(&self) -> Result<(), String> {
         let unreadable = match crate::secrets::load_identity(&self.dir) {
             Loaded::Found(me) => return self.start_with(me),
             Loaded::Restored(me) => {

@@ -3,14 +3,15 @@ use crate::{engine::{Engine, Event, BODY_INLINE_MAX}, Error, Result};
 
 impl Engine {
     pub fn incoming_event(&self, peer: String, id: String, preview: String, quiet: bool) -> Event {
-        Event::Incoming { peer, id, preview, quiet }
+        Event::Incoming { owner: self.me().address(), peer, id, preview, quiet }
     }
     /// The account was captured when the notification was posted, never at send time.
     /// Admission is local; routing, delivery and retries remain the sender's job.
     pub fn queue_notification_reply(&self, owner: &str, id: &str, peer: &str, body: &str) -> Result<bool> {
-        if owner != self.me().address() || self.stopped.load(std::sync::atomic::Ordering::Relaxed) {
+        if owner != self.me().address() {
             return Err(Error::Invalid("The notification belongs to an identity that is no longer connected.".into()));
         }
+        if self.stopped.load(std::sync::atomic::Ordering::Relaxed) { return Err(Error::Cancelled); }
         let added = self.store.queue_notification_reply(owner, id, peer, body)?;
         if added {
             if body.len() as u64 > BODY_INLINE_MAX { self.host.file_work_changed(); }

@@ -93,6 +93,8 @@ pub enum Event {
     Chat { peer: String },
     /// A new incoming message (the shell decides whether to notify).
     Incoming {
+        /// Immutable identity of the engine that received this message.
+        owner: String,
         peer: String,
         id: String,
         preview: String,

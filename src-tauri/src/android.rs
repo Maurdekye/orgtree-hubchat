@@ -332,7 +332,7 @@ fn notification_reply(mut env: JNIEnv, owner: JString, id: JString, peer: JStrin
         let e = c.and_then(|c| c.engine().ok());
         let _admission = c.map(|c| c.file_admission(body.len() as u64 > hubchat_core::engine::BODY_INLINE_MAX));
         Ok(hubchat_core::notification_reply::admit(e.as_deref(), &owner, &id, &peer, &body))
-    })().unwrap_or("rejected");
+    })().unwrap_or("retry");
     env.new_string(result).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
 }
 

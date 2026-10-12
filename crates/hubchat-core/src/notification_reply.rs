@@ -1,6 +1,17 @@
 //! Shell notification payloads and readiness-safe local admission.
 use crate::{engine::{Engine, Event}, store::Store, Error};
 
+/// Core publication precedes key loading so startup callbacks can find the core.
+/// Concurrent attaches serialize loading; a failed load never latches readiness.
+#[derive(Default)]
+pub struct IdentityLoader(std::sync::Mutex<()>);
+impl IdentityLoader {
+    pub fn run(&self, ready: impl FnOnce() -> bool, load: impl FnOnce() -> std::result::Result<(), String>) -> std::result::Result<(), String> {
+        let _guard = self.0.lock().map_err(|_| "Identity startup is unavailable; retry".to_string())?;
+        if ready() { Ok(()) } else { load() }
+    }
+}
+
 pub struct IncomingNotice {
     pub owner: String,
     pub peer: String,
@@ -9,9 +20,9 @@ pub struct IncomingNotice {
 }
 
 pub fn incoming_notice(event: &Event, store: &Store, preview: bool) -> Option<IncomingNotice> {
-    let Event::Incoming { peer, preview: body, .. } = event else { return None };
+    let Event::Incoming { owner, peer, preview: body, .. } = event else { return None };
     Some(IncomingNotice {
-        owner: store.meta("identity.address").ok().flatten().unwrap_or_default(),
+        owner: owner.clone(),
         peer: peer.clone(),
         title: store.display_name(peer).ok().flatten().unwrap_or_else(|| peer.clone()),
         body: if preview { body.clone() } else { "New message".into() },
@@ -19,7 +30,7 @@ pub fn incoming_notice(event: &Event, store: &Store, preview: bool) -> Option<In
 }
 
 pub fn admit(engine: Option<&Engine>, owner: &str, id: &str, peer: &str, body: &str) -> &'static str {
-    let Some(engine) = engine else { return "rejected" };
+    let Some(engine) = engine else { return "retry" };
     match engine.queue_notification_reply(owner, id, peer, body) {
         Ok(_) => "queued",
         Err(Error::Invalid(_)) => "rejected",
@@ -89,5 +100,58 @@ mod tests {
         assert_eq!(admit(Some(&engine), &owner, ID, PEER, "sole saved text"), "queued");
         assert_eq!(store.message(ID).unwrap().unwrap().body, "sole saved text");
         assert_eq!(store.queue_notification_reply(&owner, ID, PEER, "sole saved text").unwrap(), false);
+    }
+
+    #[test]
+    fn concurrent_cold_attach_waits_and_failed_load_can_recover() {
+        use std::sync::{Mutex, atomic::{AtomicUsize, Ordering}};
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let me = Identity::generate("alice").unwrap();
+        let owner = me.address();
+        store.set_meta("identity.address", &owner).unwrap();
+        let published = Arc::new((IdentityLoader::default(), Mutex::new(None::<Arc<Engine>>)));
+        assert!(published.0.run(|| false, || Err("injected startup I/O failure".into())).is_err());
+        assert_eq!(admit(published.1.lock().unwrap().as_deref(), &owner, ID, PEER, "saved"), "retry");
+        let entered = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let loads = Arc::new(AtomicUsize::new(0));
+        let (p, e, r, n, s) = (published.clone(), entered.clone(), release.clone(), loads.clone(), store.clone());
+        let first = std::thread::spawn(move || p.0.run(|| p.1.lock().unwrap().is_some(), || {
+            e.wait(); r.wait();
+            n.fetch_add(1, Ordering::SeqCst);
+            *p.1.lock().unwrap() = Some(engine(s, me));
+            Ok(())
+        }));
+        entered.wait(); // published core, but no engine while the first attach loads
+        assert_eq!(admit(published.1.lock().unwrap().as_deref(), &owner, ID, PEER, "saved"), "retry");
+        let p = published.clone();
+        let second_entered = Arc::new(Barrier::new(2));
+        let e = second_entered.clone();
+        let second = std::thread::spawn(move || {
+            e.wait();
+            p.0.run(|| p.1.lock().unwrap().is_some(), || panic!("must not create a second engine"))
+        });
+        second_entered.wait();
+        release.wait();
+        first.join().unwrap().unwrap();
+        second.join().unwrap().unwrap();
+        assert_eq!(loads.load(Ordering::SeqCst), 1);
+        let e = published.1.lock().unwrap().clone().unwrap();
+        for _ in 0..2 { assert_eq!(admit(Some(&e), &owner, ID, PEER, "saved"), "queued"); }
+        assert_eq!(store.message(ID).unwrap().unwrap().body, "saved");
+        assert!(!store.queue_notification_reply(&owner, ID, PEER, "saved").unwrap());
+    }
+
+    #[test]
+    fn stopped_engine_retries_but_established_invalid_identity_rejects() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let me = Identity::generate("alice").unwrap();
+        let owner = me.address();
+        store.set_meta("identity.address", &owner).unwrap();
+        let e = engine(store.clone(), me);
+        e.shutdown();
+        assert_eq!(admit(Some(&e), &owner, ID, PEER, "saved"), "retry");
+        assert_eq!(admit(Some(&e), "another.ffffff", ID, PEER, "saved"), "rejected");
+        assert!(store.message(ID).unwrap().is_none());
     }
 }
