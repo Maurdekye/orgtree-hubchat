@@ -108,3 +108,22 @@ roster, then accepts a matching one. Mounted renderer15/15, Windows command
 library check and TypeScript pass. These are component fixtures, not physical
 linked devices or a full deployed registration-to-render exercise. Earlier194
 core-suite receipt predates this correction and is not a current broad-suite run.
+
+Round2 correction: the generation guard now encloses the complete production
+roster admission batch, including roster/provenance snapshot/upsert/removal,
+corresponding picture metadata, online state and directory notification. Legacy
+poll, sync and setup roster refresh all use this shared synchronous boundary.
+No await, runtime-map acquisition or nested generation guard occurs inside it.
+Poll still replaces an empty snapshot; sync still replaces only a nonempty
+first-page roster. Mail/history/receipt mutations remain outside this helper.
+
+Four deterministic native worker controls pause an old generation after an
+early cancellation check, disable/re-enable, admit fresh owner B, then resume
+the production batch call for stale owner A. Snapshot (poll/sync), upsert and
+removal each failed before the outer guard (17pass/4fail); all21 focused picture
+tests pass after it. Fresh-generation positive updates/removal also pass.
+These tests execute real Engine/store/generation locking at the extracted
+production admission boundary; they do not drive an actual HTTP poll loop or
+claim random whole-application preemption. Earlier metadata-only helper tests
+remain separately labelled. Windows native command library check passes;
+unchanged renderer/hub/Orgtree paths were not rerun for this correction.

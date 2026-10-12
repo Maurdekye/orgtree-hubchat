@@ -1,5 +1,12 @@
 # Hubchat development invariants
 
+- 2026-10-12: Poll, sync snapshot/upsert/remove/online, and setup roster refresh
+  admit complete roster/provenance plus picture metadata under the originating
+  session_commit guard. An early cancellation check alone is insufficient.
+  Keep that closure synchronous without runtime-map acquisition or nested
+  generation guards. [verified: engine.rs, engine_pictures.rs;
+  measured admission-boundary controls: docs/profile-pictures.md]
+
 - 2026-10-12: Peer picture bytes/high-water marks bind to hub-reported opaque
   identity provenance, not reusable addresses. Per-hub roster ownership updates
   atomically; absent/conflicting owners use fallback. Retain same-owner removal

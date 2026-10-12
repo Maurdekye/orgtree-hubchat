@@ -7,16 +7,23 @@ impl Engine {
     /// Shared synchronous roster admission for poll, sync and setup refresh.
     /// `snapshot` preserves poll's empty-snapshot and sync's nonempty-first-page rules.
     pub(crate) fn admit_roster_batch(&self, client:&HubClient, entries:&[crate::hub::RosterEntry], snapshot:bool, removed:&[String], online:Option<&[String]>)->Result<()> {
+        // Hold the originating generation for ALL namespace-changing effects.
+        // No await or runtime-map acquisition is allowed in this closure.
+        client.session_commit(|| {
+        if self.stopped.load(std::sync::atomic::Ordering::Relaxed) {return Err(Error::Cancelled);}
         let url=client.address().as_str();
         let mut changed=false;
         if snapshot {self.store.set_roster(url,entries)?;changed=true;}
         else if !entries.is_empty() {self.store.upsert_roster(url,entries)?;changed=true;}
         if !removed.is_empty() {self.store.remove_roster(url,removed)?;changed=true;}
-        self.observe_pictures_for(client,entries)?;
+        self.observe_pictures(entries)?;
+        self.picture_changed.send_replace(());
         if let Some(online)=online {self.store.set_online(url,online)?;changed=true;}
         if changed {self.host.event(Event::Directory);}
         Ok(())
+        }).ok_or(Error::FilePaused)?
     }
+    #[cfg(test)] // Earlier narrow-helper proof, separate from production batch proof.
     pub(crate) fn observe_pictures_for(&self, client:&HubClient, entries:&[crate::hub::RosterEntry])->Result<()> {
         client.session_commit(|| {
             self.observe_pictures(entries)?;
