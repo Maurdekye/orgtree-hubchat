@@ -89,3 +89,39 @@ What it does not cover:
 - A panic before the app's setup runs (while plugins start) leaves none either.
 - Release builds carry no symbols (`strip` in Cargo.toml), so a backtrace may
   name no functions. The location and the message are always there.
+
+## Verification
+
+Measured on 2026-10-12 at `d5e0e4a` (this work on Hubchat main `4e42a4d`):
+
+- `cargo test --locked -j2 -p hubchat --lib` exited 0: 37 passed, 0 failed,
+  2 ignored (the two DPAPI backup tests, which need a signed-in Windows
+  session), no warnings, 74 s with compilation. The 13 tray and crash-report
+  tests are among them: the update rows follow the updater and wait for the
+  UI, the UI's updater report is read as it is sent, nothing new starts while
+  a check or an install is under way, a failed install can be tried again, a
+  restart comes back as it was without the old link, Exit on close is off
+  until turned on and is kept on the device, a report stops at its limit, only
+  the newest 50 stay, dumps are counted by their extension, the dialog says
+  what a report holds and that none is sent, and a throwaway child process
+  that panics leaves a report (two tests: the child, and the parent that reads
+  its report).
+- `cargo check --locked -j2 -p hubchat --lib --target aarch64-linux-android`
+  exited 0 with no warnings in 2m 56s (cold dependency cache), using the NDK
+  27.3 Android 24 clang and llvm-ar (`CC_aarch64_linux_android`,
+  `AR_aarch64_linux_android`). The Android library still compiles with the
+  desktop-only tray, crash and diagnostics code left out.
+- Typecheck (`node_modules/.bin/tsc`) exited 0.
+- Against the browser mock, `tools/proof-tray-settings.mjs` passed 13 of 13
+  and `tools/proof-update-races.mjs` passed 9 of 9. The race proof failed 5
+  of its 9 checks at the seam-only predecessor (`fc96444`, identical to
+  `3d907ed` after the rebase), reproducing both races found in review. Run
+  each against `npx vite --host 127.0.0.1 --port 14731 --strictPort` as its
+  header says.
+
+Limits: nobody has seen the native menu. The tests drive the menu's state,
+not the menu Windows draws, and no app was built or run, so the labels, the
+greyed rows, the Start with Windows re-read, Restart and Exit on close have
+not been exercised in a real Hubchat. The Android check only compiles: no
+link, APK or device. The browser proofs measure the shared UI against its
+mock. No real Hubchat was made to crash.
