@@ -92,7 +92,7 @@ missing-engine rejection behavior in the production payload/admission helpers.
 Controlled tests failed all three new assertions (six existing tests passed):
 a delayed A event sampled B after the shared scratch store was wiped/adopted,
 and unavailable-engine/cold-init-failure calls returned rejected instead of
-retry. Final corrected source passes all12 focused core tests. The barrier-controlled
+retry. Round2 corrected source passed all12 focused core tests. The barrier-controlled
 production-helper test also covers core publication before engine availability,
 two concurrent cold attaches, an injected failed initial load, one eventual
 engine load and exactly-once durable UUID admission. An unreadable key leaves
@@ -105,7 +105,7 @@ actual WorkManager process. Shell/JNI wiring is checked separately by source
 review and the assigned Android-target compiler. The delayed callback preserves
 A as its action owner; Engine B rejects it and creates no outgoing row.
 
-Measured final source2b804c6: `cargo test --locked -j2 -p hubchat-core
+Measured round2 source2b804c6: `cargo test --locked -j2 -p hubchat-core
 notification_reply -- --nocapture` passed12/12 (128 filtered), compilation20.47s.
 `cargo check --locked -j2 -p hubchat --lib --target aarch64-linux-android`
 passed warning-free using installed NDK27.3.13750724 Android24 clang/ar
@@ -120,3 +120,39 @@ completion helper. Evidence is in the author D rig evidence folder; build
 logs/output stay under the reserved author C root. Machine locks were released
 after every bounded run. Owned build output measured10,707,725,723bytes, below
 the100GB cleanup threshold.
+
+## Round3 completion correction (2026-10-12)
+
+Successful explicit key recovery now preserves `load_key_inner` readiness and
+sets the same completion invariant as cold startup. Successful adoption also
+runs under the establishment guard and latches completion only after the engine
+is established. An existing live engine is positive readiness evidence; missing
+or unreadable keys and failed establishment do not latch it. Later unsuccessful
+explicit attempts do not clear previously established completion. The latch
+suppresses background startup loading, and never skips intentional adoption.
+
+Android push-mode callbacks can synchronously call core attachment while an
+adoption is in progress. Attachment uses a nonblocking gate: busy or nested
+attachment returns retry rather than waiting on its own guard. Actual identity
+loads remain serialized. Post-adoption push refresh runs after the guard.
+
+Measured predecessor eb4e83c retained the missing-latch behavior and failed all3
+new controls (prior12 passed): explicit recovery and adoption after unreadable
+startup each created a replacement A engine in a worker during simulated
+departure while A's synthetic key remained present; an already-ready engine
+also failed to complete startup. The adoption wrapper in that control source
+serialized establishment but did not latch it. Corrected source004ead8 passes
+17 focused tests (0 failed, 128 filtered), compile19.53s. Recovery and adoption
+controls each exercise unreadable and failed initialization, simulate taking
+A before key deletion, verify no background reload, then successfully adopt B
+and admit its durable UUID once. Negative readiness/error and nested mode-change
+attachment controls pass. These are production-helper/Engine/scratch-store
+schedules, not execution of global CORE, real key storage, unregister or JNI.
+
+Final Android aarch64/NDK27/API24 Rust source check passed warning-free in3.90s.
+Kotlin and JNI reply source did not change in this round; the measured8 policy
+checks and API compilation from round2 still cover identical Kotlin sources.
+Evidence: `inline-review-round3.json` and named logs in the author's D rig
+evidence folder. Owned build bytes10,751,615,402, below100GB; all machine locks
+released and no build process remains. Native-library linking, APK and device
+runtime verification remain unperformed.
