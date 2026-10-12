@@ -239,6 +239,12 @@ mod tests {
     async fn qr_hubs_with(h: &str, host: Option<&str>, ips: &[IpAddr], d: &Door, limit: Duration, loopback: bool) -> Vec<String> {
         super::qr_hubs_with(h, host, ips, d, limit, loopback, &requests()).await
     }
+    async fn same_hub(me: &Health, address: HubAddress, limit: Duration) -> bool {
+        super::same_hub(me, address, limit, &requests()).await
+    }
+    async fn answering(me: &Health, at: Vec<(IpAddr, u16)>, limit: Duration) -> Vec<(IpAddr, u16)> {
+        super::answering(me, at, limit, &requests()).await
+    }
 
     /// A fake hub: answers every request with `body` as /healthz JSON.
     async fn fake(body: String) -> u16 {
