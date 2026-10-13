@@ -175,7 +175,7 @@ fn reply_prefix_ok(prefix: &str, set: &[&str], answers: &[Answer], no_text: bool
     let mut lines = prefix.split_inclusive('\n').peekable();
     for id in set {
         let quote = lines.next().and_then(|l| l.strip_prefix(crate::engine::QUOTE_PREFIX)).and_then(|l| l.strip_suffix('\n'));
-        if !quote.is_some_and(|q| q.chars().count() <= QUOTE_CHARS) {
+        if quote.is_none_or(|q| q.chars().count() > QUOTE_CHARS) {
             return false;
         }
         match answers.iter().find(|a| a.question == *id) {
