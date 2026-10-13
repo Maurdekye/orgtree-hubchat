@@ -1,5 +1,20 @@
 # Hubchat development invariants
 
+- 2026-10-13: Typing is heartbeats, never start and stop (user 2026-10-13
+  22:34Z): a writer sends one about every 500 ms and the window shows the
+  row while the last one ARRIVED under 1 s ago by its own clock
+  (`store.ts`), so nothing can leave it standing; an `incoming` message from
+  that peer ends it at once. Never a notification. A hub's typing-only answer
+  is taken on a fast path that stores nothing and waits `PACE` before the
+  next sync. Our user's heartbeats (user 22:33Z) go per draft every `BEAT`
+  until the last edit is `IDLE` old or the composer, a send, the device
+  going out of use or Android suspending stops them; only `{"to": [peer]}`,
+  never the draft, through the chat's next hub, and only to hubs listing
+  `typing`. [decided: user 2026-10-13, docket
+  show-agent-typing-in-hubchat-using-ordered-messa; verified:
+  engine_typing.rs, engine.rs sync_session, hub_v2.rs, src/lib/store.ts,
+  Composer.tsx; docs/typing.md]
+
 - 2026-10-13: Account-avatar proof runs inside the caller's shared lock/Job
   with `--inside`; standalone callers supply Orgtree's rig helper through
   `HUBCHAT_RIG_LIB`. Never commit a static import into an author's worktree.
