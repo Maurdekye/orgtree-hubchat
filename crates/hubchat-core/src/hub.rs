@@ -324,7 +324,7 @@ impl CancelFlag {
         if *cancelled { None } else { Some(action()) }
     }
 
-    async fn cancelled(&self) {
+    pub(crate) async fn cancelled(&self) {
         let mut changes = self.0.subscribe();
         loop {
             if *changes.borrow_and_update() {

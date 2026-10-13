@@ -94,6 +94,11 @@ pub enum Event {
     Hub { url: String },
     /// The merged directory changed.
     Directory,
+    /// A typing heartbeat from `peer` came (hub feature `typing`): it is
+    /// writing to us. The window shows it while the last one came within a
+    /// second, by its own clock. Shown in the chat only: never a
+    /// notification.
+    Typing { peer: String },
     /// Local immutable-copy preparation, before queue admission.
     Preparing {
         message_id: String,
@@ -215,6 +220,9 @@ pub struct Engine {
     /// This device is in use (focused, recently touched): our other devices
     /// keep quiet while it is (user 23:50Z).
     active: std::sync::atomic::AtomicBool,
+    /// The drafts our user is writing now, for typing heartbeats
+    /// (`engine_typing`; memory only).
+    composing: engine_typing::Composing,
     /// Android push mode parks hub loops between foreground use and wake checks.
     suspended: tokio::sync::watch::Sender<bool>,
     files_paused: tokio::sync::watch::Sender<bool>,
@@ -256,6 +264,7 @@ impl Engine {
             preview_slots: tokio::sync::Semaphore::new(2),
             read_receipts: std::sync::atomic::AtomicBool::new(true),
             active: std::sync::atomic::AtomicBool::new(false),
+            composing: Default::default(),
             suspended: tokio::sync::watch::channel(false).0,
             files_paused: tokio::sync::watch::channel(false).0,
             device: Mutex::new((
@@ -306,6 +315,10 @@ impl Engine {
     /// The UI says whether this device is in use (focused, touched in the
     /// last few minutes). A change is told to every hub that can carry it.
     pub fn set_active(self: &Arc<Self>, on: bool) {
+        if !on {
+            // no longer in use: nobody here is writing (typing)
+            self.composing_ends();
+        }
         if self.active.swap(on, std::sync::atomic::Ordering::Relaxed) != on {
             let me = self.clone();
             tokio::spawn(async move { me.report_active(on).await });
@@ -342,6 +355,9 @@ impl Engine {
     /// Suspend ongoing hub requests while Android relies on push. Changing
     /// this wakes existing loops; a newly added hub sees the current value.
     pub fn set_suspended(&self, on: bool) {
+        if on {
+            self.composing_ends();
+        }
         self.suspended.send_if_modified(|current| {
             if *current == on {
                 false
@@ -1002,6 +1018,10 @@ impl Engine {
         // news: it raises no notifications.
         let mut catching_up = cursor.is_none();
         let mut registered_again = false;
+        // typing heartbeats for us (hub feature `typing`, 2026-10-13): asked
+        // on every sync, the last answer's mark sent back
+        let typing_wanted = features.iter().any(|f| f == "typing");
+        let mut typing_seen: Option<u64> = None;
         while !stop.is_cancelled() {
             self.send_queued_deletes(client, url, features, unix_ms())
                 .await?;
@@ -1022,6 +1042,7 @@ impl Engine {
                     } else {
                         crate::hub::POLL_WAIT_SECS
                     },
+                    typing_wanted.then(|| typing_seen.map(serde_json::Value::from).unwrap_or(serde_json::Value::Bool(true))),
                 )
                 .await
             {
@@ -1045,6 +1066,20 @@ impl Engine {
             registered_again = false;
             if stop.is_cancelled() {
                 break;
+            }
+            // nothing but typing heartbeats (the hub answered from memory):
+            // tell the window and sync again after PACE, storing nothing;
+            // heartbeats that come meanwhile wait at the hub and come together
+            if r.typing_only {
+                if let Some(rows) = &r.typing {
+                    self.typing_beats(rows, &std::collections::BTreeSet::new());
+                }
+                typing_seen = r.typing_seq.or(typing_seen);
+                tokio::select! {
+                    _ = tokio::time::sleep(engine_typing::PACE) => {}
+                    _ = stop.cancelled() => {}
+                }
+                continue;
             }
             if r.version.is_some() {
                 let v = r.version.clone();
@@ -1073,6 +1108,9 @@ impl Engine {
             let t = now();
             let mut to_deliver = Vec::new();
             let mut peers = std::collections::BTreeSet::new();
+            // who wrote to us in this answer: their message wins over a
+            // typing row in the same answer
+            let mut just_wrote = std::collections::BTreeSet::new();
             for ch in &r.changes {
                 match ch {
                     crate::hub_v2::Change::Message(m) => {
@@ -1094,6 +1132,9 @@ impl Engine {
                         let fresh = self.store.upsert_live_synced_at(url, &me, m, self.offset(url))?;
                         self.body_changed.notify_one();
                         let incoming = m.env.from != me;
+                        if incoming {
+                            just_wrote.insert(m.env.from.clone());
+                        }
                         if !incoming && (!m.env.attachments.is_empty() || m.env.body.len() as u64 > BODY_INLINE_MAX) {
                             self.host.file_work_changed();
                         }
@@ -1127,6 +1168,10 @@ impl Engine {
             for p in peers {
                 self.host.event(Event::Chat { peer: p });
             }
+            if let Some(rows) = &r.typing {
+                self.typing_beats(rows, &just_wrote);
+            }
+            typing_seen = r.typing_seq.or(typing_seen);
             if !to_deliver.is_empty() {
                 client.receipts(&self.me, &to_deliver).await?;
             }
@@ -1433,6 +1478,8 @@ impl Engine {
         if msg.peer == self.me.address() {
             return Err(Error::Invalid("that's you".into()));
         }
+        // its draft is done: no more typing heartbeats for it
+        self.composing_sent(&msg.peer);
         // the first message answered is the reply_to older clients read; a
         // pick counts only on a message this one replies to
         let mut seen = std::collections::HashSet::new();
@@ -2500,3 +2547,6 @@ mod hub_enabled_tests;
 mod hub_disabled_start_test;
 #[path = "engine_pictures.rs"]
 mod engine_pictures;
+
+#[path = "engine_typing.rs"]
+mod engine_typing;

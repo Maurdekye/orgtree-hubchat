@@ -82,6 +82,30 @@ pub struct SyncResult {
     /// history); absent when it synced from the beginning.
     #[serde(default)]
     pub start: Option<String>,
+    /// The typing heartbeats this answer relays, one row per sender (hubs
+    /// with "typing", when the sync asked; 2026-10-13).
+    #[serde(default)]
+    pub typing: Option<Vec<TypingRow>>,
+    /// The mark the next sync sends back as `typing`, so that each
+    /// heartbeat is told once.
+    #[serde(default)]
+    pub typing_seq: Option<u64>,
+    /// Nothing but heartbeats came: the cursor is the one sent and there
+    /// are no changes (the hub answered from memory).
+    #[serde(default)]
+    pub typing_only: bool,
+}
+
+/// A sender whose typing heartbeat an answer relays (`typing`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct TypingRow {
+    pub from: String,
+}
+
+/// The body of a typing heartbeat: the addresses and nothing else, never
+/// a word of the draft.
+pub(crate) fn typing_body(to: &[String]) -> serde_json::Value {
+    serde_json::json!({ "to": to })
 }
 
 /// Where a history page ends: before a time on the hub's clock (unix ms,
@@ -144,6 +168,8 @@ pub type UploadCheckpoint = std::sync::Arc<dyn Fn(&UploadState) -> Result<()> + 
 impl HubClient {
     /// Every change for our address since `cursor` (None: from the start,
     /// or with `start_now` from now on, on hubs with lazy_history).
+    // one argument per field of the sync request
+    #[allow(clippy::too_many_arguments)]
     pub async fn sync(
         &self,
         me: &Identity,
@@ -152,6 +178,7 @@ impl HubClient {
         cursor: Option<&str>,
         start_now: bool,
         wait_secs: u64,
+        typing: Option<serde_json::Value>,
     ) -> Result<SyncResult> {
         self.session_work(async {
         let wait = wait_secs.min(crate::hub::POLL_WAIT_SECS);
@@ -165,9 +192,21 @@ impl HubClient {
         if start_now && cursor.is_none() {
             body["start"] = "now".into();
         }
+        // typing heartbeats for us (hubs with "typing"): true, then the
+        // last answer's typing_seq
+        if let Some(t) = typing {
+            body["typing"] = t;
+        }
         self.post_json(me, "/api/sync", &body, Duration::from_secs(wait + 30))
             .await
         }).await
+    }
+
+    /// One typing heartbeat (hubs with "typing"): we are writing to `to`
+    /// right now. Sent about every 500 ms while we do; only the addresses go.
+    pub async fn typing(&self, me: &Identity, to: &[String], timeout: Duration) -> Result<()> {
+        let _: serde_json::Value = self.post_json(me, "/api/typing", &typing_body(to), timeout).await?;
+        Ok(())
     }
 
     /// One page of our conversation with `with`, older than `before`
