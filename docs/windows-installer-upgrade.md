@@ -93,3 +93,35 @@ anything that is not a `.test` identity or whose folders already exist.
 `tools/installer-proof/standin-hubchat.cs` is a stand-in `hubchat.exe` for
 exercising the close ladder (graceful, hide-in-tray, ignores everything) without
 the real app.
+
+## Graceful-quit correction and required acceptance control (2026-10-13)
+
+The initial real-executable upgrade proof passed its 19 install/preservation
+checks while the primary did not exit on `--quit-for-upgrade`: the installer's
+WM_CLOSE fallback hid that defect. Its direct real-app predecessor probe still
+found the primary running after 80 seconds. Those receipts prove the fallback
+flow, not rung-1 graceful quit.
+
+The single-instance callback now clones the app handle and requests `exit(0)`
+from a separate thread, allowing the synchronous Windows callback to return.
+It retains Tauri's ExitRequested/Exit cleanup rather than terminating the
+primary directly. Temporary trace instrumentation is not included. This is a
+candidate correction until the batched real-app control below passes; source
+inspection alone does not prove shutdown scheduling on Windows.
+
+Run `tools/windows-installer-upgrade-proof.ps1 -RequireGracefulQuit` with the
+real Tauri `.test` binary in BOTH disposable setup packages (the prior setup
+uses an older bundle version). This adds three checks to the existing 19:
+
+- The primary exits within five seconds of the direct quit request, with no
+  WM_CLOSE or force fallback available in that control.
+- The forwarding process exits successfully.
+- After starting the app again, the actual Upgrade flow logs a rung-1 graceful
+  exit and no timeout, WM_CLOSE or force termination in that attempt.
+
+The strengthened real run must pass 22/22. Run the same strengthened proof
+against the pre-correction primary as the red control: its direct quit must
+fail, even though the historical 19-check upgrade succeeded. Preserve the
+fresh-install, Advanced setup, silent `/S`, Cancel and close-ladder controls.
+All work remains restricted to a disposable `.test` product; the real Hubchat
+version, executable hash, scheme and Run key are compared without changing it.

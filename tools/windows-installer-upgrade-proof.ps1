@@ -25,10 +25,12 @@ param(
   [switch] $NoMarker,           # delete HubchatQuitControl after the prior install (an old Hubchat)
   [switch] $Cancel,             # press Cancel on the "could not close" prompt instead of expecting success
   [switch] $AppNotRunning,      # do not start the installed app before upgrading (the upgrade must still relaunch it)
+  [switch] $RequireGracefulQuit, # real app: prompt primary exit AND rung-1 helper evidence
   [switch] $KeepForInspection,
   [int] $UiSeconds = 60
 )
 $ErrorActionPreference = 'Stop'
+if ($RequireGracefulQuit -and ($NoMarker -or $AppNotRunning -or $Cancel -or $Mode)) { throw 'RequireGracefulQuit needs a running real app with the quit-control marker' }
 if ($ProductName -eq 'Hubchat' -or $ProductName -notmatch 'Test') { throw "refusing: '$ProductName' is not a disposable test product name" }
 if ($Identifier -notmatch '\.test$') { throw "refusing: identifier '$Identifier' must end with .test" }
 New-Item -ItemType Directory -Force $Evidence | Out-Null
@@ -128,8 +130,27 @@ try {
     Start-Sleep -Seconds 3
     $app.Refresh()
     Check 'prior app running' (-not $app.HasExited) "pid $($app.Id)"
+    if ($RequireGracefulQuit) {
+      # This control has NO WM_CLOSE or termination fallback. A primary that
+      # only exits at installer rung 2 must fail before any upgrade is attempted.
+      $quitTimer = [Diagnostics.Stopwatch]::StartNew()
+      $request = Start-Process -FilePath $installedExe -ArgumentList '--quit-for-upgrade' -PassThru -WindowStyle Hidden
+      $primaryGone = $app.WaitForExit(5000)
+      $elapsed = $quitTimer.ElapsedMilliseconds
+      $requestGone = $request.WaitForExit(5000)
+      Check 'real quit request exits the primary within five seconds without fallback' $primaryGone "elapsedMs=$elapsed primary=$($app.Id)"
+      Check 'quit request forwarding process exits successfully' ($requestGone -and $request.ExitCode -eq 0) "request=$($request.Id)"
+      if (-not $primaryGone -or -not $requestGone) { throw 'real quit request did not settle promptly' }
+      $app = Start-Process -FilePath $installedExe -PassThru -WindowStyle Hidden
+      Start-Sleep -Seconds 3
+      $app.Refresh()
+      if ($app.HasExited) { throw 'real app did not restart for the installer control' }
+    }
   }
   $stamp = Get-Date
+  # Read only this attempt's appended helper lines; old success must not pass.
+  $helperLog = Join-Path $env:TEMP 'hubchat-installer-upgrade.log'
+  $helperOffset = if (Test-Path -LiteralPath $helperLog) { (Get-Item -LiteralPath $helperLog).Length } else { 0 }
 
   # 4. new setup, with its window
   Say "new setup: $NewSetup"
@@ -190,6 +211,18 @@ try {
   } else {
     Check 'installer exit 0' ($setupExit -eq 0) "exit $setupExit"
     Check 'old process is gone' (-not $oldAlive) "pid $($app.Id)"
+    if ($RequireGracefulQuit) {
+      $tail = ''
+      if (Test-Path -LiteralPath $helperLog) {
+        $bytes = [IO.File]::ReadAllBytes($helperLog)
+        # The helper may rotate its bounded log at the start of this attempt.
+        $start = if ($bytes.Length -ge $helperOffset) { [int]$helperOffset } else { 0 }
+        $tail = [Text.Encoding]::UTF8.GetString($bytes, $start, $bytes.Length - $start)
+      }
+      $graceful = $tail -match 'closed gracefully after the quit request' -and $tail -notmatch 'posted WM_CLOSE|terminating pid|no graceful quit within'
+      Check 'installer used rung-1 graceful quit without window or force fallback' $graceful
+      Set-Content -LiteralPath (Join-Path $Evidence 'this-attempt-helper.log') -Value $tail
+    }
     Check 'files replaced' ($newHash -ne $oldHash) "$oldHash -> $newHash"
     Check 'DisplayVersion upgraded' ($u2.DisplayVersion -ne $oldVersion) "$oldVersion -> $($u2.DisplayVersion)"
     Check 'quit-control marker written by the new install' ($u2.HubchatQuitControl -eq '1')

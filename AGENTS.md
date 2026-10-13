@@ -28,6 +28,15 @@
   [decided: user 2026-10-13; verified: Guide.tsx, guide-sections.ts;
   docs/help-tabs.md]
 
+- 2026-10-13: Windows NSIS uses the vendored Upgrade flow and exact-installed-
+  executable close ladder. A successful upgrade alone does not prove graceful
+  quit: the real `.test` proof must require the direct five-second quit and
+  rung-1 helper receipt (22 checks). Dispatch the single-instance quit request
+  outside its synchronous callback; retain Tauri exit cleanup, data location,
+  fresh/Advanced/silent behavior and signing. Never exercise the production
+  install in this proof. [verified: src-tauri/src/lib.rs, windows/installer.nsi,
+  tools/windows-installer-upgrade-proof.ps1; docs/windows-installer-upgrade.md]
+
 - 2026-10-13: Local Windows `frontendDist` must resolve as Tauri Directory,
   not URL: `C:/...` matches the URL-first untagged parser and omits embedded
   assets. Use `scripts/local-tauri-config.mjs` for out-of-tree builds, then
