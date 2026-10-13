@@ -32,6 +32,16 @@
   lib/answers.ts, Conversation.tsx, Composer.tsx; contract, measured proof
   and limits: docs/question-cards.md]
 
+- 2026-10-13: A send's preparation (`store.ts` `prepareSend`) goes on after
+  every wait (draft save, send command, draft clear) and in its failure path
+  only while the identity that started it is still here (a generation that
+  `reloadAfterSwitch` moves on) and the chat's slot still holds its message.
+  Otherwise it stops, starting no send command and publishing no queued or
+  failed state: a send ending after an identity switch must never empty the
+  next identity's composer or take over a send that identity started in the
+  chat (review R4; it used to check the slot only once, after the send
+  command). [verified: store.ts; proof and limits: docs/question-cards.md]
+
 - 2026-10-12: Poll, sync snapshot/upsert/remove/online, and setup roster refresh
   admit complete roster/provenance plus picture metadata under the originating
   session_commit guard. An early cancellation check alone is insufficient.

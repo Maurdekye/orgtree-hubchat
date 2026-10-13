@@ -134,19 +134,30 @@ a card's header hint, selection and options still work, and what is chosen
 goes with the next message. A message the queued one replied to, chosen again
 meanwhile, is cleared with it.
 
-## Verification (2026-10-13, after reviews R1, R2 and R3)
+A send that ends after an identity switch changes nothing (review R4).
+`prepareSend` (`src/lib/store.ts`) goes on after each wait (saving the draft,
+the send command, clearing the draft) and in its failure path only while the
+identity that started it is still here and the chat's slot still holds its
+message. The identity is a generation number that `reloadAfterSwitch` moves
+on. Otherwise it starts no send command and shows nothing as queued or failed,
+so it leaves alone the next identity's composer and any send that identity
+has started in the chat.
 
-Measured on Hubchat `hubchat-opus/questions` (on main `0a1bdde`), the mail
-hub's `hubchat-opus/hub-meta` (on `6a883ad`, unchanged since review R1) and
-Orgtree's `hubchat-opus/question-options` (on rust-engine `9fc30fb`). Every
-cargo step ran under the machine build lock inside Orgtree's kernel Job
-runner. Each review finding also has a red control: the same check run on
-the reviewed code fails, and passes on the fix. The R2 and R3 corrections
-changed only the interface, so the cargo results below are from the R1
-corrections.
+## Verification (2026-10-13, after reviews R1 to R4)
+
+Measured on Hubchat `hubchat-opus/questions` (on main `7eac2bd`, which
+brought the Hubchat log), the mail hub's `hubchat-opus/hub-meta` (on
+`6a883ad`, unchanged since review R1) and Orgtree's
+`hubchat-opus/question-options` (on rust-engine `67fc92e`). Every cargo step
+ran under the machine build lock inside Orgtree's kernel Job runner (after
+the rebase: 6144 MB, 600 s per step). Each review finding also has a red
+control: the same check run on the reviewed code fails, and passes on the
+fix. The red controls ran before the branches were rebased (Hubchat on main
+`0a1bdde`, Orgtree on `9fc30fb`); everything else below ran again on the
+rebased branches, except the mail hub's own tests (its branch is unchanged).
 
 - **Core:** `cargo test --locked -j2 -p hubchat-core --lib --test
-  questions_fallback` passes 211 of 211 and 5 of 5. The question tests check
+  questions_fallback` passes 216 of 216 and 5 of 5. The question tests check
   the option rules, untrusted `meta` part by part, a plain-text part left out
   only where `meta` stands for it (also on a long body's preview and then the
   whole body), what older clients read and the 4096-byte limit; the store
@@ -163,9 +174,10 @@ corrections.
   plain text, `reply_to` and the `meta`; the other device gets the same
   replies, picks and receipt time; a single plain reply goes out as before.
 - **Desktop shell:** `cargo check --locked -j2 -p hubchat` passes with no
-  warning. Clippy reports nothing in this work.
+  warning. Clippy reports nothing in this work (its findings are all in
+  main's code, the log's `diag.rs` included).
 - **Interface:** `tools/verify-questions.ps1` (Orgtree's
-  `apps/desktop/renderer/tests/joblimit.ps1`, 4096 MB, 300 s) passes 76 of 76
+  `apps/desktop/renderer/tests/joblimit.ps1`, 4096 MB, 300 s) passes 83 of 83
   checks against the browser mock at desktop and phone widths, dark and
   light. Five call `cardStates` and pin the settling order in either list
   order. Six restart with answers saved on cards beyond the first page
@@ -203,12 +215,27 @@ corrections.
   `Composer.tsx` queued step with `Conversation.tsx`'s own callbacks and
   `answers.ts` (512 MB / 45 s Job) and passes 14 of 14. On the R3 files it
   passes 10 of 14: the later reply is lost, also beside a multi-reply, and so
-  is a saved reply the message didn't carry.
+  is a saved reply the message didn't carry. Seven (review R4) hold a sent
+  message's draft clearing (`window.__hcSend`) and meanwhile call the store's
+  own `reloadAfterSwitch` in the page, as a link switch does. The old send
+  ending afterwards leaves the next identity's text in the box, and leaves a
+  send it has started in the chat preparing; that send then goes as usual.
+  Control: with no switch, the held send is queued once its draft is
+  cleared. Red control: with the R4 `store.ts` the proof fails the two
+  consequence checks (81 of 83): the box is emptied, and the next identity's
+  send is taken over. The R4 reviewer's module probe of the real `store.ts`,
+  `answers.ts` and `Composer.tsx`, with three checks added, passes 9 of 9
+  (512 MB / 45 s Job). On the R4 files it passes 5 of 9: the reviewer's three
+  failures, and a reset during the first draft save still starting the send
+  command. The log's own proof of Settings › Developer
+  (`tools/proof-developer-tab.mjs`, 4096 MB / 300 s Job) passes 10 of 10 on
+  the rebased branch.
 - **Mail hub:** at review R1, with a throwaway PostgreSQL 18, `message_meta`,
   `people_and_replies`, `profile_pictures`, `hub_suite`, `sync`, `history`,
   `lazy_history` and `long_messages` passed. Clippy reports nothing in this
   work.
-- **Orgtree:** the `net::cards` unit tests pass 3 of 3, and the rig proof
+- **Orgtree:** on rust-engine `67fc92e` the `net::cards` unit tests pass 3
+  of 3, the engine builds with no warning, and the rig proof
   `question-options.mjs` (18 checks) delivers cards through the real sender
   to a hosted hub with the `meta` feature and reads them as a person
   registered over HTTP; an agent's own question ending in a list the tool
@@ -252,3 +279,9 @@ corrections.
   stays saved but unseen until the next Reply replaces the reply list, or
   cancelling a reply that shows clears it too. A send doesn't clear it, since
   the message didn't carry it.
+- The identity switch in the proofs is the renderer's reset
+  (`reloadAfterSwitch`) called in the browser page; the mock's identity stays,
+  and no real link switch ran. A command already on its way to the core when
+  a switch comes (the draft save or clear, the send command) can't be called
+  back: which identity's store it reaches is decided by the core and was not
+  measured.
