@@ -215,6 +215,39 @@ mod desktop {
             .find(|a| a.len() < 4096 && a.to_ascii_lowercase().starts_with("hubchat://"))
     }
 
+    /// What the Windows installer's Upgrade (src-tauri/windows/installer.nsi,
+    /// installer-upgrade.ps1) starts the installed Hubchat with to ask the
+    /// running one to quit before its files are replaced: a second launch that
+    /// the single-instance plugin hands to the running Hubchat. Quitting is
+    /// the tray's "Quit Hubchat", so everything shuts down as it always does.
+    pub const QUIT_FOR_UPGRADE: &str = "--quit-for-upgrade";
+
+    /// True when a launch's arguments are that quit request.
+    pub fn quit_for_upgrade_requested<I: IntoIterator<Item = String>>(args: I) -> bool {
+        args.into_iter().any(|a| a == QUIT_FOR_UPGRADE)
+    }
+
+    #[cfg(test)]
+    mod quit_request_tests {
+        fn args(a: &[&str]) -> Vec<String> {
+            a.iter().map(|s| s.to_string()).collect()
+        }
+
+        #[test]
+        fn only_the_exact_argument_is_a_quit_request() {
+            assert!(super::quit_for_upgrade_requested(args(&["hubchat.exe", "--quit-for-upgrade"])));
+            assert!(!super::quit_for_upgrade_requested(args(&["hubchat.exe"])));
+            assert!(!super::quit_for_upgrade_requested(args(&["hubchat.exe", "--hidden"])));
+            assert!(!super::quit_for_upgrade_requested(args(&["hubchat.exe", "--quit-for-upgrade-now"])));
+            assert!(!super::quit_for_upgrade_requested(args(&["hubchat.exe", "hubchat://chat?to=--quit-for-upgrade"])));
+        }
+
+        #[test]
+        fn a_quit_request_is_not_a_link() {
+            assert!(!super::take_link_arg(args(&["hubchat.exe", "--quit-for-upgrade"])));
+        }
+    }
+
     /// Keep the hubchat:// link among a launch's arguments, if there is one.
     /// True when there was.
     pub fn take_link_arg<I: IntoIterator<Item = String>>(args: I) -> bool {
@@ -320,6 +353,12 @@ pub fn run() {
         // A second launch (Start menu, autostart) shows the running window
         // instead of starting another Hubchat. Registered first, per the plugin.
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // The Windows installer's Upgrade asks the running Hubchat to quit
+            // before replacing its files: the same quit as the tray's.
+            if desktop::quit_for_upgrade_requested(args.iter().cloned()) {
+                app.exit(0);
+                return;
+            }
             // a hubchat:// link opened while we run: the UI takes it
             if desktop::take_link_arg(args) {
                 use tauri::Emitter;
@@ -459,6 +498,11 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 use tauri::Manager;
+                // The installer's quit request found no running Hubchat (it had
+                // already quit): this start is not to become one.
+                if desktop::quit_for_upgrade_requested(std::env::args()) {
+                    std::process::exit(0);
+                }
                 let dir = app.path().app_data_dir()?;
                 // first, so a panic anywhere after this leaves a report
                 crash::install(&dir, &app.package_info().version.to_string());

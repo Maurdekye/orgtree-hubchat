@@ -76,6 +76,16 @@ Var UpdateMode
 Var NoShortcutMode
 Var WixMode
 Var OldMainBinaryName
+; HUBCHAT EDIT: state of the Upgrade page (see the HUBCHAT EDIT block below).
+Var HubUpgradeAvailable
+Var HubUpgradeChoice
+Var HubUpgradeSelected
+Var HubUpgradeInstallDir
+Var HubUpgradeExe
+Var HubUpgradeControl
+Var HubUpgradePage
+Var HubUpgradeLabel
+Var HubUpgradeButton
 
 Name "${PRODUCTNAME}"
 BrandingText "${COPYRIGHT}"
@@ -164,6 +174,188 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 !define MUI_LANGDLL_REGISTRY_ROOT "HKCU"
 !define MUI_LANGDLL_REGISTRY_KEY "${MANUPRODUCTKEY}"
 !define MUI_LANGDLL_REGISTRY_VALUENAME "Installer Language"
+
+; ---------------------------------------------------------------------------
+; HUBCHAT EDIT (everything between the HUBCHAT EDIT and HUBCHAT END markers, plus
+; the marked lines elsewhere, is not in the stock Tauri 2.12.1 template; see
+; docs/windows-installer-upgrade.md).
+;
+; Upgrade page, shown first and only when an existing installation of this
+; product is found, the same experience as Orgtree's installer:
+;   - "Upgrade" closes the running Hubchat gracefully (src-tauri/windows/
+;     installer-upgrade.ps1 asks it to quit, waits, and only force-terminates
+;     the exact installed executable after a timeout, reporting that), then
+;     continues through the stock passive + /UPDATE path (the one the in-app
+;     updater already uses: same install location and scope, no uninstall,
+;     app data untouched) and relaunches Hubchat once at the end.
+;   - "Advanced setup" (or Next) keeps the stock wizard pages unchanged.
+; Silent runs, /P and /UPDATE (the in-app updater) never show this page.
+; ---------------------------------------------------------------------------
+Function HubDetectUpgradeInstall
+  StrCpy $HubUpgradeAvailable "0"
+  StrCpy $HubUpgradeInstallDir ""
+  StrCpy $HubUpgradeExe ""
+  StrCpy $HubUpgradeControl "0"
+
+  ; The uninstall record is the identity of the installation: its name must be
+  ; exactly this product (a different product, e.g. "Hubchat Test", has its own).
+  ReadRegStr $0 SHCTX "${UNINSTKEY}" "DisplayName"
+  ${If} $0 != "${PRODUCTNAME}"
+    Return
+  ${EndIf}
+  ReadRegStr $1 SHCTX "${UNINSTKEY}" "DisplayVersion"
+  ReadRegStr $2 SHCTX "${UNINSTKEY}" "UninstallString"
+  ${If} $1 == ""
+  ${OrIf} $2 == ""
+    Return
+  ${EndIf}
+  ; The recorded location, which must still hold the app and its uninstaller.
+  ReadRegStr $3 SHCTX "${MANUPRODUCTKEY}" ""
+  ${If} $3 == ""
+    Return
+  ${EndIf}
+  GetFullPathName $3 $3
+  ${IfNot} ${FileExists} "$3\${MAINBINARYNAME}.exe"
+    Return
+  ${EndIf}
+  ${IfNot} ${FileExists} "$3\uninstall.exe"
+    Return
+  ${EndIf}
+
+  ; Same, older or unknown version are all an Upgrade, as in Orgtree's installer.
+  ; Only a NEWER installed version stays on the stock page when downgrades are
+  ; not allowed (that page disables the option).
+  nsis_tauri_utils::SemverCompare "${VERSION}" $1
+  Pop $4
+  ${If} $4 != 0
+  ${AndIf} $4 != 1
+  ${AndIf} $4 != -1
+    Return
+  ${EndIf}
+  !if "${ALLOWDOWNGRADES}" == "false"
+    ${If} $4 = -1
+      Return
+    ${EndIf}
+  !endif
+
+  ; Installs made by a Hubchat that can be asked to quit say so.
+  ReadRegStr $HubUpgradeControl SHCTX "${UNINSTKEY}" "HubchatQuitControl"
+  StrCpy $HubUpgradeInstallDir $3
+  StrCpy $HubUpgradeExe "$3\${MAINBINARYNAME}.exe"
+  StrCpy $HubUpgradeAvailable "1"
+FunctionEnd
+
+Function HubUpgradeClose
+hub_close_attempt:
+  DetailPrint "Requesting a graceful ${PRODUCTNAME} shutdown..."
+  StrCpy $0 ""
+  ${If} $HubUpgradeControl == "1"
+    StrCpy $0 " -QuitControl"
+  ${EndIf}
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\hubchat-upgrade.ps1 "${HUBCHAT_WINDOWS_DIR}\installer-upgrade.ps1"
+  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\hubchat-upgrade.ps1" -ExecutablePath "$HubUpgradeExe" -GracefulSeconds 25 -LogPath "$TEMP\hubchat-installer-upgrade.log"$0'
+  Pop $0
+  Pop $1
+  ${If} $0 == 0
+    ; The helper's first word is FORCED when it had to terminate the process.
+    StrCpy $2 $1 6
+    ${If} $2 == "FORCED"
+      DetailPrint "WARNING: $1"
+    ${Else}
+      DetailPrint "${PRODUCTNAME} is closed; continuing the upgrade."
+    ${EndIf}
+    Push "1"
+    Return
+  ${EndIf}
+  DetailPrint "Could not close ${PRODUCTNAME}: $1"
+  MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "${PRODUCTNAME} is still running or could not be verified as closed.$\r$\n$1$\r$\nRetry to request a graceful close again, or Cancel to leave the existing installation untouched." /SD IDCANCEL IDRETRY hub_close_attempt
+  Push "0"
+FunctionEnd
+
+Page custom HubUpgradePageShow HubUpgradePageLeave
+Function HubUpgradePageShow
+  ; Silent, passive and update-mode runs keep the stock flow; a choice already
+  ; made is not asked again.
+  ${If} ${Silent}
+  ${OrIf} $PassiveMode = 1
+  ${OrIf} $UpdateMode = 1
+  ${OrIf} $HubUpgradeSelected == "1"
+    Abort
+  ${EndIf}
+  Call HubDetectUpgradeInstall
+  ${If} $HubUpgradeAvailable != "1"
+    Abort
+  ${EndIf}
+  StrCpy $HubUpgradeChoice ""
+  !insertmacro MUI_HEADER_TEXT "Upgrade ${PRODUCTNAME}" "An existing ${PRODUCTNAME} installation was found."
+  nsDialogs::Create 1018
+  Pop $HubUpgradePage
+  ${If} $HubUpgradePage == error
+    Abort
+  ${EndIf}
+  ${IfThen} $(^RTL) = 1 ${|} nsDialogs::SetRTL $(^RTL) ${|}
+  ${NSD_CreateLabel} 0u 0u 300u 22u "Upgrade the existing installation using its recorded settings."
+  Pop $HubUpgradeLabel
+  ${NSD_CreateLabel} 0u 27u 300u 34u "Install location: $HubUpgradeInstallDir"
+  Pop $HubUpgradeLabel
+  !if "${INSTALLMODE}" == "perMachine"
+    ${NSD_CreateLabel} 0u 65u 300u 20u "Scope: all users (kept unchanged)"
+  !else if "${INSTALLMODE}" == "both"
+    ${If} $MultiUser.InstallMode == "AllUsers"
+      ${NSD_CreateLabel} 0u 65u 300u 20u "Scope: all users (kept unchanged)"
+    ${Else}
+      ${NSD_CreateLabel} 0u 65u 300u 20u "Scope: current user (kept unchanged)"
+    ${EndIf}
+  !else
+    ${NSD_CreateLabel} 0u 65u 300u 20u "Scope: current user (kept unchanged)"
+  !endif
+  Pop $HubUpgradeLabel
+  ${NSD_CreateButton} 0u 98u 110u 16u "&Upgrade"
+  Pop $HubUpgradeButton
+  ${NSD_OnClick} $HubUpgradeButton HubUpgradeChooseUpgrade
+  ${NSD_CreateButton} 122u 98u 110u 16u "&Advanced setup"
+  Pop $HubUpgradeButton
+  ${NSD_OnClick} $HubUpgradeButton HubUpgradeChooseAdvanced
+  nsDialogs::Show
+FunctionEnd
+Function HubUpgradeChooseUpgrade
+  Pop $0
+  StrCpy $HubUpgradeChoice "upgrade"
+  GetDlgItem $1 $HWNDPARENT 1
+  SendMessage $1 ${BM_CLICK} 0 0
+FunctionEnd
+Function HubUpgradeChooseAdvanced
+  Pop $0
+  StrCpy $HubUpgradeChoice "advanced"
+  GetDlgItem $1 $HWNDPARENT 1
+  SendMessage $1 ${BM_CLICK} 0 0
+FunctionEnd
+Function HubUpgradePageLeave
+  ${If} $HubUpgradeChoice == "upgrade"
+    ; Same location and scope as the existing installation.
+    StrCpy $INSTDIR $HubUpgradeInstallDir
+    Call HubUpgradeClose
+    Pop $0
+    ${If} $0 != "1"
+      ; The user cancelled (or the app could not be closed): nothing was changed.
+      SetErrorLevel 1
+      Quit
+    ${EndIf}
+    StrCpy $HubUpgradeSelected "1"
+    ; The stock passive + update path: skips the wizard pages, never uninstalls
+    ; first, keeps the existing shortcuts and closes by itself.
+    StrCpy $PassiveMode 1
+    StrCpy $UpdateMode 1
+  ${Else}
+    ; Next without choosing is the same as Advanced setup: the full stock pages.
+    StrCpy $HubUpgradeChoice "advanced"
+    StrCpy $HubUpgradeSelected "0"
+  ${EndIf}
+FunctionEnd
+; ---------------------------------------------------------------------------
+; HUBCHAT END
+; ---------------------------------------------------------------------------
 
 ; Installer pages, must be ordered as they appear
 ; 1. Welcome Page
@@ -742,6 +934,12 @@ Section Install
 SectionEnd
 
 Function .onInstSuccess
+  ; HUBCHAT EDIT: an explicit Upgrade on the Upgrade page closed Hubchat before
+  ; installing, so it starts it again, once, as the user (not elevated).
+  ${If} $HubUpgradeSelected == "1"
+    nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" ""
+    Return
+  ${EndIf}
   ; Check for `/R` flag only in silent and passive installers because
   ; GUI installer has a toggle for the user to (re)start the app
   ${If} $PassiveMode = 1
