@@ -199,10 +199,31 @@ and file names, in both verbose modes) and
   content was already archived and only the fresh file is missing, nothing is
   written (the archive is not repeated) until it can be. The first line after
   recovery says how many were dropped. Without this the active file, which the
-  budget never removes, would grow past 8 MiB and past 64 MiB. Tests:
+  budget never removes, would grow past 8 MiB and past 64 MiB. The panic hook's
+  pointer line obeys the same limit (next bullet). Tests:
   `trace::tests::a_rollover_that_cannot_archive_keeps_the_original_stays_within_its_limit_and_recovers`,
   `..::a_fresh_file_that_cannot_be_made_after_archiving_takes_nothing_and_archives_once`,
   `..::a_healthy_rollover_still_rolls_without_dropping_anything`.
+- The panic hook's pointer line (`trace::emergency`) goes through the same
+  handle, lock and size account as every other line, so the limit holds for it
+  too and it cannot land between a rollover's archive and the fresh file.
+  Ordinary lines stop `max / 128` (64 KiB) short of the 8 MiB limit; that
+  reserve is for pointer lines alone, so a full file that cannot roll over
+  still takes the first ones and never passes 8 MiB: past the reserve a pointer
+  is refused and counted (the crash report, a separate folder with its own
+  count limit, has the facts). When the content is already archived and only
+  the fresh file is missing, the line is written to the kept file (an abort
+  leaves it there) and also held, up to the reserve, to open the fresh file.
+  The hook never rolls the file over (no compressing megabytes inside a panic),
+  waits at most 2 s for the writer (a writer that is itself the panicking
+  thread holds the lock, and the hook gives up rather than wait for itself),
+  and takes a lock poisoned by a dead writer as it is. A pointer that cannot
+  get in is lost; the report is not. Tests:
+  `trace::tests::repeated_panic_notes_at_a_full_file_that_cannot_roll_stay_within_the_limit_and_the_account`,
+  `..::a_panic_note_waits_for_a_rollover_and_lands_in_the_fresh_file`,
+  `..::a_panic_note_left_in_the_kept_file_of_a_failed_fresh_start_is_carried_into_the_fresh_file`,
+  `..::the_carried_notes_are_bounded_by_the_reserve`,
+  `..::a_hook_that_cannot_get_the_file_gives_up_and_a_poisoned_lock_is_used_as_it_is`.
 - If `diagnostics/logs` cannot take a file, the log goes to its own folder,
   `<temporary folder>/hubchat-logs`, with the same file names, so the same
   pruning and budget apply to it (it is swept at every start, used or not).
@@ -230,9 +251,11 @@ preference. [decided: coordinator contract with rig-opus, 2026-10-11]
 `app_data_dir` → panic hook (`crash::install`, rig-opus) → `trace::init` →
 `core::init` → tray. `trace::init` never fails the app. The panic hook is the
 only one in the process; after it saves its report it calls `trace::emergency`,
-which appends one pointer line (report name, thread, source line, never the
-payload) straight to the active file, because a release build aborts after the
-hook and would lose a queued line. The two modules join in
+which writes one pointer line (report name, thread, source line, never the
+payload) to the active file at once, without the writer queue, because a
+release build aborts after the hook and would lose a queued line. It shares the
+file's lock and size account with the writer (see Rotation, retention and
+bounds). The two modules join in
 `trace::init`: `crate::crash::note_panics_in(emergency)` registers the pointer
 line, and `crate::tray::before_restart(shutdown)` makes Restart Hubchat (which
 skips the Exit event) flush the file before it restarts.

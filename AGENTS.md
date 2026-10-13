@@ -130,7 +130,11 @@
   folder cannot be written the log goes to an owned, pruned temporary folder
   and the Developer page says so. A hub's own words (its version, its answers)
   are never logged, and a log file that cannot roll over drops lines instead of
-  growing past its limit. Logs
+  growing past its limit. The panic hook's pointer line (`trace::emergency`)
+  shares the file's lock and size account with the writer (2026-10-13; it
+  used to append through a second handle outside both): it stops at the limit,
+  has a reserve ordinary lines leave for it, never lands between a rollover's
+  archive and the fresh file, and never waits longer than 2 s. Logs
   (`diagnostics/logs`) and crash reports (`diagnostics/crash-reports`) are
   separate folders with separate owners. Rotation at 8 MiB and a 64 MiB budget
   are coordinator choices; 30 days follows Orgtree. [decided: coordinator
