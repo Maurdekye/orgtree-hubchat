@@ -52,10 +52,10 @@ passing something on is no proof of anything.
 
 | Key | On | Rules |
 |---|---|---|
-| `question` | a card (`kind` "question") | `options`: 2-10 labels, each 1-100 characters with no line breaks or control characters, no leading or trailing spaces, all different (ignoring case). `multiple`: true for pick one or more; false or absent for pick one. Anything else: the card is shown as free-response. |
+| `question` | a card (`kind` "question") | `options`: 2-10 labels (user 2026-10-12 21:12Z), each 1-100 characters with no line breaks or control characters, no leading or trailing spaces, all different (ignoring case). `multiple`: true for pick one or more; false or absent for pick one. Anything else: the card is shown as free-response. Hubchat's core checks these rules; its interface then checks only the shape, never more strictly. |
 | `replies` | a multi-reply | Every message it answers, oldest first: 2-50 different ids of 1-200 characters. The envelope's `reply_to` must be the first. If not, only `reply_to` counts. |
 | `answers` | a reply to cards | For each card answered by picking: `question`, an id among the replies (or `reply_to`), and `picked`, 1-10 of that card's own labels (exactly one for a single-choice card). An entry that doesn't fit the card the receiver holds is ignored. That card then counts as a plain reply. |
-| `fallback` | anything with plain-text extras | `[start, end]`: byte offsets into the UTF-8 body of the part written for clients that don't read `meta`. It is a prefix (`start` 0) or a suffix (`end` = the body's length). Receivers that read `meta` leave it out of what they show and of the answer text. |
+| `fallback` | anything with plain-text extras | `[start, end]`: byte offsets into the UTF-8 body of the part written for clients that don't read `meta`. It is a prefix (`start` 0) or a suffix (`end` = the body's length). Receivers that read `meta` leave it out of what they show and of the answer text, but only where its text is exactly what the accepted `meta` stands for (below): the card's numbered list, written from the accepted options; or the reply's lines, one quote line per message it answers (in order), each followed by `Answer: ` and the accepted picks for it, or by `Skipped` in a reply with no text. Anything else stays in the body, and a reply falls back to dropping its one quote line. A long body's preview keeps a range that reaches past it, for a card or a reply only, and checks it again on the whole body. |
 
 ## In the body: the plain-text version
 
@@ -105,18 +105,37 @@ Later messages leave the card as it is. Hubchat marks their note on that card
 both send; whichever the hub received first counts, on every device. The
 asker receives both messages, in that same order.
 
-## Verification (2026-10-12)
+A card or its first answer may lie further back than the messages a chat has
+loaded (the newest 50, then a page at a time). So the interface settles every
+card it holds (saved picks and replies first, then quoted cards and the
+loaded page's cards) from the loaded messages together with the store's
+`card_answers`: each card in the chat and the first message from its other
+side that replies to it, in hub order, found by index (reply_to, and
+`reply_links` for every message a multi-reply answers; at most 1000 cards per
+call). A card the store has not answered for yet is unknown: no saved pick on
+it is sent and no empty reply skips it until the store answers. A saved pick
+on a card that some answer settled is dropped.
+
+## Verification (2026-10-13, after review R1)
 
 Measured on Hubchat `hubchat-opus/questions` (on main `0a1bdde`), the mail
-hub's `hubchat-opus/hub-meta` (on `6a883ad`) and Orgtree's
-`hubchat-opus/question-options` (on rust-engine `cf7668e`). Every cargo step
-ran under the machine build lock inside Orgtree's kernel Job runner.
+hub's `hubchat-opus/hub-meta` (on `6a883ad`, unchanged since review R1) and
+Orgtree's `hubchat-opus/question-options` (on rust-engine `9fc30fb`). Every
+cargo step ran under the machine build lock inside Orgtree's kernel Job
+runner. Each review R1 finding also has a red control: the same check run on
+the reviewed code fails, and passes on the fix.
 
-- **Core:** `cargo test --locked -j2 -p hubchat-core --lib` passes 209 of 209.
-  The question tests check the option rules, untrusted `meta` part by part,
-  the plain-text part left out only when it fits, what older clients read
-  and the 4096-byte limit; the saved-answer tests check unsent answers across
-  a reopen and migration 16 from a real version-15 store.
+- **Core:** `cargo test --locked -j2 -p hubchat-core --lib --test
+  questions_fallback` passes 211 of 211 and 5 of 5. The question tests check
+  the option rules, untrusted `meta` part by part, a plain-text part left out
+  only where `meta` stands for it (also on a long body's preview and then the
+  whole body), what older clients read and the 4096-byte limit; the store
+  tests check unsent answers across a reopen, migration 16 from a real
+  version-15 store, and `card_answers` (the first answer however far back,
+  by reply_to or a multi-reply's links; the card's own side, ties, unsent
+  answers and deletes). Red control: `questions_fallback.rs` on the reviewed
+  `questions.rs` fails 4 of its 5 tests (a refused card's list cut, a whole
+  reply emptied into a skip); its positive control passes.
 - **Round trip:** `tests/questions_v2.rs` against the hub branch's own binary
   (scratch port, throwaway PostgreSQL 18): cards written as Orgtree writes
   them arrive as cards on two devices without the plain list; one empty
@@ -126,17 +145,30 @@ ran under the machine build lock inside Orgtree's kernel Job runner.
 - **Desktop shell:** `cargo check --locked -j2 -p hubchat` passes with no
   warning. Clippy reports nothing in this work.
 - **Interface:** `tools/verify-questions.ps1` (Orgtree's
-  `apps/desktop/renderer/tests/joblimit.ps1`, 4096 MB, 300 s) passes 37 of 37
+  `apps/desktop/renderer/tests/joblimit.ps1`, 4096 MB, 300 s) passes 52 of 52
   checks against the browser mock at desktop and phone widths, dark and
-  light. Five of them call `cardStates` directly and pin the settling order;
-  each must give the same result whatever order the messages are listed in.
-- **Mail hub:** with a throwaway PostgreSQL 18, `message_meta`,
+  light. Five call `cardStates` and pin the settling order in either list
+  order. Six restart with answers saved on cards beyond the first page
+  (`?pages=1`): the pick on a card another device answered is gone, the open
+  card's pick and a free-response reply stay, one empty send answers and
+  skips them with both quotes noted, and scrolled back the cards read the
+  same. Nine run the real `questions.ts` (settlement from the store; unknown
+  is neither open nor settled) and `answers.ts` with its API held back (an
+  old identity's read dropped after a switch; same-identity reads and
+  current edits kept). Red control: with the reviewed interface files the
+  same proof fails the saved-pick, quote-note, settlement and both
+  identity-switch checks (43 of 48); the positive controls pass.
+- **Mail hub:** at review R1, with a throwaway PostgreSQL 18, `message_meta`,
   `people_and_replies`, `profile_pictures`, `hub_suite`, `sync`, `history`,
-  `lazy_history` and `long_messages` pass. Clippy reports nothing in this work.
-- **Orgtree:** the `net::cards` unit tests pass, and the rig proof
-  `question-options.mjs` (17 checks) delivers cards through the real sender
+  `lazy_history` and `long_messages` passed. Clippy reports nothing in this
+  work.
+- **Orgtree:** the `net::cards` unit tests pass 3 of 3, and the rig proof
+  `question-options.mjs` (18 checks) delivers cards through the real sender
   to a hosted hub with the `meta` feature and reads them as a person
-  registered over HTTP.
+  registered over HTTP; an agent's own question ending in a list the tool
+  would refuse arrives whole, without `meta`. Red control: the reviewed
+  engine gives that question `meta` (rig proof 17 of 18; the unit test
+  fails with the reviewed `meta`).
 
 ## Limits
 
@@ -150,10 +182,18 @@ ran under the machine build lock inside Orgtree's kernel Job runner.
   first card quoted. It doesn't track whether its cards are settled.
 - Not run: an Android build, an emulator or a device, the installed app, a
   live hub or chat. The browser proof drives the mock API (`src/lib/mock.ts`),
-  not the Tauri commands: `hc_send`, `hc_draft_answers` and
-  `hc_set_draft_answers` compile and were compared with `src/api.ts` by
-  reading. Long-press selection was driven with mouse events at phone width,
-  not by touch.
+  not the Tauri commands: `hc_send`, `hc_draft_answers`,
+  `hc_set_draft_answers` and `hc_card_answers` compile and were compared with
+  `src/api.ts` by reading. The mock answers `cardAnswers` with the same
+  rule (`cardStates`); the store's own query is checked by the core tests.
+  Long-press selection was driven with mouse events at phone width, not by
+  touch.
 - Settling is the same on every device for answers that crossed one hub. A
   chat whose answers arrive over two different hubs orders them by each hub's
   own clock; that case was not run.
+- A device settles cards from what it holds. An answer another device sent
+  that has not reached this one yet doesn't count here until it arrives; if
+  this device answers meanwhile, hub order decides which one counts.
+- A pick whose labels aren't the card's options (another client, a bug) is
+  ignored when settling: the card counts as a plain reply, and the reply's
+  `Answer:` line, matching its `meta`, is not shown.
