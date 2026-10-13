@@ -29,7 +29,11 @@ const sheets = { desktop: shared + sourceSheets(['desktop', 'app-desktop']), and
 const old = spawnSync(process.execPath, [root + '/tools/proof-pictures-renderer.mjs'], { cwd: root, windowsHide: true, encoding: 'utf8', timeout: 30000,
   env: { ...process.env, HUBCHAT_DEPENDENCY_ROOT: depsRoot, HUBCHAT_DOM_DEPENDENCY_ROOT: 'E:/Libraries/Desktop/orgtree', HUBCHAT_RENDERER_OUT: out + '/legacy', HUBCHAT_RENDERER_EVIDENCE: out + '/legacy.json', HUBCHAT_JOB_CONTAINED: '1' } });
 fs.writeFileSync(out + '/legacy.log', old.stdout + old.stderr);
-const config = { extends: root + '/tsconfig.json', references: [], compilerOptions: { paths: { '*': [depsRoot + '/node_modules/*'], react: [depsRoot + '/node_modules/@types/react'], 'react/*': [depsRoot + '/node_modules/@types/react/*'] } } };
+const config = { extends: root + '/tsconfig.json', references: [], compilerOptions: {
+  typeRoots: [depsRoot + '/node_modules/@types'], types: [depsRoot + '/node_modules/vite/client'],
+  paths: { '*': [depsRoot + '/node_modules/*'], react: [depsRoot + '/node_modules/@types/react'], 'react/*': [depsRoot + '/node_modules/@types/react/*'],
+    'react-dom': [depsRoot + '/node_modules/@types/react-dom'], 'react-dom/*': [depsRoot + '/node_modules/@types/react-dom/*'] },
+} };
 fs.writeFileSync(out + '/typecheck.json', JSON.stringify(config));
 const t = spawnSync(process.execPath, [depsRoot + '/node_modules/typescript/bin/tsc', '-p', out + '/typecheck.json', '--noEmit'], { cwd: root, encoding: 'utf8', timeout: 30000, windowsHide: true });
 fs.writeFileSync(out + '/typecheck.log', t.stdout + t.stderr);
