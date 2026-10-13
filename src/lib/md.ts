@@ -132,8 +132,8 @@ export function guideMd(src: string): string {
   const html = marked.parse(src, { async: false, walkTokens(token) {
     if (token.type === "link" && token.href.startsWith("#")) token.href = prefix + token.href;
   } }) as string;
-  return clean(html.trim()).replaceAll(`data-href="${prefix}#`, 'data-href="#')
-    .replaceAll(`title="${prefix}#`, 'title="#');
+  return clean(html.trim()).split(`data-href="${prefix}#`).join('data-href="#')
+    .split(`title="${prefix}#`).join('title="#');
 }
 
 // --- plain one-line text, for the chat list and quotes ----------------------
