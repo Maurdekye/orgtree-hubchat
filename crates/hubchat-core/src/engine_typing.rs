@@ -74,14 +74,12 @@ impl Composing {
     /// edit is `IDLE` old ends here.
     fn beats(&self, peer: &str, run: u64, now: Instant) -> bool {
         let mut m = self.drafts.lock().unwrap();
-        match m.get(peer) {
-            Some(d) if d.run == run && now.saturating_duration_since(d.edited) < IDLE => true,
-            Some(d) if d.run == run => {
-                m.remove(peer);
-                false
-            }
-            _ => false,
+        let Some(d) = m.get(peer).filter(|d| d.run == run) else { return false };
+        if now.saturating_duration_since(d.edited) < IDLE {
+            return true;
         }
+        m.remove(peer);
+        false
     }
 }
 
