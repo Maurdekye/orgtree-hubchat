@@ -218,7 +218,21 @@ and file names, in both verbose modes) and
   waits at most 2 s for the writer (a writer that is itself the panicking
   thread holds the lock, and the hook gives up rather than wait for itself),
   and takes a lock poisoned by a dead writer as it is. A pointer that cannot
-  get in is lost; the report is not. Tests:
+  get in is lost; the report is not.
+- The size account counts every byte the file took, also the prefix of a write
+  that then failed (`write_counted`; ordinary lines, the hook's lines and the
+  pointers carried into a fresh file all go through it). A failed write is not
+  assumed to have taken nothing: the file is asked how long it is, and a sink
+  that cannot say is charged for the rest of the line, so the account may be
+  too high (lines are then turned away early; a rollover starts it over from
+  the real file) and is never too low. A torn line is not repaired: the next
+  line follows its prefix. Tests:
+  `trace::tests::a_pointer_the_sink_takes_only_partly_is_charged_so_the_limit_holds`,
+  `..::a_line_the_sink_takes_only_partly_is_charged_so_the_limit_holds`,
+  `..::carried_pointers_a_sink_takes_only_partly_are_charged`,
+  `..::a_pointer_control_whole_writes_and_zero_byte_errors_stay_bounded`,
+  `..::write_counted_charges_each_accepted_byte_retries_interruptions_and_refuses_a_zero_write`,
+  `..::a_real_file_account_matches_its_length_after_whole_writes`. Earlier tests:
   `trace::tests::repeated_panic_notes_at_a_full_file_that_cannot_roll_stay_within_the_limit_and_the_account`,
   `..::a_panic_note_waits_for_a_rollover_and_lands_in_the_fresh_file`,
   `..::a_panic_note_left_in_the_kept_file_of_a_failed_fresh_start_is_carried_into_the_fresh_file`,

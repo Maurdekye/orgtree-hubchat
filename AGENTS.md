@@ -134,7 +134,9 @@
   shares the file's lock and size account with the writer (2026-10-13; it
   used to append through a second handle outside both): it stops at the limit,
   has a reserve ordinary lines leave for it, never lands between a rollover's
-  archive and the fresh file, and never waits longer than 2 s. Logs
+  archive and the fresh file, and never waits longer than 2 s. The size account
+  counts every byte the file took, the prefix of a failed write included
+  (2026-10-13; it used to add only after a whole write). Logs
   (`diagnostics/logs`) and crash reports (`diagnostics/crash-reports`) are
   separate folders with separate owners. Rotation at 8 MiB and a 64 MiB budget
   are coordinator choices; 30 days follows Orgtree. [decided: coordinator
