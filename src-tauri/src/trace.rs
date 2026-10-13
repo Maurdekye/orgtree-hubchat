@@ -32,8 +32,8 @@ use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, SystemTime};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError};
+use std::time::{Duration, Instant, SystemTime};
 
 use hubchat_core::diag;
 use serde::Serialize;
@@ -61,6 +61,9 @@ pub const MAX_FILE_BYTES: u64 = 8 * 1024 * 1024;
 /// All of this log's files together stay under this: past it the oldest
 /// archives go first, whatever their age (Orgtree bounds by age alone).
 pub const MAX_TOTAL_BYTES: u64 = 64 * 1024 * 1024;
+/// How long the panic hook waits for the writer to let go of the file before it
+/// gives up on its pointer line (the crash report holds the facts).
+const EMERGENCY_WAIT: Duration = Duration::from_secs(2);
 /// Events waiting for the writer thread; more are dropped (lossy), never grown.
 const QUEUE_LINES: usize = 16_384;
 
@@ -528,8 +531,17 @@ pub struct LogFile {
     /// After a failed rollover the next attempt waits until then (a rollover
     /// compresses the whole file, so it is not retried on every line).
     retry_at: SystemTime,
-    /// Lines turned away since the file last could not roll over.
+    /// Lines turned away since the file last had room.
     dropped: u64,
+    /// Room at the end of the file that only the panic hook's lines may use:
+    /// ordinary lines stop `reserve` bytes short of `max`, so a pointer to a
+    /// crash report still fits in a file that is full and cannot roll over, and
+    /// the file never passes `max`.
+    reserve: u64,
+    /// Pointer lines the hook added to a file whose content is already archived
+    /// (the fresh file is missing): the fresh file starts with them, because the
+    /// kept file is about to be started over.
+    carried: Vec<String>,
 }
 
 /// How long a failed rollover waits before the next try.
@@ -554,6 +566,8 @@ impl LogFile {
             archived: false,
             retry_at: SystemTime::UNIX_EPOCH,
             dropped: 0,
+            reserve: max / 128,
+            carried: Vec::new(),
         })
     }
 
@@ -591,8 +605,6 @@ impl LogFile {
             }
             self.archived = true;
         }
-        // The fresh file is opened for append like the first one: `emergency` also
-        // appends, and a plain write handle would overwrite its lines.
         let fresh = std::fs::File::create(&self.path)
             .and_then(|_| std::fs::OpenOptions::new().create(true).append(true).open(&self.path));
         let Ok(f) = fresh else {
@@ -602,6 +614,14 @@ impl LogFile {
         self.file = f;
         self.size = 0;
         self.archived = false;
+        // pointer lines added while only the fresh file was missing are in no
+        // archive: they open the fresh file
+        for note in std::mem::take(&mut self.carried) {
+            if self.file.write_all(note.as_bytes()).is_ok() {
+                self.size += note.len() as u64;
+            }
+        }
+        let _ = self.file.sync_data();
         self.roll_at = SystemTime::now() + Duration::from_secs(24 * 3600);
         if let Some(dir) = self.path.parent() {
             prune(dir, Some(&self.path));
@@ -620,14 +640,15 @@ impl std::io::Write for LogFile {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let now = SystemTime::now();
         let note = (self.dropped > 0).then(|| {
-            format!("{:<8} [{}] T- {} log lines were dropped: the file could not be rolled over\n", "WARNING", timestamp(), self.dropped)
+            format!("{:<8} [{}] T- {} log lines were dropped: the file was full\n", "WARNING", timestamp(), self.dropped)
         });
         let need = buf.len() as u64 + note.as_ref().map_or(0, |n| n.len() as u64);
-        let full = self.size + need > self.max;
+        let room = self.max.saturating_sub(self.reserve);
+        let full = self.size + need > room;
         if self.size > 0 && (full || now >= self.roll_at || self.archived) && now >= self.retry_at {
             self.roll();
         }
-        if self.archived || (self.size > 0 && self.size + need > self.max) {
+        if self.archived || (self.size > 0 && self.size + need > room) {
             self.dropped = self.dropped.saturating_add(1);
             return Ok(buf.len());
         }
@@ -645,6 +666,80 @@ impl std::io::Write for LogFile {
     }
 }
 
+impl LogFile {
+    /// The panic hook's pointer line, written through the file's own handle and
+    /// admitted by the same size account as every other line, but against the
+    /// whole limit (ordinary lines leave `reserve` bytes for it): the file
+    /// never grows past `max` however many times the hook runs, and a line that
+    /// does not fit is counted and left to the crash report. It never rolls the
+    /// file over (the hook must not compress megabytes). When the content is
+    /// already archived and only the fresh file is missing the line also waits
+    /// in `carried`, so the fresh file starts with it. Answers whether the line
+    /// reached the file. Never panics.
+    fn append_emergency(&mut self, text: &str) -> bool {
+        let n = text.len() as u64;
+        if self.size.saturating_add(n) > self.max || self.file.write_all(text.as_bytes()).is_err() {
+            self.dropped = self.dropped.saturating_add(1);
+            return false;
+        }
+        self.size = self.size.saturating_add(n);
+        let _ = self.file.sync_data();
+        if self.archived {
+            let held: u64 = self.carried.iter().map(|c| c.len() as u64).sum();
+            if held.saturating_add(n) <= self.reserve {
+                self.carried.push(text.to_string());
+            }
+        }
+        true
+    }
+}
+
+/// The log file as its two writers share it: the thread that writes the queued
+/// lines and the panic hook. One lock covers a write, a rollover and a
+/// pointer line, so they cannot interleave. The hook only ever `try_lock`s, for
+/// a bounded time (it must never deadlock behind a writer that is itself the
+/// panicking thread), and a lock poisoned by a panic is used as it is.
+#[derive(Clone)]
+struct SharedLog(Arc<Mutex<LogFile>>);
+
+impl SharedLog {
+    fn new(file: LogFile) -> SharedLog {
+        SharedLog(Arc::new(Mutex::new(file)))
+    }
+
+    fn lock(&self) -> MutexGuard<'_, LogFile> {
+        self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Write the hook's pointer line, waiting at most `wait` for the writer.
+    fn emergency(&self, line: &str, wait: Duration) -> bool {
+        let text = emergency_text(line);
+        let give_up = Instant::now() + wait;
+        let mut file = loop {
+            match self.0.try_lock() {
+                Ok(file) => break file,
+                Err(TryLockError::Poisoned(poisoned)) => break poisoned.into_inner(),
+                Err(TryLockError::WouldBlock) => {
+                    if Instant::now() >= give_up {
+                        return false;
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
+        };
+        file.append_emergency(&text)
+    }
+}
+
+impl std::io::Write for SharedLog {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.lock().write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.lock().flush()
+    }
+}
+
 // ----------------------------------------------------------- start / stop
 
 static STARTED: AtomicBool = AtomicBool::new(false);
@@ -654,6 +749,8 @@ static APP_DATA: OnceLock<PathBuf> = OnceLock::new();
 /// installed.
 static LOG_DIR: OnceLock<PathBuf> = OnceLock::new();
 static ACTIVE: OnceLock<PathBuf> = OnceLock::new();
+/// The running log's file, for the panic hook (`emergency`).
+static SINK: OnceLock<SharedLog> = OnceLock::new();
 static FALLBACK: OnceLock<bool> = OnceLock::new();
 static GUARDS: Mutex<Vec<tracing_appender::non_blocking::WorkerGuard>> = Mutex::new(Vec::new());
 
@@ -726,6 +823,8 @@ struct Begun {
     dir: PathBuf,
     fallback: bool,
     guards: Vec<tracing_appender::non_blocking::WorkerGuard>,
+    /// the file as the writer thread and the panic hook share it
+    log: SharedLog,
 }
 
 /// Open the log file (the usual folder, else the fallback) and give the layer
@@ -743,11 +842,12 @@ fn begin(
         eprintln!("hubchat: no folder takes a log file; running without one");
         return None;
     };
+    let log = SharedLog::new(file);
     let (w, guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
         .buffered_lines_limit(QUEUE_LINES)
         .lossy(true)
         .thread_name("hubchat-log")
-        .finish(file);
+        .finish(log.clone());
     let file_sink: Arc<dyn Sink> = Arc::new(Nb(w));
     let mut guards = vec![guard];
     let console: Option<Arc<dyn Sink>> = if cfg!(debug_assertions) || std::env::var("HUBCHAT_LOG_CONSOLE").is_ok_and(|v| v == "1") {
@@ -770,7 +870,7 @@ fn begin(
         }
         return None;
     }
-    Some(Begun { path, dir, fallback: used_fallback, guards })
+    Some(Begun { path, dir, fallback: used_fallback, guards, log })
 }
 
 /// Start the log: `<logs dir>/<start time>.log`, else the same name in the
@@ -795,11 +895,12 @@ fn start(app_data: &Path, logs_dir: &Path, fallback: &Path) -> Option<PathBuf> {
     }
     let want = effective(app_data);
     let begun = begin(logs_dir, fallback, |layer, filter| tracing_subscriber::registry().with(layer.with_filter(filter)).try_init().is_ok());
-    let Some(Begun { path, dir, fallback: used_fallback, guards }) = begun else {
+    let Some(Begun { path, dir, fallback: used_fallback, guards, log }) = begun else {
         diag::set_verbose(false);
         return None;
     };
     diag::set_verbose(want);
+    let _ = SINK.set(log);
     // the plugins talk through the `log` crate: take their messages in (info and up).
     // `try_init` may have installed the bridge already; the level is set either way.
     let _ = tracing_log::LogTracer::builder().with_max_level(log::LevelFilter::Info).init();
@@ -853,17 +954,18 @@ fn emergency_text(line: &str) -> String {
     format!("{:<8} [{}] T- {}\n", "ERROR", timestamp(), mask_tokens(&flat))
 }
 
-/// Write one line straight to the active log file, without the writer queue:
-/// for the panic hook, which runs just before a release build aborts and would
-/// lose a queued line. Never panics; does nothing before `init`. The caller
-/// passes a pointer (a report's file name, a source line), never a payload.
+/// Write one pointer line to the active log file at once, without the writer
+/// queue: for the panic hook, which runs just before a release build aborts and
+/// would lose a queued line. The line goes through the file's own handle and
+/// size account (`LogFile::append_emergency`): it cannot grow the file past its
+/// limit, it cannot land between a rollover's archive and the fresh file, and
+/// the hook waits at most `EMERGENCY_WAIT` for the writer. Best effort, never
+/// panics, does nothing before `init`. The caller passes a pointer (a report's
+/// file name, a source line), never a payload.
 #[allow(dead_code)] // the desktop panic hook (crash.rs) calls it; Android has none
 pub fn emergency(line: &str) {
-    let Some(path) = ACTIVE.get() else { return };
-    let text = emergency_text(line);
-    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(path) {
-        let _ = f.write_all(text.as_bytes());
-        let _ = f.sync_data();
+    if let Some(log) = SINK.get() {
+        log.emergency(line, EMERGENCY_WAIT);
     }
 }
 
@@ -1111,9 +1213,8 @@ mod tests {
         flate2::read::GzDecoder::new(std::fs::File::open(archives[0].path()).unwrap()).read_to_string(&mut text).unwrap();
         assert_eq!(text, format!("{first}second\n"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "b".repeat(40) + "\n");
-        // another appender (the panic hook's `emergency`) and this writer do not overwrite each other
-        let mut other = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
-        other.write_all(b"emergency\n").unwrap();
+        // the panic hook's line goes through the same handle: neither overwrites the other
+        assert!(f.append_emergency("emergency\n"));
         f.write_all(b"after\n").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "b".repeat(40) + "\nemergency\nafter\n");
         let _ = std::fs::remove_dir_all(&d);
@@ -1231,7 +1332,11 @@ mod tests {
             assert_eq!(std::fs::read_to_string(app_data.join("verbose-logging")).unwrap(), "off");
         }
         shutdown(); // flushes the writer thread
+        // the panic hook's pointer reaches the same file through the shared handle, here
+        // after the writer has stopped, as at an abort
+        emergency("panic: report r-7.txt thread=main at src/x.rs:1:1");
         let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.lines().last().is_some_and(|l| l.starts_with("ERROR") && l.ends_with("panic: report r-7.txt thread=main at src/x.rs:1:1")), "{text}");
         assert!(text.contains("hubchat starting") && text.contains("proof line peer:") && text.contains("POST /api/send 403"), "{text}");
         assert!(text.lines().all(|l| l.contains("] T")), "every line has the prefix: {text}");
         for leak in ["maya", "office", "diagnostics", "Users"] {
@@ -1478,5 +1583,170 @@ mod tests {
         let made = archives(&dir);
         assert_eq!(made.len(), 1);
         assert_eq!(gz_text(&made[0]), "a".repeat(200));
+    }
+
+    const NOTE: &str = "panic: report 2026-10-13T01-00-00Z-ab12.txt thread=main at src/x.rs:1:1";
+    const NOTE_ID: &str = "2026-10-13T01-00-00Z-ab12";
+    const HOOK_WAIT: Duration = Duration::from_secs(5);
+
+    fn count(text: &str, what: &str) -> usize {
+        text.matches(what).count()
+    }
+
+    /// Read-only (or writable again) file: an archive can still be made of it,
+    /// but a fresh file cannot be started over it.
+    fn read_only(path: &Path, ro: bool) {
+        let mut p = std::fs::metadata(path).unwrap().permissions();
+        p.set_readonly(ro);
+        std::fs::set_permissions(path, p).unwrap();
+    }
+
+    #[test]
+    fn repeated_panic_notes_at_a_full_file_that_cannot_roll_stay_within_the_limit_and_the_account() {
+        let dir = temp("hook-full");
+        let path = dir.join("2026-10-12_01-02-03.log");
+        let mut f = LogFile::open_with(path.clone(), 1024).unwrap();
+        f.reserve = 480; // ordinary lines stop at 544
+        let real = f.archive_dir.clone();
+        let blocker = dir.join("not-a-folder");
+        std::fs::write(&blocker, "x").unwrap();
+        f.archive_dir = blocker.join("archives"); // archives cannot be made
+        f.write_all(&[b'a'; 130]).unwrap(); // fits
+        f.write_all(&[b'b'; 500]).unwrap(); // does not fit and cannot roll over: turned away
+        assert_eq!(f.dropped, 1);
+        let log = SharedLog::new(f);
+        let one = emergency_text(NOTE).len() as u64;
+        let mut written = 0u64;
+        for _ in 0..40 {
+            if log.emergency(NOTE, HOOK_WAIT) {
+                written += 1;
+            }
+        }
+        assert!(written > 1);
+        assert_eq!(written, (1024 - 130) / one, "the hook may use what is left up to the limit, and no more");
+        let len = std::fs::metadata(&path).unwrap().len();
+        assert!(len <= 1024 && len == 130 + written * one, "len {len}");
+        {
+            let f = log.lock();
+            assert_eq!(f.size, len, "the writer's account counts the hook's bytes");
+            assert_eq!(f.dropped, 1 + (40 - written), "refused notes are counted");
+        }
+        // the ordinary writer is still turned away, not the other way round
+        let mut w = log.clone();
+        w.write_all(&[b'c'; 10]).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), len);
+        // the folder works again: the archive holds the kept content and the notes
+        {
+            let mut f = log.lock();
+            f.archive_dir = real;
+            f.retry_at = SystemTime::UNIX_EPOCH;
+        }
+        w.write_all(b"after recovery\n").unwrap();
+        w.flush().unwrap();
+        let made = archives(&dir);
+        assert_eq!(made.len(), 1, "{made:?}");
+        assert_eq!(count(&gz_text(&made[0]), NOTE_ID) as u64, written);
+        let fresh = std::fs::read_to_string(&path).unwrap();
+        assert!(fresh.contains(" log lines were dropped") && fresh.ends_with("after recovery\n"), "{fresh}");
+    }
+
+    #[test]
+    fn a_panic_note_waits_for_a_rollover_and_lands_in_the_fresh_file() {
+        let dir = temp("hook-wait");
+        let path = dir.join("2026-10-12_01-02-03.log");
+        let mut f = LogFile::open_with(path.clone(), 256).unwrap();
+        f.write_all(&[b'a'; 200]).unwrap();
+        let log = SharedLog::new(f);
+        let mut writer = log.lock(); // the writer is in the middle of a rollover
+        let hook = {
+            let log = log.clone();
+            std::thread::spawn(move || log.emergency(NOTE, Duration::from_secs(30)))
+        };
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 200, "the hook did not write behind the writer's back");
+        assert!(writer.roll()); // the archive is complete and the file is started over
+        drop(writer);
+        assert!(hook.join().unwrap(), "the hook got in once the writer let go");
+        let fresh = std::fs::read_to_string(&path).unwrap();
+        assert!(fresh.contains(NOTE_ID) && !fresh.contains("aaaa"), "{fresh}");
+        let made = archives(&dir);
+        assert_eq!(made.len(), 1);
+        assert!(gz_text(&made[0]) == "a".repeat(200));
+    }
+
+    #[test]
+    fn a_panic_note_left_in_the_kept_file_of_a_failed_fresh_start_is_carried_into_the_fresh_file() {
+        let dir = temp("hook-kept");
+        let path = dir.join("2026-10-12_01-02-03.log");
+        let mut f = LogFile::open_with(path.clone(), 1024).unwrap();
+        f.reserve = 400; // ordinary lines stop at 624
+        f.write_all(&[b'a'; 200]).unwrap();
+        read_only(&path, true);
+        f.write_all(&[b'b'; 500]).unwrap(); // archives, then cannot start the fresh file
+        assert!(f.archived && f.dropped == 1);
+        let log = SharedLog::new(f);
+        assert!(log.emergency(NOTE, HOOK_WAIT), "the hook still reaches the file through the writer's own handle");
+        assert!(log.emergency(NOTE, HOOK_WAIT));
+        // an abort now leaves the pointers in the kept file
+        assert_eq!(count(&std::fs::read_to_string(&path).unwrap(), NOTE_ID), 2);
+        read_only(&path, false);
+        log.lock().retry_at = SystemTime::UNIX_EPOCH;
+        let mut w = log.clone();
+        w.write_all(b"back\n").unwrap();
+        w.flush().unwrap();
+        assert_eq!(archives(&dir).len(), 1, "the content was archived once");
+        assert!(!gz_text(&archives(&dir)[0]).contains(NOTE_ID), "the pointers are not in the archive");
+        let fresh = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(count(&fresh, NOTE_ID), 2, "the fresh file starts with them: {fresh}");
+        assert!(fresh.find(NOTE_ID).unwrap() < fresh.find(" log lines were dropped").unwrap() && fresh.ends_with("back\n") && !fresh.contains("aaaa"), "{fresh}");
+        assert!(fresh.len() as u64 <= 1024 && log.lock().size == fresh.len() as u64);
+    }
+
+    #[test]
+    fn the_carried_notes_are_bounded_by_the_reserve() {
+        let dir = temp("hook-carry");
+        let path = dir.join("2026-10-12_01-02-03.log");
+        let mut f = LogFile::open_with(path.clone(), 1024).unwrap();
+        let one = emergency_text(NOTE).len() as u64;
+        f.reserve = one * 2 + 1; // room for two carried notes
+        f.write_all(&[b'a'; 300]).unwrap();
+        f.archive().unwrap();
+        f.archived = true; // the content is archived and the fresh file is missing
+        for _ in 0..6 {
+            f.append_emergency(&emergency_text(NOTE));
+        }
+        assert_eq!(f.carried.len(), 2, "no more than the reserve is held for the fresh file");
+        assert!(f.roll());
+        let fresh = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(count(&fresh, NOTE_ID), 2, "{fresh}");
+        assert!(f.carried.is_empty());
+    }
+
+    #[test]
+    fn a_hook_that_cannot_get_the_file_gives_up_and_a_poisoned_lock_is_used_as_it_is() {
+        let dir = temp("hook-lock");
+        let path = dir.join("2026-10-12_01-02-03.log");
+        let log = SharedLog::new(LogFile::open_with(path.clone(), 4096).unwrap());
+        {
+            // the panicking thread is the one holding the file: the hook must not wait for itself
+            let _held = log.lock();
+            let started = Instant::now();
+            assert!(!log.emergency(NOTE, Duration::from_millis(60)));
+            assert!(started.elapsed() < Duration::from_secs(10));
+        }
+        // a writer that died while holding the lock
+        let dying = log.clone();
+        let _ = std::thread::spawn(move || {
+            let _held = dying.lock();
+            panic!("the writer died");
+        })
+        .join();
+        assert!(log.0.is_poisoned());
+        assert!(log.emergency(NOTE, HOOK_WAIT));
+        let mut w = log.clone();
+        w.write_all(b"still writing\n").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(count(&text, NOTE_ID), 1);
+        assert!(text.ends_with("still writing\n"), "{text}");
     }
 }
