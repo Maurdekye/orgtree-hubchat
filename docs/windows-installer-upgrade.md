@@ -125,3 +125,12 @@ fail, even though the historical 19-check upgrade succeeded. Preserve the
 fresh-install, Advanced setup, silent `/S`, Cancel and close-ladder controls.
 All work remains restricted to a disposable `.test` product; the real Hubchat
 version, executable hash, scheme and Run key are compared without changing it.
+
+Add `-WizardControls` for four additional checks: fresh Welcome with no Upgrade,
+no installation from that Welcome page, Advanced reaching the stock pages without
+replacing files, and a noninteractive silent `/S` reinstall preserving the new
+version and executable. Combined with `-RequireGracefulQuit`, expect 26 checks
+when the real Hubchat installation is present for the read-only preservation
+comparison (25 if absent). The existing 19 upgrade checks remain intact. These
+controls terminate only the installer process objects that they themselves
+started; never use a cleanup helper that kills all processes named `setup`.

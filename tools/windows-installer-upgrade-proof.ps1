@@ -25,14 +25,15 @@ param(
   [switch] $NoMarker,           # delete HubchatQuitControl after the prior install (an old Hubchat)
   [switch] $Cancel,             # press Cancel on the "could not close" prompt instead of expecting success
   [switch] $AppNotRunning,      # do not start the installed app before upgrading (the upgrade must still relaunch it)
+  [switch] $WizardControls,     # fresh/Advanced/silent controls on these same setups
   [switch] $RequireGracefulQuit, # real app: prompt primary exit AND rung-1 helper evidence
   [switch] $KeepForInspection,
   [int] $UiSeconds = 60
 )
 $ErrorActionPreference = 'Stop'
 if ($RequireGracefulQuit -and ($NoMarker -or $AppNotRunning -or $Cancel -or $Mode)) { throw 'RequireGracefulQuit needs a running real app with the quit-control marker' }
-if ($ProductName -eq 'Hubchat' -or $ProductName -notmatch 'Test') { throw "refusing: '$ProductName' is not a disposable test product name" }
-if ($Identifier -notmatch '\.test$') { throw "refusing: identifier '$Identifier' must end with .test" }
+if ($ProductName -notmatch '^Hubchat [A-Za-z0-9 -]*Test$') { throw "refusing: '$ProductName' is not a disposable test product name" }
+if ($Identifier -notmatch '^dev\.orgtree\.hubchat\.[A-Za-z0-9.-]+\.test$') { throw "refusing: identifier '$Identifier' must end with .test" }
 New-Item -ItemType Directory -Force $Evidence | Out-Null
 $log = Join-Path $Evidence 'proof.log'
 function Say([string] $m) { $l = '{0:HH:mm:ss} {1}' -f (Get-Date), $m; Add-Content $log $l; Write-Host $l }
@@ -70,7 +71,7 @@ public static class Ui {
   [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n);
-  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
   [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
   public static string Text(IntPtr h) { var s = new StringBuilder(512); GetWindowText(h, s, 512); return s.ToString(); }
   public static string Cls(IntPtr h) { var s = new StringBuilder(128); GetClassName(h, s, 128); return s.ToString(); }
@@ -103,7 +104,52 @@ function Setup-Windows([int] $setupPid) {
 
 $fail = $null
 $installedExe = Join-Path $installDir 'hubchat.exe'
+function Wait-Controls([Diagnostics.Process] $process, [string] $pattern) {
+  $until = (Get-Date).AddSeconds($UiSeconds)
+  while ((Get-Date) -lt $until -and -not $process.HasExited) {
+    foreach ($window in @(Setup-Windows $process.Id)) {
+      $lines = [Ui]::Controls($window.H)
+      if (($lines -join "`n") -match $pattern) { return [pscustomobject]@{ Window=$window.H; Lines=$lines } }
+    }
+    Start-Sleep -Milliseconds 250
+  }
+  throw "Installer page did not appear: $pattern"
+}
+function Remove-OwnedDirectory([string] $path) {
+  # Never follow a reparse point or remove a computed path outside this proof.
+  $full = [IO.Path]::GetFullPath($path)
+  $allowed = @($installDir, $roaming, $local) | ForEach-Object { [IO.Path]::GetFullPath($_) }
+  if ($full -notin $allowed) { throw 'Cleanup target is outside disposable product roots' }
+  if (-not (Test-Path -LiteralPath $full)) { return }
+  if ((Resolve-Path -LiteralPath $full).Path -ne $full) { throw 'Unexpected resolved cleanup target' }
+  $ancestor = Get-Item -LiteralPath $full
+  while ($ancestor) {
+    if ($ancestor.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Refusing reparse cleanup ancestor' }
+    $ancestor = $ancestor.Parent
+  }
+  $todo = New-Object 'System.Collections.Generic.Stack[string]'
+  $todo.Push($full)
+  while ($todo.Count) {
+    foreach ($entry in Get-ChildItem -LiteralPath $todo.Pop() -Force) {
+      if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Refusing reparse cleanup child' }
+      if ($entry.PSIsContainer) { $todo.Push($entry.FullName) }
+    }
+  }
+  Remove-Item -LiteralPath $full -Recurse -Force
+}
+function Stop-OwnedSetup([Diagnostics.Process] $process) {
+  # This process object is one we just launched, never a global name lookup.
+  if (-not $process.HasExited) { $process.Kill(); $process.WaitForExit(10000) | Out-Null }
+}
 try {
+  if ($WizardControls) {
+    $fresh = Start-Process -FilePath $NewSetup -PassThru
+    try {
+      $page = Wait-Controls $fresh 'Welcome'
+      Check 'fresh install shows stock Welcome without Upgrade' (-not (($page.Lines -join "`n") -match '\|Button\|&Upgrade'))
+      Check 'fresh Welcome has not installed files' (-not (Test-Path -LiteralPath $installDir))
+    } finally { Stop-OwnedSetup $fresh }
+  }
   # 1. prior install, silent, no shortcuts
   Say "prior install: $PriorSetup"
   $p1 = Start-Process -FilePath $PriorSetup -ArgumentList '/S', '/NS' -Wait -PassThru
@@ -112,6 +158,15 @@ try {
   Check 'prior install registered' ($u.DisplayName -eq $ProductName) "DisplayVersion $($u.DisplayVersion) at $($u.InstallLocation)"
   $oldHash = (Get-FileHash $installedExe).Hash
   $oldVersion = $u.DisplayVersion
+  if ($WizardControls) {
+    $advanced = Start-Process -FilePath $NewSetup -PassThru
+    try {
+      $page = Wait-Controls $advanced '\|Button\|&Advanced setup'
+      if (-not [Ui]::Click($page.Window, '&Advanced setup')) { throw 'Advanced setup click failed' }
+      $stock = Wait-Controls $advanced 'already installed|Choose Install Location|Welcome'
+      Check 'Advanced setup reaches stock pages without replacing files' ((Get-FileHash -LiteralPath $installedExe).Hash -eq $oldHash -and -not (($stock.Lines -join "`n") -match '\|Button\|&Upgrade'))
+    } finally { Stop-OwnedSetup $advanced }
+  }
   Check 'prior install wrote the quit-control marker' ($u.HubchatQuitControl -eq '1')
   if ($NoMarker) { Remove-ItemProperty -Path $uninstKey -Name HubchatQuitControl; Say 'marker removed: an old Hubchat that cannot be asked to quit' }
   if ($Mode) { Set-Content -Path (Join-Path $installDir 'standin-mode.txt') -Value $Mode; Say "stand-in mode: $Mode" }
@@ -230,6 +285,23 @@ try {
     $relaunched = @($inDir | Where-Object { $_.StartTime -gt $stamp })
     Check 'relaunched exactly once from the install folder' ($relaunched.Count -eq 1) ("pids " + (($relaunched | ForEach-Object { "$($_.Id)/session$($_.SessionId)" }) -join ','))
   }
+  if ($WizardControls -and -not $Cancel) {
+    # Silent reinstall is stock behavior, without the interactive Upgrade page.
+    # Ask our disposable app to quit first; stop on failure rather than kill it.
+    $quit = Start-Process -FilePath $installedExe -ArgumentList '--quit-for-upgrade' -PassThru -WindowStyle Hidden
+    if (-not $quit.WaitForExit(5000)) { throw 'silent control quit forwarder did not exit' }
+    foreach ($running in $inDir) { if (-not $running.WaitForExit(5000)) { throw 'silent control primary did not exit' } }
+    $silent = Start-Process -FilePath $NewSetup -ArgumentList '/S','/NS' -PassThru -WindowStyle Hidden
+    $visible = $false
+    $until = (Get-Date).AddSeconds(60)
+    while (-not $silent.HasExited -and (Get-Date) -lt $until) {
+      foreach ($w in @(Setup-Windows $silent.Id)) { if ([Ui]::IsWindowVisible($w.H)) { $visible = $true } }
+      Start-Sleep -Milliseconds 200
+    }
+    try {
+      Check 'silent /S remains noninteractive and preserves version and files' ($silent.HasExited -and $silent.ExitCode -eq 0 -and -not $visible -and (Get-FileHash -LiteralPath $installedExe).Hash -eq $newHash -and (Get-ItemProperty $uninstKey).DisplayVersion -eq $u2.DisplayVersion)
+    } finally { Stop-OwnedSetup $silent }
+  }
   Check 'canary untouched' ((Test-Path (Join-Path $roaming 'canary.txt')) -and ((Get-FileHash (Join-Path $roaming 'canary.txt')).Hash -eq $canary))
   Check 'no Start Menu/desktop entry made for the product' (-not (Get-ChildItem ([Environment]::GetFolderPath('Programs')), ([Environment]::GetFolderPath('Desktop')) -Filter "$ProductName*" -ErrorAction SilentlyContinue))
 
@@ -257,7 +329,7 @@ try {
     Start-Sleep -Seconds 1
     $un = Join-Path $installDir 'uninstall.exe'
     if (Test-Path $un) { Start-Process -FilePath $un -ArgumentList '/S' -Wait | Out-Null; Start-Sleep -Seconds 2 }
-    foreach ($p in $installDir, $roaming, $local) { if (Test-Path $p) { Remove-Item $p -Recurse -Force -ErrorAction SilentlyContinue } }
+    foreach ($p in $installDir, $roaming, $local) { Remove-OwnedDirectory $p }
     if (Test-Path $uninstKey) { Remove-Item $uninstKey -Recurse -Force -ErrorAction SilentlyContinue }
     Say 'cleanup done'
   }
