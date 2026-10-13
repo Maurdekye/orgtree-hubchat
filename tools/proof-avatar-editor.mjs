@@ -26,12 +26,16 @@ await esbuild.build({ entryPoints: [root + '/tools/avatar-editor.fixture.tsx'], 
 const sourceSheets = names => names.map(n => fs.readFileSync(path.join(root, 'src/styles', n + '.css'), 'utf8')).join('\n');
 const shared = sourceSheets(['tokens', 'base', 'app']);
 const sheets = { desktop: shared + sourceSheets(['desktop', 'app-desktop']), android: shared + sourceSheets(['mobile', 'app-mobile']) };
+const old = spawnSync(process.execPath, [root + '/tools/proof-pictures-renderer.mjs'], { cwd: root, windowsHide: true, encoding: 'utf8', timeout: 30000,
+  env: { ...process.env, HUBCHAT_DEPENDENCY_ROOT: depsRoot, HUBCHAT_DOM_DEPENDENCY_ROOT: 'E:/Libraries/Desktop/orgtree', HUBCHAT_RENDERER_OUT: out + '/legacy', HUBCHAT_RENDERER_EVIDENCE: out + '/legacy.json', HUBCHAT_JOB_CONTAINED: '1' } });
+fs.writeFileSync(out + '/legacy.log', old.stdout + old.stderr);
 const config = { extends: root + '/tsconfig.json', references: [], compilerOptions: { paths: { '*': [depsRoot + '/node_modules/*'], react: [depsRoot + '/node_modules/@types/react'], 'react/*': [depsRoot + '/node_modules/@types/react/*'] } } };
 fs.writeFileSync(out + '/typecheck.json', JSON.stringify(config));
 const t = spawnSync(process.execPath, [depsRoot + '/node_modules/typescript/bin/tsc', '-p', out + '/typecheck.json', '--noEmit'], { cwd: root, encoding: 'utf8', timeout: 30000, windowsHide: true });
 fs.writeFileSync(out + '/typecheck.log', t.stdout + t.stderr);
 const checks = [], check = (name, ok, detail) => { checks.push({ name, ok: !!ok, detail }); console.log(JSON.stringify({ name, ok: !!ok, detail })); };
 check('source typecheck', t.status === 0, (t.stdout + t.stderr).slice(-500));
+check('retained picture renderer controls', old.status === 0, (old.stdout + old.stderr).slice(-500));
 const server = http.createServer((r, s) => {
   if (r.url === '/renderer.js') { s.setHeader('Content-Type', 'text/javascript'); s.end(fs.readFileSync(out + '/renderer.js')); }
   else if (r.url?.startsWith('/styles.css')) { s.setHeader('Content-Type', 'text/css'); s.end(sheets[r.url.includes('android') ? 'android' : 'desktop']); }
