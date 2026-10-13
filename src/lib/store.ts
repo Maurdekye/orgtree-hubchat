@@ -255,6 +255,8 @@ export interface Preparation {
   error: string | null;
 }
 const preparations = new Map<string, Preparation>();
+// Which identity the preparations belong to: reloadAfterSwitch moves this on.
+let generation = 0;
 const psubs = new Set<() => void>();
 const preparationChanged = () => psubs.forEach((f) => f());
 export const getPreparation = (peer: string) => preparations.get(peer) ?? null;
@@ -269,17 +271,24 @@ export async function prepareSend(message: NewOutgoing): Promise<void> {
   if (preparations.get(message.peer)?.phase === "preparing") return;
   const p: Preparation = { message, phase: "preparing", done: 0, total: (message.attachments ?? []).reduce((n, a) => n + a.bytes, 0), name: message.attachments?.[0]?.name ?? "", error: null };
   preparations.set(message.peer, p); preparationChanged();
+  // A command completed after an identity switch must not touch the new UI:
+  // after every wait, go on only while the identity that sent this is still
+  // here and the chat's slot still holds this message. A switch empties the
+  // slots, and the next identity may start its own send there (review R4).
+  const gen = generation;
+  const mine = () => gen === generation && preparations.get(message.peer)?.message.id === message.id;
   try {
     await api.setDraft(message.peer, message.body);
+    if (!mine()) return;
     await api.send(message);
-    // A completed command after an identity switch must not touch the new UI.
-    if (preparations.get(message.peer)?.message.id !== message.id) return;
+    if (!mine()) return;
     noteDraft(message.peer, "");
     await api.setDraft(message.peer, "").catch(() => {});
+    if (!mine()) return;
     preparations.set(message.peer, { ...p, phase: "queued" });
     void refreshChats();
   } catch (e) {
-    if (preparations.get(message.peer)?.message.id !== message.id) return;
+    if (!mine()) return;
     preparations.set(message.peer, { ...p, phase: "failed", error: errText(e) });
   }
   preparationChanged();
@@ -291,6 +300,7 @@ export function setOnboarding(on: boolean) { set({ onboarding: on }); }
 /** This device now holds another identity (a link switched it): drop what
  *  belonged to the old one and load the new one, like a fresh sign-in. */
 export async function reloadAfterSwitch(): Promise<void> {
+  generation += 1;
   preparations.clear(); preparationChanged();
   forgetDraftAnswers();
   transfers.clear(); tsubs.forEach((f) => f());
