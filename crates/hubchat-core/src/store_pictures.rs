@@ -4,11 +4,17 @@ use super::*;
 use crate::pictures::{PictureMeta, PictureRecord, next_revision};
 
 fn key(part: &str, peer: &str) -> String { format!("picture.{part}.{peer}") }
+fn owners_of(hub:&str)->String { format!("picture.peer.{hub}\n") }
 pub(super) fn roster_owner(c:&Connection,hub:&str,e:&RosterEntry)->rusqlite::Result<()> {
-    let k=format!("picture.peer.{hub}\n{}",e.slug);
+    let k=format!("{}{}",owners_of(hub),e.slug);
     if let Some(token)=e.picture_owner.as_deref().filter(|s|crate::pictures::valid_owner(s)) {
         c.execute("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",params![k,token])?;
     } else { c.execute("DELETE FROM meta WHERE key=?",[k])?; }
+    Ok(())
+}
+/// The owners a removed hub's roster named go with its rows.
+pub(super) fn forget_roster_owners(c:&Connection,hub:&str)->rusqlite::Result<()> {
+    c.execute("DELETE FROM meta WHERE substr(key,1,length(?1))=?1",[owners_of(hub)])?;
     Ok(())
 }
 // Unknown or conflicting hub provenance means unavailable, not a guessed owner.

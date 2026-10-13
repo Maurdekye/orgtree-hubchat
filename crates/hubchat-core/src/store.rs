@@ -272,6 +272,11 @@ CREATE INDEX reply_links_by_message ON reply_links(message_id);
 CREATE TRIGGER reply_links_gone AFTER DELETE ON messages BEGIN
   DELETE FROM reply_links WHERE message_id=OLD.id;
 END;"#,
+    // 17: every saved hub fetches its whole directory once more (user
+    // 2026-10-13): a hub removed and added again at the same address resumed
+    // its old sync position, and contacts unchanged since never came back to
+    // the directory (forget_hub_sync; Engine::refresh_directory_once)
+    r#"INSERT OR REPLACE INTO meta(key, value) SELECT 'sync.directory_refresh_due.' || url, 'yes' FROM hubs;"#,
 ];
 
 pub struct Store {
@@ -454,13 +459,15 @@ impl Store {
         self.with(|c| c.execute("DELETE FROM meta WHERE key=?", [key]).map(|_| ()))
     }
 
+    /// A URL that isn't saved starts clean: a removal before 1.2.0-alpha.2
+    /// left its sync state behind (`forget_hub_sync`).
     pub fn add_hub(&self, url: &str, now: &str) -> Result<()> {
         self.with(|c| {
-            c.execute(
-                "INSERT OR IGNORE INTO hubs(url, added_at) VALUES(?,?)",
-                [url, now],
-            )
-            .map(|_| ())
+            let tx = c.transaction()?;
+            if tx.execute("INSERT OR IGNORE INTO hubs(url, added_at) VALUES(?,?)", [url, now])? == 1 {
+                forget_hub_sync(&tx, url)?;
+            }
+            tx.commit()
         })
     }
 
@@ -469,7 +476,7 @@ impl Store {
             let tx = c.transaction()?;
             tx.execute("DELETE FROM message_hubs WHERE hub=?", [url])?;
             relabel(&tx, url)?;
-            tx.execute("DELETE FROM meta WHERE key=?", [store_hub_enabled::disabled_key(url)])?;
+            forget_hub_sync(&tx, url)?;
             tx.execute("DELETE FROM hubs WHERE url=?", [url])?;
             tx.commit()
         })
@@ -1446,6 +1453,58 @@ fn relabel(tx: &rusqlite::Transaction, hub: &str) -> rusqlite::Result<usize> {
     )
 }
 
+// What a saved hub's sync keeps in `meta` under its URL.
+
+/// Where this device's sync with the hub stands (the hub's cursor).
+pub(crate) fn cursor_key(url: &str) -> String {
+    format!("sync.cursor.{url}")
+}
+
+/// Where this device's copy of the hub's mail begins (lazy history).
+pub(crate) fn start_key(url: &str) -> String {
+    format!("sync.start_ms.{url}")
+}
+
+/// The hub's chat list is still to be taken in.
+pub(crate) fn chats_key(url: &str) -> String {
+    format!("sync.chat_list_due.{url}")
+}
+
+/// The hub's clock minus ours.
+pub(crate) fn clock_key(url: &str) -> String {
+    format!("hub.clock_offset_ms.{url}")
+}
+
+/// The revision of our picture the hub acknowledged.
+pub(crate) fn picture_ack_key(url: &str) -> String {
+    format!("picture.ack.{url}")
+}
+
+/// The hub's whole directory is to be fetched once more (migration 17).
+pub(crate) fn directory_refresh_key(url: &str) -> String {
+    format!("sync.directory_refresh_due.{url}")
+}
+
+/// Forget what a hub's sync kept under its URL; its rows go with the hub.
+/// A position kept after its directory rows were gone made the same URL,
+/// added again, resume there: the hub sent only what had changed since, so
+/// every contact unchanged since stayed out of the directory (user
+/// 2026-10-13: "i cant re-message any of my old contacts").
+fn forget_hub_sync(tx: &rusqlite::Transaction, url: &str) -> rusqlite::Result<()> {
+    for key in [
+        cursor_key(url),
+        start_key(url),
+        chats_key(url),
+        clock_key(url),
+        picture_ack_key(url),
+        directory_refresh_key(url),
+        store_hub_enabled::disabled_key(url),
+    ] {
+        tx.execute("DELETE FROM meta WHERE key=?", [key])?;
+    }
+    store_pictures::forget_roster_owners(tx, url)
+}
+
 /// A reply never sorts above the message it answers (hubs' clocks differ):
 /// it goes 1 ms after its parent, and the replies below it (to a bounded
 /// depth) after it in turn.
@@ -1901,6 +1960,90 @@ mod tests {
         drop(s);
         let s = Store::open(&path).unwrap();
         assert_eq!(version(&s), MIGRATIONS.len());
+    }
+
+    /// What a hub's sync keeps under its URL (written as the engine and the
+    /// picture code write it).
+    fn sync_keys(u: &str) -> [String; 6] {
+        [
+            format!("sync.cursor.{u}"),
+            format!("sync.start_ms.{u}"),
+            format!("sync.chat_list_due.{u}"),
+            format!("hub.clock_offset_ms.{u}"),
+            format!("picture.ack.{u}"),
+            format!("picture.peer.{u}\npeer.abc123"),
+        ]
+    }
+
+    /// User 2026-10-13: removing a hub kept its sync position, so the same
+    /// address added again resumed it, and contacts unchanged since never
+    /// came back. Removal forgets that hub's sync state, and only that.
+    #[test]
+    fn removing_a_hub_forgets_what_its_sync_kept() {
+        let s = Store::open_in_memory().unwrap();
+        let (a, b) = ("http://a:7370", "http://b:7370");
+        for u in [a, b] {
+            s.add_hub(u, "t0").unwrap();
+            for k in sync_keys(u) {
+                s.set_meta(&k, "kept").unwrap();
+            }
+        }
+        s.remove_hub(a).unwrap();
+        for k in sync_keys(a) {
+            assert_eq!(s.meta(&k).unwrap(), None, "{k:?} outlived its hub");
+        }
+        for k in sync_keys(b) {
+            assert_eq!(s.meta(&k).unwrap().as_deref(), Some("kept"), "{k:?} of the other hub");
+        }
+    }
+
+    /// A store a removal hit before the fix: adding that address again
+    /// starts its sync over; adding a hub already saved keeps its position.
+    #[test]
+    fn an_address_added_again_starts_its_sync_over() {
+        let s = Store::open_in_memory().unwrap();
+        let u = "http://pendragon:7370";
+        for k in sync_keys(u) {
+            s.set_meta(&k, "left behind").unwrap();
+        }
+        s.add_hub(u, "t1").unwrap();
+        for k in sync_keys(u) {
+            assert_eq!(s.meta(&k).unwrap(), None, "{k:?} survived the address being added again");
+        }
+        s.set_meta(&format!("sync.cursor.{u}"), "9-9-0").unwrap();
+        s.add_hub(u, "t2").unwrap();
+        assert_eq!(s.meta(&format!("sync.cursor.{u}")).unwrap().as_deref(), Some("9-9-0"));
+    }
+
+    /// Migration 17: a store from before the fix fetches each saved hub's
+    /// whole directory once more, so contacts a removal of the same address
+    /// dropped come back without the user doing anything. Its sync position
+    /// stays, and nothing is scheduled twice.
+    #[test]
+    fn a_store_from_before_the_fix_fetches_each_directory_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hubchat.db");
+        let due = |u: &str| format!("sync.directory_refresh_due.{u}");
+        let hubs = ["http://star-system:7378", "http://pendragon:7370"];
+        {
+            let s = Store::open(&path).unwrap();
+            for u in hubs {
+                s.add_hub(u, "t0").unwrap();
+                s.set_meta(&format!("sync.cursor.{u}"), "2583-40-0").unwrap();
+                s.delete_meta(&due(u)).unwrap();
+            }
+            // the store as it stood before migration 17
+            s.with(|c| c.pragma_update(None, "user_version", 16)).unwrap();
+        }
+        let s = Store::open(&path).unwrap();
+        for u in hubs {
+            assert_eq!(s.meta(&due(u)).unwrap().as_deref(), Some("yes"), "{u}");
+            assert_eq!(s.meta(&format!("sync.cursor.{u}")).unwrap().as_deref(), Some("2583-40-0"), "{u}");
+        }
+        s.delete_meta(&due(hubs[0])).unwrap();
+        drop(s);
+        let s = Store::open(&path).unwrap();
+        assert_eq!(s.meta(&due(hubs[0])).unwrap(), None, "scheduled again");
     }
 
     /// B3: a hub that starts its sync over drops only what no other hub

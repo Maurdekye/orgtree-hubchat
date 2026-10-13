@@ -12,7 +12,7 @@ use serde::Serialize;
 use tokio::sync::Notify;
 
 use crate::hub::{CancelFlag, Outgoing, Profile};
-use crate::store::{Message, NewOutgoing, Store};
+use crate::store::{chats_key, clock_key, cursor_key, directory_refresh_key, start_key, Message, NewOutgoing, Store};
 use crate::{Error, HubAddress, HubClient, Identity, Result};
 
 /// First line of a reply's wire body (see `Engine::wire_body`).
@@ -59,18 +59,6 @@ pub struct OlderPage {
     /// Hubs this device started from now on that couldn't be asked
     /// (offline): their older messages are not loaded yet.
     pub unreachable: Vec<String>,
-}
-
-fn start_key(url: &str) -> String {
-    format!("sync.start_ms.{url}")
-}
-
-fn chats_key(url: &str) -> String {
-    format!("sync.chat_list_due.{url}")
-}
-
-fn clock_key(url: &str) -> String {
-    format!("hub.clock_offset_ms.{url}")
 }
 
 /// A hub timestamp (RFC 3339, `Z`) in unix ms.
@@ -889,7 +877,30 @@ impl Engine {
         }
     }
 
+    /// Migration 17's repair, once per saved hub: a hub resuming a saved sync
+    /// position fetches its whole directory and replaces its rows, which
+    /// brings back contacts an earlier removal of the same address dropped
+    /// (user 2026-10-13). A first sync or a v1 poll sends the whole roster
+    /// anyway. Sync changes after it still apply on top.
+    async fn refresh_directory_once(&self, client: &HubClient, url: &str, health: &crate::hub::Health) -> Result<()> {
+        let due = directory_refresh_key(url);
+        if self.store.meta(&due)?.is_none() {
+            return Ok(());
+        }
+        if health.supports("sync") && self.store.meta(&cursor_key(url))?.is_some() {
+            match client.roster(&self.me).await {
+                Ok(roster) => self.admit_roster_batch(client, &roster, true, &[], None)?,
+                // a hub that refuses the call keeps what its sync brings, as
+                // before; a network failure ends the session and it retries
+                Err(e) if e.status().is_some() => {}
+                Err(e) => return Err(e),
+            }
+        }
+        self.store.delete_meta(&due)
+    }
+
     async fn mail_session(&self, client:&HubClient,url:&str,stop:&CancelFlag,profile:&Profile,health:&crate::hub::Health)->Result<()> {
+        self.refresh_directory_once(client, url, health).await?;
         if health.supports("sync") {
             return self
                 .sync_session(client, url, stop, profile, &health.features)
@@ -979,7 +990,7 @@ impl Engine {
         profile: &Profile,
         features: &[String],
     ) -> Result<()> {
-        let key = format!("sync.cursor.{url}");
+        let key = cursor_key(url);
         let start_key = start_key(url);
         // lazy history: a device new to this hub starts from now and pages
         // older mail in as the user scrolls back

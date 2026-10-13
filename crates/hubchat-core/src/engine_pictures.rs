@@ -65,7 +65,7 @@ impl Engine {
     async fn reconcile_picture(&self, client:&HubClient, initial:bool)->Result<()> {
         if !matches!(self.profile().kind.as_str(),"person"|"org") { return Ok(()); }
         let owner=self.me.address();
-        let ack_key=format!("picture.ack.{}",client.address());
+        let ack_key=crate::store::picture_ack_key(client.address().as_str());
         if initial || (self.store.picture_meta(&owner)?.is_some() && self.store.picture(&owner)?.is_none()) {
             if let Some(remote)=client.picture(&self.me,&owner).await? {
                 self.admit_picture(client,&owner,&remote,None)?;
