@@ -781,6 +781,13 @@ pub fn hc_set_draft_answers(peer: String, answers: hubchat_core::store::DraftAns
     core::get()?.store.set_draft_answers(&peer, &answers).map_err(s)
 }
 
+/// Question cards in a chat and the first answer to each, however far back
+/// (what settles them, beside the loaded page).
+#[tauri::command]
+pub fn hc_card_answers(peer: String, ids: Vec<String>) -> R<Vec<Message>> {
+    core::get()?.store.card_answers(&peer, &ids).map_err(s)
+}
+
 #[derive(Serialize)]
 pub struct FileInfo {
     name: String,
