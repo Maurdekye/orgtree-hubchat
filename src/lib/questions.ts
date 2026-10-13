@@ -8,10 +8,11 @@
 import type { Message } from "../api";
 import { replyIds } from "./replies";
 
-/** The bounds a card's options must keep; anything else is shown as a
- *  free-response card (what arrives over a hub is never trusted). */
+/** The most options a card has. The core checks every rule on what
+ *  arrives (crates/hubchat-core/src/questions.rs) and keeps a card's options
+ *  only if they pass; once it has, their plain-text list is gone from the
+ *  body, so this side checks the shape only and is never stricter. */
 export const MAX_OPTIONS = 10;
-export const MAX_LABEL = 100;
 
 export interface Card {
   /** Empty: a free-response question. */
@@ -24,16 +25,13 @@ export type CardState =
   | { st: "answered"; by: Message; picked: string[] | null }
   | { st: "skipped"; by: Message };
 
-const okLabel = (l: unknown): l is string =>
-  typeof l === "string" && l.trim() === l && l.length > 0 && l.length <= MAX_LABEL && !/[\u0000-\u001f\u007f]/.test(l);
+const okLabel = (l: unknown): l is string => typeof l === "string" && l.length > 0;
 
 /** The card a message is, or null. */
 export function cardOf(m: Message): Card | null {
   if (m.kind !== "question") return null;
   const q = m.question;
-  if (!q || !Array.isArray(q.options) || q.options.length < 2 || q.options.length > MAX_OPTIONS || !q.options.every(okLabel)) return { options: [], multiple: false };
-  const seen = new Set(q.options.map((o) => o.toLowerCase()));
-  if (seen.size !== q.options.length) return { options: [], multiple: false };
+  if (!q || !Array.isArray(q.options) || q.options.length < 2 || q.options.length > MAX_OPTIONS || !q.options.every(okLabel) || new Set(q.options).size !== q.options.length) return { options: [], multiple: false };
   return { options: q.options, multiple: q.multiple === true };
 }
 
