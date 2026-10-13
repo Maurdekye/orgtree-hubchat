@@ -61,16 +61,21 @@ function Profile() {
     catch (e) { toast("Couldn't save: " + errText(e)); }
     finally { setBusy(false); }
   };
+  const pictureTrigger = (choose: () => void, processing: boolean) => {
+    const avatar = <button type="button" className="profile-picture-button" aria-label="Change profile picture"
+      title="Change profile picture" disabled={processing} onClick={choose}>
+      <Avatar kind="me" name={me.name || me.id} size={platform === "android" ? 96 : 72} />
+      <span className="profile-picture-pencil" aria-hidden="true"><Icon name="edit" /></span>
+    </button>;
+    return platform === "android" ? <div className="hero">{avatar}</div>
+      : <div style={{ display: "flex", gap: 20, alignItems: "center", margin: "8px 0 6px" }}>{avatar}
+          <div><div style={{ font: "600 19px var(--font-display)", color: "var(--ink-strong)" }}>{me.name || me.id}</div><div className="mono dim" style={{ fontSize: 12.5 }}><Addr a={me.address} net /></div></div>
+        </div>;
+  };
   return (
     <>
-      {platform === "android"
-        ? <div className="hero"><Avatar kind="me" name={me.name || me.id} size={96} /></div>
-        : <div style={{ display: "flex", gap: 20, alignItems: "center", margin: "8px 0 6px" }}>
-            <Avatar kind="me" name={me.name || me.id} size={72} />
-            <div><div style={{ font: "600 19px var(--font-display)", color: "var(--ink-strong)" }}>{me.name || me.id}</div><div className="mono dim" style={{ fontSize: 12.5 }}><Addr a={me.address} net /></div></div>
-          </div>}
+      <PictureEditor owner={me.address} hasPicture={!!me.picture?.sha256} trigger={pictureTrigger} />
       <Sec>
-        <PictureEditor owner={me.address} hasPicture={!!me.picture?.sha256} />
         <div className="field" style={platform === "android" ? { marginTop: 8 } : undefined}>
           <label htmlFor="pf-name">Display name</label>
           <label className="input"><input id="pf-name" aria-label="Your name" value={name} maxLength={48} onChange={(e) => setName(e.target.value)} /></label>

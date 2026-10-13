@@ -1,17 +1,27 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, type PictureCrop } from "../api";
 import { refreshAll } from "../lib/store";
 import { errText } from "../lib/native";
 
 /** The shared desktop/Android Profile editor. Cropping uses oriented native
  * previews; full original bytes never enter an image element or canvas. */
-export function PictureEditor({ owner, hasPicture }: { owner: string; hasPicture: boolean }) {
+export function PictureEditor({ owner, hasPicture, trigger }: {
+  owner: string; hasPicture: boolean; trigger?: (choose: () => void, busy: boolean) => ReactNode;
+}) {
   const [selected, setSelected] = useState<{ data: string; preview: string; width: number; height: number } | null>(null);
   const [crop, setCrop] = useState<PictureCrop>({ x: .5, y: .5, size: 1 });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [editing, setEditing] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
   const intent = useRef(0);
-  useEffect(() => { intent.current++; setSelected(null); setError(""); setBusy(false); return () => { intent.current++; }; }, [owner]);
+  useEffect(() => { intent.current++; setSelected(null); setError(""); setBusy(false); setEditing(false); return () => { intent.current++; }; }, [owner]);
+  const start = () => {
+    if (busy) return;
+    setEditing(true);
+    fileInput.current?.click();
+  };
+  const cancel = () => { intent.current++; setSelected(null); setError(""); setEditing(false); };
   const choose = async (file: File | undefined) => {
     const request = ++intent.current;
     setError(""); setSelected(null);
@@ -36,14 +46,16 @@ export function PictureEditor({ owner, hasPicture }: { owner: string; hasPicture
     try {
       await api.setPicture(owner, remove ? null : selected!.data, crop);
       await refreshAll();
-      if (request === intent.current) setSelected(null);
+      if (request === intent.current) { setSelected(null); setEditing(false); }
     } catch (e) { if (request === intent.current) setError(errText(e)); }
     finally { if (request === intent.current) setBusy(false); }
   };
   const side = selected ? Math.min(selected.width, selected.height) * crop.size : 1;
-  return <div className="field">
-    <label htmlFor="picture-file">Profile picture</label>
-    <input id="picture-file" type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={e => { void choose(e.currentTarget.files?.[0]); e.currentTarget.value = ""; }} />
+  return <>
+    {trigger?.(start, busy)}
+    <input ref={fileInput} id="picture-file" type="file" hidden={!!trigger} aria-label="Choose profile picture" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={e => { void choose(e.currentTarget.files?.[0]); e.currentTarget.value = ""; }} />
+    {(!trigger || editing) && <div className="field">
+    {!trigger && <label htmlFor="picture-file">Profile picture</label>}
     <div className="help">Static PNG, JPEG or WebP · up to 5 MiB and 16 megapixels. Shared across your devices and hubs.</div>
     {selected && <>
       <div aria-label="Square crop preview" style={{ position: "relative", width: 192, height: 192, overflow: "hidden", border: "1px solid var(--line)", margin: "12px 0" }}>
@@ -53,10 +65,11 @@ export function PictureEditor({ owner, hasPicture }: { owner: string; hasPicture
       <label>Horizontal position<input aria-label="Horizontal crop position" type="range" min="0" max="1" step="0.01" value={crop.x} disabled={busy} onChange={e => setCrop(c => ({ ...c, x: Number(e.target.value) }))} /></label>
       <label>Vertical position<input aria-label="Vertical crop position" type="range" min="0" max="1" step="0.01" value={crop.y} disabled={busy} onChange={e => setCrop(c => ({ ...c, y: Number(e.target.value) }))} /></label>
       <button className="btn primary" disabled={busy} onClick={() => void save(false)}>Save picture</button>{" "}
-      <button className="btn" disabled={busy} onClick={() => { intent.current++; setSelected(null); }}>Cancel</button>
     </>}
     {hasPicture && <button className="btn" disabled={busy} onClick={() => void save(true)}>Remove picture</button>}
+    {(selected || trigger) && <>{" "}<button className="btn" disabled={busy} onClick={cancel}>Cancel</button></>}
     {busy && <p role="status">Processing picture…</p>}
     {error && <p role="alert">{error}</p>}
-  </div>;
+  </div>}
+  </>;
 }
