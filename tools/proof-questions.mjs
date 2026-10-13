@@ -247,6 +247,7 @@ try {
     let n0 = await outs();
     check('R2, query held: a pick on a known card plus an empty reply to one not known yet: Send waits and says it is checking; pick and reply stay',
       (await waits()) && (await note()) === CHECKING && (await chips()).length === 1 && (await msgText('.composer .replybar .rb-txt'))?.includes('Anything to add to the runbook today?'));
+    await b.shot(join(out, '13-unknown-card-waits-desktop-light.png'));
     await ev(`document.querySelector('.composer textarea').focus(), true`); await b.key('Enter'); await sleep(500);
     check('R2, query held: Enter with no text sends nothing', (await outs()) === n0);
     await cards('release()'); await sleep(700);
@@ -299,7 +300,6 @@ try {
     await cards('release()'); await sleep(700);
     check('R2: once the store answers, the kept pick is back in the composer', (await chips()).some((x) => x.includes('Ship')));
     await pickOpt('q-u4', 'Ship');
-    await b.shot(join(out, '13-unknown-card-wait-desktop-light.png'));
   } catch (e) {
     check('R2 unknown-card scenario ran to the end: ' + e.message, false);
   }
