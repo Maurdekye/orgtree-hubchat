@@ -54,9 +54,11 @@ export interface AnswerNote {
   counted: boolean;
 }
 
-/** For each message that replies to cards: what it did to each of them. */
-export function answerNotes(msgs: Message[], states: Map<string, CardState>): Map<string, AnswerNote[]> {
-  const byId = new Map(msgs.map((m) => [m.id, m]));
+/** For each message that replies to cards: what it did to each of them.
+ *  `held`: cards known beyond `msgs` (api.cardAnswers), so a quoted card
+ *  further back gets its note too. */
+export function answerNotes(msgs: Message[], states: Map<string, CardState>, held: Message[] = []): Map<string, AnswerNote[]> {
+  const byId = new Map([...held, ...msgs].map((m) => [m.id, m]));
   const out = new Map<string, AnswerNote[]>();
   for (const m of msgs) {
     const notes: AnswerNote[] = [];
@@ -74,8 +76,9 @@ export function answerNotes(msgs: Message[], states: Map<string, CardState>): Ma
 const cmp = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
 /** Hub order: the hub's receipt time, then the id, the same on every device.
  *  What hasn't reached a hub yet comes after, in the order it was written
- *  (the order this device's outbox sends it in). */
-function order(a: Message, b: Message): number {
+ *  (the order this device's outbox sends it in). The core's card_answers
+ *  (store_questions.rs) finds a card's first answer in the same order. */
+export function hubOrder(a: Message, b: Message): number {
   if (a.received_at && b.received_at) return cmp(a.received_at, b.received_at) || cmp(a.id, b.id);
   if (a.received_at || b.received_at) return a.received_at ? -1 : 1;
   return cmp(a.created_at, b.created_at) || cmp(a.id, b.id);
@@ -90,7 +93,7 @@ export function cardStates(msgs: Message[]): Map<string, CardState> {
   const out = new Map<string, CardState>();
   for (const id of cards.keys()) out.set(id, { st: "open" });
   if (!cards.size) return out;
-  const answers = msgs.filter((m) => replyIds(m).some((id) => cards.has(id))).sort(order);
+  const answers = msgs.filter((m) => replyIds(m).some((id) => cards.has(id))).sort(hubOrder);
   for (const a of answers) {
     for (const id of replyIds(a)) {
       const c = cards.get(id);
@@ -100,4 +103,32 @@ export function cardStates(msgs: Message[]): Map<string, CardState> {
     }
   }
   return out;
+}
+
+/** A chat's cards as the view knows them: the loaded page together with
+ *  what the store found for the cards the view holds (api.cardAnswers: each
+ *  card and the first answer to it, however far back). A card or its answer
+ *  may lie beyond the page (review R1), so the page alone proves nothing. */
+export interface Settlement {
+  states: Map<string, CardState>;
+  /** Cards the store has answered for: their state is known. */
+  known: Set<string>;
+}
+
+export function settlement(page: Message[], found: Message[]): Settlement {
+  const all = new Map(page.map((m) => [m.id, m]));
+  for (const m of found) all.set(m.id, m);
+  return { states: cardStates([...all.values()]), known: new Set(found.filter((m) => cardOf(m)).map((m) => m.id)) };
+}
+
+/** Open for an answer: the store has answered for the card and nothing
+ *  settled it. Until the store answers, a card's state is unknown, and
+ *  unknown is not open: no pick on it goes, no empty reply skips it. */
+export const isOpen = (s: Settlement, id: string) => s.known.has(id) && s.states.get(id)?.st === "open";
+
+/** Some answer or skip settled the card: whichever the store finds first,
+ *  it stays settled. */
+export function isSettled(s: Settlement, id: string): boolean {
+  const st = s.states.get(id)?.st;
+  return !!st && st !== "open";
 }

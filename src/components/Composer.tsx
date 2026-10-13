@@ -10,7 +10,7 @@ import { isImage, pastedImages, pastedName, thumbable, useFilePreview } from "..
 import { errText, pickFiles } from "../lib/native";
 import { displayName, limitFor, msgTime, preview } from "../lib/peers";
 import { foldAt } from "../lib/replies";
-import { cardOf, type CardState } from "../lib/questions";
+import { cardOf } from "../lib/questions";
 import { noteDraft, usePreparation, getPreparation, prepareSend, clearPreparation } from "../lib/store";
 import { usePlatform } from "./ui";
 
@@ -22,7 +22,9 @@ interface Props {
   replies: Message[];
   /** Options picked on open question cards. */
   picked: { card: Message; labels: string[] }[];
-  cards: Map<string, CardState>;
+  /** Whether a question card is still open: the store knows it, and nothing
+   *  answered or skipped it (unknown is not open). */
+  open: (id: string) => boolean;
   /** Where each loaded message sits in the chat, oldest first. */
   pos: Map<string, number>;
   onRemoveReply: (id: string) => void;
@@ -65,7 +67,7 @@ function AttThumb({ a, onRemove, disabled }: { a: NewAttachment; onRemove: () =>
   );
 }
 
-export function Composer({ peer, c, hubs, replies, picked, cards, pos, onRemoveReply, onUnpick, onCancelReply, onSent, ref, off }: Props) {
+export function Composer({ peer, c, hubs, replies, picked, open, pos, onRemoveReply, onUnpick, onCancelReply, onSent, ref, off }: Props) {
   const platform = usePlatform();
   const [text, setText] = useState("");
   const [atts, setAtts] = useState<NewAttachment[]>([]);
@@ -120,7 +122,7 @@ export function Composer({ peer, c, hubs, replies, picked, cards, pos, onRemoveR
   // a message may go with no text when it answers or skips a question card
   // (user 2026-10-11 22:42Z): a picked option answers even without text, a
   // plain reply to an open card with no text skips it
-  const openCard = (m: Message) => !!cardOf(m) && !m.outgoing && (cards.get(m.id)?.st ?? "open") === "open";
+  const openCard = (m: Message) => !!cardOf(m) && !m.outgoing && open(m.id);
   const skips = replies.filter((r) => openCard(r) && !picked.some((p) => p.card.id === r.id)).length;
   const answersCard = picked.length > 0 || skips > 0;
   const can = (!!text.trim() || atts.length > 0 || answersCard) && !over && !sending;

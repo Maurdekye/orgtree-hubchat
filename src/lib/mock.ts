@@ -29,6 +29,8 @@
 // "wrong". Hubs on 127.0.0.1 / localhost can't be reached from the "phone".
 import type { Api, LogInfo, SetupLink, SetupState, Attachment, ChatSummary, DraftAnswers, SendRoute, Contact, HcEvent, HubRow, HubStatus, LinkEvent, LinkLookup, LinkRole, Message, NewOutgoing, OlderPage, ParsedLink, Probe, PushState, Resolved, State } from "../api";
 import { toast } from "./toast";
+import { hubOrder } from "./questions";
+import { replyIds } from "./replies";
 
 const params = new URLSearchParams(location.search);
 const intent = { link: "", peer: "" };
@@ -263,6 +265,16 @@ if (!onboarding) {
   }
   hubOld.set(PAT, new Map([[OFFICE, office], [LAB, lab]]));
   oldUnread.set(PAT, [...office, ...lab].filter((m, i, a) => !m.outgoing && !m.seen && a.findIndex((x) => x.id === m.id) === i).length);
+  // ?pages=1: question cards further back than a chat's first page: one
+  // answered from another device, two still open, then 60 build checks
+  if (params.get("pages")) {
+    const CI = "nightly-ci.alex.8d21e0", d0 = Date.now() - 2 * 864e5;
+    add(CI, false, d0, "Restart the flaky runner now?", { id: "q-old", kind: "question", question: { options: ["Restart now", "Wait for the window"], multiple: false } });
+    add(CI, false, d0 + 60000, "Keep the artifacts of nightly #417?", { id: "q-fresh", kind: "question", question: { options: ["Keep", "Delete"], multiple: false } });
+    add(CI, false, d0 + 120000, "Anything to add to the runbook?", { id: "q-free", kind: "question" });
+    add(CI, true, d0 + 300000, "", { id: "a-old", reply_to: "q-old", answers: [{ question: "q-old", picked: ["Wait for the window"] }] });
+    for (let i = 1; i <= 60; i++) add(CI, false, d0 + 600000 + i * 1800000, "Nightly check " + i + ": green.", { kind: "status" });
+  }
   add(PAT, false, at(0, "08:10"), "Morning! Did the new phone pick everything up?", { seen: false, read_at: null });
   add(PAT, true, at(0, "08:12"), "Only today's messages so far. The rest loads as I scroll back.");
   // ?gone=<address>: that chat was deleted before this start (reopening the
@@ -815,6 +827,20 @@ export const mockApi: Api = {
   draft: async (peer) => drafts[peer] ?? null,
   setDraft: async (peer, body) => { drafts[peer] = body; },
   draftAnswers: async (peer) => savedAnswers()[peer] ?? null,
+  // as the core finds them (store_questions.rs): each card in this chat and
+  // the first answer from its other side in hub order, page or no page
+  cardAnswers: async (peer, ids) => {
+    const floor = floorOf(peer), held = msgs.filter((m) => m.peer === peer && (!floor || m.created_at > floor));
+    const out = new Map<string, Message>();
+    for (const id of ids.slice(0, 1000)) {
+      const card = held.find((m) => m.id === id && m.kind === "question");
+      if (!card) continue;
+      const first = held.filter((m) => m.outgoing !== card.outgoing && replyIds(m).includes(id)).sort(hubOrder)[0];
+      out.set(card.id, card);
+      if (first) out.set(first.id, first);
+    }
+    return clone([...out.values()]);
+  },
   setDraftAnswers: async (peer, answers) => {
     const all = savedAnswers();
     if (answers.replies.length || Object.keys(answers.picks).length) all[peer] = answers; else delete all[peer];

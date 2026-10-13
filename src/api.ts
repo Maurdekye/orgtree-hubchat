@@ -449,6 +449,9 @@ export const tauriApi = {
   send: (msg: NewOutgoing) => invoke<void>("hc_send", { msg }),
   draftAnswers: (peer: string) => invoke<DraftAnswers | null>("hc_draft_answers", { peer }),
   setDraftAnswers: (peer: string, answers: DraftAnswers) => invoke<void>("hc_set_draft_answers", { peer, answers }),
+  /** Which of `ids` are question cards in this chat, each with the first
+   *  answer to it, however far back (what settles them). */
+  cardAnswers: (peer: string, ids: string[]) => invoke<Message[]>("hc_card_answers", { peer, ids }),
   retry: (id: string) => invoke<void>("hc_retry", { id }),
   removeAttachment: (messageId: string, localId: string) => invoke<void>("hc_remove_attachment", { messageId, localId }),
   cancelTransfer: (localId: string) => invoke<void>("hc_cancel_transfer", { localId }),

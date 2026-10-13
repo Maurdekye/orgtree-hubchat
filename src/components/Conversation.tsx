@@ -12,7 +12,7 @@ import { displayName, hubByUrl, hubName, hubStatusText, kindInfo, kindOf, limitF
 import { scanSetup } from "../lib/setup";
 import { refreshChats, useMessages, useSendRoute, useSnap } from "../lib/store";
 import { replyIds } from "../lib/replies";
-import { cardOf, cardStates, answerNotes } from "../lib/questions";
+import { cardOf, answerNotes, isOpen, isSettled, settlement } from "../lib/questions";
 import { clearDraftAnswers, loadDraftAnswers, pick, removeReply, setReplies, unpick, useDraftAnswers } from "../lib/answers";
 import { toast } from "../lib/toast";
 import { Composer, type ComposerApi } from "./Composer";
@@ -22,6 +22,7 @@ import { MessageView } from "./MessageView";
 import { Addr, KindChip, KindGlyph, NoteCard, PeerAvatar, PresText, pressKeys, useNow, usePlatform, useSeenTick } from "./ui";
 
 const GROUP_GAP = 5 * 60000;
+const NONE: Message[] = [];
 const CHIP_KINDS = new Set(["question", "request", "decision", "status"]);
 
 interface Props {
@@ -103,22 +104,37 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
     for (const m of msgs) { const ids = replyIds(m); if (ids.length > 1) out.set(m.id, ids.map((id) => byId.get(id) ?? extra[id])); }
     return out;
   }, [msgs, byId, extra]);
-  // question cards: each one's state, and what each reply did to them
-  const cards = useMemo(() => cardStates(msgs), [msgs]);
-  const notes = useMemo(() => answerNotes(msgs, cards), [msgs, cards]);
+  // question cards: each one's state, from the page and from the store's
+  // first answer to every card held here (a card or its answer may lie
+  // beyond the page), and what each reply did to them
+  const asked = useMemo(() => [...new Set([
+    ...Object.keys(pending.picks), ...pending.replies, ...msgs.flatMap(replyIds),
+    ...msgs.filter((m) => m.kind === "question").map((m) => m.id).reverse(),
+  ])], [msgs, pending]);
+  const [found, setFound] = useState<{ peer: string; msgs: Message[] }>({ peer: "", msgs: NONE });
+  useEffect(() => {
+    let live = true;
+    (asked.length ? api.cardAnswers(peer, asked) : Promise.resolve(NONE)).then((r) => { if (live) setFound({ peer, msgs: r }); }, (e) => console.warn("hc_card_answers", e));
+    return () => { live = false; };
+  }, [peer, asked]);
+  const held = found.peer === peer ? found.msgs : NONE;
+  const settled = useMemo(() => settlement(msgs, held), [msgs, held]);
+  const cards = settled.states;
+  const notes = useMemo(() => answerNotes(msgs, cards, held), [msgs, cards, held]);
+  const open = useCallback((id: string) => isOpen(settled, id), [settled]);
   const replies = useMemo(() => pending.replies.map((id) => byId.get(id) ?? extra[id]).filter((m): m is Message => !!m), [pending.replies, byId, extra]);
-  // picks wait only on open cards: one answered meanwhile (say on another
-  // device) drops them
+  // picks wait only on cards the store shows open: one answered meanwhile
+  // (say on another device) drops them, one not known yet waits
   const picked = useMemo(() => Object.entries(pending.picks).flatMap(([id, labels]) => {
     const m = byId.get(id) ?? extra[id], card = m ? cardOf(m) : null;
-    if (!m || !card || m.outgoing || (cards.get(id)?.st ?? "open") !== "open") return [];
+    if (!m || !card || m.outgoing || !open(id)) return [];
     const l = card.options.filter((o) => labels.includes(o));
     return l.length ? [{ card: m, labels: l }] : [];
-  }), [pending.picks, byId, extra, cards]);
+  }), [pending.picks, byId, extra, open]);
   useEffect(() => {
-    const done = Object.keys(pending.picks).filter((id) => (cards.get(id)?.st ?? "open") !== "open");
+    const done = Object.keys(pending.picks).filter((id) => isSettled(settled, id));
     if (done.length) unpick(peer, done);
-  }, [cards, pending.picks, peer]);
+  }, [settled, pending.picks, peer]);
   const onPick = useCallback((m: Message, label: string) => { const card = cardOf(m); if (card) pick(peer, m.id, label, card.multiple); }, [peer]);
 
   // keep pinned to the newest message while at the bottom
@@ -406,7 +422,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   const comp = useRef<ComposerApi>(null);
   const conv = useRef<HTMLElement>(null);
   const dragging = useFileDrop(conv, platform === "desktop" && !off, (paths) => comp.current?.addFiles(paths));
-  const composer = <Composer ref={comp} peer={peer} c={c} hubs={hubs} replies={replies} picked={picked} cards={cards} pos={pos} onRemoveReply={(id) => removeReply(peer, id)} onUnpick={(id) => unpick(peer, [id])} onCancelReply={() => setReplies(peer, [])}
+  const composer = <Composer ref={comp} peer={peer} c={c} hubs={hubs} replies={replies} picked={picked} open={open} pos={pos} onRemoveReply={(id) => removeReply(peer, id)} onUnpick={(id) => unpick(peer, [id])} onCancelReply={() => setReplies(peer, [])}
     onSent={() => { clearDraftAnswers(peer); pinned.current = true; reload(); }} off={off} />;
   const jumpBtn = <button className={"jump" + (far ? "" : " hide")} onClick={toBottom} title="Jump to the newest message" aria-label="Jump to the newest message"><Icon name="arrow_down" /></button>;
   const copyAddr = () => copyText("@net:" + peer, "Address copied");
