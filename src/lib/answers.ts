@@ -60,10 +60,14 @@ export function unpick(peer: string, cards: string[]) {
   save(peer, { ...d, picks });
 }
 
-/** The message went: nothing is pending any more. */
-export function clearDraftAnswers(peer: string) {
-  if (!cache.has(peer)) return;
-  save(peer, EMPTY);
+/** The message went: what it replied to and the cards it answered are done.
+ *  A pick it couldn't carry yet (its card not known to be open) stays. */
+export function sentDraftAnswers(peer: string, cards: string[]) {
+  const d = cache.get(peer);
+  if (!d) return;
+  const picks = { ...d.picks };
+  for (const c of cards) delete picks[c];
+  save(peer, { replies: [], picks });
 }
 
 /** Another identity now holds this device: forget the old one's, including

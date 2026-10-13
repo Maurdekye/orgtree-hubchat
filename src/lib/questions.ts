@@ -132,3 +132,8 @@ export function isSettled(s: Settlement, id: string): boolean {
   const st = s.states.get(id)?.st;
   return !!st && st !== "open";
 }
+
+/** Where a card stands for the composer: open, settled, or unknown (the
+ *  store hasn't answered for it yet, or couldn't). */
+export type CardKnown = "open" | "settled" | "unknown";
+export const cardKnown = (s: Settlement, id: string): CardKnown => (isOpen(s, id) ? "open" : isSettled(s, id) ? "settled" : "unknown");

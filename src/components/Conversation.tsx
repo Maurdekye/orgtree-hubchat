@@ -12,8 +12,8 @@ import { displayName, hubByUrl, hubName, hubStatusText, kindInfo, kindOf, limitF
 import { scanSetup } from "../lib/setup";
 import { refreshChats, useMessages, useSendRoute, useSnap } from "../lib/store";
 import { replyIds } from "../lib/replies";
-import { cardOf, answerNotes, isOpen, isSettled, settlement } from "../lib/questions";
-import { clearDraftAnswers, loadDraftAnswers, pick, removeReply, setReplies, unpick, useDraftAnswers } from "../lib/answers";
+import { cardOf, answerNotes, cardKnown, isOpen, isSettled, settlement } from "../lib/questions";
+import { loadDraftAnswers, pick, removeReply, sentDraftAnswers, setReplies, unpick, useDraftAnswers } from "../lib/answers";
 import { toast } from "../lib/toast";
 import { Composer, type ComposerApi } from "./Composer";
 import { HubHelpLink } from "./HubHelp";
@@ -122,6 +122,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   const cards = settled.states;
   const notes = useMemo(() => answerNotes(msgs, cards, held), [msgs, cards, held]);
   const open = useCallback((id: string) => isOpen(settled, id), [settled]);
+  const cardState = useCallback((id: string) => cardKnown(settled, id), [settled]);
   const replies = useMemo(() => pending.replies.map((id) => byId.get(id) ?? extra[id]).filter((m): m is Message => !!m), [pending.replies, byId, extra]);
   // picks wait only on cards the store shows open: one answered meanwhile
   // (say on another device) drops them, one not known yet waits
@@ -422,8 +423,8 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   const comp = useRef<ComposerApi>(null);
   const conv = useRef<HTMLElement>(null);
   const dragging = useFileDrop(conv, platform === "desktop" && !off, (paths) => comp.current?.addFiles(paths));
-  const composer = <Composer ref={comp} peer={peer} c={c} hubs={hubs} replies={replies} picked={picked} open={open} pos={pos} onRemoveReply={(id) => removeReply(peer, id)} onUnpick={(id) => unpick(peer, [id])} onCancelReply={() => setReplies(peer, [])}
-    onSent={() => { clearDraftAnswers(peer); pinned.current = true; reload(); }} off={off} />;
+  const composer = <Composer ref={comp} peer={peer} c={c} hubs={hubs} replies={replies} picked={picked} cardState={cardState} pos={pos} onRemoveReply={(id) => removeReply(peer, id)} onUnpick={(id) => unpick(peer, [id])} onCancelReply={() => setReplies(peer, [])}
+    onSent={(m) => { sentDraftAnswers(peer, (m.answers ?? []).map((a) => a.question)); pinned.current = true; reload(); }} off={off} />;
   const jumpBtn = <button className={"jump" + (far ? "" : " hide")} onClick={toBottom} title="Jump to the newest message" aria-label="Jump to the newest message"><Icon name="arrow_down" /></button>;
   const copyAddr = () => copyText("@net:" + peer, "Address copied");
 

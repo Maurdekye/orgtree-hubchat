@@ -3,14 +3,14 @@
 // on the chat) and a size check against the hub's limit before anything is
 // sent.
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
-import { api, newId, type Contact, type HubStatus, type Message, type NewAttachment } from "../api";
+import { api, newId, type Contact, type HubStatus, type Message, type NewAttachment, type NewOutgoing } from "../api";
 import { Icon } from "../lib/icons";
 import { bytes, isLong, MAX_FILES, num, utf8Len } from "../lib/format";
 import { isImage, pastedImages, pastedName, thumbable, useFilePreview } from "../lib/images";
 import { errText, pickFiles } from "../lib/native";
 import { displayName, limitFor, msgTime, preview } from "../lib/peers";
 import { foldAt } from "../lib/replies";
-import { cardOf } from "../lib/questions";
+import { cardOf, type CardKnown } from "../lib/questions";
 import { noteDraft, usePreparation, getPreparation, prepareSend, clearPreparation } from "../lib/store";
 import { usePlatform } from "./ui";
 
@@ -22,16 +22,17 @@ interface Props {
   replies: Message[];
   /** Options picked on open question cards. */
   picked: { card: Message; labels: string[] }[];
-  /** Whether a question card is still open: the store knows it, and nothing
-   *  answered or skipped it (unknown is not open). */
-  open: (id: string) => boolean;
+  /** Where a question card stands: open (the store knows it, and nothing
+   *  answered or skipped it), settled, or unknown (the store hasn't said). */
+  cardState: (id: string) => CardKnown;
   /** Where each loaded message sits in the chat, oldest first. */
   pos: Map<string, number>;
   onRemoveReply: (id: string) => void;
   onUnpick: (cardId: string) => void;
   /** Esc or the reply bar's close: reply to nothing. */
   onCancelReply: () => void;
-  onSent: () => void;
+  /** The message went (it is queued): what it carried. */
+  onSent: (m: NewOutgoing) => void;
   ref?: Ref<ComposerApi>;
   /** Why nothing can be sent here (no hub lists the address): shown instead of the box. */
   off?: string | null;
@@ -67,7 +68,7 @@ function AttThumb({ a, onRemove, disabled }: { a: NewAttachment; onRemove: () =>
   );
 }
 
-export function Composer({ peer, c, hubs, replies, picked, open, pos, onRemoveReply, onUnpick, onCancelReply, onSent, ref, off }: Props) {
+export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRemoveReply, onUnpick, onCancelReply, onSent, ref, off }: Props) {
   const platform = usePlatform();
   const [text, setText] = useState("");
   const [atts, setAtts] = useState<NewAttachment[]>([]);
@@ -96,7 +97,7 @@ export function Composer({ peer, c, hubs, replies, picked, open, pos, onRemoveRe
     if (preparation?.phase !== "queued") return;
     setText(""); setAtts([]); setErr(null);
     clearPreparation(peer);
-    onCancelReply(); onSent();
+    onCancelReply(); onSent(preparation.message);
     ta.current?.focus();
   }, [preparation, peer, onCancelReply, onSent]);
 
@@ -121,11 +122,15 @@ export function Composer({ peer, c, hubs, replies, picked, open, pos, onRemoveRe
   const overNote = lim ? "This message is " + bytes(total) + ". Hub " + lim.hub.name + " takes up to " + bytes(lim.bytes) + " per message, text and files together." : "";
   // a message may go with no text when it answers or skips a question card
   // (user 2026-10-11 22:42Z): a picked option answers even without text, a
-  // plain reply to an open card with no text skips it
-  const openCard = (m: Message) => !!cardOf(m) && !m.outgoing && open(m.id);
-  const skips = replies.filter((r) => openCard(r) && !picked.some((p) => p.card.id === r.id)).length;
+  // plain reply to an open card with no text skips it. With no text, files or
+  // not, every card it plainly replies to is skipped if open, so each must be
+  // known first: while the store hasn't said for one, the message waits,
+  // whatever else it answers, and keeps everything it holds (review R2)
+  const plain = replies.filter((r) => !!cardOf(r) && !r.outgoing && !picked.some((p) => p.card.id === r.id));
+  const skips = plain.filter((r) => cardState(r.id) === "open").length;
+  const checking = text.trim() ? 0 : plain.filter((r) => cardState(r.id) === "unknown").length;
   const answersCard = picked.length > 0 || skips > 0;
-  const can = (!!text.trim() || atts.length > 0 || answersCard) && !over && !sending;
+  const can = (!!text.trim() || atts.length > 0 || answersCard) && !checking && !over && !sending;
 
   const attsRef = useRef(atts);
   attsRef.current = atts;
@@ -233,7 +238,8 @@ export function Composer({ peer, c, hubs, replies, picked, open, pos, onRemoveRe
     ? <span style={{ color: "var(--bad)" }}>{overNote}</span>
     : <>
         {platform === "desktop" ? <span><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line</span> : null}
-        {skips && !text.trim() && !atts.length ? <span className="skipnote">Sending with no text skips {skips === 1 ? "the question" : skips + " questions"} you reply to</span> : null}
+        {checking ? <span className="skipnote">Checking whether {checking === 1 ? "the question you reply to is" : checking + " questions you reply to are"} still open</span>
+          : skips && !text.trim() ? <span className="skipnote">Sending with no text skips {skips === 1 ? "the question" : skips + " questions"} you reply to</span> : null}
         {isLong(text) ? <span className="count">{num(text.length)} characters · shows collapsed</span> : null}
       </>;
   const row = (
