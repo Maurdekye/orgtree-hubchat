@@ -157,43 +157,94 @@ fn check_fallback(v: &Value) -> Option<(usize, usize)> {
     (s <= e).then_some((s, e))
 }
 
-/// The body without its plain-text part, if the range fits it: a prefix or
-/// a suffix, on character boundaries.
-pub fn without(body: &str, (s, e): (usize, usize)) -> Option<String> {
-    if e > body.len() || !body.is_char_boundary(s) || !body.is_char_boundary(e) || (s != 0 && e != body.len()) {
-        return None;
+/// The list a card with these options carries after its question, as
+/// Orgtree writes it: all a card's plain-text part may be.
+fn options_text(q: &QuestionMeta) -> String {
+    let mut s = String::from(if q.multiple { "\n\nPick one or more:" } else { "\n\nPick one:" });
+    for (i, o) in q.options.iter().enumerate() {
+        s.push_str(&format!("\n{}. {o}", i + 1));
     }
-    Some(format!("{}{}", &body[..s], &body[e..]))
+    s
+}
+
+/// Whether `prefix` is exactly what `outgoing` writes before a reply's text
+/// for what was accepted of it: for each message it answers, in order, a
+/// quote line, then `Answer: ` and the picks accepted for it, or `Skipped`
+/// (a reply with no text, nothing picked on that message).
+fn reply_prefix_ok(prefix: &str, set: &[&str], answers: &[Answer], no_text: bool) -> bool {
+    let mut lines = prefix.split_inclusive('\n').peekable();
+    for id in set {
+        let quote = lines.next().and_then(|l| l.strip_prefix(crate::engine::QUOTE_PREFIX)).and_then(|l| l.strip_suffix('\n'));
+        if !quote.is_some_and(|q| q.chars().count() <= QUOTE_CHARS) {
+            return false;
+        }
+        match answers.iter().find(|a| a.question == *id) {
+            Some(a) => {
+                if lines.next() != Some(format!("Answer: {}\n", a.picked.join(", ")).as_str()) {
+                    return false;
+                }
+            }
+            None => {
+                if no_text && lines.peek() == Some(&"Skipped\n") {
+                    lines.next();
+                }
+            }
+        }
+    }
+    lines.next().is_none()
+}
+
+/// Whether `body` may be shown without the range a sender named as its
+/// plain-text part: only when that text is exactly what the accepted `meta`
+/// shows instead (a card's options after its question, a reply's quote, pick
+/// and skip lines before its text). What arrives is untrusted, so anything
+/// else, such as a list whose card was refused, stays readable.
+fn fallback_ok(body: &str, (s, e): (usize, usize), reply_to: Option<&str>, meta: &Meta) -> bool {
+    if e > body.len() || !body.is_char_boundary(s) || !body.is_char_boundary(e) {
+        return false;
+    }
+    let suffix = e == body.len() && meta.question.as_ref().is_some_and(|q| body[s..] == options_text(q));
+    let prefix = s == 0
+        && reply_to.is_some_and(|first| {
+            let set: Vec<&str> = if meta.replies.is_empty() { vec![first] } else { meta.replies.iter().map(String::as_str).collect() };
+            reply_prefix_ok(&body[..e], &set, &meta.answers, e == body.len())
+        });
+    suffix || prefix
 }
 
 /// The text a received body shows: without its plain-text part when `meta`
-/// names one that fits, else without the one quote line a reply carries.
-pub fn shown(body: &str, reply: bool, meta: &Meta) -> String {
-    if let Some(t) = meta.fallback.and_then(|r| without(body, r)) {
-        return t;
+/// names one that stands for it, else without the one quote line a reply
+/// carries.
+pub fn shown(body: &str, reply_to: Option<&str>, meta: &Meta) -> String {
+    if let Some((s, e)) = meta.fallback.filter(|&r| fallback_ok(body, r, reply_to, meta)) {
+        return format!("{}{}", &body[..s], &body[e..]);
     }
-    if reply {
-        crate::engine::strip_quote(body).to_owned()
-    } else {
-        body.to_owned()
+    match reply_to {
+        Some(_) => crate::engine::strip_quote(body).to_owned(),
+        None => body.to_owned(),
     }
 }
 
 /// A received message as Hubchat keeps it: the text it shows and what of its
-/// `meta` passed the checks (each part on its own).
+/// `meta` passed the checks (each part on its own). A plain-text range is
+/// kept only when it stands for that `meta`, or when it reaches past a long
+/// body's preview of a card or a reply, to be checked again once the whole
+/// body is here.
 pub fn incoming(body: &str, kind: Option<&str>, reply_to: Option<&str>, meta: Option<&Value>) -> (String, Meta) {
     let Some(v) = meta.filter(|v| v.is_object()) else {
-        return (shown(body, reply_to.is_some(), &Meta::default()), Meta::default());
+        return (shown(body, reply_to, &Meta::default()), Meta::default());
     };
     let replies = v.get("replies").map(|r| check_replies(r, reply_to)).unwrap_or_default();
     let set: Vec<String> = if replies.is_empty() { reply_to.map(str::to_owned).into_iter().collect() } else { replies.clone() };
-    let m = Meta {
+    let mut m = Meta {
         question: if kind == Some("question") { v.get("question").and_then(check_question) } else { None },
         answers: v.get("answers").map(|a| check_answers(a, &set)).unwrap_or_default(),
         replies,
-        fallback: v.get("fallback").and_then(check_fallback),
+        fallback: None,
     };
-    (shown(body, reply_to.is_some(), &m), m)
+    let later = |e: usize| e > body.len() && (m.question.is_some() || reply_to.is_some());
+    m.fallback = v.get("fallback").and_then(check_fallback).filter(|&r| later(r.1) || fallback_ok(body, r, reply_to, &m));
+    (shown(body, reply_to, &m), m)
 }
 
 /// One message a reply answers, as its sender holds it.
@@ -303,17 +354,88 @@ mod tests {
     fn the_plain_text_part_goes_only_when_it_fits() {
         let body = "Which one?\n\nPick one:\n1. A\n2. B";
         let at = body.find("\n\nPick").unwrap();
-        let (text, m) = incoming(body, Some("question"), None, Some(&json!({"question": {"options": ["A", "B"]}, "fallback": [at, body.len()]})));
+        let card = json!({"question": {"options": ["A", "B"]}, "fallback": [at, body.len()]});
+        let (text, m) = incoming(body, Some("question"), None, Some(&card));
         assert_eq!(text, "Which one?");
         assert_eq!(m.question.unwrap().options.len(), 2);
         // a range in the middle, past the end or inside a character is ignored
-        assert_eq!(without("abcdef", (1, 3)), None);
-        assert_eq!(without("abc", (0, 9)), None);
-        assert_eq!(without("é", (0, 1)), None);
-        // a long body's preview keeps a suffix range for when the whole body is here
-        let (preview, m) = incoming("Which one?", Some("question"), None, Some(&json!({"fallback": [10, 40]})));
-        assert_eq!(preview, "Which one?");
-        assert_eq!(shown(body, false, &Meta { fallback: Some((at, body.len())), ..m }), "Which one?");
+        let m = Meta { replies: vec![], question: Some(QuestionMeta { options: vec!["A".into(), "B".into()], multiple: false }), answers: vec![], fallback: None };
+        for (b, r) in [(body, (1, at)), (body, (at, body.len() + 1)), ("é", (0, 1))] {
+            assert!(!fallback_ok(b, r, None, &m) && !fallback_ok(b, r, Some("a"), &m), "{b:?} {r:?}");
+        }
+        // a long body's preview keeps the range for when the whole body is here,
+        // and only then does the list go
+        let (preview, m) = incoming("Which one?", Some("question"), None, Some(&card));
+        assert_eq!((preview.as_str(), m.fallback), ("Which one?", Some((at, body.len()))));
+        assert_eq!(shown(body, None, &m), "Which one?");
+    }
+
+    #[test]
+    fn a_plain_text_part_goes_only_for_what_meta_shows_instead() {
+        // review R1: a card whose options are refused (here: the same label
+        // twice) keeps its list as text, and keeps no range
+        let body = "Q?\n\nPick one:\n1. Same\n2. same";
+        let at = body.find("\n\nPick").unwrap();
+        let (text, m) = incoming(body, Some("question"), None, Some(&json!({"question": {"options": ["Same", "same"]}, "fallback": [at, body.len()]})));
+        assert_eq!((text.as_str(), m), (body, Meta::default()));
+        // a range alone, on the wrong kind, or over the whole body, removes nothing
+        for (kind, meta) in [
+            (Some("question"), json!({"fallback": [at, body.len()]})),
+            (None, json!({"question": {"options": ["Same", "Other"]}, "fallback": [at, body.len()]})),
+            (Some("question"), json!({"question": {"options": ["Same", "Other"]}, "fallback": [0, body.len()]})),
+            (None, json!({"fallback": [0, body.len()]})),
+        ] {
+            let (text, m) = incoming(body, kind, None, Some(&meta));
+            assert_eq!((text.as_str(), m.fallback), (body, None), "{meta}");
+        }
+        // accepted options that aren't the list as written remove nothing:
+        // other labels, another order, pick one or more, a range off by one
+        let body = "Q?\n\nPick one:\n1. Beta\n2. Stable";
+        let at = body.find("\n\nPick").unwrap();
+        for (q, r) in [
+            (json!({"options": ["Beta", "Other"]}), [at, body.len()]),
+            (json!({"options": ["Stable", "Beta"]}), [at, body.len()]),
+            (json!({"options": ["Beta", "Stable"], "multiple": true}), [at, body.len()]),
+            (json!({"options": ["Beta", "Stable"]}), [at + 1, body.len()]),
+        ] {
+            let (text, m) = incoming(body, Some("question"), None, Some(&json!({"question": q, "fallback": r})));
+            assert_eq!((text.as_str(), m.fallback, m.question.is_some()), (body, None, true), "{q} {r:?}");
+        }
+        let (text, _) = incoming(body, Some("question"), None, Some(&json!({"question": {"options": ["Beta", "Stable"]}, "fallback": [at, body.len()]})));
+        assert_eq!(text, "Q?");
+        // review R1: a reply whose range covers text that isn't its lines is
+        // not a skip: the old one-line rule applies and the text stays
+        for (b, meta) in [
+            ("> q\nreal answer", json!({"fallback": [0, 15]})),
+            ("> q\nSkipped\nmore", json!({"fallback": [0, 12]})),
+            ("> q\nAnswer: Beta\n", json!({"fallback": [0, 17]})),
+            ("> q\nAnswer: Beta\n", json!({"answers": [{"question": "q", "picked": ["Stable"]}], "fallback": [0, 17]})),
+            ("> q\n> r\nSkipped\n", json!({"fallback": [0, 16]})),
+            ("> q\n> r\n", json!({"replies": ["q", "r", "s"], "fallback": [0, 8]})),
+        ] {
+            let (text, m) = incoming(b, None, Some("q"), Some(&meta));
+            assert_eq!((text.as_str(), m.fallback), (crate::engine::strip_quote(b), None), "{b:?} {meta}");
+        }
+        // positive controls: a reply's own lines still go, as `outgoing` writes them
+        for (b, meta, want) in [
+            ("> q\nSkipped\n", json!({"fallback": [0, 12]}), ""),
+            ("> q\nAnswer: Beta, Gamma\nwhy", json!({"answers": [{"question": "q", "picked": ["Beta", "Gamma"]}], "fallback": [0, 24]}), "why"),
+            ("> q\n> r\nSkipped\n", json!({"replies": ["q", "r"], "fallback": [0, 16]}), ""),
+            ("> q\n> r\nhi", json!({"replies": ["q", "r"], "fallback": [0, 8]}), "hi"),
+        ] {
+            assert_eq!(incoming(b, None, Some("q"), Some(&meta)).0, want, "{b:?}");
+        }
+        // older clients: no meta, the one quote line goes as before
+        assert_eq!(incoming("> q\nok", None, Some("q"), None).0, "ok");
+        // a long reply: the range is checked against the preview, then again
+        // against the whole body
+        let full = format!("> q\n> r\n{}", "x".repeat(100));
+        let (preview, m) = incoming(&full[..20], None, Some("q"), Some(&json!({"replies": ["q", "r"], "fallback": [0, 8]})));
+        assert_eq!((preview.as_str(), m.fallback), (&full[8..20], Some((0, 8))));
+        assert_eq!(shown(&full, Some("q"), &m), &full[8..]);
+        // a preview of a refused card keeps no range, so the whole body shows it all
+        let (_, m) = incoming("Q?", Some("question"), None, Some(&json!({"question": {"options": ["a", "A"]}, "fallback": [2, 30]})));
+        assert_eq!(m, Meta::default());
     }
 
     #[test]

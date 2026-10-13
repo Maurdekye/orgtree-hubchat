@@ -5,7 +5,8 @@ pub(crate) const BODY_MISSING: &str = "The rest of this message is no longer on 
 pub(crate) struct BodyFetch {
     pub id: String,
     pub peer: String,
-    pub reply: bool,
+    /// What it replies to: its quote line (or its meta's) goes.
+    pub reply_to: Option<String>,
     /// The message's checked meta: its plain-text part goes once the body is whole.
     pub meta: Option<String>,
 }
@@ -13,8 +14,8 @@ pub(crate) struct BodyFetch {
 impl Store {
     pub(crate) fn pending_bodies(&self, after: &str, now: u64) -> Result<Vec<BodyFetch>> {
         self.with(|c| {
-            let mut q = c.prepare("SELECT b.id,m.peer,m.reply_to IS NOT NULL,m.meta FROM body_fetches b JOIN messages m ON m.id=b.id WHERE b.done=0 AND b.retry_at<=?1 AND b.id>?2 ORDER BY b.id LIMIT 64")?;
-            let rows = q.query_map(params![now,after], |r| Ok(BodyFetch {id:r.get(0)?,peer:r.get(1)?,reply:r.get(2)?,meta:r.get(3)?}))?;
+            let mut q = c.prepare("SELECT b.id,m.peer,m.reply_to,m.meta FROM body_fetches b JOIN messages m ON m.id=b.id WHERE b.done=0 AND b.retry_at<=?1 AND b.id>?2 ORDER BY b.id LIMIT 64")?;
+            let rows = q.query_map(params![now,after], |r| Ok(BodyFetch {id:r.get(0)?,peer:r.get(1)?,reply_to:r.get(2)?,meta:r.get(3)?}))?;
             rows.collect()
         })
     }

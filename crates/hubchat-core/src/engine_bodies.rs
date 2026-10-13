@@ -100,7 +100,7 @@ impl Engine {
         match result {
             Ok(body) => {
                 // without the reply's quote line, or the plain-text part its meta names
-                let body = crate::questions::shown(&body, row.reply, &crate::questions::Meta::load(row.meta.as_deref()));
+                let body = crate::questions::shown(&body, row.reply_to.as_deref(), &crate::questions::Meta::load(row.meta.as_deref()));
                 if self.store.finish_body(id, &body).unwrap_or(false) {
                     self.host.event(Event::Chat { peer: peer.into() });
                 }
