@@ -322,14 +322,19 @@ FunctionEnd
 Function HubUpgradeChooseUpgrade
   Pop $0
   StrCpy $HubUpgradeChoice "upgrade"
-  GetDlgItem $1 $HWNDPARENT 1
-  SendMessage $1 ${BM_CLICK} 0 0
+  Call HubUpgradeClickNext
 FunctionEnd
 Function HubUpgradeChooseAdvanced
   Pop $0
   StrCpy $HubUpgradeChoice "advanced"
+  Call HubUpgradeClickNext
+FunctionEnd
+; The Next click is POSTED, not sent: a synchronous BM_CLICK from inside this
+; button's callback runs the leave handler nested in the callback and the wizard
+; then never advances (measured: the installer sat on an empty page forever).
+Function HubUpgradeClickNext
   GetDlgItem $1 $HWNDPARENT 1
-  SendMessage $1 ${BM_CLICK} 0 0
+  System::Call 'user32::PostMessage(i $1, i ${BM_CLICK}, i 0, i 0)'
 FunctionEnd
 Function HubUpgradePageLeave
   ${If} $HubUpgradeChoice == "upgrade"
@@ -935,9 +940,17 @@ SectionEnd
 
 Function .onInstSuccess
   ; HUBCHAT EDIT: an explicit Upgrade on the Upgrade page closed Hubchat before
-  ; installing, so it starts it again, once, as the user (not elevated).
+  ; installing, so it starts it again, once, as the user. A per-user installer is
+  ; not elevated and simply starts it; an elevated one (installed for all users, or
+  ; run as administrator) goes through RunAsUser so Hubchat does not inherit that.
   ${If} $HubUpgradeSelected == "1"
-    nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" ""
+    System::Call 'shell32::IsUserAnAdmin()i.r0'
+    ${If} $0 = 0
+      SetOutPath $INSTDIR
+      Exec '"$INSTDIR\${MAINBINARYNAME}.exe"'
+    ${Else}
+      nsis_tauri_utils::RunAsUser "$INSTDIR\${MAINBINARYNAME}.exe" ""
+    ${EndIf}
     Return
   ${EndIf}
   ; Check for `/R` flag only in silent and passive installers because
