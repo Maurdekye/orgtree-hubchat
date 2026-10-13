@@ -356,7 +356,12 @@ pub fn run() {
             // The Windows installer's Upgrade asks the running Hubchat to quit
             // before replacing its files: the same quit as the tray's.
             if desktop::quit_for_upgrade_requested(args.iter().cloned()) {
-                app.exit(0);
+                // The Windows single-instance callback is entered while handling
+                // the second process's synchronous message. Let that callback
+                // return while another thread requests event-loop shutdown.
+                // Keep Tauri's normal ExitRequested/Exit cleanup, not process::exit.
+                let app = app.clone();
+                std::thread::spawn(move || app.exit(0));
                 return;
             }
             // a hubchat:// link opened while we run: the UI takes it
