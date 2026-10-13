@@ -40,3 +40,12 @@ Initial receipt/config errors are retained under
 `D:\orgtree-work\rig\hubchat-dm-sol\avatar-editor\initial`.
 Native device chooser/Tauri acceptance and installed artifact behavior remain
 outside this synthetic proof.
+
+Batch 120a2 at combined Hubchat `b5fe107` stopped before any check because the
+proof statically imported an absolute Orgtree helper path from the author's
+worktree. The runner now loads the helper only in standalone mode, through
+explicit `HUBCHAT_RIG_LIB` (a filesystem path to Orgtree's `tools/rig/lib.mjs`).
+Contained `--inside` batch mode uses its caller's existing shared lock and
+kernel Job and has no dependency on that helper. The portable batch adapter
+supplies the combined Orgtree helper path for standalone callers. Product
+sources and pass criteria remain unchanged; the combined Avatar rerun is pending.

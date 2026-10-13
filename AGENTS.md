@@ -1,5 +1,10 @@
 # Hubchat development invariants
 
+- 2026-10-13: Account-avatar proof runs inside the caller's shared lock/Job
+  with `--inside`; standalone callers supply Orgtree's rig helper through
+  `HUBCHAT_RIG_LIB`. Never commit a static import into an author's worktree.
+  [verified: `tools/proof-avatar-editor.mjs`; docs/account-avatar-editor.md]
+
 - 2026-10-13: Help uses one tab per level-two heading from bundled
   `docs/setup.md`; intro and screenshot-block stripping are preserved. All
   guide entry points share `GuideBody`. Local guide anchors select their tab;

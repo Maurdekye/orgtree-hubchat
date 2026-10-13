@@ -2,10 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { launch } from './cdp.mjs';
-import { withBuildLock } from 'file:///D:/orgtree-work/worktrees/hubchat-dm-sol-usage-export/tools/rig/lib.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = process.env.AVATAR_EDITOR_OUT;
 if (!out?.startsWith('C:\\orgtree-build\\hubchat-dm-sol\\')) throw Error('Owned C output required');
@@ -13,6 +12,11 @@ const depsRoot = 'E:/Libraries/Desktop/orgtree/.worktrees/orgtree-hubchat';
 const deps = createRequire(depsRoot + '/package.json'), orgDeps = createRequire('E:/Libraries/Desktop/orgtree/package.json');
 const esbuild = orgDeps('esbuild'); fs.mkdirSync(out, { recursive: true });
 if (!process.argv.includes('--inside')) {
+  // The Hubchat repository does not own Orgtree's build-lock helper. Standalone
+  // callers name that dependency; contained batch runs already own the lock.
+  const rigLib = process.env.HUBCHAT_RIG_LIB;
+  if (!rigLib) throw Error('Set HUBCHAT_RIG_LIB to the Orgtree tools/rig/lib.mjs path, or use --inside under the existing lock and Job');
+  const { withBuildLock } = await import(pathToFileURL(path.resolve(rigLib)).href);
   const r = withBuildLock('Hubchat avatar focused renderer/typecheck proof', () => {
     const p = spawnSync(process.execPath, [fileURLToPath(import.meta.url), '--inside'], { cwd: root, env: process.env, windowsHide: true, encoding: 'utf8', timeout: 120000, maxBuffer: 4 * 1024 * 1024 });
     fs.writeFileSync(path.join(out, 'run.log'), p.stdout + p.stderr); console.log((p.stdout + p.stderr).slice(-3500)); return p.status ?? 1;
