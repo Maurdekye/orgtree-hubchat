@@ -132,6 +132,22 @@
   [decided: user via coordinator 2026-10-12; source: store_hub_enabled.rs,
   engine_hub_enabled.rs, hub.rs; verification gate and limits:
   docs/hub-enable-disable.md]
+- 2026-10-13: Removing a saved hub forgets everything its sync kept under its
+  URL (`forget_hub_sync`: cursor, lazy-history start, owed chat list, clock
+  offset, picture acknowledgement, roster picture owners, enabled state), and
+  adding a URL that isn't saved forgets leftovers first. Before, removal kept
+  the cursor while the directory rows went, so the same address added again
+  resumed an incremental sync and every contact unchanged since stayed out of
+  the directory (user 2026-10-13: Orgtree's own org lost after the hub was
+  re-added under the PC's name). A new per-URL meta key belongs in
+  `forget_hub_sync`; the key builders live in store.rs. Migration 17 schedules
+  one GET /api/roster snapshot per saved hub (`Engine::refresh_directory_once`)
+  so stores already hit heal on their own; a hub that refuses it keeps its
+  sync deltas. Hubs are still keyed by URL: the same hub under two names is
+  two entries (a stable hub ID is a separate, undecided item).
+  [decided: coordinator 2026-10-13, pure fix + one-time repair; verified:
+  store.rs, engine.rs; tests: hub_removal.rs, readdress_v2.rs; details and
+  limits: docs/hub-removal.md]
 - 2026-10-12: Picture revisions are logical counter plus operation ID. Only explicit
   edits mint revisions; metadata and byte cache updates compare them atomically.
   Removals keep metadata after cache eviction. Native decoding accepts bounded
