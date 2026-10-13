@@ -1,5 +1,12 @@
 # Hubchat development invariants
 
+- 2026-10-13: Local Windows `frontendDist` must resolve as Tauri Directory,
+  not URL: `C:/...` matches the URL-first untagged parser and omits embedded
+  assets. Use `scripts/local-tauri-config.mjs` for out-of-tree builds, then
+  check the pinned parser, actual assets and isolated rendered startup;
+  native version/hash checks alone are insufficient. CI retains `../dist`.
+  [verified: Tauri2.10.1 config parser; docs/local-alpha-packaging.md]
+
 - 2026-10-12: Question cards and multi-reply travel in an additive, bounded
   message `meta` (hub feature `meta`, at most 4096 bytes) with a plain-text
   version in the body for older hubs and clients; never repurpose `reply_to`
