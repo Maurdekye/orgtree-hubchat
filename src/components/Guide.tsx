@@ -57,6 +57,7 @@ export function GuideBody() {
     });
   };
   const tabKeys = (e: ReactKeyEvent, index: number) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
     const next = e.key === "ArrowRight" ? (index + 1) % sections.length
       : e.key === "ArrowLeft" ? (index + sections.length - 1) % sections.length
       : e.key === "Home" ? 0 : e.key === "End" ? sections.length - 1 : null;
