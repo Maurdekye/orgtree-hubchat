@@ -146,12 +146,15 @@ const cardsHeld = { mode: "", waiting: [] as (() => void)[] };
 };
 // window.__hcSend, for the same proof: hold() keeps the next message with
 // files being prepared (a quarter done) until release() lets it go on, or
-// fail() makes its preparation fail
-const sendHeld = { on: false, waiting: [] as ((fail: boolean) => void)[] };
+// fail() makes its preparation fail; holdDraft() keeps a draft being cleared
+// (a send's last step) waiting until releaseDraft()
+const sendHeld = { on: false, waiting: [] as ((fail: boolean) => void)[], draft: false, drafts: [] as (() => void)[] };
 (window as unknown as { __hcSend: unknown }).__hcSend = {
   hold: () => { sendHeld.on = true; },
   release: () => { sendHeld.on = false; sendHeld.waiting.splice(0).forEach((go) => go(false)); },
   fail: () => { sendHeld.on = false; sendHeld.waiting.splice(0).forEach((go) => go(true)); },
+  holdDraft: () => { sendHeld.draft = true; },
+  releaseDraft: () => { sendHeld.draft = false; sendHeld.drafts.splice(0).forEach((go) => go()); },
 };
 // unsent answers survive a restart in the app; here a reload stands in for it
 const ANSWERS_KEY = "hubchat-mock-draft-answers";
@@ -848,7 +851,7 @@ export const mockApi: Api = {
   deleteMessage: async (id) => { const i = msgs.findIndex((m) => m.id === id); if (i >= 0) { const p = msgs[i].peer; msgs.splice(i, 1); chatEv(p); } },
   deleteChat: async (peer) => { for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].peer === peer) msgs.splice(i, 1); chatEv(peer); },
   draft: async (peer) => drafts[peer] ?? null,
-  setDraft: async (peer, body) => { drafts[peer] = body; },
+  setDraft: async (peer, body) => { if (!body && sendHeld.draft) await new Promise<void>((go) => sendHeld.drafts.push(go)); drafts[peer] = body; },
   draftAnswers: async (peer) => savedAnswers()[peer] ?? null,
   // as the core finds them (store_questions.rs): each card in this chat and
   // the first answer from its other side in hub order, page or no page

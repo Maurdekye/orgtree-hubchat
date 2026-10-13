@@ -7,9 +7,10 @@
 // switch, settlement from the store); review R2: an empty send to a card the
 // store hasn't answered for yet (its query held back, then failing) waits,
 // mixed with picks, skips and files; review R3: a reply or pick chosen in the
-// chat while a message's file is prepared stays for the next message. Each
-// R1/R2/R3 part records a failure and goes on, so the same proof shows what
-// the reviewed code did.
+// chat while a message's file is prepared stays for the next message; review
+// R4: a send ending after an identity switch leaves the next identity's
+// composer and send alone. Each R1-R4 part records a failure and goes on, so
+// the same proof shows what the reviewed code did.
 // Run it only through tools/verify-questions.ps1, which starts it inside the
 // Orgtree kernel Job runner: bundling, the server and Chrome end with the job.
 for (const k of ['HUBCHAT_JOB_CONTAINED', 'HUBCHAT_VITE_CACHE', 'HUBCHAT_PROOF_OUT']) if (!process.env[k]) throw Error('Use tools/verify-questions.ps1; missing ' + k);
@@ -414,6 +415,83 @@ try {
         && (await ev(`document.querySelectorAll('.composer .rb-item').length`)) === 2 && s4?.replies?.join() === 'q-p7,q-p8');
   } catch (e) {
     check('R3 preparation scenario ran to the end: ' + e.message, false);
+  }
+
+  // ---------- review R4: an identity switch while a sent message's draft clears
+  // A send's last step clears the chat's draft; window.__hcSend (the mock)
+  // holds that write. Meanwhile comes the renderer's reset for an identity
+  // switch: store.ts reloadAfterSwitch, called in the page as JoinLink calls
+  // it (the mock's identity itself stays, so the box keeps its text; the next
+  // identity's text is typed over it). The old send must not come back as
+  // queued: it would empty the next identity's composer, or take over the send
+  // it has started in that chat.
+  try {
+    const CI = 'nightly-ci.alex.8d21e0';
+    await ev(`localStorage.removeItem('hubchat-mock-draft-answers'), true`);
+    await b.nav(base + '?pages=1', 1200);
+    await openChat('nightly-ci');
+    await ev(`import('/src/lib/store.ts').then((m) => { window.__store = m; return true; })`);
+    const files = (js) => ev(`(window.__hcSend.${js}, true)`);
+    const outs = () => ev(`document.querySelectorAll('.timeline .msg.out').length`);
+    const boxText = () => ev(`document.querySelector('.composer textarea').value`);
+    const fileCount = () => ev(`document.querySelectorAll('.composer .attchip, .composer .attthumb').length`);
+    const busy = () => ev(`!!document.querySelector('.composer .comp-preparing') && document.querySelector('.composer textarea').disabled`);
+    const slot = () => ev(`(() => { const p = window.__store.getPreparation(${JSON.stringify(CI)}); return p ? p.phase + ': ' + p.message.body : null; })()`);
+    const reset = async () => { await ev(`window.__store.reloadAfterSwitch().then(() => true)`); await sleep(500); };
+    // whatever the box holds gives way to the text typed
+    const retype = async (t) => { await ev(`(() => { const e = document.querySelector('.composer textarea'); e.focus(); e.select(); return true; })()`); await b.type('.composer textarea', t); };
+    // Send with the draft clearing held: the message is in the chat, the box still waits
+    const sendDraftHeld = async (t) => {
+      await retype(t);
+      const n0 = await outs();
+      await files('holdDraft()');
+      await b.click('.composer .sendbtn', 100);
+      for (let i = 0; i < 30 && ((await outs()) <= n0 || !(await busy())); i++) await sleep(100);
+      return n0;
+    };
+
+    // control: no switch; once the draft is cleared the send is queued as before
+    let n0 = await sendDraftHeld('Same identity, nothing switched.');
+    check('R4: a sent message waits on its draft being cleared: it is in the chat, the box still says "Queuing message..."',
+      (await outs()) === n0 + 1 && (await busy()) && (await slot()) === 'preparing: Same identity, nothing switched.');
+    await files('releaseDraft()');
+    for (let i = 0; i < 30 && (await busy()); i++) await sleep(100);
+    await sleep(300);
+    check('R4 control: with no switch, once the draft is cleared the send is queued as before: the box is empty and the slot free',
+      (await boxText()) === '' && (await slot()) === null && !(await busy()));
+
+    // the switch comes while the draft clears; the next identity only types
+    n0 = await sendDraftHeld('From the first identity.');
+    await reset();
+    await retype('The next identity, not sent yet.');
+    check('R4: after the switch the slot is empty and the box takes the next identity\'s text',
+      (await slot()) === null && !(await busy()) && (await boxText()) === 'The next identity, not sent yet.');
+    await files('releaseDraft()'); await sleep(700);
+    check('R4: the old send ending meanwhile changes nothing: the next identity\'s text stays in the box and the slot stays empty',
+      (await boxText()) === 'The next identity, not sent yet.' && (await slot()) === null && !(await busy()));
+
+    // the switch comes while the draft clears; the next identity sends a file
+    n0 = await sendDraftHeld('From the first identity, again.');
+    await reset();
+    await retype('The next identity sends a file.');
+    await b.click('.composer [aria-label="Attach files"]', 500);
+    await files('hold()');
+    await b.click('.composer .sendbtn', 100);
+    for (let i = 0; i < 30 && !(await busy()); i++) await sleep(100);
+    check('R4: after the switch the next identity\'s own send is being prepared',
+      (await busy()) && (await slot()) === 'preparing: The next identity sends a file.');
+    await b.shot(join(out, '16-switch-own-send-preparing-desktop-light.png'));
+    await files('releaseDraft()'); await sleep(700);
+    check('R4: the old send ending meanwhile leaves that send alone: still preparing, its text and file still in the box',
+      (await busy()) && (await slot()) === 'preparing: The next identity sends a file.' && (await boxText()) === 'The next identity sends a file.' && (await fileCount()) === 1);
+    const n1 = await outs();
+    await files('release()');
+    for (let i = 0; i < 50 && ((await outs()) <= n1 || (await busy())); i++) await sleep(100);
+    await sleep(500);
+    check('R4: then that send goes as usual: its message is in the chat, the box is empty and the slot free',
+      (await outs()) === n1 + 1 && (await boxText()) === '' && (await fileCount()) === 0 && (await slot()) === null);
+  } catch (e) {
+    check('R4 switch scenario ran to the end: ' + e.message, false);
   }
 
   // ------------------------------------------------------------ android
