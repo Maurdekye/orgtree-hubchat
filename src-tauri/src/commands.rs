@@ -288,6 +288,19 @@ pub fn hc_set_active(on: bool) -> R<()> {
     Ok(())
 }
 
+/// The composer: our user edited the draft for `peer` (`on`), or stopped
+/// writing to it (sent, cleared, chat left, app in the background). While
+/// they write, the core sends typing heartbeats, never the draft.
+#[tauri::command]
+pub fn hc_composing(peer: String, on: bool) -> R<()> {
+    let c = core::get()?;
+    if let Ok(e) = c.engine() {
+        let _g = c.rt.enter();
+        e.composing(&peer, on);
+    }
+    Ok(())
+}
+
 /// Settings › Devices: rename this device; returns the name it now has.
 #[tauri::command]
 pub fn hc_set_device_name(name: String) -> R<String> {

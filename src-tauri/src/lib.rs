@@ -372,6 +372,7 @@ pub fn run() {
             commands::hc_set_read_receipts,
             commands::hc_set_device_name,
             commands::hc_set_active,
+            commands::hc_composing,
             commands::hc_set_notifications,
             commands::hc_set_stay_connected,
             commands::hc_set_push,
