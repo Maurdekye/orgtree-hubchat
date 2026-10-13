@@ -262,9 +262,16 @@ END;
     // 15: persistent device-local Close DM; custody and history are unchanged.
     r#"CREATE TABLE closed_dms (peer TEXT PRIMARY KEY);"#,
     // 16: question cards and multi-reply (docs/question-cards.md): what a
-    // message's checked meta holds, and each chat's unsent replies and picks
+    // message's checked meta holds, each chat's unsent replies and picks, and
+    // every message a multi-reply answers (reply_to has its own index), so
+    // what settles a card is found however far back it is
     r#"ALTER TABLE messages ADD COLUMN meta TEXT;
-CREATE TABLE draft_answers (peer TEXT PRIMARY KEY, data TEXT NOT NULL);"#,
+CREATE TABLE draft_answers (peer TEXT PRIMARY KEY, data TEXT NOT NULL);
+CREATE TABLE reply_links (target TEXT NOT NULL, message_id TEXT NOT NULL, PRIMARY KEY (target, message_id)) WITHOUT ROWID;
+CREATE INDEX reply_links_by_message ON reply_links(message_id);
+CREATE TRIGGER reply_links_gone AFTER DELETE ON messages BEGIN
+  DELETE FROM reply_links WHERE message_id=OLD.id;
+END;"#,
 ];
 
 pub struct Store {
@@ -617,6 +624,7 @@ impl Store {
                  VALUES(?,?,1,?,?,?,?,?,'queued',?)",
                 params![msg.id, msg.peer, msg.body, msg.kind, msg.reply_to, now, now, meta],
             )?;
+            link_replies(&tx, &msg.id, &crate::questions::Meta::load(meta).replies)?;
             for (i, a) in msg.attachments.iter().enumerate() {
                 tx.execute(
                     "INSERT INTO attachments(local_id, message_id, position, name, bytes, source, source_sha256, staged_path, state)
@@ -642,6 +650,7 @@ impl Store {
             )?;
             if n > 0 {
                 close_dm::reopen(&tx, &env.from)?;
+                link_replies(&tx, &env.id, &qa.replies)?;
                 for (i, a) in env.attachments.iter().enumerate() {
                     insert_remote_attachment(&tx, hub, &env.id, i, a)?;
                 }
@@ -827,7 +836,7 @@ impl Store {
             c.execute_batch(
                 "DELETE FROM attachments; DELETE FROM messages; DELETE FROM roster; DELETE FROM hubs;
                  DELETE FROM drafts; DELETE FROM notification_replies; DELETE FROM meta; DELETE FROM closed_dms;
-                 DELETE FROM draft_answers;",
+                 DELETE FROM draft_answers; DELETE FROM reply_links;",
             )
         })
     }
@@ -918,6 +927,7 @@ impl Store {
                             qa.stored(),
                         ],
                     )?;
+                    link_replies(&tx, &env.id, &qa.replies)?;
                     for (i, a) in env.attachments.iter().enumerate() {
                         insert_remote_attachment(&tx, hub, &env.id, i, a)?;
                     }
@@ -1501,6 +1511,15 @@ fn held_by(tx: &rusqlite::Transaction, id: &str, hub: &str) -> rusqlite::Result<
         "INSERT OR IGNORE INTO message_hubs(id, hub) VALUES(?,?)",
         [id, hub],
     )
+}
+
+/// Every message a multi-reply answers, so `card_answers` finds a card's
+/// answers by index; a single reply's reply_to has its own.
+fn link_replies(tx: &rusqlite::Transaction, id: &str, replies: &[String]) -> rusqlite::Result<()> {
+    for r in replies {
+        tx.execute("INSERT OR IGNORE INTO reply_links(target, message_id) VALUES(?,?)", params![r, id])?;
+    }
+    Ok(())
 }
 
 fn insert_remote_attachment(
