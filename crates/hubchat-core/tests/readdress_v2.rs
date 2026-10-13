@@ -1,7 +1,9 @@
-//! The same hub under another address (user 2026-10-13 18:51Z: the hub was
-//! added as `localhost`, removed, and added again as the PC's name): the
-//! contacts and chats must survive and stay messageable through the new
-//! address.
+//! A hub removed and added again (user 2026-10-13 18:51Z: the hub was added
+//! as `localhost`, removed, and added again as the PC's name, an address the
+//! PC had used before): the contacts and chats must survive and stay
+//! messageable. Removing a hub used to keep its sync position, so an
+//! address added again resumed it and contacts unchanged since never came
+//! back to the directory.
 //! Set HUBCHAT_V2_HUB to a scratch mail hub v2 (skipped when unset). The test
 //! reaches that one hub a second way, through a TCP forwarder: another
 //! address, the same hub. Each scenario prints what it saw at every step
@@ -27,13 +29,16 @@ impl Host for TestHost {
     }
 }
 
-fn device(me: &Identity, name: &str) -> Arc<Engine> {
-    let store = Arc::new(Store::open_in_memory().unwrap());
+fn engine_on(store: Arc<Store>, me: &Identity, name: &str) -> Arc<Engine> {
     let profile = Profile { kind: "person".into(), org_name: name.into(), username: name.into(), blurb: String::new() };
     let e = Engine::new(store, me.clone(), profile, Arc::new(TestHost));
     e.set_device(name, name);
     e.start().unwrap();
     e
+}
+
+fn device(me: &Identity, name: &str) -> Arc<Engine> {
+    engine_on(Arc::new(Store::open_in_memory().unwrap()), me, name)
 }
 
 fn url(a: &str) -> String {
@@ -66,9 +71,13 @@ fn connected(e: &Engine, hub: &str) -> bool {
     e.hub_statuses().iter().any(|s| s.url == u && s.state == HubState::Connected && s.answered_ms.is_some())
 }
 
-/// The hubs `e`'s directory lists `who` on (None: not listed at all).
+/// The hubs `store`'s directory lists `who` on (None: not listed at all).
+fn listed_in(store: &Store, who: &str) -> Option<Vec<String>> {
+    store.directory().unwrap().into_iter().find(|c| c.address == who).map(|c| c.hubs)
+}
+
 fn listed_on(e: &Engine, who: &str) -> Option<Vec<String>> {
-    e.store().directory().unwrap().into_iter().find(|c| c.address == who).map(|c| c.hubs)
+    listed_in(e.store(), who)
 }
 
 fn has_chat(e: &Engine, peer: &str) -> bool {
@@ -121,15 +130,21 @@ impl Drop for Forwarder {
 
 #[derive(Clone, Copy, Debug)]
 enum Order {
-    /// Remove the old address, then add the new one (the user's words).
+    /// Remove the old address, then add a new one this device never used.
     RemoveThenAdd,
     /// Add the new address first, then remove the old one.
     AddThenRemove,
+    /// Remove the address, then add the same address again.
+    SameAddress,
+    /// The user's case: the new address was on this device once and was
+    /// removed (box unticked); now the old one is removed and the new one
+    /// added again.
+    UsedBefore,
 }
 
-/// Alex talks with Bob through the hub at `old`, then moves to `new` (the
-/// same hub) in `order`, `unregister` as the removal dialog's box was.
-/// Returns what went wrong, in order; empty when the contacts survived.
+/// Alex talks with Bob through the hub at `old`, then moves (`order`) with
+/// `unregister` as the removal dialog's box was. Returns what went wrong,
+/// in order; empty when the contacts survived.
 async fn scenario(old: &str, new: &str, order: Order, unregister: bool) -> Vec<String> {
     let tag = format!("[{order:?}, unregister={unregister}]");
     let mut bad = Vec::new();
@@ -141,6 +156,11 @@ async fn scenario(old: &str, new: &str, order: Order, unregister: bool) -> Vec<S
     b.add_hub(old).unwrap();
     assert!(until(30, || connected(&a, old) && connected(&b, old)).await, "{tag} both connected at the old address");
     assert!(until(30, || listed_on(&a, &bob.address()).is_some() && listed_on(&b, &alex.address()).is_some()).await, "{tag} each lists the other");
+    if let Order::UsedBefore = order {
+        a.add_hub(new).unwrap();
+        assert!(until(30, || connected(&a, new)).await, "{tag} the new address connected the first time");
+        a.remove_hub(&url(new), false).await.unwrap();
+    }
     let first = uid("hi-");
     a.send(msg(&first, &bob.address(), "hi bob")).await.unwrap();
     assert!(until(30, || b.store().message(&first).unwrap().is_some()).await, "{tag} bob got alex's first message");
@@ -149,13 +169,17 @@ async fn scenario(old: &str, new: &str, order: Order, unregister: bool) -> Vec<S
     assert!(until(30, || a.store().message(&answer).unwrap().is_some()).await, "{tag} alex got bob's answer");
     eprintln!("{tag} before: bob listed on {:?}, chat with bob: {}", listed_on(&a, &bob.address()), has_chat(&a, &bob.address()));
 
+    let at = match order {
+        Order::SameAddress => old,
+        _ => new,
+    };
     match order {
-        Order::RemoveThenAdd => {
+        Order::RemoveThenAdd | Order::SameAddress | Order::UsedBefore => {
             a.remove_hub(&url(old), unregister).await.unwrap();
             eprintln!("{tag} old address removed: bob listed on {:?}, chat with bob: {}", listed_on(&a, &bob.address()), has_chat(&a, &bob.address()));
-            a.add_hub(new).unwrap();
-            if !until(30, || connected(&a, new)).await {
-                bad.push(format!("{tag} the new address never connected: {:?}", a.hub_statuses()));
+            a.add_hub(at).unwrap();
+            if !until(30, || connected(&a, at)).await {
+                bad.push(format!("{tag} the address added never connected: {:?}", a.hub_statuses()));
             }
         }
         Order::AddThenRemove => {
@@ -174,10 +198,10 @@ async fn scenario(old: &str, new: &str, order: Order, unregister: bool) -> Vec<S
         }
     }
 
-    let back = until(30, || listed_on(&a, &bob.address()).is_some_and(|h| h.contains(&url(new)))).await;
+    let back = until(30, || listed_on(&a, &bob.address()).is_some_and(|h| h.contains(&url(at)))).await;
     eprintln!("{tag} after: bob listed on {:?}, chat with bob: {}, hubs {:?}", listed_on(&a, &bob.address()), has_chat(&a, &bob.address()), a.hub_statuses().iter().map(|s| (s.url.clone(), s.state.clone())).collect::<Vec<_>>());
     if !back {
-        bad.push(format!("{tag} bob is not in alex's directory through the new address (the composer says he isn't on any hub)"));
+        bad.push(format!("{tag} bob is not in alex's directory through the address added (the composer says he isn't on any hub)"));
     }
     if !has_chat(&a, &bob.address()) {
         bad.push(format!("{tag} alex's chat with bob is gone"));
@@ -203,18 +227,23 @@ async fn scenario(old: &str, new: &str, order: Order, unregister: bool) -> Vec<S
     bad
 }
 
-async fn run(order: Order, unregister: bool) {
-    let Ok(hub) = std::env::var("HUBCHAT_V2_HUB") else {
+fn scratch_hub() -> Option<String> {
+    let hub = std::env::var("HUBCHAT_V2_HUB").ok();
+    if hub.is_none() {
         eprintln!("SKIPPED: set HUBCHAT_V2_HUB to a scratch mail hub v2");
-        return;
-    };
+    }
+    hub
+}
+
+async fn run(order: Order, unregister: bool) {
+    let Some(hub) = scratch_hub() else { return };
     let fwd = Forwarder::start(&hub).await;
     let bad = scenario(&hub, &fwd.addr(), order, unregister).await;
     assert!(bad.is_empty(), "{bad:#?}");
 }
 
-/// What the user did: remove the hub (the dialog's "also remove my address"
-/// box is ticked by default), then add the same hub by another name.
+/// Remove the hub (the dialog's "also remove my address" box is ticked by
+/// default), then add the same hub by a name this device never used.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn same_hub_readded_at_another_address_keeps_contacts() {
     run(Order::RemoveThenAdd, true).await;
@@ -230,4 +259,56 @@ async fn same_hub_readded_without_unregistering_keeps_contacts() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn same_hub_added_again_then_old_address_removed_keeps_contacts() {
     run(Order::AddThenRemove, true).await;
+}
+
+/// The removed address itself, added again.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_same_address_added_again_keeps_contacts() {
+    run(Order::SameAddress, true).await;
+}
+
+/// The user's case: the hub added again under a name this device had used
+/// (and removed) before.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_address_used_before_added_again_keeps_contacts() {
+    run(Order::UsedBefore, true).await;
+}
+
+/// A store the bug already hit, as the user's is: its sync position kept,
+/// the contact's directory row gone. The first start after the update brings
+/// the contact back without the user doing anything.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_store_hit_before_the_fix_heals_on_its_own() {
+    let Some(hub) = scratch_hub() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("hubchat.sqlite3");
+    let alex = Identity::generate("alex").unwrap();
+    let bob = Identity::generate("bob").unwrap();
+    let b = device(&bob, "bob-pc");
+    b.add_hub(&hub).unwrap();
+    {
+        let store = Arc::new(Store::open(&path).unwrap());
+        let a = engine_on(store.clone(), &alex, "alex-pc");
+        a.add_hub(&hub).unwrap();
+        assert!(until(30, || connected(&a, &hub) && listed_on(&a, &bob.address()).is_some()).await, "alex lists bob");
+        a.shutdown();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        // what the bug left: the position kept, the contact's row gone
+        store.remove_roster(&url(&hub), &[bob.address()]).unwrap();
+        assert!(listed_in(&store, &bob.address()).is_none());
+    }
+    // the store as it stood before the update
+    rusqlite::Connection::open(&path).unwrap().pragma_update(None, "user_version", 16).unwrap();
+    let a = engine_on(Arc::new(Store::open(&path).unwrap()), &alex, "alex-pc");
+    let healed = until(30, || listed_on(&a, &bob.address()).is_some()).await;
+    eprintln!("[stale store] after the start: bob listed on {:?}, hubs {:?}", listed_on(&a, &bob.address()), a.hub_statuses().iter().map(|s| (s.url.clone(), s.state.clone())).collect::<Vec<_>>());
+    let again = uid("again-");
+    if healed {
+        a.send(msg(&again, &bob.address(), "back?")).await.unwrap();
+    }
+    let reached = healed && until(30, || b.store().message(&again).unwrap().is_some()).await;
+    a.shutdown();
+    b.shutdown();
+    assert!(healed, "bob never came back to alex's directory on its own");
+    assert!(reached, "alex's message never reached bob (alex's copy: {})", state(&a, &again));
 }
