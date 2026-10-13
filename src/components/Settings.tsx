@@ -61,12 +61,13 @@ function Profile() {
     catch (e) { toast("Couldn't save: " + errText(e)); }
     finally { setBusy(false); }
   };
-  const pictureTrigger = (choose: () => void, processing: boolean) => {
-    const avatar = <button type="button" className="profile-picture-button" aria-label="Change profile picture"
+  const pictureTrigger = (choose: () => void, processing: boolean, remove: () => void) => {
+    const avatar = <span className="profile-picture-controls"><button type="button" className="profile-picture-button" aria-label="Change profile picture"
       title="Change profile picture" disabled={processing} onClick={choose}>
       <Avatar kind="me" name={me.name || me.id} size={platform === "android" ? 96 : 72} />
       <span className="profile-picture-pencil" aria-hidden="true"><Icon name="edit" /></span>
-    </button>;
+    </button>{me.picture?.sha256 && <button type="button" className="profile-picture-remove" aria-label="Remove profile picture"
+      title="Remove profile picture" disabled={processing} onClick={remove}><Icon name="close" /></button>}</span>;
     return platform === "android" ? <div className="hero">{avatar}</div>
       : <div style={{ display: "flex", gap: 20, alignItems: "center", margin: "8px 0 6px" }}>{avatar}
           <div><div style={{ font: "600 19px var(--font-display)", color: "var(--ink-strong)" }}>{me.name || me.id}</div><div className="mono dim" style={{ fontSize: 12.5 }}><Addr a={me.address} net /></div></div>

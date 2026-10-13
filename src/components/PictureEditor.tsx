@@ -6,7 +6,7 @@ import { errText } from "../lib/native";
 /** The shared desktop/Android Profile editor. Cropping uses oriented native
  * previews; full original bytes never enter an image element or canvas. */
 export function PictureEditor({ owner, hasPicture, trigger }: {
-  owner: string; hasPicture: boolean; trigger?: (choose: () => void, busy: boolean) => ReactNode;
+  owner: string; hasPicture: boolean; trigger?: (choose: () => void, busy: boolean, remove: () => void) => ReactNode;
 }) {
   const [selected, setSelected] = useState<{ data: string; preview: string; width: number; height: number } | null>(null);
   const [crop, setCrop] = useState<PictureCrop>({ x: .5, y: .5, size: 1 });
@@ -52,7 +52,7 @@ export function PictureEditor({ owner, hasPicture, trigger }: {
   };
   const side = selected ? Math.min(selected.width, selected.height) * crop.size : 1;
   return <>
-    {trigger?.(start, busy)}
+    {trigger?.(start, busy, () => { setEditing(true); void save(true); })}
     <input ref={fileInput} id="picture-file" type="file" hidden={!!trigger} aria-label="Choose profile picture" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={e => { void choose(e.currentTarget.files?.[0]); e.currentTarget.value = ""; }} />
     {(!trigger || editing) && <div className="field">
     {!trigger && <label htmlFor="picture-file">Profile picture</label>}
@@ -66,7 +66,7 @@ export function PictureEditor({ owner, hasPicture, trigger }: {
       <label>Vertical position<input aria-label="Vertical crop position" type="range" min="0" max="1" step="0.01" value={crop.y} disabled={busy} onChange={e => setCrop(c => ({ ...c, y: Number(e.target.value) }))} /></label>
       <button className="btn primary" disabled={busy} onClick={() => void save(false)}>Save picture</button>{" "}
     </>}
-    {hasPicture && <button className="btn" disabled={busy} onClick={() => void save(true)}>Remove picture</button>}
+    {hasPicture && !trigger && <button className="btn" disabled={busy} onClick={() => void save(true)}>Remove picture</button>}
     {(selected || trigger) && <>{" "}<button className="btn" disabled={busy} onClick={cancel}>Cancel</button></>}
     {busy && <p role="status">Processing picture…</p>}
     {error && <p role="alert">{error}</p>}
