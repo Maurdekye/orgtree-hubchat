@@ -228,6 +228,8 @@ Notes:
   repo. To build without it, create a file such as `no-updater.json`
   containing `{ "bundle": { "createUpdaterArtifacts": false } }` and run
   `npm run tauri build -- --config no-updater.json`.
+  The installer offers Upgrade over an existing install, closing and relaunching
+  Hubchat: [docs/windows-installer-upgrade.md](docs/windows-installer-upgrade.md).
 - **Android script:** on Windows without Developer Mode, `tauri android build`
   can't create a symlink it needs. `scripts/android-build.sh` (run it in Git
   Bash) works around that. It builds for arm64.
