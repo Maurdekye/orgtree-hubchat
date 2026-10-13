@@ -515,13 +515,61 @@ fn prune_with(dir: &Path, active: Option<&Path>, now: SystemTime, keep_for: Dura
     }
 }
 
+/// What a log file appends to: a file, or (in tests) a sink that fails on cue.
+trait Appender: std::io::Write + Send {
+    /// Make what was appended durable (best effort).
+    fn sync(&mut self);
+    /// How many bytes the sink holds, when it can say.
+    fn len(&self) -> Option<u64>;
+}
+
+impl Appender for std::fs::File {
+    fn sync(&mut self) {
+        let _ = self.sync_data();
+    }
+    fn len(&self) -> Option<u64> {
+        self.metadata().ok().map(|m| m.len())
+    }
+}
+
+/// `write_all` that charges `size` with every byte the sink took, also when it
+/// then fails: the bytes of a short write stay in the file, so the size account
+/// (the only thing that keeps the file under its limit) must count them. What a
+/// write that failed left behind is not taken on trust as nothing: the sink is
+/// asked how long it now is, and a sink that cannot say is charged for the rest
+/// of the buffer (the account may then be too high, never too low; a rollover
+/// starts it over from the real file).
+fn write_counted(sink: &mut dyn Appender, size: &mut u64, mut buf: &[u8]) -> std::io::Result<()> {
+    while !buf.is_empty() {
+        match sink.write(buf) {
+            Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
+            Ok(n) => {
+                let n = n.min(buf.len());
+                *size = size.saturating_add(n as u64);
+                buf = &buf[n..];
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => {
+                match sink.len() {
+                    Some(len) => *size = (*size).max(len),
+                    None => *size = size.saturating_add(buf.len() as u64),
+                }
+                return Err(e);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The log file: rolled over daily or at `max` bytes (a gzip archive beside
 /// it, then a fresh file under the same name); never by count.
 pub struct LogFile {
     path: PathBuf,
     /// Where archives are made (the file's own folder); a field so a test can break it.
     archive_dir: PathBuf,
-    file: std::fs::File,
+    file: Box<dyn Appender>,
+    /// Bytes in the file: every byte the sink has taken, whole writes and the
+    /// prefixes of failed ones alike (`write_counted`).
     size: u64,
     max: u64,
     roll_at: SystemTime,
@@ -555,8 +603,13 @@ impl LogFile {
     fn open_with(path: PathBuf, max: u64) -> std::io::Result<LogFile> {
         let file = std::fs::OpenOptions::new().create(true).append(true).open(&path)?;
         let size = file.metadata().map(|m| m.len()).unwrap_or(0);
+        Ok(LogFile::with_sink(path, Box::new(file), size, max))
+    }
+
+    /// A log file over `file`, which already holds `size` bytes.
+    fn with_sink(path: PathBuf, file: Box<dyn Appender>, size: u64, max: u64) -> LogFile {
         let archive_dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
-        Ok(LogFile {
+        LogFile {
             path,
             archive_dir,
             file,
@@ -568,7 +621,7 @@ impl LogFile {
             dropped: 0,
             reserve: max / 128,
             carried: Vec::new(),
-        })
+        }
     }
 
     /// Gzip the file beside itself as `<name>.<32 hex>.gz`.
@@ -611,22 +664,27 @@ impl LogFile {
             self.retry_at = SystemTime::now() + ROLL_RETRY;
             return false;
         };
-        self.file = f;
+        self.file = Box::new(f);
         self.size = 0;
         self.archived = false;
-        // pointer lines added while only the fresh file was missing are in no
-        // archive: they open the fresh file
-        for note in std::mem::take(&mut self.carried) {
-            if self.file.write_all(note.as_bytes()).is_ok() {
-                self.size += note.len() as u64;
-            }
-        }
-        let _ = self.file.sync_data();
+        self.replay_carried();
         self.roll_at = SystemTime::now() + Duration::from_secs(24 * 3600);
         if let Some(dir) = self.path.parent() {
             prune(dir, Some(&self.path));
         }
         true
+    }
+}
+
+impl LogFile {
+    /// Pointer lines added while only the fresh file was missing are in no
+    /// archive: they open the fresh file. Best effort (a line the sink refuses is
+    /// lost), but every byte the sink takes is charged.
+    fn replay_carried(&mut self) {
+        for note in std::mem::take(&mut self.carried) {
+            let _ = write_counted(&mut *self.file, &mut self.size, note.as_bytes());
+        }
+        self.file.sync();
     }
 }
 
@@ -653,12 +711,10 @@ impl std::io::Write for LogFile {
             return Ok(buf.len());
         }
         if let Some(note) = note {
-            self.file.write_all(note.as_bytes())?;
-            self.size += note.len() as u64;
+            write_counted(&mut *self.file, &mut self.size, note.as_bytes())?;
             self.dropped = 0;
         }
-        self.file.write_all(buf)?;
-        self.size += buf.len() as u64;
+        write_counted(&mut *self.file, &mut self.size, buf)?;
         Ok(buf.len())
     }
     fn flush(&mut self) -> std::io::Result<()> {
@@ -678,12 +734,11 @@ impl LogFile {
     /// reached the file. Never panics.
     fn append_emergency(&mut self, text: &str) -> bool {
         let n = text.len() as u64;
-        if self.size.saturating_add(n) > self.max || self.file.write_all(text.as_bytes()).is_err() {
+        if self.size.saturating_add(n) > self.max || write_counted(&mut *self.file, &mut self.size, text.as_bytes()).is_err() {
             self.dropped = self.dropped.saturating_add(1);
             return false;
         }
-        self.size = self.size.saturating_add(n);
-        let _ = self.file.sync_data();
+        self.file.sync();
         if self.archived {
             let held: u64 = self.carried.iter().map(|c| c.len() as u64).sum();
             if held.saturating_add(n) <= self.reserve {
@@ -1748,5 +1803,232 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         assert_eq!(count(&text, NOTE_ID), 1);
         assert!(text.ends_with("still writing\n"), "{text}");
+    }
+
+    /// A sink that takes `allow` more bytes and then fails every write: a storage
+    /// fault in the middle of a line (the bytes it took stay in the file). With
+    /// `base` it can say how long it is (`base` plus what it took); without, it
+    /// cannot.
+    struct Torn {
+        bytes: Arc<Mutex<Vec<u8>>>,
+        allow: Arc<std::sync::atomic::AtomicUsize>,
+        base: Option<u64>,
+    }
+
+    impl std::io::Write for Torn {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let left = self.allow.load(Ordering::SeqCst);
+            if left == 0 {
+                return Err(std::io::Error::other("injected storage fault"));
+            }
+            let n = left.min(buf.len());
+            self.allow.fetch_sub(n, Ordering::SeqCst);
+            self.bytes.lock().unwrap().extend_from_slice(&buf[..n]);
+            Ok(n)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Appender for Torn {
+        fn sync(&mut self) {}
+        fn len(&self) -> Option<u64> {
+            self.base.map(|b| b + self.bytes.lock().unwrap().len() as u64)
+        }
+    }
+
+    type Taken = Arc<Mutex<Vec<u8>>>;
+    type Allow = Arc<std::sync::atomic::AtomicUsize>;
+
+    /// A log file of `max` bytes over a `Torn` sink that already holds `size`
+    /// bytes; `exact`: the sink can say how long it is.
+    fn torn(dir: &Path, size: u64, max: u64, exact: bool) -> (LogFile, Taken, Allow) {
+        let bytes: Taken = Arc::new(Mutex::new(Vec::new()));
+        let allow: Allow = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let sink = Torn { bytes: bytes.clone(), allow: allow.clone(), base: exact.then_some(size) };
+        (LogFile::with_sink(dir.join("2026-10-12_01-02-03.log"), Box::new(sink), size, max), bytes, allow)
+    }
+
+    fn held(bytes: &Taken) -> u64 {
+        bytes.lock().unwrap().len() as u64
+    }
+
+    #[test]
+    fn a_pointer_the_sink_takes_only_partly_is_charged_so_the_limit_holds() {
+        let dir = temp("torn-hook");
+        let line = "x".repeat(127) + "\n"; // 128 bytes
+        for exact in [true, false] {
+            let (mut f, bytes, allow) = torn(&dir, 800, 1024, exact);
+            let mut accounts = Vec::new();
+            for _ in 0..6 {
+                allow.store(64, Ordering::SeqCst); // the sink takes 64 bytes of each attempt, then fails
+                assert!(!f.append_emergency(&line), "a pointer the sink did not take whole is not reported written");
+                accounts.push((f.size, held(&bytes)));
+            }
+            assert!(800 + held(&bytes) <= 1024, "exact={exact}: the sink reached {} bytes against a limit of 1024", 800 + held(&bytes));
+            for (size, taken) in accounts {
+                assert!(size >= 800 + taken, "exact={exact}: the account must never understate: {size} for {taken} taken");
+                if exact {
+                    assert_eq!(size, 800 + taken, "a sink that can say how long it is gives an exact account");
+                }
+            }
+            if !exact {
+                // it cannot say: the rest of the line is charged, so later pointers are refused sooner
+                assert_eq!((f.size, held(&bytes)), (928, 64));
+            }
+        }
+    }
+
+    #[test]
+    fn a_pointer_control_whole_writes_and_zero_byte_errors_stay_bounded() {
+        let dir = temp("torn-hook-control");
+        let line = "x".repeat(127) + "\n";
+        for exact in [true, false] {
+            // healthy: written whole, charged whole, the next one does not fit
+            let (mut f, bytes, allow) = torn(&dir, 800, 1024, exact);
+            allow.store(usize::MAX, Ordering::SeqCst);
+            assert!(f.append_emergency(&line));
+            assert_eq!((f.size, held(&bytes)), (928, 128));
+            assert!(!f.append_emergency(&line));
+            assert_eq!((f.size, held(&bytes)), (928, 128));
+            // a sink that fails before taking anything
+            let (mut f, bytes, allow) = torn(&dir, 800, 1024, exact);
+            allow.store(0, Ordering::SeqCst);
+            for _ in 0..6 {
+                assert!(!f.append_emergency(&line));
+            }
+            assert_eq!(held(&bytes), 0);
+            assert!((800..=1024).contains(&f.size), "exact={exact}: {}", f.size);
+            if exact {
+                assert_eq!(f.size, 800, "nothing was taken, nothing is charged");
+            }
+        }
+    }
+
+    #[test]
+    fn a_sink_that_cannot_say_how_long_it_is_is_charged_for_the_rest_of_a_failed_line() {
+        let dir = temp("torn-unknown");
+        let line = "x".repeat(127) + "\n";
+        let (mut f, bytes, allow) = torn(&dir, 800, 1024, false);
+        allow.store(0, Ordering::SeqCst);
+        assert!(!f.append_emergency(&line));
+        assert_eq!((f.size, held(&bytes)), (928, 0), "the outcome of a failed write is unknown, not zero");
+        // the next pointer, which would not fit on top of that, is refused without touching the sink
+        allow.store(usize::MAX, Ordering::SeqCst);
+        assert!(!f.append_emergency(&line));
+        assert_eq!(held(&bytes), 0);
+    }
+
+    #[test]
+    fn a_line_the_sink_takes_only_partly_is_charged_so_the_limit_holds() {
+        let dir = temp("torn-line");
+        for exact in [true, false] {
+            let (mut f, bytes, allow) = torn(&dir, 800, 1024, exact);
+            f.reserve = 0;
+            let mut accounts = Vec::new();
+            let mut failed = 0;
+            for _ in 0..6 {
+                allow.store(64, Ordering::SeqCst);
+                if f.write(&[b'y'; 128]).is_err() {
+                    failed += 1;
+                }
+                accounts.push((f.size, held(&bytes)));
+            }
+            assert!(failed >= 1, "the injected fault reached the writer");
+            assert!(800 + held(&bytes) <= 1024, "exact={exact}: the sink reached {} bytes against a limit of 1024", 800 + held(&bytes));
+            for (size, taken) in accounts {
+                assert!(size >= 800 + taken, "exact={exact}: the account must never understate: {size} for {taken} taken");
+                if exact {
+                    assert_eq!(size, 800 + taken, "a sink that can say how long it is gives an exact account");
+                }
+            }
+            assert!(f.dropped >= 1, "lines that no longer fit are turned away");
+        }
+    }
+
+    #[test]
+    fn carried_pointers_a_sink_takes_only_partly_are_charged() {
+        let dir = temp("torn-carry");
+        for exact in [true, false] {
+            let (mut f, bytes, allow) = torn(&dir, 0, 1024, exact);
+            f.carried = vec!["a".repeat(100), "b".repeat(100)];
+            allow.store(150, Ordering::SeqCst); // the first whole, half of the second, then the fault
+            f.replay_carried();
+            assert_eq!(held(&bytes), 150);
+            // exact: what the sink took; unknown: the rest of the second note on top
+            assert_eq!(f.size, if exact { 150 } else { 200 }, "exact={exact}");
+            assert!(f.carried.is_empty());
+        }
+    }
+
+    /// Hands out 3 bytes at a time, after an interruption.
+    struct Chunky {
+        bytes: Vec<u8>,
+        interrupted: bool,
+    }
+
+    impl std::io::Write for Chunky {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if !self.interrupted {
+                self.interrupted = true;
+                return Err(std::io::ErrorKind::Interrupted.into());
+            }
+            let n = buf.len().min(3);
+            self.bytes.extend_from_slice(&buf[..n]);
+            Ok(n)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Appender for Chunky {
+        fn sync(&mut self) {}
+        fn len(&self) -> Option<u64> {
+            None
+        }
+    }
+
+    /// Takes nothing and says so.
+    struct Zero;
+
+    impl std::io::Write for Zero {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Ok(0)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Appender for Zero {
+        fn sync(&mut self) {}
+        fn len(&self) -> Option<u64> {
+            None
+        }
+    }
+
+    #[test]
+    fn write_counted_charges_each_accepted_byte_retries_interruptions_and_refuses_a_zero_write() {
+        let mut sink = Chunky { bytes: Vec::new(), interrupted: false };
+        let mut size = 10;
+        write_counted(&mut sink, &mut size, b"0123456789").unwrap();
+        assert_eq!((size, sink.bytes.len()), (20, 10));
+        let mut size = 0;
+        let err = write_counted(&mut Zero, &mut size, b"x").unwrap_err();
+        assert_eq!((err.kind(), size), (std::io::ErrorKind::WriteZero, 0));
+    }
+
+    #[test]
+    fn a_real_file_account_matches_its_length_after_whole_writes() {
+        let dir = temp("account-real");
+        let path = dir.join("2026-10-12_01-02-03.log");
+        let mut f = LogFile::open_with(path.clone(), 4096).unwrap();
+        f.write_all(b"one line\n").unwrap();
+        assert!(f.append_emergency("a pointer\n"));
+        f.write_all(b"another line\n").unwrap();
+        assert_eq!(f.size, std::fs::metadata(&path).unwrap().len());
+        assert_eq!(f.file.len(), Some(f.size));
     }
 }
