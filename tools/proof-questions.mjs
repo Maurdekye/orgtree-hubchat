@@ -4,8 +4,10 @@
 // final, desktop Ctrl+click and Android long-press selection, stacked quotes;
 // review R1: cards and answers beyond the first page after a restart, and the
 // real answers.ts and questions.ts modules (saved answers across an identity
-// switch, settlement from the store). Each R1 part records a failure and goes
-// on, so the same proof shows what the reviewed code did.
+// switch, settlement from the store); review R2: an empty send to a card the
+// store hasn't answered for yet (its query held back, then failing) waits,
+// mixed with picks, skips and files. Each R1/R2 part records a failure and
+// goes on, so the same proof shows what the reviewed code did.
 // Run it only through tools/verify-questions.ps1, which starts it inside the
 // Orgtree kernel Job runner: bundling, the server and Chrome end with the job.
 for (const k of ['HUBCHAT_JOB_CONTAINED', 'HUBCHAT_VITE_CACHE', 'HUBCHAT_PROOF_OUT']) if (!process.env[k]) throw Error('Use tools/verify-questions.ps1; missing ' + k);
@@ -216,6 +218,92 @@ try {
     check('beyond-the-page scenario ran to the end: ' + e.message, false);
   }
 
+  // ------------- review R2: an empty send to a card the store hasn't answered for
+  // window.__hcCards (the mock) holds the store's answer back or makes it
+  // fail, and adds a card as if it had just come in. While a card's state is
+  // unknown, an empty message replying to it must wait, whatever else it
+  // answers, and keep everything; once the store answers it goes.
+  try {
+    const CI = 'nightly-ci.alex.8d21e0';
+    await ev(`localStorage.removeItem('hubchat-mock-draft-answers'), true`);
+    await b.nav(base + '?pages=1', 1200);
+    await openChat('nightly-ci');
+    const cards = (js) => ev(`(window.__hcCards.${js}, true)`);
+    const saved = () => ev(`JSON.parse(localStorage.getItem('hubchat-mock-draft-answers') || '{}')[${JSON.stringify(CI)}] ?? null`);
+    const outs = () => ev(`document.querySelectorAll('.timeline .msg.out').length`);
+    const waits = () => ev(`document.querySelector('.composer .sendbtn').disabled`);
+    const note = () => msgText('.composer .skipnote');
+    const CHECKING = 'Checking whether the question you reply to is still open';
+    const SKIPS = 'Sending with no text skips the question you reply to';
+    const notes = () => ev(`[...${sent}.querySelectorAll('.quote')].map((q) => q.querySelector('.q-ans')?.innerText ?? '')`);
+    const newCard = async (id, body, options) => { await cards(`card(${JSON.stringify(CI)}, '${id}', ${JSON.stringify(body)}, ${JSON.stringify(options)})`); await sleep(700); };
+
+    // a pick on a known card, a reply to a card not known yet (query held)
+    await newCard('q-k1', 'Rotate the signing key tonight?', ['Rotate', 'Later']);
+    await cards('hold()');
+    await newCard('q-u1', 'Anything to add to the runbook today?', []);
+    await pickOpt('q-k1', 'Rotate');
+    await b.click('#m-q-u1 .q-hint', 300);
+    let n0 = await outs();
+    check('R2, query held: a pick on a known card plus an empty reply to one not known yet: Send waits and says it is checking; pick and reply stay',
+      (await waits()) && (await note()) === CHECKING && (await chips()).length === 1 && (await msgText('.composer .replybar .rb-txt'))?.includes('Anything to add to the runbook today?'));
+    await ev(`document.querySelector('.composer textarea').focus(), true`); await b.key('Enter'); await sleep(500);
+    check('R2, query held: Enter with no text sends nothing', (await outs()) === n0);
+    await cards('release()'); await sleep(700);
+    check('R2: once the store answers, Send is open and says the empty reply skips the now known open card',
+      !(await waits()) && (await note()) === SKIPS && (await chips()).length === 1);
+    await sendNow();
+    check('R2: then one empty send answers the first card ("Answer: Rotate") and skips the second ("Skipped")', (await notes()).join('|') === 'Answer: Rotate|Skipped');
+
+    // an empty reply to a known open card and to one not known (query failing)
+    await newCard('q-k2', 'Keep the canary hub running?', ['Keep it', 'Stop it']);
+    await cards('fail()');
+    await newCard('q-u2', 'Move the nightly to 03:00?', ['Yes', 'No']);
+    await clickAt(`document.querySelector('#m-q-k2 .kchip')`, 2);
+    await clickAt(`document.querySelector('#m-q-u2 .kchip')`, 2);
+    await b.click('.selbar .btn', 300);
+    n0 = await outs();
+    check('R2, query failing: an empty reply to a known open card and to one not known: Send waits; both replies stay',
+      (await waits()) && (await note()) === CHECKING && (await ev(`document.querySelectorAll('.composer .rb-item').length`)) === 2);
+    await ev(`document.querySelector('.composer textarea').focus(), true`); await b.key('Enter'); await sleep(500);
+    check('R2, query failing: Enter with no text sends nothing', (await outs()) === n0);
+    await b.type('.composer textarea', 'Both can wait until Friday.');
+    check('R2, query failing: with text the reply can go at once (positive control)', !(await waits()));
+    await sendNow();
+    check('R2, query failing: the reply with text answers both cards', (await outs()) === n0 + 1 && (await ev(`${sent}.querySelectorAll('.quote').length`)) === 2);
+    await cards('release()'); await sleep(700);
+
+    // files and no text: the same wait (query held)
+    await newCard('q-k3', 'Archive last week\'s logs?', ['Archive', 'Keep']);
+    await cards('hold()');
+    await newCard('q-u3', 'Anything for the on-call notes?', []);
+    await pickOpt('q-k3', 'Archive');
+    await b.click('#m-q-u3 .q-hint', 300);
+    await b.click('.composer [aria-label="Attach files"]', 500);
+    check('R2, query held: a file but no text, a pick, and a reply to a card not known yet: Send waits',
+      (await waits()) && (await note()) === CHECKING && (await ev(`document.querySelectorAll('.composer .attchip, .composer .attthumb').length`)) === 1);
+    await cards('release()'); await sleep(700);
+    check('R2: once known, a file with no text says it skips the open card, and can go', !(await waits()) && (await note()) === SKIPS);
+    await sendNow();
+    check('R2: the file goes with the pick ("Answer: Archive") and the skip ("Skipped")', (await notes()).join('|') === 'Answer: Archive|Skipped');
+
+    // a pick on a card not known yet: a text message can't carry it, and keeps it
+    await cards('hold()');
+    await newCard('q-u4', 'Ship the hotfix to beta?', ['Ship', 'Wait']);
+    await pickOpt('q-u4', 'Ship');
+    check('R2, query held: a pick on a card not known yet shows on the card, not in the composer',
+      (await opts('q-u4')).find((o) => o.l === 'Ship')?.on && (await chips()).length === 0);
+    await b.type('.composer textarea', 'Unrelated: the lab hub is back.');
+    await sendNow();
+    check('R2: a message that couldn\'t carry that pick leaves it saved', (await saved())?.picks?.['q-u4']?.join() === 'Ship');
+    await cards('release()'); await sleep(700);
+    check('R2: once the store answers, the kept pick is back in the composer', (await chips()).some((x) => x.includes('Ship')));
+    await pickOpt('q-u4', 'Ship');
+    await b.shot(join(out, '13-unknown-card-wait-desktop-light.png'));
+  } catch (e) {
+    check('R2 unknown-card scenario ran to the end: ' + e.message, false);
+  }
+
   // ------------------------------------------------------------ android
   await ev(`localStorage.removeItem('hubchat-mock-draft-answers'), true`);
   await b.size(390, 844, 2);
@@ -327,8 +415,10 @@ try {
   } catch (e) {
     check('saved-answers checks ran: ' + e.message, false);
   }
-  check('no console errors or exceptions', b.errors.length === 0);
-  if (b.errors.length) console.log(b.errors.join('\n'));
+  // the R2 part makes the store's answer fail on purpose; the view warns
+  const unexpected = b.errors.filter((e) => !e.includes('mock: cardAnswers failing on purpose'));
+  check('no console errors or exceptions (other than the failures the R2 part causes)', unexpected.length === 0);
+  if (unexpected.length) console.log(unexpected.join('\n'));
 } catch (e) {
   check('proof ran to the end: ' + e.message, false);
 } finally {

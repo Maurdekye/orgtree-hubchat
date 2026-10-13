@@ -131,6 +131,19 @@ for (const s of params.getAll("seen")) {
 
 const msgs: Message[] = [];
 const drafts: Record<string, string> = {};
+// window.__hcCards, for the question-card proof: hold() makes cardAnswers
+// wait until release(), fail() makes it fail, and card() adds a card from a
+// chat's other side as if it had just come in
+const cardsHeld = { mode: "", waiting: [] as (() => void)[] };
+(window as unknown as { __hcCards: unknown }).__hcCards = {
+  hold: () => { cardsHeld.mode = "hold"; },
+  fail: () => { cardsHeld.mode = "fail"; },
+  release: () => { cardsHeld.mode = ""; cardsHeld.waiting.splice(0).forEach((go) => go()); },
+  card: (peer: string, id: string, body: string, options: string[]) => {
+    add(peer, false, now(), body, { id, kind: "question", question: options.length ? { options, multiple: false } : undefined });
+    chatEv(peer);
+  },
+};
 // unsent answers survive a restart in the app; here a reload stands in for it
 const ANSWERS_KEY = "hubchat-mock-draft-answers";
 const savedAnswers = (): Record<string, DraftAnswers> => { try { return JSON.parse(localStorage.getItem(ANSWERS_KEY) || "{}"); } catch { return {}; } };
@@ -830,6 +843,8 @@ export const mockApi: Api = {
   // as the core finds them (store_questions.rs): each card in this chat and
   // the first answer from its other side in hub order, page or no page
   cardAnswers: async (peer, ids) => {
+    if (cardsHeld.mode === "fail") throw new Error("mock: cardAnswers failing on purpose");
+    if (cardsHeld.mode === "hold") await new Promise<void>((go) => cardsHeld.waiting.push(go));
     const floor = floorOf(peer), held = msgs.filter((m) => m.peer === peer && (!floor || m.created_at > floor));
     const out = new Map<string, Message>();
     for (const id of ids.slice(0, 1000)) {
