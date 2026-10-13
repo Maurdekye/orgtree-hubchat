@@ -144,6 +144,15 @@ const cardsHeld = { mode: "", waiting: [] as (() => void)[] };
     chatEv(peer);
   },
 };
+// window.__hcSend, for the same proof: hold() keeps the next message with
+// files being prepared (a quarter done) until release() lets it go on, or
+// fail() makes its preparation fail
+const sendHeld = { on: false, waiting: [] as ((fail: boolean) => void)[] };
+(window as unknown as { __hcSend: unknown }).__hcSend = {
+  hold: () => { sendHeld.on = true; },
+  release: () => { sendHeld.on = false; sendHeld.waiting.splice(0).forEach((go) => go(false)); },
+  fail: () => { sendHeld.on = false; sendHeld.waiting.splice(0).forEach((go) => go(true)); },
+};
 // unsent answers survive a restart in the app; here a reload stands in for it
 const ANSWERS_KEY = "hubchat-mock-draft-answers";
 const savedAnswers = (): Record<string, DraftAnswers> => { try { return JSON.parse(localStorage.getItem(ANSWERS_KEY) || "{}"); } catch { return {}; } };
@@ -761,6 +770,7 @@ export const mockApi: Api = {
     const total = (n.attachments ?? []).reduce((n, a) => n + a.bytes, 0);
     if (total) for (let step = 0; step <= 4; step++) {
       emit({ type: "preparing", peer: n.peer, message_id: n.id, name: n.attachments![0].name, done: Math.floor(total * step / 4), total });
+      if (step === 1 && sendHeld.on && await new Promise<boolean>((go) => sendHeld.waiting.push(go))) throw new Error("mock: preparing failed on purpose");
       await sleep(250);
     }
     const m = add(n.peer, true, now(), n.body, {

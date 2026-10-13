@@ -6,8 +6,10 @@
 // real answers.ts and questions.ts modules (saved answers across an identity
 // switch, settlement from the store); review R2: an empty send to a card the
 // store hasn't answered for yet (its query held back, then failing) waits,
-// mixed with picks, skips and files. Each R1/R2 part records a failure and
-// goes on, so the same proof shows what the reviewed code did.
+// mixed with picks, skips and files; review R3: a reply or pick chosen in the
+// chat while a message's file is prepared stays for the next message. Each
+// R1/R2/R3 part records a failure and goes on, so the same proof shows what
+// the reviewed code did.
 // Run it only through tools/verify-questions.ps1, which starts it inside the
 // Orgtree kernel Job runner: bundling, the server and Chrome end with the job.
 for (const k of ['HUBCHAT_JOB_CONTAINED', 'HUBCHAT_VITE_CACHE', 'HUBCHAT_PROOF_OUT']) if (!process.env[k]) throw Error('Use tools/verify-questions.ps1; missing ' + k);
@@ -302,6 +304,116 @@ try {
     await pickOpt('q-u4', 'Ship');
   } catch (e) {
     check('R2 unknown-card scenario ran to the end: ' + e.message, false);
+  }
+
+  // ---------- review R3: Reply in the chat while a message's file is prepared
+  // window.__hcSend (the mock) holds a message with a file while it is being
+  // prepared. The box is locked then, but Reply and picks in the chat still
+  // work. What is chosen meanwhile isn't part of that message: once it is
+  // queued that must still be in the composer, and saved, and go with the
+  // next message. What the message carried is done.
+  try {
+    const CI = 'nightly-ci.alex.8d21e0';
+    await ev(`localStorage.removeItem('hubchat-mock-draft-answers'), true`);
+    await b.nav(base + '?pages=1', 1200);
+    await openChat('nightly-ci');
+    const cards = (js) => ev(`(window.__hcCards.${js}, true)`);
+    const files = (js) => ev(`(window.__hcSend.${js}, true)`);
+    const saved = () => ev(`JSON.parse(localStorage.getItem('hubchat-mock-draft-answers') || '{}')[${JSON.stringify(CI)}] ?? null`);
+    const outs = () => ev(`document.querySelectorAll('.timeline .msg.out').length`);
+    const newCard = async (id, body, options) => { await cards(`card(${JSON.stringify(CI)}, '${id}', ${JSON.stringify(body)}, ${JSON.stringify(options)})`); await sleep(700); };
+    const bar = () => ev(`[...document.querySelectorAll('.composer .replybar .rb-txt')].map((e) => e.innerText)`);
+    const boxText = () => ev(`document.querySelector('.composer textarea').value`);
+    const fileCount = () => ev(`document.querySelectorAll('.composer .attchip, .composer .attthumb').length`);
+    const preparing = () => ev(`!!document.querySelector('.composer .comp-preparing') && document.querySelector('.composer textarea').disabled`);
+    const notes = () => ev(`[...${sent}.querySelectorAll('.quote')].map((q) => q.querySelector('.q-ans')?.innerText ?? '')`);
+    // Send, held while its file is prepared; then let it go on and wait
+    // until it is in the chat and the box is free again
+    const sendAndHold = async () => {
+      await files('hold()');
+      await b.click('.composer .sendbtn', 100);
+      for (let i = 0; i < 30 && !(await preparing()); i++) await sleep(100);
+    };
+    const letGo = async (n0) => {
+      await files('release()');
+      for (let i = 0; i < 50 && ((await outs()) <= n0 || (await preparing())); i++) await sleep(100);
+      await sleep(500);
+    };
+
+    // the message: a reply to one card and a pick on another, text and a file
+    await newCard('q-p0', 'Anything QA should know about tonight\'s build?', []);
+    await newCard('q-p1', 'Which build goes to QA?', ['Nightly', 'RC']);
+    await newCard('q-p2', 'Who signs off on the QA run?', []);
+    await newCard('q-p3', 'Rerun the flaky upload test?', ['Rerun', 'Skip it']);
+    await pickOpt('q-p1', 'RC');
+    await b.click('#m-q-p0 .q-hint', 300);
+    await b.type('.composer textarea', 'Nothing unusual. QA gets the RC.');
+    await b.click('.composer [aria-label="Attach files"]', 500);
+    let n0 = await outs();
+    await sendAndHold();
+    check('R3: Send with a file: while the file is prepared the box is locked ("Preparing files...") and the message is not in the chat yet',
+      (await preparing()) && (await outs()) === n0);
+    // meanwhile, in the chat: Reply to a third card (its header hint), a pick
+    // on a fourth, and another pick on the card the message answers
+    await b.click('#m-q-p2 .q-hint', 300);
+    await pickOpt('q-p3', 'Rerun');
+    await pickOpt('q-p1', 'Nightly');
+    check('R3: meanwhile Reply and picks in the chat still work: the composer now replies to the third card, and the new pick is a chip',
+      (await preparing()) && (await bar()).some((t) => t.includes('Who signs off on the QA run?')) && (await chips()).some((x) => x.includes('Rerun')));
+    await b.shot(join(out, '14-reply-while-preparing-desktop-light.png'));
+    await letGo(n0);
+    check('R3: the message goes as it was sent: it quotes the first two cards ("Answer: RC" on the second), and the box is empty',
+      (await outs()) === n0 + 1 && (await notes()).join('|') === '|Answer: RC' && (await boxText()) === '' && (await fileCount()) === 0);
+    check('R3: the reply chosen meanwhile is still in the composer (the third card)',
+      (await bar()).some((t) => t.includes('Who signs off on the QA run?')));
+    const c3 = await chips();
+    check('R3: the pick made meanwhile on the fourth card is still a chip; the one on the card the message answered is gone (first answer final)',
+      c3.length === 1 && c3[0].includes('Rerun'));
+    const s3 = await saved();
+    const kept = s3?.replies?.join() === 'q-p2' && Object.keys(s3?.picks ?? {}).join() === 'q-p3' && s3.picks['q-p3'].join() === 'Rerun';
+    check('R3: and both are still saved (a restart brings them back): replies "q-p2", a pick only on "q-p3"', kept);
+    if (!kept) console.log('   saved:', JSON.stringify(s3));
+    await b.shot(join(out, '15-kept-after-queued-desktop-light.png'));
+    await b.type('.composer textarea', 'Sam signs off.');
+    await sendNow();
+    check('R3: the next message carries them: it answers the third card with its text and the fourth with "Rerun"; nothing stays saved',
+      (await notes()).join('|') === '|Answer: Rerun' && (await saved()) === null);
+
+    // control: nothing chosen meanwhile, so all the message carried clears
+    await newCard('q-p4', 'Tag the release candidate?', ['Tag it', 'Not yet']);
+    await newCard('q-p5', 'Anything for the changelog?', []);
+    await pickOpt('q-p4', 'Tag it');
+    await b.click('#m-q-p5 .q-hint', 300);
+    await b.type('.composer textarea', 'The upload fix.');
+    await b.click('.composer [aria-label="Attach files"]', 500);
+    n0 = await outs();
+    await sendAndHold();
+    await letGo(n0);
+    check('R3 control: with nothing chosen meanwhile, the message carries the pick and the reply, and then the composer and the saved answers are empty',
+      (await notes()).join('|') === 'Answer: Tag it|' && !(await ev(`!!document.querySelector('.composer .replybar')`)) && (await chips()).length === 0 && (await saved()) === null);
+
+    // a failed preparation sends nothing and keeps the current choice, here
+    // two cards picked with Ctrl+click and the selection's Reply meanwhile
+    await newCard('q-p6', 'Can QA start before 09:00?', []);
+    await newCard('q-p7', 'Should the lab hub stay on 2.1?', ['Stay', 'Upgrade']);
+    await newCard('q-p8', 'Anyone else to tell?', []);
+    await b.click('#m-q-p6 .q-hint', 300);
+    await b.type('.composer textarea', 'Yes, from 08:30.');
+    await b.click('.composer [aria-label="Attach files"]', 500);
+    n0 = await outs();
+    await sendAndHold();
+    await clickAt(`document.querySelector('#m-q-p7 .kchip')`, 2);
+    await clickAt(`document.querySelector('#m-q-p8 .kchip')`, 2);
+    await b.click('.selbar .btn', 300);
+    check('R3: meanwhile the selection\'s Reply works too: "Replying to 2 messages"',
+      (await preparing()) && (await msgText('.composer .replybar.multi .rb-who')) === 'Replying to 2 messages');
+    await files('fail()'); await sleep(700);
+    const s4 = await saved();
+    check('R3 control: a failed preparation sends nothing, shows the error, and keeps the text, the file and the two replies chosen meanwhile (saved too)',
+      (await outs()) === n0 && (await ev(`!!document.querySelector('.composer .comp-err')`)) && (await boxText()) === 'Yes, from 08:30.' && (await fileCount()) === 1
+        && (await ev(`document.querySelectorAll('.composer .rb-item').length`)) === 2 && s4?.replies?.join() === 'q-p7,q-p8');
+  } catch (e) {
+    check('R3 preparation scenario ran to the end: ' + e.message, false);
   }
 
   // ------------------------------------------------------------ android
