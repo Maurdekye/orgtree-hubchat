@@ -18,8 +18,12 @@
   `reply_links`) for each card it holds, and a card the store hasn't answered
   for yet is unknown, never open. The composer checks each card a message
   replies to: with no text (files or not) it waits while any card it plainly
-  replies to is unknown, keeping everything, and after a send clears only
-  what went (review R2). Unsent replies and picks persist per chat
+  replies to is unknown, keeping everything (review R2). Once a message is
+  queued only what it carried is cleared (`sentDraftAnswers(peer, message)`:
+  the messages it replied to and their picks), never the whole reply list:
+  Reply and picks in the chat still work while its files are prepared, and
+  what is chosen then goes with the next message (review R3, 2026-10-13).
+  Unsent replies and picks persist per chat
   (migration 16 `draft_answers`, wiped with the identity); a saved-answers
   read started under another identity is dropped. A migration test that
   fakes an older store must remove every later migration's changes.

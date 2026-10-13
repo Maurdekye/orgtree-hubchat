@@ -122,19 +122,28 @@ open card it plainly replies to (no option picked on it), so while any of
 those cards is unknown it waits: Send is off, the composer says it is
 checking whether the question is still open, and every reply and pick stays
 as it is. Once the store answers, the message can go as before. A message
-with text goes at once, since text answers a card whatever its state. After
-a send only what went is cleared: its replies and the cards it answered. A
-pick it could not carry, on a card not yet known to be open, stays saved.
+with text goes at once, since text answers a card whatever its state.
 
-## Verification (2026-10-13, after reviews R1 and R2)
+Once a message is queued, only what it carried is cleared: the messages it
+replied to, and the picks on those cards (each one it answered is among them).
+Everything else stays saved (review R3). That covers a pick it could not carry,
+on a card not yet known to be open, and a saved reply to a message not on
+screen yet. It also covers a reply or pick chosen in the chat while the
+message's files were being prepared. Only the composer is locked then; Reply,
+a card's header hint, selection and options still work, and what is chosen
+goes with the next message. A message the queued one replied to, chosen again
+meanwhile, is cleared with it.
+
+## Verification (2026-10-13, after reviews R1, R2 and R3)
 
 Measured on Hubchat `hubchat-opus/questions` (on main `0a1bdde`), the mail
 hub's `hubchat-opus/hub-meta` (on `6a883ad`, unchanged since review R1) and
 Orgtree's `hubchat-opus/question-options` (on rust-engine `9fc30fb`). Every
 cargo step ran under the machine build lock inside Orgtree's kernel Job
 runner. Each review finding also has a red control: the same check run on
-the reviewed code fails, and passes on the fix. The R2 correction changed
-only the interface, so the cargo results below are from the R1 corrections.
+the reviewed code fails, and passes on the fix. The R2 and R3 corrections
+changed only the interface, so the cargo results below are from the R1
+corrections.
 
 - **Core:** `cargo test --locked -j2 -p hubchat-core --lib --test
   questions_fallback` passes 211 of 211 and 5 of 5. The question tests check
@@ -156,7 +165,7 @@ only the interface, so the cargo results below are from the R1 corrections.
 - **Desktop shell:** `cargo check --locked -j2 -p hubchat` passes with no
   warning. Clippy reports nothing in this work.
 - **Interface:** `tools/verify-questions.ps1` (Orgtree's
-  `apps/desktop/renderer/tests/joblimit.ps1`, 4096 MB, 300 s) passes 66 of 66
+  `apps/desktop/renderer/tests/joblimit.ps1`, 4096 MB, 300 s) passes 76 of 76
   checks against the browser mock at desktop and phone widths, dark and
   light. Five call `cardStates` and pin the settling order in either list
   order. Six restart with answers saved on cards beyond the first page
@@ -176,11 +185,25 @@ only the interface, so the cargo results below are from the R1 corrections.
   sends nothing; once the store answers, the same message goes with its
   answer and skip; text goes at once; a pick a message couldn't carry stays
   saved and comes back. Red control: with the R2 interface files the proof
-  fails those checks (56 of 66); the text-reply control passes. The R2
-  reviewer's own module probe of `Composer.tsx`, adapted to its new
-  `cardState` prop and run in a 512 MB / 45 s Job, passes 8 of 8 (the two
-  mixed sends held back; unknown-only, known skip, picked-only, settled-card
-  and text controls).
+  as it was then fails those checks (56 of 66); the text-reply control
+  passes. The R2 reviewer's own module probe of `Composer.tsx`, adapted to
+  its new `cardState` prop and run in a 512 MB / 45 s Job, passes 8 of 8 (the
+  two mixed sends held back; unknown-only, known skip, picked-only,
+  settled-card and text controls). Ten (review R3) hold a message with a
+  file while it is prepared (`window.__hcSend`) and meanwhile use a card's
+  header hint and picks on two cards. Once queued, the message carries only
+  what it was sent with. The reply and the new pick stay in the composer and
+  saved, and go with the next message; the pick changed on the card it
+  answered is gone. Controls: with nothing chosen meanwhile everything
+  clears, and a failed preparation (the selection's Reply used meanwhile)
+  sends nothing and keeps the text, the file and the replies. Red control:
+  with the R3 interface files the proof fails three of them (73 of 76). The
+  reply chosen meanwhile is lost from the composer and the saved answers, and
+  the next message doesn't answer its card. A module probe runs the real
+  `Composer.tsx` queued step with `Conversation.tsx`'s own callbacks and
+  `answers.ts` (512 MB / 45 s Job) and passes 14 of 14. On the R3 files it
+  passes 10 of 14: the later reply is lost, also beside a multi-reply, and so
+  is a saved reply the message didn't carry.
 - **Mail hub:** at review R1, with a throwaway PostgreSQL 18, `message_meta`,
   `people_and_replies`, `profile_pictures`, `hub_suite`, `sync`, `history`,
   `lazy_history` and `long_messages` passed. Clippy reports nothing in this
@@ -220,3 +243,12 @@ only the interface, so the cargo results below are from the R1 corrections.
 - A pick whose labels aren't the card's options (another client, a bug) is
   ignored when settling: the card counts as a plain reply, and the reply's
   `Answer:` line, matching its `meta`, is not shown.
+- While a message's files are prepared, the composer shows the current
+  choice. A reply or pick made in the chat then appears above the locked box,
+  though the message being prepared doesn't carry it; it goes with the next
+  message. The preparation itself was held in the browser mock, not timed
+  against the core's file copy.
+- A saved reply to a message this device can no longer load (deleted here)
+  stays saved but unseen until the next Reply replaces the reply list, or
+  cancelling a reply that shows clears it too. A send doesn't clear it, since
+  the message didn't carry it.
