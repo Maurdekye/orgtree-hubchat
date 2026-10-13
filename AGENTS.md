@@ -115,6 +115,13 @@
   [verified: `navigationIntent.ts`, `Desktop.tsx`, `Android.tsx`, `dm.ts`;
   measured deferred-response predecessor controls: `docs/close-dm.md`]
 
+- 2026-10-13: Escape cancels a prepared reply exactly as the reply bar's x
+  (disabled while sending), from the composer or anywhere in the desktop
+  conversation after the highlight and a selection. Window-capture overlays,
+  an open `.modal`/`.dialog` and IME composition keep the key; with no reply
+  Escape keeps its old meaning. [user 2026-10-13; verified: `Composer.tsx`,
+  `Conversation.tsx`; proof `tools/verify-escape-reply-renderer.ps1`]
+
 - 2026-10-11: Inline Android notification replies use the existing durable outbox and sender. Bind admission to the captured notification identity and verify identity.address in the same transaction. Migration14 consumed worker receipts contain no body, survive message/chat deletion, and clear on identity wipe. [verified: engine_notification_reply.rs, store_notification_reply.rs; docs/notification-inline-replies.md]
 
 - 2026-10-12: Incoming notification reply owners originate in the immutable Engine identity (both hub paths), never current store metadata during posting. Unavailable core/engine, stopped engine, unreadable key and initialization failures retry sealed handoffs. Serialize identity establishment and latch genuine engine readiness from cold initialization, explicit key recovery and adoption; missing/unreadable/error results never establish it. Busy/nested attachments retry, avoiding mode-callback deadlocks. A completion latch suppresses background reload of a departing key, never an intentional adoption. UUID/outbox admission remains atomic. [verified: engine_notification_reply.rs, notification_reply.rs, core.rs, android.rs, NotificationReplyPolicy.kt; docs/notification-inline-replies.md]

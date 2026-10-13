@@ -250,6 +250,12 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
     if (e.nativeEvent.isComposing || e.ctrlKey || e.altKey || e.metaKey) return;
     const t = e.target as HTMLElement, cur = hlRef.current;
     if (!cur && e.key === "Escape" && sel.length) { e.preventDefault(); e.stopPropagation(); setSel([]); return; }
+    // Escape anywhere in the conversation cancels a prepared reply, as its ×
+    // does (user 2026-10-13); the highlight and a selection go first, an open
+    // modal keeps the key, and with no reply Escape keeps its old meaning
+    if (!cur && e.key === "Escape" && replies.length && !comp.current?.busy() && !document.querySelector(".modal, .dialog")) {
+      e.preventDefault(); e.stopPropagation(); setReplies(peer, []); return;
+    }
     if (!cur) {
       // the default order would go to the attach button: never from here
       if (e.key === "Tab" && e.shiftKey && t.matches(".composer textarea")) {

@@ -44,6 +44,8 @@ interface Props {
 export interface ComposerApi {
   addFiles: (sources: string[]) => void;
   focus: () => void;
+  /** a send is in flight: the reply bar's × is disabled, so Escape waits too */
+  busy: () => boolean;
 }
 
 /** A file waiting to be sent: its name and size. */
@@ -151,7 +153,7 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
     }
     setAtts(next);
   };
-  useImperativeHandle(ref, () => ({ addFiles: (sources) => void addFiles(sources), focus: () => ta.current?.focus() }));
+  useImperativeHandle(ref, () => ({ addFiles: (sources) => void addFiles(sources), focus: () => ta.current?.focus(), busy: () => sending }));
   // an image pasted into the box joins the attachments (user 23:40Z); text
   // still pastes as text
   const paste = async (files: File[]) => {
@@ -255,7 +257,10 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
           onPaste={(e) => { const imgs = pastedImages(e.clipboardData); if (imgs.length) { e.preventDefault(); void paste(imgs); } }}
           onKeyDown={(e) => {
             if (platform === "desktop" && e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); }
-            else if (e.key === "Escape" && replies.length && !sending) { e.stopPropagation(); e.preventDefault(); onCancelReply(); }
+            // Escape cancels the reply as its × does; an IME composition or an
+            // open modal keeps the key
+            else if (e.key === "Escape" && replies.length && !sending && !e.nativeEvent.isComposing
+              && !document.querySelector(".modal, .dialog")) { e.stopPropagation(); e.preventDefault(); onCancelReply(); }
           }} />
       </div>
       {/* pressing Send leaves the focus (and Android's keyboard) in the message box */}
