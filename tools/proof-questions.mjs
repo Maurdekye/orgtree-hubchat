@@ -1,7 +1,11 @@
 // Question cards and multi-reply against the browser mock (docket
 // hubchat-question-messages-carry-preset-answers-y): picking options, saved
 // picks after a reload, answering and skipping in one send, first answer
-// final, desktop Ctrl+click and Android long-press selection, stacked quotes.
+// final, desktop Ctrl+click and Android long-press selection, stacked quotes;
+// review R1: cards and answers beyond the first page after a restart, and the
+// real answers.ts and questions.ts modules (saved answers across an identity
+// switch, settlement from the store). Each R1 part records a failure and goes
+// on, so the same proof shows what the reviewed code did.
 // Run it only through tools/verify-questions.ps1, which starts it inside the
 // Orgtree kernel Job runner: bundling, the server and Chrome end with the job.
 for (const k of ['HUBCHAT_JOB_CONTAINED', 'HUBCHAT_VITE_CACHE', 'HUBCHAT_PROOF_OUT']) if (!process.env[k]) throw Error('Use tools/verify-questions.ps1; missing ' + k);
@@ -172,6 +176,46 @@ try {
   await ev(`document.querySelector('#m-q-ship').scrollIntoView({ block: 'center' }), true`);
   await b.shot(join(out, '07-cards-desktop-light.png'));
 
+  // ---------------------------------- review R1: cards beyond the first page
+  // A restart with answers saved earlier on cards further back than the
+  // first page (?pages=1: nightly-ci's chat, 60 build checks after them).
+  // Another device answered one of them meanwhile: its saved pick must not
+  // come back as an answer. The two nobody answered keep theirs.
+  try {
+    const CI = 'nightly-ci.alex.8d21e0';
+    await ev(`localStorage.setItem('hubchat-mock-draft-answers', JSON.stringify({ '${CI}': { replies: ['q-free'], picks: { 'q-old': ['Restart now'], 'q-fresh': ['Keep'] } } })), true`);
+    await b.nav(base + '?pages=1', 1200);
+    await openChat('nightly-ci');
+    await sleep(500);
+    const saved = () => ev(`JSON.parse(localStorage.getItem('hubchat-mock-draft-answers') || '{}')[${JSON.stringify(CI)}] ?? null`);
+    check('beyond the page: the three cards and the other device\'s answer are not on screen (the newest 50 messages are build checks)',
+      !(await ev(`!!document.querySelector('#m-q-old, #m-a-old, #m-q-fresh, #m-q-free')`)) && (await ev(`document.querySelectorAll('.timeline .msg').length`)) === 50);
+    const c1 = await chips(), s1 = await saved();
+    const dropped = c1.length === 1 && c1[0].includes('Keep') && !!s1 && !('q-old' in s1.picks) && s1.picks['q-fresh']?.join() === 'Keep';
+    check('beyond the page: after a restart the saved pick on the card another device answered is gone (chip and saved); the open card keeps "Keep"', dropped);
+    if (!dropped) console.log('   chips:', JSON.stringify(c1), 'saved:', JSON.stringify(s1));
+    check('beyond the page: the saved reply to the open free-response card is back, and sending it empty would skip it',
+      (await msgText('.composer .replybar .rb-txt'))?.includes('Anything to add to the runbook?') && (await msgText('.composer .skipnote')) === 'Sending with no text skips the question you reply to');
+    await b.shot(join(out, '11-beyond-page-desktop-light.png'));
+    await sendNow();
+    const got = await ev(`[...${sent}.querySelectorAll('.quote')].map((q) => q.querySelector('.q-ans')?.innerText ?? '')`);
+    check('beyond the page: one empty send answers the open card and skips the free one, each quote noted ("Answer: Keep", "Skipped"); the answered card is not in it',
+      got.join('|') === 'Answer: Keep|Skipped');
+    if (got.join('|') !== 'Answer: Keep|Skipped') console.log('   got:', JSON.stringify(got));
+    check('beyond the page: nothing stays saved for the chat', (await saved()) === null);
+    // older pages until the cards show: they read as the store said
+    for (let i = 0; i < 12 && !(await ev(`!!document.querySelector('#m-q-old')`)); i++) {
+      await ev(`document.querySelector('.timeline').scrollTop = 0, true`); await sleep(700);
+    }
+    check('beyond the page: scrolled back, the cards read the same: "Answered" (the other device\'s pick), "Answered" (Keep), "Skipped"',
+      /^Answered/.test(await msgText('#m-q-old .q-state')) && (await opts('q-old')).find((o) => o.l === 'Wait for the window')?.on
+        && /^Answered/.test(await msgText('#m-q-fresh .q-state')) && /^Skipped/.test(await msgText('#m-q-free .q-state')));
+    await ev(`document.querySelector('#m-q-old').scrollIntoView({ block: 'center' }), true`);
+    await b.shot(join(out, '12-beyond-page-scrolled-desktop-light.png'));
+  } catch (e) {
+    check('beyond-the-page scenario ran to the end: ' + e.message, false);
+  }
+
   // ------------------------------------------------------------ android
   await ev(`localStorage.removeItem('hubchat-mock-draft-answers'), true`);
   await b.size(390, 844, 2);
@@ -219,6 +263,70 @@ try {
     settle([ans('own', 'Beta', { outgoing: false, received_at: T })]) === 'open' &&
     settle([ans('x1', 'Nope', { body: 'hello', received_at: T })]) === 'answered:x1:' &&
     settle([ans('x2', ['Beta', 'Stable'], { received_at: T })]) === 'skipped:x2:');
+
+  // ------------------------- review R1: settlement from the store (the module)
+  try {
+    const Q = await server.ssrLoadModule('/src/lib/questions.ts');
+    const q = msg({ id: 'q', outgoing: false, kind: 'question', body: 'Which?', question: { options: ['A', 'B'], multiple: false }, received_at: '2026-10-12T09:00:00.000Z' });
+    const a = ans('a', 'A', { received_at: '2026-10-12T09:05:00.000Z' });
+    const chat = (n) => Array.from({ length: n }, (_, i) => msg({ id: 'c' + String(i).padStart(2, '0'), outgoing: i % 2 === 0, body: 'chat', received_at: '2026-10-12T10:00:00.000Z' }));
+    const s1 = Q.settlement([a, ...chat(49)], [q, a]);
+    check("settlement: the reviewer's page (the answer and 49 later, not the card) with the store's card and first answer: answered, not open",
+      s1.states.get('q')?.st === 'answered' && Q.isSettled(s1, 'q') && !Q.isOpen(s1, 'q'));
+    const s2 = Q.settlement(chat(50), [q, a]);
+    check('settlement: card and answer both beyond the page: answered', Q.isSettled(s2, 'q') && !Q.isOpen(s2, 'q'));
+    const q2 = msg({ id: 'q2', outgoing: false, kind: 'question', body: 'Still open?', question: { options: ['A', 'B'] }, received_at: '2026-10-12T09:10:00.000Z' });
+    const s3 = Q.settlement(chat(50), [q2]);
+    check('settlement: a card the store holds with no answer is open (positive control)', Q.isOpen(s3, 'q2') && !Q.isSettled(s3, 'q2'));
+    const s4 = Q.settlement(chat(50), []);
+    check('settlement: before the store has answered, a card is unknown: neither open nor settled', !Q.isOpen(s4, 'q') && !Q.isSettled(s4, 'q'));
+    const s5 = Q.settlement([q, ans('b-late', 'B', { received_at: '2026-10-12T11:00:00.000Z' }), ...chat(48)], [q, a]);
+    check("settlement: a later answer on the page doesn't take the place of the store's earlier one", s5.states.get('q')?.st === 'answered' && s5.states.get('q').by.id === 'a');
+  } catch (e) {
+    check('settlement checks ran: ' + e.message, false);
+  }
+
+  // ----------------- review R1: saved answers across an identity switch (module)
+  // The real answers.ts, its two API calls held back by the proof: a read
+  // the old identity started must not land in the next identity's cache.
+  try {
+    const { api } = await server.ssrLoadModule('/src/api.ts');
+    const A = await server.ssrLoadModule('/src/lib/answers.ts');
+    const writes = [], reads = [];
+    const orig = { draftAnswers: api.draftAnswers, setDraftAnswers: api.setDraftAnswers };
+    api.draftAnswers = () => new Promise((r) => reads.push(r));
+    api.setDraftAnswers = async (_peer, d) => { writes.push(JSON.stringify(d)); };
+    const last = () => writes.at(-1), P = 'x.000001';
+    const OLD = { replies: ['old-q'], picks: { 'old-q': ['Old pick'] } };
+    let r = A.loadDraftAnswers(P);
+    A.forgetDraftAnswers();
+    reads.shift()(OLD); await r;
+    A.setReplies(P, ['new-q']);
+    check('saved answers: a read the old identity started, landing after the switch, is dropped (the next edit saves no old pick)', last() === JSON.stringify({ replies: ['new-q'], picks: {} }));
+    A.forgetDraftAnswers();
+    const rOld = A.loadDraftAnswers(P);
+    A.forgetDraftAnswers();
+    const rNew = A.loadDraftAnswers(P);
+    const [old, fresh] = [reads.shift(), reads.shift()];
+    fresh(null); await rNew;
+    old(OLD); await rOld;
+    A.setReplies(P, ['n2']);
+    check("saved answers: a new identity's empty read leaves no slot for the old identity's read landing later", last() === JSON.stringify({ replies: ['n2'], picks: {} }));
+    A.forgetDraftAnswers();
+    r = A.loadDraftAnswers(P);
+    reads.shift()({ replies: ['r'], picks: { q: ['A'] } }); await r;
+    A.pick(P, 'q2', 'B', false);
+    check("saved answers: the same identity's read is taken (positive control)", last() === JSON.stringify({ replies: ['r'], picks: { q: ['A'], q2: ['B'] } }));
+    A.forgetDraftAnswers();
+    r = A.loadDraftAnswers(P);
+    A.setReplies(P, ['current']);
+    reads.shift()(OLD); await r;
+    A.pick(P, 'q', 'B', false);
+    check('saved answers: an edit made while a read was out wins over it (positive control)', last() === JSON.stringify({ replies: ['current'], picks: { q: ['B'] } }));
+    Object.assign(api, orig);
+  } catch (e) {
+    check('saved-answers checks ran: ' + e.message, false);
+  }
   check('no console errors or exceptions', b.errors.length === 0);
   if (b.errors.length) console.log(b.errors.join('\n'));
 } catch (e) {
