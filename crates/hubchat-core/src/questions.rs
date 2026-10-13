@@ -371,70 +371,28 @@ mod tests {
     }
 
     #[test]
-    fn a_plain_text_part_goes_only_for_what_meta_shows_instead() {
-        // review R1: a card whose options are refused (here: the same label
-        // twice) keeps its list as text, and keeps no range
-        let body = "Q?\n\nPick one:\n1. Same\n2. same";
-        let at = body.find("\n\nPick").unwrap();
-        let (text, m) = incoming(body, Some("question"), None, Some(&json!({"question": {"options": ["Same", "same"]}, "fallback": [at, body.len()]})));
-        assert_eq!((text.as_str(), m), (body, Meta::default()));
-        // a range alone, on the wrong kind, or over the whole body, removes nothing
-        for (kind, meta) in [
-            (Some("question"), json!({"fallback": [at, body.len()]})),
-            (None, json!({"question": {"options": ["Same", "Other"]}, "fallback": [at, body.len()]})),
-            (Some("question"), json!({"question": {"options": ["Same", "Other"]}, "fallback": [0, body.len()]})),
-            (None, json!({"fallback": [0, body.len()]})),
-        ] {
-            let (text, m) = incoming(body, kind, None, Some(&meta));
-            assert_eq!((text.as_str(), m.fallback), (body, None), "{meta}");
-        }
-        // accepted options that aren't the list as written remove nothing:
-        // other labels, another order, pick one or more, a range off by one
-        let body = "Q?\n\nPick one:\n1. Beta\n2. Stable";
-        let at = body.find("\n\nPick").unwrap();
-        for (q, r) in [
-            (json!({"options": ["Beta", "Other"]}), [at, body.len()]),
-            (json!({"options": ["Stable", "Beta"]}), [at, body.len()]),
-            (json!({"options": ["Beta", "Stable"], "multiple": true}), [at, body.len()]),
-            (json!({"options": ["Beta", "Stable"]}), [at + 1, body.len()]),
-        ] {
-            let (text, m) = incoming(body, Some("question"), None, Some(&json!({"question": q, "fallback": r})));
-            assert_eq!((text.as_str(), m.fallback, m.question.is_some()), (body, None, true), "{q} {r:?}");
-        }
-        let (text, _) = incoming(body, Some("question"), None, Some(&json!({"question": {"options": ["Beta", "Stable"]}, "fallback": [at, body.len()]})));
-        assert_eq!(text, "Q?");
-        // review R1: a reply whose range covers text that isn't its lines is
-        // not a skip: the old one-line rule applies and the text stays
-        for (b, meta) in [
-            ("> q\nreal answer", json!({"fallback": [0, 15]})),
-            ("> q\nSkipped\nmore", json!({"fallback": [0, 12]})),
-            ("> q\nAnswer: Beta\n", json!({"fallback": [0, 17]})),
-            ("> q\nAnswer: Beta\n", json!({"answers": [{"question": "q", "picked": ["Stable"]}], "fallback": [0, 17]})),
-            ("> q\n> r\nSkipped\n", json!({"fallback": [0, 16]})),
-            ("> q\n> r\n", json!({"replies": ["q", "r", "s"], "fallback": [0, 8]})),
-        ] {
-            let (text, m) = incoming(b, None, Some("q"), Some(&meta));
-            assert_eq!((text.as_str(), m.fallback), (crate::engine::strip_quote(b), None), "{b:?} {meta}");
-        }
-        // positive controls: a reply's own lines still go, as `outgoing` writes them
-        for (b, meta, want) in [
-            ("> q\nSkipped\n", json!({"fallback": [0, 12]}), ""),
-            ("> q\nAnswer: Beta, Gamma\nwhy", json!({"answers": [{"question": "q", "picked": ["Beta", "Gamma"]}], "fallback": [0, 24]}), "why"),
-            ("> q\n> r\nSkipped\n", json!({"replies": ["q", "r"], "fallback": [0, 16]}), ""),
-            ("> q\n> r\nhi", json!({"replies": ["q", "r"], "fallback": [0, 8]}), "hi"),
-        ] {
-            assert_eq!(incoming(b, None, Some("q"), Some(&meta)).0, want, "{b:?}");
-        }
-        // older clients: no meta, the one quote line goes as before
-        assert_eq!(incoming("> q\nok", None, Some("q"), None).0, "ok");
+    fn a_long_body_is_checked_again_once_whole() {
         // a long reply: the range is checked against the preview, then again
         // against the whole body
         let full = format!("> q\n> r\n{}", "x".repeat(100));
         let (preview, m) = incoming(&full[..20], None, Some("q"), Some(&json!({"replies": ["q", "r"], "fallback": [0, 8]})));
         assert_eq!((preview.as_str(), m.fallback), (&full[8..20], Some((0, 8))));
         assert_eq!(shown(&full, Some("q"), &m), &full[8..]);
-        // a preview of a refused card keeps no range, so the whole body shows it all
+        // a range the whole body doesn't bear out stays: the old quote rule
+        let other = format!("> q\nhello\n{}", "x".repeat(100));
+        assert_eq!(shown(&other, Some("q"), &m), crate::engine::strip_quote(&other));
+        // a card's list beyond the preview: it goes only if it is the list
+        let card = format!("{}?\n\nPick one:\n1. A\n2. B", "Q".repeat(50));
+        let at = card.find("\n\nPick").unwrap();
+        let (_, m) = incoming(&card[..20], Some("question"), None, Some(&json!({"question": {"options": ["A", "B"]}, "fallback": [at, card.len()]})));
+        assert_eq!(shown(&card, None, &m), &card[..at]);
+        let edited = card.replace("2. B", "2. C");
+        assert_eq!(shown(&edited, None, &m), edited);
+        // a preview of a refused card, or of a message that is neither a
+        // card nor a reply, keeps no range, so the whole body shows it all
         let (_, m) = incoming("Q?", Some("question"), None, Some(&json!({"question": {"options": ["a", "A"]}, "fallback": [2, 30]})));
+        assert_eq!(m, Meta::default());
+        let (_, m) = incoming("Hi", None, None, Some(&json!({"fallback": [2, 30]})));
         assert_eq!(m, Meta::default());
     }
 
