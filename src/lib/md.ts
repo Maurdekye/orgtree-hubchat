@@ -124,6 +124,18 @@ export function md(src: string): string {
   return clean((marked.parse(String(src || "").replace(/\r\n?/g, "\n"), { async: false }) as string).trim());
 }
 
+/** Bundled guide only: preserve local section links without widening the
+ * message renderer's http(s)-only policy. The private URL survives the same
+ * sanitizer, then becomes a non-navigating data target handled by GuideBody. */
+export function guideMd(src: string): string {
+  const prefix = "https://hubchat-guide.invalid/";
+  const html = marked.parse(src, { async: false, walkTokens(token) {
+    if (token.type === "link" && token.href.startsWith("#")) token.href = prefix + token.href;
+  } }) as string;
+  return clean(html.trim()).replaceAll(`data-href="${prefix}#`, 'data-href="#')
+    .replaceAll(`title="${prefix}#`, 'title="#');
+}
+
 // --- plain one-line text, for the chat list and quotes ----------------------
 
 function flat(ts: Token[] | undefined): string {

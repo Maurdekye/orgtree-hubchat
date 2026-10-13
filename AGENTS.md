@@ -1,5 +1,13 @@
 # Hubchat development invariants
 
+- 2026-10-13: Help uses one tab per level-two heading from bundled
+  `docs/setup.md`; intro and screenshot-block stripping are preserved. All
+  guide entry points share `GuideBody`. Local guide anchors select their tab;
+  message markdown still accepts only http(s) links. Tabs support roving focus
+  and arrow/Home/End keys, with a scrollable strip on narrow screens.
+  [decided: user 2026-10-13; verified: Guide.tsx, guide-sections.ts;
+  docs/help-tabs.md]
+
 - 2026-10-13: Local Windows `frontendDist` must resolve as Tauri Directory,
   not URL: `C:/...` matches the URL-first untagged parser and omits embedded
   assets. Use `scripts/local-tauri-config.mjs` for out-of-tree builds, then

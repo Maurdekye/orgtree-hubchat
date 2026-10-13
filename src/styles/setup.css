@@ -42,3 +42,12 @@
 .modal.guide-modal { width: 640px; }
 .screen.guide-screen { z-index: 60; }
 .guide-screen .scr-body { overflow-y: auto; }
+.guide-tabs { display: flex; gap: 6px; overflow-x: auto; overscroll-behavior-x: contain;
+  margin: 12px 0 16px; padding: 2px 2px 8px; scrollbar-width: thin; }
+.guide-tabs > button { flex: 0 0 auto; max-width: 100%; white-space: normal; border: 1px solid var(--line);
+  border-radius: 6px; padding: 7px 11px; background: var(--panel-2); color: var(--dim); }
+.guide-tabs > button[aria-selected="true"] { background: var(--accent-soft);
+  border-color: var(--accent); color: var(--accent-text); }
+.guide-section[hidden] { display: none; }
+.guide-section > .md-h:first-child { margin-top: 0; }
+[data-platform="android"] .guide-tabs > button { min-height: 44px; }
