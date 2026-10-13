@@ -116,14 +116,25 @@ call). A card the store has not answered for yet is unknown: no saved pick on
 it is sent and no empty reply skips it until the store answers. A saved pick
 on a card that some answer settled is dropped.
 
-## Verification (2026-10-13, after review R1)
+The composer checks every card a message replies to, not the message as a
+whole (review R2). A message with no text, with files or without, skips each
+open card it plainly replies to (no option picked on it), so while any of
+those cards is unknown it waits: Send is off, the composer says it is
+checking whether the question is still open, and every reply and pick stays
+as it is. Once the store answers, the message can go as before. A message
+with text goes at once, since text answers a card whatever its state. After
+a send only what went is cleared: its replies and the cards it answered. A
+pick it could not carry, on a card not yet known to be open, stays saved.
+
+## Verification (2026-10-13, after reviews R1 and R2)
 
 Measured on Hubchat `hubchat-opus/questions` (on main `0a1bdde`), the mail
 hub's `hubchat-opus/hub-meta` (on `6a883ad`, unchanged since review R1) and
 Orgtree's `hubchat-opus/question-options` (on rust-engine `9fc30fb`). Every
 cargo step ran under the machine build lock inside Orgtree's kernel Job
-runner. Each review R1 finding also has a red control: the same check run on
-the reviewed code fails, and passes on the fix.
+runner. Each review finding also has a red control: the same check run on
+the reviewed code fails, and passes on the fix. The R2 correction changed
+only the interface, so the cargo results below are from the R1 corrections.
 
 - **Core:** `cargo test --locked -j2 -p hubchat-core --lib --test
   questions_fallback` passes 211 of 211 and 5 of 5. The question tests check
@@ -145,7 +156,7 @@ the reviewed code fails, and passes on the fix.
 - **Desktop shell:** `cargo check --locked -j2 -p hubchat` passes with no
   warning. Clippy reports nothing in this work.
 - **Interface:** `tools/verify-questions.ps1` (Orgtree's
-  `apps/desktop/renderer/tests/joblimit.ps1`, 4096 MB, 300 s) passes 52 of 52
+  `apps/desktop/renderer/tests/joblimit.ps1`, 4096 MB, 300 s) passes 66 of 66
   checks against the browser mock at desktop and phone widths, dark and
   light. Five call `cardStates` and pin the settling order in either list
   order. Six restart with answers saved on cards beyond the first page
@@ -157,7 +168,19 @@ the reviewed code fails, and passes on the fix.
   old identity's read dropped after a switch; same-identity reads and
   current edits kept). Red control: with the reviewed interface files the
   same proof fails the saved-pick, quote-note, settlement and both
-  identity-switch checks (43 of 48); the positive controls pass.
+  identity-switch checks (43 of 48); the positive controls pass. Fourteen
+  (review R2) drive the real composer with the mock's store answer held back
+  or failing (`window.__hcCards`): a pick plus an empty reply to an unknown
+  card, an empty multi-reply to a known open card and an unknown one, and a
+  file with no text each wait with every reply and pick kept, and Enter
+  sends nothing; once the store answers, the same message goes with its
+  answer and skip; text goes at once; a pick a message couldn't carry stays
+  saved and comes back. Red control: with the R2 interface files the proof
+  fails those checks (56 of 66); the text-reply control passes. The R2
+  reviewer's own module probe of `Composer.tsx`, adapted to its new
+  `cardState` prop and run in a 512 MB / 45 s Job, passes 8 of 8 (the two
+  mixed sends held back; unknown-only, known skip, picked-only, settled-card
+  and text controls).
 - **Mail hub:** at review R1, with a throwaway PostgreSQL 18, `message_meta`,
   `people_and_replies`, `profile_pictures`, `hub_suite`, `sync`, `history`,
   `lazy_history` and `long_messages` passed. Clippy reports nothing in this

@@ -16,14 +16,17 @@
   (no automatic skip). Settlement never comes from the loaded page alone: the
   view asks `Store::card_answers` (indexed by reply_to and migration 16
   `reply_links`) for each card it holds, and a card the store hasn't answered
-  for yet is unknown, never open. Unsent replies and picks persist per chat
+  for yet is unknown, never open. The composer checks each card a message
+  replies to: with no text (files or not) it waits while any card it plainly
+  replies to is unknown, keeping everything, and after a send clears only
+  what went (review R2). Unsent replies and picks persist per chat
   (migration 16 `draft_answers`, wiped with the identity); a saved-answers
   read started under another identity is dropped. A migration test that
   fakes an older store must remove every later migration's changes.
   [decided: user 2026-10-11 13:01-13:27Z, 22:42-22:44Z, 2026-10-12 21:12Z;
   verified: questions.rs, store_questions.rs, engine.rs, lib/questions.ts,
-  lib/answers.ts, Conversation.tsx; contract, measured proof and limits:
-  docs/question-cards.md]
+  lib/answers.ts, Conversation.tsx, Composer.tsx; contract, measured proof
+  and limits: docs/question-cards.md]
 
 - 2026-10-12: Poll, sync snapshot/upsert/remove/online, and setup roster refresh
   admit complete roster/provenance plus picture metadata under the originating
