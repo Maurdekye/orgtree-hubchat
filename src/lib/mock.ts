@@ -29,7 +29,7 @@
 // "wrong". Hubs on 127.0.0.1 / localhost can't be reached from the "phone".
 import type { Api, LogInfo, SetupLink, SetupState, Attachment, ChatSummary, DraftAnswers, SendRoute, Contact, HcEvent, HubRow, HubStatus, LinkEvent, LinkLookup, LinkRole, Message, NewOutgoing, OlderPage, ParsedLink, Probe, PushState, Resolved, State } from "../api";
 import { toast } from "./toast";
-import { hubOrder } from "./questions";
+import { cardStates } from "./questions";
 import { replyIds } from "./replies";
 
 const params = new URLSearchParams(location.search);
@@ -835,9 +835,9 @@ export const mockApi: Api = {
     for (const id of ids.slice(0, 1000)) {
       const card = held.find((m) => m.id === id && m.kind === "question");
       if (!card) continue;
-      const first = held.filter((m) => m.outgoing !== card.outgoing && replyIds(m).includes(id)).sort(hubOrder)[0];
       out.set(card.id, card);
-      if (first) out.set(first.id, first);
+      const st = cardStates([card, ...held.filter((m) => replyIds(m).includes(id))]).get(id);
+      if (st && st.st !== "open") out.set(st.by.id, st.by);
     }
     return clone([...out.values()]);
   },

@@ -78,7 +78,7 @@ const cmp = (x: string, y: string) => (x < y ? -1 : x > y ? 1 : 0);
  *  What hasn't reached a hub yet comes after, in the order it was written
  *  (the order this device's outbox sends it in). The core's card_answers
  *  (store_questions.rs) finds a card's first answer in the same order. */
-export function hubOrder(a: Message, b: Message): number {
+function order(a: Message, b: Message): number {
   if (a.received_at && b.received_at) return cmp(a.received_at, b.received_at) || cmp(a.id, b.id);
   if (a.received_at || b.received_at) return a.received_at ? -1 : 1;
   return cmp(a.created_at, b.created_at) || cmp(a.id, b.id);
@@ -93,7 +93,7 @@ export function cardStates(msgs: Message[]): Map<string, CardState> {
   const out = new Map<string, CardState>();
   for (const id of cards.keys()) out.set(id, { st: "open" });
   if (!cards.size) return out;
-  const answers = msgs.filter((m) => replyIds(m).some((id) => cards.has(id))).sort(hubOrder);
+  const answers = msgs.filter((m) => replyIds(m).some((id) => cards.has(id))).sort(order);
   for (const a of answers) {
     for (const id of replyIds(a)) {
       const c = cards.get(id);
