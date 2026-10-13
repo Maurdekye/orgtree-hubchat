@@ -151,14 +151,26 @@ try {
   Check 'Upgrade click delivered' ([Ui]::Click($upgradePage.H, '&Upgrade'))
 
   if ($Cancel) {
-    # the close helper cannot close the app: the Retry/Cancel prompt appears; Cancel it
-    $dl = (Get-Date).AddSeconds(90); $pressed = $false
+    # The close helper cannot close the app: the Retry/Cancel prompt appears. Press
+    # Cancel if it is shown (on an interactive desktop); on a non-interactive window
+    # station Windows does not display it and it answers by itself, the same as Cancel.
+    $dl = (Get-Date).AddSeconds(15); $pressed = $false
     while ((Get-Date) -lt $dl -and -not $pressed -and -not $setup.HasExited) {
       Start-Sleep -Milliseconds 500
-      foreach ($w in @(Setup-Windows $setup.Id)) { if ([Ui]::Controls($w.H) -match '\|Button\|Retry$') { if ([Ui]::Click($w.H, 'Cancel')) { $pressed = $true; Say 'pressed Cancel on the Retry/Cancel prompt'; break } } }
+      foreach ($w in @(Setup-Windows $setup.Id)) { if ([Ui]::Controls($w.H) -match '\|Button\|&?Retry$') { if ([Ui]::Click($w.H, 'Cancel')) { $pressed = $true; Say 'pressed Cancel on the Retry/Cancel prompt'; break } } }
     }
+    Start-Sleep -Seconds 4
+    # Cancel leaves everything as it was, on the Upgrade page.
+    $stillOpen = -not $setup.HasExited
+    $pageAgain = $false
+    if ($stillOpen) { foreach ($w in @(Setup-Windows $setup.Id)) { if ([Ui]::Controls($w.H) -match '\|Button\|&Upgrade$') { $pageAgain = $true } } }
+    Check 'cancel: still on the Upgrade page (installer open, Upgrade button present)' ($stillOpen -and $pageAgain)
+    Check 'cancel: the app was not closed' ($null -ne (Get-Process -Id $app.Id -ErrorAction SilentlyContinue)) "pid $($app.Id)"
+    if ($stillOpen) { Stop-Process -Id $setup.Id -Force; Say 'installer closed by the script (the user would press Cancel Setup)' }
+    $setup.WaitForExit(20000) | Out-Null
+  } else {
+    $setup.WaitForExit(120000) | Out-Null
   }
-  $setup.WaitForExit(120000) | Out-Null
   Check 'new setup finished' $setup.HasExited
   $setupExit = if ($setup.HasExited) { $setup.ExitCode } else { -1 }
   Say "new setup exit code $setupExit"
@@ -174,7 +186,6 @@ try {
   if (Test-Path $helperLog) { Copy-Item $helperLog (Join-Path $Evidence 'installer-upgrade-helper.log') -Force }
 
   if ($Cancel) {
-    Check 'cancel: installer exited non-zero' ($setupExit -ne 0) "exit $setupExit"
     Check 'cancel: installation untouched' ($newHash -eq $oldHash -and $u2.DisplayVersion -eq $oldVersion) "version $($u2.DisplayVersion)"
   } else {
     Check 'installer exit 0' ($setupExit -eq 0) "exit $setupExit"

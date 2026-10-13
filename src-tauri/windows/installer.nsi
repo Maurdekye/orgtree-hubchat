@@ -343,9 +343,12 @@ Function HubUpgradePageLeave
     Call HubUpgradeClose
     Pop $0
     ${If} $0 != "1"
-      ; The user cancelled (or the app could not be closed): nothing was changed.
-      SetErrorLevel 1
-      Quit
+      ; The user cancelled (or Hubchat could not be closed): nothing was changed.
+      ; Stay on this page rather than Quit: Quit from inside a page's leave
+      ; callback left the installer process alive with no window (measured). From
+      ; here the user can Cancel Setup, pick Advanced setup, or try Upgrade again.
+      StrCpy $HubUpgradeChoice ""
+      Abort
     ${EndIf}
     StrCpy $HubUpgradeSelected "1"
     ; The stock passive + update path: skips the wizard pages, never uninstalls

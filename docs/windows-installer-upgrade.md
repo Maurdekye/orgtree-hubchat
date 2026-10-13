@@ -39,8 +39,9 @@ different product such as "Hubchat Test", is never closed). In order:
 3. Only then terminate the process. This is reported: the installer prints
    `WARNING: FORCED: Hubchat did not close gracefully, so it was terminated (pid …)`
    and the helper logs it to `%TEMP%\hubchat-installer-upgrade.log`. If it still
-   runs afterwards the installer shows **Retry / Cancel**; Cancel leaves the
-   installation untouched (exit code 1).
+   runs afterwards the installer shows **Retry / Cancel**. Cancel returns to the
+   Upgrade page with nothing changed (Hubchat keeps running); from there the user can
+   cancel Setup, choose Advanced setup, or try Upgrade again.
 
 The same close runs again right before files are replaced
 (`NSIS_HOOK_PREINSTALL`), so a Hubchat started in between is closed the same way.
