@@ -424,7 +424,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   const conv = useRef<HTMLElement>(null);
   const dragging = useFileDrop(conv, platform === "desktop" && !off, (paths) => comp.current?.addFiles(paths));
   const composer = <Composer ref={comp} peer={peer} c={c} hubs={hubs} replies={replies} picked={picked} cardState={cardState} pos={pos} onRemoveReply={(id) => removeReply(peer, id)} onUnpick={(id) => unpick(peer, [id])} onCancelReply={() => setReplies(peer, [])}
-    onSent={(m) => { sentDraftAnswers(peer, (m.answers ?? []).map((a) => a.question)); pinned.current = true; reload(); }} off={off} />;
+    onSent={(m) => { sentDraftAnswers(peer, m); pinned.current = true; reload(); }} off={off} />;
   const jumpBtn = <button className={"jump" + (far ? "" : " hide")} onClick={toBottom} title="Jump to the newest message" aria-label="Jump to the newest message"><Icon name="arrow_down" /></button>;
   const copyAddr = () => copyText("@net:" + peer, "Address copied");
 

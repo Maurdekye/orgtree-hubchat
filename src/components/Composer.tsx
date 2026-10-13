@@ -31,7 +31,8 @@ interface Props {
   onUnpick: (cardId: string) => void;
   /** Esc or the reply bar's close: reply to nothing. */
   onCancelReply: () => void;
-  /** The message went (it is queued): what it carried. */
+  /** The message went (it is queued): what it carried, so that only that is
+   *  cleared from the replies and picks. */
   onSent: (m: NewOutgoing) => void;
   ref?: Ref<ComposerApi>;
   /** Why nothing can be sent here (no hub lists the address): shown instead of the box. */
@@ -93,13 +94,16 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
       if (saveT.current) { clearTimeout(saveT.current); saveT.current = null; void api.setDraft(peer, textRef.current).catch(() => {}); }
     };
   }, [peer]);
+  // queued: the box empties, but the replies are left to onSent: Reply in the
+  // chat still works while the files are prepared, and a reply chosen then
+  // isn't part of this message (review R3)
   useEffect(() => {
     if (preparation?.phase !== "queued") return;
     setText(""); setAtts([]); setErr(null);
     clearPreparation(peer);
-    onCancelReply(); onSent(preparation.message);
+    onSent(preparation.message);
     ta.current?.focus();
-  }, [preparation, peer, onCancelReply, onSent]);
+  }, [preparation, peer, onSent]);
 
   useLayoutEffect(() => {
     const t = ta.current; if (!t) return;

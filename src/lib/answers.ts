@@ -3,7 +3,7 @@
 // message goes, and survive a restart (user 2026-10-11 22:42Z), so the core
 // keeps them beside the chat's draft.
 import { useSyncExternalStore } from "react";
-import { api, type DraftAnswers } from "../api";
+import { api, type DraftAnswers, type NewOutgoing } from "../api";
 
 const EMPTY: DraftAnswers = { replies: [], picks: {} };
 const cache = new Map<string, DraftAnswers>();
@@ -60,14 +60,17 @@ export function unpick(peer: string, cards: string[]) {
   save(peer, { ...d, picks });
 }
 
-/** The message went: what it replied to and the cards it answered are done.
- *  A pick it couldn't carry yet (its card not known to be open) stays. */
-export function sentDraftAnswers(peer: string, cards: string[]) {
+/** The message went: the messages it replied to, the cards it answered among
+ *  them, are done. Everything else stays: a reply or pick chosen while it was
+ *  being prepared (review R3), and a pick it couldn't carry yet (its card not
+ *  known to be open). */
+export function sentDraftAnswers(peer: string, m: Pick<NewOutgoing, "reply_to" | "replies" | "answers">) {
   const d = cache.get(peer);
   if (!d) return;
+  const went = new Set([...(m.replies ?? []), ...(m.reply_to ? [m.reply_to] : []), ...(m.answers ?? []).map((a) => a.question)]);
   const picks = { ...d.picks };
-  for (const c of cards) delete picks[c];
-  save(peer, { replies: [], picks });
+  for (const c of went) delete picks[c];
+  save(peer, { replies: d.replies.filter((id) => !went.has(id)), picks });
 }
 
 /** Another identity now holds this device: forget the old one's, including
