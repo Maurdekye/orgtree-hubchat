@@ -7,6 +7,9 @@ import { api, type DraftAnswers } from "../api";
 
 const EMPTY: DraftAnswers = { replies: [], picks: {} };
 const cache = new Map<string, DraftAnswers>();
+// Which identity's answers the cache holds: a read that started under an
+// earlier one is dropped when it lands (forgetDraftAnswers moves this on).
+let generation = 0;
 const subs = new Set<() => void>();
 const changed = () => subs.forEach((f) => f());
 
@@ -14,11 +17,13 @@ export function useDraftAnswers(peer: string): DraftAnswers {
   return useSyncExternalStore((f) => { subs.add(f); return () => { subs.delete(f); }; }, () => cache.get(peer) ?? EMPTY);
 }
 
-/** Read a chat's saved answers once; anything changed meanwhile wins. */
+/** Read a chat's saved answers once; anything changed meanwhile wins, and
+ *  a read another identity started is dropped. */
 export async function loadDraftAnswers(peer: string): Promise<void> {
   if (cache.has(peer)) return;
+  const mine = generation;
   const d = await api.draftAnswers(peer).catch(() => null);
-  if (cache.has(peer) || !d || (!d.replies.length && !Object.keys(d.picks).length)) return;
+  if (mine !== generation || cache.has(peer) || !d || (!d.replies.length && !Object.keys(d.picks).length)) return;
   cache.set(peer, { replies: d.replies, picks: d.picks }); changed();
 }
 
@@ -61,7 +66,9 @@ export function clearDraftAnswers(peer: string) {
   save(peer, EMPTY);
 }
 
-/** Another identity now holds this device: forget the old one's. */
+/** Another identity now holds this device: forget the old one's, including
+ *  reads still on their way. */
 export function forgetDraftAnswers() {
+  generation += 1;
   cache.clear(); changed();
 }
