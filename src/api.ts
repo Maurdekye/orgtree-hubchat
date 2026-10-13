@@ -298,6 +298,10 @@ export type HcEvent =
   | { type: "incoming"; peer: string; id: string; preview: string }
   | { type: "hub"; url: string }
   | { type: "directory" }
+  /** A typing heartbeat from `peer` (hub feature `typing`): it is writing
+   *  to us. Shown while the last one came within a second; never a
+   *  notification. */
+  | { type: "typing"; peer: string }
   | { type: "preparing"; message_id: string; peer: string; name: string; done: number; total: number }
   | { type: "transfer"; local_id: string; message_id: string; upload: boolean; done: number; total: number };
 
@@ -420,6 +424,10 @@ export const tauriApi = {
   setPush: (on: boolean, distributor: string) => invoke<void>("hc_set_push", { on, distributor }),
   /** This device is in use (user 23:50Z): our other devices don't notify meanwhile. */
   setActive: (on: boolean) => invoke<void>("hc_set_active", { on }),
+  /** The composer: our user edited the draft for `peer` (true), or stopped
+   *  writing to it (false). The core sends typing heartbeats meanwhile,
+   *  never the draft. */
+  composing: (peer: string, on: boolean) => invoke<void>("hc_composing", { peer, on }),
   /** Settings › Devices: rename this device (empty: its own name again); the name it now has. */
   setDeviceName: (name: string) => invoke<string>("hc_set_device_name", { name }),
 

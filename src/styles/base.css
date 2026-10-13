@@ -270,6 +270,15 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 /* read by screen readers only (a message's sender, the live announcements) */
 .sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
 .crow-prev .you { flex: none; }
+/* typing (hub feature `typing`): the chat list's preview, and a row under the
+   newest message with three dots (still under reduced motion, above) */
+.crow-prev .typing-prev { color: var(--accent-text); font-style: italic; }
+.typing-row { display: flex; align-items: center; gap: 8px; padding: 6px 14px 10px; font-size: 13px; color: var(--dim); font-style: italic; }
+.typing-dots { display: inline-flex; gap: 3px; }
+.typing-dots i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .35; animation: typing-dot 1.2s infinite ease-in-out; }
+.typing-dots i:nth-child(2) { animation-delay: .2s; }
+.typing-dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes typing-dot { 0%, 80%, 100% { opacity: .35; transform: none; } 40% { opacity: 1; transform: translateY(-2px); } }
 /* the hub picker (HubPicker.tsx): Automatic and each hub, the chosen one checked */
 .hubopt { align-items: flex-start !important; }
 .hubopt .ck { width: 18px; height: 18px; flex: none; color: var(--accent-text); }

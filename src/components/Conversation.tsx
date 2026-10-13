@@ -10,7 +10,7 @@ import { bytes, dayLabel, dayStart, MAX_FILES } from "../lib/format";
 import { copyText, errText } from "../lib/native";
 import { displayName, hubByUrl, hubName, hubStatusText, kindInfo, kindOf, limitFor, msgTime, peerHubs, presence, preview, viaHub } from "../lib/peers";
 import { scanSetup } from "../lib/setup";
-import { refreshChats, useMessages, useSendRoute, useSnap } from "../lib/store";
+import { refreshChats, useMessages, useSendRoute, useSnap, useTyping } from "../lib/store";
 import { replyIds } from "../lib/replies";
 import { cardOf, answerNotes, cardKnown, isOpen, isSettled, settlement } from "../lib/questions";
 import { loadDraftAnswers, pick, removeReply, sentDraftAnswers, setReplies, unpick, useDraftAnswers } from "../lib/answers";
@@ -46,6 +46,8 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   const hubs = snap.state?.hubs || [];
   const c = snap.byAddr.get(peer);
   const name = displayName(c, peer);
+  // they are writing to us now (hub feature `typing`)
+  const typingNow = useTyping(peer);
   const kind = kindOf(c);
   const { msgs, loaded, reload, more, loadingOlder, loadOlder, unreachable, retryOlder } = useMessages(peer);
   // what the next message answers: the messages it replies to and the
@@ -499,7 +501,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
         <div className="timeline scroll" ref={tl} onScroll={onScroll} tabIndex={platform === "desktop" ? -1 : undefined} role="region" aria-label={"Messages with " + name}
           onContextMenu={(e) => { if (hlRef.current && e.target === e.currentTarget) { e.preventDefault(); menuOnHl(); } }}
           onMouseDown={() => { if (hlRef.current) leaveHl(); }}
-          onBlur={(e) => { if (hlRef.current && document.hasFocus() && !e.currentTarget.contains(e.relatedTarget as Node | null)) leaveHl(); }}><div className="tl-inner">{rows}</div></div>
+          onBlur={(e) => { if (hlRef.current && document.hasFocus() && !e.currentTarget.contains(e.relatedTarget as Node | null)) leaveHl(); }}><div className="tl-inner">{rows}{typingNow ? <TypingRow name={name} /> : null}</div></div>
         {jumpBtn}
         {dragging ? <DropZone lim={limitFor(c, hubs)} /> : null}
       </div>
@@ -514,6 +516,17 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
       {composer}
       <div className="sr" role="status" aria-live="polite">{said}</div>
     </section>
+  );
+}
+
+/** Under the newest message while the peer is writing to us (hub feature
+ *  `typing`): its name and three dots, announced politely. */
+function TypingRow({ name }: { name: string }) {
+  return (
+    <div className="typing-row" role="status" aria-live="polite" data-typing="1">
+      <span className="typing-dots" aria-hidden="true"><i /><i /><i /></span>
+      <span>{name} is typing…</span>
+    </div>
   );
 }
 

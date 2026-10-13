@@ -156,6 +156,21 @@ const sendHeld = { on: false, waiting: [] as ((fail: boolean) => void)[], draft:
   holdDraft: () => { sendHeld.draft = true; },
   releaseDraft: () => { sendHeld.draft = false; sendHeld.drafts.splice(0).forEach((go) => go()); },
 };
+// typing heartbeats from `peer`, as the core relays them (one every 500 ms)
+// until the returned stop is called
+function typingBeats(peer: string): () => void {
+  emit({ type: "typing", peer });
+  const t = setInterval(() => emit({ type: "typing", peer }), 500);
+  return () => clearInterval(t);
+}
+// window.__hcTyping, for the typing proof: `calls` lists what the composer
+// told the core (each edit with text, at most every 250 ms, and each stop),
+// and beats(peer, ms) makes `peer` write to us for that long
+const typingProof = { calls: [] as { peer: string; on: boolean; at: number }[] };
+(window as unknown as { __hcTyping: unknown }).__hcTyping = {
+  calls: typingProof.calls,
+  beats: (peer: string, ms: number) => { const stop = typingBeats(peer); setTimeout(stop, ms); },
+};
 // unsent answers survive a restart in the app; here a reload stands in for it
 const ANSWERS_KEY = "hubchat-mock-draft-answers";
 const savedAnswers = (): Record<string, DraftAnswers> => { try { return JSON.parse(localStorage.getItem(ANSWERS_KEY) || "{}"); } catch { return {}; } };
@@ -557,7 +572,11 @@ async function pipeline(m: Message) {
   await sleep(500); m.state = "delivered"; m.delivered_at = iso(now()); chatEv(m.peer);
   await sleep(2500); m.state = "read"; m.read_at = iso(now()); chatEv(m.peer);
   if (c.kind === "org" || c.kind === "chat") {
+    // the agent writes its answer: a typing heartbeat every 500 ms until it
+    // comes (the answer ends the row at once)
+    const stop = typingBeats(m.peer);
     await sleep(2500);
+    stop();
     const r = add(m.peer, false, now(), c.kind === "org" ? "Got it. An agent is on it; I'll report back here." : "On it. I'll reply in this chat when I'm done.", { seen: false, reply_to: m.id });
     emit({ type: "incoming", peer: m.peer, id: r.id, preview: r.body });
     chatEv(m.peer);
@@ -674,6 +693,7 @@ export const mockApi: Api = {
     if (st.push) st.push = { ...st.push, enabled: on, active: on, distributor, status: on ? "Push is on" : "Off" };
   },
   setActive: async () => {},
+  composing: async (peer, on) => { typingProof.calls.push({ peer, on, at: performance.now() }); },
   setDeviceName: async (name) => {
     await sleep(200);
     if (name.trim().length > 64) throw "a device name has at most 64 characters";

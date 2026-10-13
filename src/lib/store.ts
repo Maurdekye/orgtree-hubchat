@@ -305,12 +305,56 @@ export async function reloadAfterSwitch(): Promise<void> {
   forgetDraftAnswers();
   transfers.clear(); tsubs.forEach((f) => f());
   active.clear(); activeChanged();
+  typing.clear(); typingChanged();
   set({ chats: [], directory: [], byAddr: new Map(), drafts: {}, onboarding: false, chatsReady: false });
   await refreshAll();
 }
 export function noteDraft(peer: string, body: string) {
   if ((snap.drafts[peer] || "") === body) return;
   set({ drafts: { ...snap.drafts, [peer]: body } });
+}
+
+/** Who is writing to us now (hub feature `typing`): typing heartbeats,
+ *  about two a second while they write (user 2026-10-13 22:34Z). Each
+ *  `typing` event is one; a peer shows as typing while its last one came
+ *  within `TYPING_WINDOW_MS` by this device's own clock, so the row ends by
+ *  itself a second after they stop (a writer that crashed included), and
+ *  at once when their message comes. Shown in the chat and the chat list;
+ *  never a notification. */
+const typing = new Map<string, number>(); // peer -> when its last heartbeat came
+const typingSubs = new Set<() => void>();
+let typingSnap: ReadonlySet<string> = new Set();
+let typingTimer: ReturnType<typeof setTimeout> | undefined;
+export const TYPING_WINDOW_MS = 1000;
+function typingChanged() {
+  const t = performance.now();
+  for (const [p, at] of typing) if (t - at >= TYPING_WINDOW_MS) typing.delete(p);
+  if (typing.size !== typingSnap.size || [...typing.keys()].some((p) => !typingSnap.has(p))) {
+    typingSnap = new Set(typing.keys());
+    typingSubs.forEach((f) => f());
+  }
+  if (typingTimer) clearTimeout(typingTimer);
+  typingTimer = undefined;
+  if (!typing.size) return;
+  const next = Math.min(...typing.values()) + TYPING_WINDOW_MS;
+  typingTimer = setTimeout(typingChanged, Math.max(0, next - performance.now()) + 5);
+}
+function noteTyping(peer: string) {
+  typing.set(peer, performance.now());
+  typingChanged();
+}
+/** Their message came: the row goes at once. */
+function typingEnded(peer: string) {
+  if (typing.delete(peer)) typingChanged();
+}
+const subscribeTyping = (f: () => void) => { typingSubs.add(f); return () => { typingSubs.delete(f); }; };
+/** Whether `peer` is writing to us now. */
+export function useTyping(peer: string | null | undefined): boolean {
+  return useSyncExternalStore(subscribeTyping, () => !!peer && typingSnap.has(peer));
+}
+/** Everyone writing to us now. */
+export function useTypingPeers(): ReadonlySet<string> {
+  return useSyncExternalStore(subscribeTyping, () => typingSnap);
 }
 
 function onEvent(e: HcEvent) {
@@ -324,10 +368,11 @@ function onEvent(e: HcEvent) {
       break;
     }
     case "chat": schedule("chats"); chatChanged(e.peer); schedule("transfers"); break;
-    case "incoming": schedule("chats"); chatChanged(e.peer); break;
+    case "incoming": typingEnded(e.peer); schedule("chats"); chatChanged(e.peer); break;
     case "file_lifecycle": schedule("state"); schedule("transfers"); break;
     case "hub": schedule("state"); schedule("transfers"); break;
     case "directory": schedule("dir"); schedule("state"); break;
+    case "typing": noteTyping(e.peer); break;
     case "transfer":
       transfers.set(e.local_id, { done: e.done, total: e.total, upload: e.upload, message_id: e.message_id });
       tsubs.forEach((f) => f());

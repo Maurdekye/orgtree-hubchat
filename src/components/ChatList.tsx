@@ -4,7 +4,7 @@ import type { ChatSummary } from "../api";
 import { Icon, Logo } from "../lib/icons";
 import { shortWhen } from "../lib/format";
 import { displayName, isAgent, kindOf, msgTime, preview } from "../lib/peers";
-import { useSnap } from "../lib/store";
+import { useSnap, useTypingPeers } from "../lib/store";
 import { openMenu } from "../lib/ctxmenu";
 import { copyText } from "../lib/native";
 import { Addr, KindGlyph, PeerAvatar, Tick, pressKeys, usePlatform } from "./ui";
@@ -44,6 +44,7 @@ export function chatMenu(e: ReactMouseEvent, peer: string, onOpen: (peer: string
 export function ChatRows({ rows, selected, onOpen, onInfo, onCloseDm }: { rows: ReturnType<typeof useFilteredChats>["rows"]; selected: string | null; onOpen: (peer: string) => void; onInfo?: (peer: string) => void; onCloseDm?: (peer: string) => void }) {
   const snap = useSnap();
   const platform = usePlatform();
+  const writing = useTypingPeers();
   const hubs = snap.state?.hubs || [];
   return (
     <>
@@ -52,7 +53,8 @@ export function ChatRows({ rows, selected, onOpen, onInfo, onCloseDm }: { rows: 
         const m = c.last;
         const draft = c.peer !== selected ? snap.drafts[c.peer] : "";
         let prev;
-        if (draft) prev = <><span className="q" style={{ color: "var(--accent-text)" }}>Draft:</span> <span className="t" dir="auto">{draft}</span></>;
+        if (writing.has(c.peer)) prev = <span className="typing-prev">typing…</span>;
+        else if (draft) prev = <><span className="q" style={{ color: "var(--accent-text)" }}>Draft:</span> <span className="t" dir="auto">{draft}</span></>;
         else if (!m) prev = <span className="t">No messages yet</span>;
         else if (m.outgoing) prev = <><Tick m={m} /><span className="you">You:</span><span className="t" dir="auto">{preview(m)}</span></>;
         else prev = <>{m.kind === "question" ? <span className="q">Question ·</span> : null}{m.kind === "question" ? " " : null}<span className="t" dir="auto">{preview(m)}</span></>;

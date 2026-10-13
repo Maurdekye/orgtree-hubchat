@@ -83,6 +83,30 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
   const saveT = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textRef = useRef(text);
   textRef.current = text;
+  // typing heartbeats while our user writes (hub feature `typing`, user
+  // 2026-10-13 22:33Z): an edit with text tells the core, at most every
+  // 250 ms; a cleared box, a sent message, another chat or the app leaving
+  // the front stops it. The core sends only the address, never the draft.
+  const typingOn = useRef(false);
+  const typingAt = useRef(0);
+  const composing = (on: boolean, to = peer) => {
+    if (!on) {
+      if (typingOn.current) { typingOn.current = false; void api.composing(to, false).catch(() => {}); }
+      return;
+    }
+    const t = performance.now();
+    if (typingOn.current && t - typingAt.current < 250) return;
+    typingOn.current = true; typingAt.current = t;
+    void api.composing(to, true).catch(() => {});
+  };
+  const composingRef = useRef(composing);
+  composingRef.current = composing;
+  useEffect(() => {
+    const away = () => { if (document.visibilityState !== "visible" || (platform === "desktop" && !document.hasFocus())) composingRef.current(false); };
+    const gone = () => composingRef.current(false);
+    window.addEventListener("blur", away); document.addEventListener("visibilitychange", away); window.addEventListener("pagehide", gone);
+    return () => { window.removeEventListener("blur", away); document.removeEventListener("visibilitychange", away); window.removeEventListener("pagehide", gone); };
+  }, [platform]);
 
   // load this chat's draft; flush the previous chat's on switch
   useEffect(() => {
@@ -93,6 +117,8 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
     else api.draft(peer).then((d) => { if (live && d && !getPreparation(peer)) { setText(d); noteDraft(peer, d); } }, () => {});
     return () => {
       live = false;
+      // leaving the chat ends its typing
+      composingRef.current(false, peer);
       if (saveT.current) { clearTimeout(saveT.current); saveT.current = null; void api.setDraft(peer, textRef.current).catch(() => {}); }
     };
   }, [peer]);
@@ -115,6 +141,7 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
 
   const change = (v: string) => {
     if (sending) return;
+    composing(!!v.trim());
     clearPreparation(peer);
     setText(v); setErr(null);
     noteDraft(peer, v);
@@ -174,6 +201,7 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
 
   const send = async () => {
     if (!can) { if (over) setErr(overNote); return; }
+    composing(false);
     if (saveT.current) { clearTimeout(saveT.current); saveT.current = null; }
     // every card answered is also replied to; the whole set goes oldest first
     const all = [...replies];
