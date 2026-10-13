@@ -71,3 +71,29 @@ apply on top; the hub sends them as they stand now, so they agree with it.
   GET /api/roster keeps only what its sync sends.
 - A cursor kept by a removed hub stays in stores until that URL is added again
   or the identity is wiped. It is no longer read by anything.
+
+## Verification
+
+Measured 2026-10-13 on the fix (base `main` 4f07838):
+
+- `tests/hub_removal.rs` (store only): removal forgets the URL's sync keys and
+  keeps another hub's; adding an unsaved URL forgets leftovers, and adding a
+  saved one keeps its cursor; migration 17 marks every saved hub once and
+  keeps its cursor. 3 pass. With the four changed source files from 4f07838,
+  all 3 fail.
+- `tests/readdress_v2.rs` against a mail hub v2 (2.1.0) on a scratch
+  PostgreSQL (set `HUBCHAT_V2_HUB`; skipped when unset). It reaches one hub
+  at a second address through a TCP forwarder and checks that the contact
+  stays in the directory and the chat stays: re-added elsewhere with and
+  without unregistering, added elsewhere before the old address is removed,
+  the same address re-added, an address used before re-added (the user's
+  case), and a store the bug already hit (version 16, a stale cursor, the
+  contact's row gone) started again. 6 pass. With the base files, the last
+  three fail as the user saw it: the chat is there, the contact isn't in the
+  directory. The first three pass on the base too.
+- `cargo test -p hubchat-core --lib` 216 pass; `cargo clippy -p hubchat-core
+  --lib --tests` adds no warnings; `cargo check -p hubchat` is clean.
+
+Not verified: an Android build (the change is platform-independent code in
+`hubchat-core`), and the repair on the user's own device, which needs the
+release.
