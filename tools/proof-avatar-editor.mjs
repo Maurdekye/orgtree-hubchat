@@ -32,7 +32,7 @@ fs.writeFileSync(out + '/legacy.log', old.stdout + old.stderr);
 const config = { extends: root + '/tsconfig.json', references: [], compilerOptions: {
   typeRoots: [depsRoot + '/node_modules/@types'], types: [depsRoot + '/node_modules/vite/client'],
   paths: { '*': [depsRoot + '/node_modules/*'], react: [depsRoot + '/node_modules/@types/react'], 'react/*': [depsRoot + '/node_modules/@types/react/*'],
-    'react-dom': [depsRoot + '/node_modules/@types/react-dom'], 'react-dom/*': [depsRoot + '/node_modules/@types/react-dom/*'] },
+    'react-dom': [depsRoot + '/node_modules/@types/react-dom'], 'react-dom/*': [depsRoot + '/node_modules/@types/react-dom/*'], qrcode: [depsRoot + '/node_modules/@types/qrcode'] },
 } };
 fs.writeFileSync(out + '/typecheck.json', JSON.stringify(config));
 const t = spawnSync(process.execPath, [depsRoot + '/node_modules/typescript/bin/tsc', '-p', out + '/typecheck.json', '--noEmit'], { cwd: root, encoding: 'utf8', timeout: 30000, windowsHide: true });
