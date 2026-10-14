@@ -188,7 +188,7 @@ pub fn left_click(app: &AppHandle, position: PhysicalPosition<f64>) {
     let Some((click,toggle)) = v.clicks.left(now, crate::tray_popup::is_recent(app)) else { return; };
     drop(v);
     if toggle { crate::tray_popup::close(app); return; }
-    let wait = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetDoubleClickTime() } as u64;
+    let wait = unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime() } as u64;
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_millis(wait)).await;
@@ -204,7 +204,7 @@ pub fn left_click(app: &AppHandle, position: PhysicalPosition<f64>) {
 
 pub fn double_click(app: &AppHandle) {
     let r = app.state::<Recent>(); let mut v = r.view.lock().unwrap();
-    v.clicks.double(Instant::now(), Duration::from_millis(unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetDoubleClickTime() } as u64));
+    v.clicks.double(Instant::now(), Duration::from_millis(unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime() } as u64));
     drop(v); crate::tray_popup::close(app); crate::desktop::show(app);
 }
 

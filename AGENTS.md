@@ -1,5 +1,12 @@
 # Hubchat development invariants
 
+- 2026-10-14: Tauri event snapshots must derive `Clone` as well as `Serialize`.
+  A stored `generate_handler!` closure needs an explicit `Invoke` input type
+  before wrapping it with the popup command guard. Windows double-click time
+  uses windows-sys `UI::Input::KeyboardAndMouse` and its enabled feature.
+  [verified from pinned source: Tauri2.12.1, tauri-macros2.7.1,
+  windows-sys0.60.2; native verification pending rig round434]
+
 - 2026-10-14: Windows tray single click toggles six recent open chats of all
   kinds, ordered by last message either direction; double click shows main.
   Delay single-click display by Windows' double-click interval to avoid flash.

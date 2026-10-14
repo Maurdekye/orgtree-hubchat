@@ -415,7 +415,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(trace::commands({
-            let handler = tauri::generate_handler![
+            // The guarded wrapper needs a concrete input type for the macro's closure.
+            let handler: fn(tauri::ipc::Invoke) -> bool = tauri::generate_handler![
             commands::hc_state,
             commands::hc_ui_state,
             commands::hc_check_id,

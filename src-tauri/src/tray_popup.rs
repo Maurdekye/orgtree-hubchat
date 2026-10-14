@@ -53,7 +53,7 @@ fn rows(items: Vec<MenuItemKind<Wry>>) -> tauri::Result<Vec<Row>> {
     }).collect()
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     generation: u32,
