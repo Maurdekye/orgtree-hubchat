@@ -32,13 +32,34 @@ Preparation failure preserves the complete draft. Remount and identity
 guards remain. Queued completion clears only sent choices, keeping later
 ones. Text plus files count toward the existing message limit together.
 
-Verification is pending Rig's contained batch. `proof-questions.mjs` has a
-focused Desktop/Android browser path (`HUBCHAT_MULTI_ONLY=1`). Its red control
-uses the base Conversation only, with the final Composer/cache, isolating
-replacement behavior from the superseded alpha.4 send policy. The mounted
-`proof-mixed-replies.mjs` separately compares the alpha.4 Composer/store with
-the final send behavior and exercises failure/remount/identity barriers.
-The former `proof-answer-separation.mjs` forwards to this replacement.
-`engine_multi_reply_tests.rs` exercises actual core admission, wire fallback,
-empty mixed skips and sender rejection without network tasks. No runtime,
-native build, real send or device pass is claimed until batch receipts exist.
+## Verification — 2026-10-14, Rig round 438
+
+Rig-opus approved committed batch `c5cf473` on `4f3db23`, under the shared
+build lock and per-step kernel Jobs. Measured results:
+
+- `proof-questions.mjs` with `HUBCHAT_MULTI_ONLY=1` passes 33/33. Replacing only
+  Conversation with the predecessor produces exactly 22 target failures; all
+  11 controls pass. This isolates target replacement from the superseded
+  alpha.4 send policy. Screens show one phone send with text for Q1/Q3 and
+  Red/Green/Blue for Q2; the predecessor drops Q1. Blank text skips Q1/Q3
+  while Q2 receives its pick. Desktop and Android sender guards keep the
+  existing target and explain refusal.
+- Mounted `proof-mixed-replies.mjs` passes 40/40 on desktop and Android
+  layouts; the alpha.4 Composer/store control fails exactly 23 targets with
+  all controls passing. It covers files, unknown-card waiting, failure,
+  remount, later selections, limits and both identity barriers. The former
+  `proof-answer-separation.mjs` forwards to this proof.
+- Full question checks pass 84/84, Escape 8/8, first-send 6/6, typecheck
+  passes, core lib 229/229 and clippy has no new diagnostics. The three new
+  `engine_multi_reply_tests.rs` cases exercise actual core admission, wire
+  fallback, mixed skips and sender rejection without network tasks.
+
+Earlier failed receipts were kept: fixture corrections moved the synthetic
+Ctrl+click onto the bubble, gave picked cards two options, reset toggled picks
+and measured send counters per layout. The final committed proofs were rerun.
+
+The full three-question browser sequence is Android; desktop mixed sending is
+covered by the mounted composer proof. These are synthetic renderer/browser
+checks, not device acceptance. Hosted real-hub transport of `meta.replies` was
+not measured in this round. No native app build, install, live-data write or
+real chat send is included. No hub pin, lockfile, schema or migration changed.

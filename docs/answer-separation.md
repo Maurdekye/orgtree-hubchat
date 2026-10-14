@@ -6,7 +6,7 @@ question, and one send can combine picks for some cards with text for others.
 Reply moves a card from picks to text targets; picking moves it back. Empty
 text skips text-target questions, visibly noted before Send. The same-sender
 rule applies to every target. See [multi-replies.md](multi-replies.md) for the
-current mechanics, compatibility and pending verification.
+current mechanics, compatibility and measured round 438 verification.
 
 The old separate-draft preparation field remains readable for compatibility,
 but new mixed sends carry their text/files together. Preparation failures,
@@ -29,5 +29,5 @@ The owner inspected the final JSON/logs and Desktop/Android-layout screenshots.
 Those were synthetic renderer checks under the shared lock/kernel Job, with
 dependencies read in place and no links or copies. They were not device
 acceptance or real chat sends. These historical receipts verify the superseded
-alpha.4 policy; they do not verify the later mixed multi-reply implementation,
-whose independent batch results remain pending.
+alpha.4 policy. The later mixed multi-reply implementation has its own measured
+round 438 receipts in [multi-replies.md](multi-replies.md).
