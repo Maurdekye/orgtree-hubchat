@@ -108,7 +108,11 @@ export function installMenu(host: HTMLElement, invoke: MenuInvoke) {
     // Position the visible menu first, then fit the reserved submenu window
     // around it. Clamping the whole two-pane window first displaced the root.
     const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
-    const x = clamp(pointX, 12, next.maxWidth - menuWidth - 12);
+    // Like a native context menu, flip the root to the other side of the
+    // cursor when it cannot fit to its right. Edge-clamping alone pins the
+    // menu to the work-area edge for every cursor in this range.
+    const x = clamp(pointX + menuWidth <= next.maxWidth - 12 ? pointX : pointX - menuWidth,
+      12, next.maxWidth - menuWidth - 12);
     const y = clamp(pointY + rootHeight <= next.maxHeight - 8 ? pointY : pointY - rootHeight,
       8, next.maxHeight - rootHeight - 8);
     const originX = clamp(x - (next.submenuLeft ? frameWidth - menuWidth - 12 : 12), 0, next.maxWidth - frameWidth);
