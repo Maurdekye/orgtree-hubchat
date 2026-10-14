@@ -273,6 +273,23 @@
   [decided: user 2026-10-11, mappings approved by lead-astra; verified:
   `tray.rs`, `updates.ts`; details: `docs/tray-menu.md`]
 
+- 2026-10-14: Start with Windows is on by default (Windows only).
+  `autostart::settle` decides once per device, before the tray is built and
+  before `first_start_of_version` notes the start. A Run entry stays as it is.
+  No Run entry but a StartupApproved record stays off on an update (it was on
+  and was turned off). Otherwise it is turned on with the plugin's own
+  `enable()`: the same entry, `--hidden`. A new install (no `last-run-version`)
+  is turned on whenever there is no Run entry. `start-with-windows` in the app
+  data folder records the decision (`default`/`kept`) and every use of the
+  switch (`on`/`off`, from `tray::set_autostart`). While it exists Hubchat
+  never turns Start with Windows on by itself, so an explicit off survives
+  restarts and updates. Test (`*.test`) and debug builds never touch the
+  entry; macOS/Linux and Android are unchanged. Never re-add a Run entry
+  removed from outside. [decided: user 2026-10-14 (on by default, existing
+  installs too, explicit off stays off); rule for earlier installs proposed by
+  hubchat-opus, approved by coordinator-opus 2026-10-14; verified:
+  `autostart.rs`, `tray.rs`, `lib.rs`; details and limits: `docs/tray-menu.md`]
+
 - 2026-10-11: Normal logging is `hubchat_core::diag` (events only) plus
   `src-tauri/src/trace.rs` (file, rotation, retention, verbose switch). Log
   tags (`diag::tag`) and error kinds (`diag::err_kind`), never message or file

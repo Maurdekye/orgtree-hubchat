@@ -17,7 +17,7 @@ keeps the same menu state and actions. The code is `src-tauri/src/tray.rs` (the 
 | Restart to update | Only once a check found an update. Installs it and restarts, as the banner's and Settings › About's buttons do. | |
 | Check for updates automatically | When Hubchat starts and every 6 hours. Updates never install on their own. | the same switch as Settings › About |
 | Check for updates | Checks now. The result shows on the status row and in Settings › About. | |
-| Start with Windows | Starts hidden in the tray at sign-in. "Start at login" on macOS and Linux. | the autostart plugin's entry (on Windows the Run key, which Windows' Startup apps can also turn off); Settings › General |
+| Start with Windows | Starts hidden in the tray at sign-in. On by default on Windows: Hubchat turns it on once on each device, then leaves it to the person ([below](#start-with-windows-is-on-by-default-user-2026-10-14)). "Start at login" on macOS and Linux, off unless turned on. | the autostart plugin's entry (on Windows the Run key, which Windows' Startup apps can also turn off); Settings › General. On Windows, `start-with-windows` in the app data folder records that the default was settled, and the switch's last choice |
 | Exit on close | Off unless turned on. On: closing the window quits Hubchat, as Quit Hubchat does. Off: closing hides the window, so messages and transfers keep going (design §7). | `exit-on-close` in the app data folder, so it belongs to the device and survives switching identity; Settings › General |
 | Notifications › Show notifications, Show message text, Play a sound | The three switches of Settings › Notifications. The last two are greyed while notifications are off. "Show notifications" covers message notifications and the notices of files that couldn't be sent or downloaded. | the core's store |
 | Crash reports… | Says how many crash reports there are, what they can contain, that Hubchat sends none, and offers Open folder. | `diagnostics/crash-reports` in the app data folder |
@@ -91,6 +91,59 @@ What it does not cover:
 - A panic before the app's setup runs (while plugins start) leaves none either.
 - Release builds carry no symbols (`strip` in Cargo.toml), so a backtrace may
   name no functions. The location and the message are always there.
+
+## Start with Windows is on by default (user 2026-10-14)
+
+The user asked for it (docket hubchat-start-with-windows-on-by-default). They
+then ruled that existing installs get it too, and that an explicit off stays
+off. Earlier versions kept no record of the switch, so hubchat-opus proposed
+the rule for them, and coordinator-opus approved it on 2026-10-14. The code is
+`src-tauri/src/autostart.rs`.
+
+- **When it is decided.** At the first start with this code, before the tray
+  is built, Hubchat decides once on the device (Windows only). To turn Start
+  with Windows on, it calls the plugin's own `enable()`, the switch's call.
+  That writes the same Run entry, `hubchat.exe --hidden`, so a start at
+  sign-in stays in the tray.
+- **The record.** `start-with-windows` in the app data folder then says it is
+  decided. It holds `default` (turned on), `kept` (left as an earlier choice
+  had it), or the switch's last `on` or `off`. The switch writes that from
+  the tray or Settings, through `tray::set_autostart`. While the file exists,
+  Hubchat never turns Start with Windows on by itself, so an off stays off
+  across restarts and updates. Like Exit on close, it is a device file.
+- **What Windows keeps.** Without that record, the decision reads what Windows
+  keeps under the product's name, in HKCU and HKLM as the plugin does:
+
+| Windows keeps | What it means | Decision |
+|---|---|---|
+| a Run entry | On, or turned off in Windows' Startup apps, which keeps the entry and marks it disabled. | left as it is |
+| no Run entry, but a `StartupApproved\Run` record | It was on and has been turned off. The plugin writes the record when it turns Start with Windows on and leaves it when it turns it off; the switch or an uninstall removed the entry. | left off on an update; turned on on a new install |
+| neither | It was never on. | turned on |
+
+- **A new install** is a data folder without `last-run-version`; every start
+  since 1.0.0 writes that file. A new install turns Start with Windows on
+  unless there is a Run entry, whatever an uninstalled Hubchat left in
+  StartupApproved.
+- **Failures.** If Windows' entries can't be read, or the plugin can't turn
+  it on, nothing is recorded and the next start tries again. The log says
+  which, in fixed words.
+- **Builds left out.** A test build (`*.test` identifier, as for the
+  `hubchat://` handler) or a debug build never adds itself to Windows'
+  startup.
+- **Platforms.** Windows only: "Start at login" on macOS and Linux is as
+  before, and Android has none.
+
+Accepted limits:
+
+- **No StartupApproved key.** The plugin writes no StartupApproved record
+  where Windows has no such key yet. On such a profile an earlier on and off
+  left no trace, so this update turns it on once. Turned off again, it stays
+  off.
+- **Entries removed from outside.** Hubchat never adds back a Run entry that
+  something else removed. That covers an uninstall that kept the data folder
+  (the uninstaller deletes the Run entry, as before) and a cleanup tool.
+- **Elevated runs.** If Hubchat runs elevated, the plugin writes the
+  machine-wide (HKLM) entry, as the switch already does.
 
 ## Verification
 
