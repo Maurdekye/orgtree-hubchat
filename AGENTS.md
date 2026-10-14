@@ -1,5 +1,13 @@
 # Hubchat development invariants
 
+- 2026-10-14: A tray context menu that cannot fit right of the cursor must
+  flip left before work-area clamping, matching the vertical flip above it.
+  Clamping alone fixes its right edge at the work-area edge and misses the
+  cursor. Test exact root corners at several edge offsets; bounds-only tests
+  missed alpha.5's regression. Scaling proofs use synthetic native geometry
+  and browser DSF emulation; real monitor DPI remains user acceptance.
+  [verified: traymenu-view.ts; docs/tray-cursor.md]
+
 - 2026-10-14: Attach the UI to the core before anything in setup can pump the
   UI thread; creating a window or WebView does (the tray popup warm-up). An
   event the core sends before the attach is dropped, and a steady state never

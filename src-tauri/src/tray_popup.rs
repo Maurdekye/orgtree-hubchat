@@ -347,6 +347,32 @@ mod tests {
     }
 
     #[test]
+    fn flipped_cursor_corner_survives_physical_window_rounding_at_scaled_origins() {
+        for scale in [1., 1.25, 1.5] {
+            for work in [(0, 0, 1920, 1040), (-1920, -200, 1920, 1040), (40, -1080, 1200, 800)] {
+                let max_x = work.2 as f64 / scale;
+                let max_y = work.3 as f64 / scale;
+                for offset in [32., 100., 200.] {
+                    let cursor = (max_x - offset, max_y - 32.);
+                    // The DOM flips the visible 312x375 root left/up, then
+                    // reserves the 648x391 submenu envelope around it.
+                    let root = (cursor.0 - 312., cursor.1 - 375.);
+                    let origin = ((root.0 - 324.).clamp(0., max_x - 648.),
+                        (root.1 - 8.).clamp(0., max_y - 391.));
+                    let (x,y,w,h) = cursor_placement(work, scale, 648., 391., origin);
+                    let right = x as f64 + (root.0 - origin.0 + 312.) * scale;
+                    let bottom = y as f64 + (root.1 - origin.1 + 375.) * scale;
+                    assert!((right - (work.0 as f64 + cursor.0 * scale)).abs() <= 0.501);
+                    assert!((bottom - (work.1 as f64 + cursor.1 * scale)).abs() <= 0.501);
+                    assert!(x >= work.0 && y >= work.1);
+                    assert!(x as i64 + w as i64 <= work.0 as i64 + work.2 as i64);
+                    assert!(y as i64 + h as i64 <= work.1 as i64 + work.3 as i64);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn popup_has_no_main_window_command_authority() {
         for command in ["hc_state", "hc_send", "hc_app_update_install", "hc_set_autostart", "hc_file_preview"] {
             assert!(!allowed_command("tray-menu", command));

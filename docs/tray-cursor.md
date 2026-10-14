@@ -61,3 +61,31 @@ they establish neither native latency nor native cold/warm improvement.
 
 No installation or live tray operation was performed. Native acceptance remains
 the user's check on the next Hubchat alpha under the disposition above.
+
+## Alpha.5 failed acceptance and horizontal flip (2026-10-14)
+
+The user reported that alpha.5 still missed the cursor. Its horizontal formula
+clamped the root against the work-area edge when it could not fit to the right,
+so every cursor in that zone produced the same root right edge. The earlier
+proof asserted exact anchoring only in the middle; its near-edge bounds check
+did not catch this. Flip the root left of the cursor first, just as the existing
+vertical formula flips above it, then apply work-area bounds for extreme edges.
+The transparent submenu envelope continues to surround that root.
+
+Prepared tests assert exact right/bottom corners across several cursor offsets.
+The native pure-function matrix covers scales 1, 1.25 and 1.5 with primary,
+negative-left and above monitor origins (27 cases, rounding tolerance 0.501
+physical pixels). The browser proof adds 27 actual DOM corner cases under CDP
+deviceScaleFactor 1/1.25/1.5, 54 physical-origin compositions and three extra
+captures. These new suites are prepared, not yet run. A tiny source-extracted
+horizontal-expression probe measured 18 old failures becoming 18 exact matches;
+its maximum old error was 282 physical pixels in synthetic coordinate layouts.
+
+The pinned Windows dependency gets the event point from physical GetCursorPos.
+Snapshot conversion subtracts the physical work-area origin and divides by the
+destination monitor scale; native placement reverses that conversion and uses
+PhysicalPosition. No separate DPI conversion defect has been established.
+Session0 has one 1024x768 display at 100%, with Explorer in Session1. Browser
+DSF emulation and synthetic origins do not measure native DPI or a second
+monitor. Coordinator 2026-10-14 22:38Z accepts these bounded proofs, with native
+125%/150% and multi-monitor acceptance left to the user on the next alpha.
