@@ -27,11 +27,13 @@ param(
   [switch] $AppNotRunning,      # do not start the installed app before upgrading (the upgrade must still relaunch it)
   [switch] $WizardControls,     # fresh/Advanced/silent controls on these same setups
   [switch] $RequireGracefulQuit, # real app: prompt primary exit AND rung-1 helper evidence
+  [switch] $RequireWindowFallback, # alpha acceptance: two-second request then WM_CLOSE, no force
   [switch] $KeepForInspection,
   [int] $UiSeconds = 60
 )
 $ErrorActionPreference = 'Stop'
 if ($RequireGracefulQuit -and ($NoMarker -or $AppNotRunning -or $Cancel -or $Mode)) { throw 'RequireGracefulQuit needs a running real app with the quit-control marker' }
+if ($RequireWindowFallback -and ($RequireGracefulQuit -or $NoMarker -or $AppNotRunning -or $Cancel -or $Mode)) { throw 'RequireWindowFallback needs a running real app and cannot replace the direct-quit control' }
 if ($ProductName -notmatch '^Hubchat [A-Za-z0-9 -]*Test$') { throw "refusing: '$ProductName' is not a disposable test product name" }
 if ($Identifier -notmatch '^dev\.orgtree\.hubchat\.[A-Za-z0-9.-]+\.test$') { throw "refusing: identifier '$Identifier' must end with .test" }
 New-Item -ItemType Directory -Force $Evidence | Out-Null
@@ -307,7 +309,7 @@ try {
   } else {
     Check 'installer exit 0' ($setupExit -eq 0) "exit $setupExit"
     Check 'old process is gone' (-not $oldAlive) "pid $($app.Id)"
-    if ($RequireGracefulQuit) {
+    if ($RequireGracefulQuit -or $RequireWindowFallback) {
       $tail = ''
       if (Test-Path -LiteralPath $helperLog) {
         $bytes = [IO.File]::ReadAllBytes($helperLog)
@@ -315,8 +317,14 @@ try {
         $start = if ($bytes.Length -ge $helperOffset) { [int]$helperOffset } else { 0 }
         $tail = [Text.Encoding]::UTF8.GetString($bytes, $start, $bytes.Length - $start)
       }
-      $graceful = $tail -match 'closed gracefully after the quit request' -and $tail -notmatch 'posted WM_CLOSE|terminating pid|no graceful quit within'
-      Check 'installer used rung-1 graceful quit without window or force fallback' $graceful
+      if ($RequireGracefulQuit) {
+        $graceful = $tail -match 'closed gracefully after the quit request' -and $tail -notmatch 'posted WM_CLOSE|terminating pid|no graceful quit within'
+        Check 'installer used rung-1 graceful quit without window or force fallback' $graceful
+      } else {
+        $fallback = $tail -match '(?s)asking the running Hubchat to quit.*no graceful quit within 2 s.*posted WM_CLOSE.*closed after WM_CLOSE elapsedMs=(\d+)'
+        $elapsed = if ($fallback) { [long]$Matches[1] } else { -1 }
+        Check 'installer used bounded two-second request then WM_CLOSE without force' ($fallback -and $tail -notmatch 'terminating pid|gone after terminate' -and $elapsed -ge 2000 -and $elapsed -lt 15000) "helperElapsedMs=$elapsed"
+      }
       Set-Content -LiteralPath (Join-Path $Evidence 'this-attempt-helper.log') -Value $tail
     }
     Check 'files replaced' ($newHash -ne $oldHash) "$oldHash -> $newHash"
@@ -328,10 +336,18 @@ try {
   }
   if ($WizardControls -and -not $Cancel) {
     # Silent reinstall is stock behavior, without the interactive Upgrade page.
-    # Ask our disposable app to quit first; stop on failure rather than kill it.
-    $quit = Start-Process -FilePath $installedExe -ArgumentList '--quit-for-upgrade' -PassThru -WindowStyle Hidden
-    if (-not $quit.WaitForExit(5000)) { throw 'silent control quit forwarder did not exit' }
-    foreach ($running in $inDir) { if (-not $running.WaitForExit(5000)) { throw 'silent control primary did not exit' } }
+    # Prepare the silent control with the same approved close ladder. The
+    # unresolved direct-quit control remains separately available above.
+    if ($RequireWindowFallback) {
+      $closeLog = Join-Path $Evidence 'silent-preparation-close.log'
+      $closeHelper = Join-Path $PSScriptRoot '../src-tauri/windows/installer-upgrade.ps1'
+      $closeOutput = & powershell -NoProfile -NonInteractive -File $closeHelper -ExecutablePath $installedExe -QuitControl -LogPath $closeLog
+      if ($LASTEXITCODE -ne 0 -or ($closeOutput -join "`n") -match 'FORCED') { throw 'silent preparation did not close without force' }
+    } else {
+      $quit = Start-Process -FilePath $installedExe -ArgumentList '--quit-for-upgrade' -PassThru -WindowStyle Hidden
+      if (-not $quit.WaitForExit(5000)) { throw 'silent control quit forwarder did not exit' }
+      foreach ($running in $inDir) { if (-not $running.WaitForExit(5000)) { throw 'silent control primary did not exit' } }
+    }
     $silent = Start-Process -FilePath $NewSetup -ArgumentList '/S','/NS' -PassThru -WindowStyle Hidden
     $visible = $false
     $until = (Get-Date).AddSeconds(60)

@@ -31,8 +31,9 @@ different product such as "Hubchat Test", is never closed). In order:
 1. If the installation says it understands it (the `HubchatQuitControl` value that
    installs from this version on write to the uninstall key), start the installed
    executable with `--quit-for-upgrade`. The single-instance plugin hands that to
-   the running Hubchat, which quits exactly like the tray's **Quit Hubchat**
-   (`lib.rs`, `desktop::quit_for_upgrade_requested`). Wait up to 25 s.
+   the running Hubchat, which requests exit like the tray's **Quit Hubchat**
+   (`lib.rs`, `desktop::quit_for_upgrade_requested`). Wait up to 2 s; this
+   request currently reaches ExitRequested but can stall before Exit.
 2. Otherwise, or if it did not quit: post `WM_CLOSE` to every window of those
    processes (a Hubchat set to quit on close does; one that hides in the tray does
    not). Wait 6 s.
@@ -102,12 +103,9 @@ WM_CLOSE fallback hid that defect. Its direct real-app predecessor probe still
 found the primary running after 80 seconds. Those receipts prove the fallback
 flow, not rung-1 graceful quit.
 
-The single-instance callback now clones the app handle and requests `exit(0)`
-from a separate thread, allowing the synchronous Windows callback to return.
-It retains Tauri's ExitRequested/Exit cleanup rather than terminating the
-primary directly. Temporary trace instrumentation is not included. This is a
-candidate correction until the batched real-app control below passes; source
-inspection alone does not prove shutdown scheduling on Windows.
+The attempted correction dispatched `exit(0)` from a separate thread. It failed
+and has been reverted: pinned Tauri already posts RequestExit asynchronously.
+Temporary diagnostic instrumentation is not included in product source.
 
 Round 432 (2026-10-14) rejected that threaded candidate: both the combined
 branch and exact author tip `9dd42a2` left the primary alive after five seconds,
@@ -127,7 +125,8 @@ uses an older bundle version). This adds three checks to the existing 19:
 - After starting the app again, the actual Upgrade flow logs a rung-1 graceful
   exit and no timeout, WM_CLOSE or force termination in that attempt.
 
-The strengthened real run must pass 22/22. Run the same strengthened proof
+This direct-quit control remains red and unresolved, not the alpha acceptance
+path approved below. A future graceful-quit fix must pass 22/22. Run the same proof
 against the pre-correction primary as the red control: its direct quit must
 fail, even though the historical 19-check upgrade succeeded. Preserve the
 fresh-install, Advanced setup, silent `/S`, Cancel and close-ladder controls.
@@ -142,3 +141,33 @@ when the real Hubchat installation is present for the read-only preservation
 comparison (25 if absent). The existing 19 upgrade checks remain intact. These
 controls terminate only the installer process objects that they themselves
 started; never use a cleanup helper that kills all processes named `setup`.
+
+## Alpha fallback ruling (coordinator, 2026-10-14)
+
+One diagnostic round measured Ready before the request; callback delivery,
+exact-argument recognition and ExitRequested all followed within about 1.5 ms.
+No user Exit event arrived within five seconds. Tauri calls plugin event hooks
+before the user's callback, so the precise downstream hang remains unknown.
+The earlier extra-thread change did not fix it and is reverted.
+
+For this alpha, ask politely first and wait 2 seconds (instead of 25), then
+post WM_CLOSE to the exact executable's processes and wait the existing 6
+seconds. Only survivors are force-terminated, with FORCED reported as before.
+The shorter initial wait avoids the measured 25-second delay on a request that
+does not finish; it is not a claim that rung 1 works. Historical real-executable
+WM_CLOSE took roughly one second. New timings must come from the batch receipt.
+
+Run the real packages with `-RequireWindowFallback -WizardControls`:
+24 checks when the real Hubchat comparison exists, 23 otherwise. The added
+fallback check requires this attempt's two-second timeout then WM_CLOSE success,
+no force, and measured helper elapsed time from 2 to under 15 seconds (includes
+process-query overhead). Silent-control preparation uses that same close helper
+and refuses forced termination; `/S` itself retains the stock behavior.
+Keep the separate `-RequireGracefulQuit` red receipt; the two acceptance switches
+are mutually exclusive. Also retain the stand-in graceful/hide/legacy/stubborn,
+not-running, Cancel, install/data, fresh and Advanced controls.
+
+Tray Quit (`src-tauri/src/tray.rs`, `"quit" => app.exit(0)`) uses the same Tauri
+exit API, so source shows exposure to the same downstream path. That is an
+inferred risk, not a measured tray-click hang. No tray-specific behavior change
+is included; a cheap disposable tray check may be recorded by the batch owner.
