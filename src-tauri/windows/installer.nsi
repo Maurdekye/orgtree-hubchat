@@ -254,7 +254,7 @@ hub_close_attempt:
   ${EndIf}
   InitPluginsDir
   File /oname=$PLUGINSDIR\hubchat-upgrade.ps1 "${HUBCHAT_WINDOWS_DIR}\installer-upgrade.ps1"
-  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\hubchat-upgrade.ps1" -ExecutablePath "$HubUpgradeExe" -GracefulSeconds 25 -LogPath "$TEMP\hubchat-installer-upgrade.log"$0'
+  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\hubchat-upgrade.ps1" -ExecutablePath "$HubUpgradeExe" -GracefulSeconds 2 -LogPath "$TEMP\hubchat-installer-upgrade.log"$0'
   Pop $0
   Pop $1
   ${If} $0 == 0

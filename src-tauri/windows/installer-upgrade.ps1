@@ -17,7 +17,7 @@
 # terminate). Exit 1: something still runs. Exit 2: the helper itself failed.
 param(
   [Parameter(Mandatory = $true)] [ValidateNotNullOrEmpty()] [string] $ExecutablePath,
-  [int] $GracefulSeconds = 25,
+  [int] $GracefulSeconds = 2,
   [int] $WindowCloseSeconds = 6,
   [int] $ForceSeconds = 10,
   [switch] $QuitControl,
@@ -32,7 +32,7 @@ function Write-Log([string] $Message) {
     if ((Test-Path -LiteralPath $LogPath) -and ((Get-Item -LiteralPath $LogPath).Length -gt 262144)) {
       Remove-Item -LiteralPath $LogPath -Force
     }
-    Add-Content -LiteralPath $LogPath -Value ('{0:yyyy-MM-dd HH:mm:ss} {1}' -f (Get-Date), $Message)
+    Add-Content -LiteralPath $LogPath -Value ('{0:yyyy-MM-dd HH:mm:ss.fff} {1}' -f (Get-Date), $Message)
   } catch { }
 }
 
@@ -80,6 +80,7 @@ public static class HubchatWindows {
 '@
 
 try {
+  $closeTimer = [Diagnostics.Stopwatch]::StartNew()
   $full = [IO.Path]::GetFullPath($ExecutablePath)
   Write-Log "start: executable=[$full] quitControl=$($QuitControl.IsPresent)"
   $targets = Get-Targets
@@ -94,7 +95,7 @@ try {
     Write-Log 'asking the running Hubchat to quit (--quit-for-upgrade)'
     Start-Process -FilePath $full -ArgumentList '--quit-for-upgrade' | Out-Null
     if (Wait-Gone $GracefulSeconds) {
-      Write-Log 'closed gracefully after the quit request'
+      Write-Log "closed gracefully after the quit request elapsedMs=$($closeTimer.ElapsedMilliseconds)"
       Write-Output 'Hubchat quit gracefully.'
       exit 0
     }
@@ -108,7 +109,7 @@ try {
     $n = [HubchatWindows]::Close($pids)
     Write-Log "posted WM_CLOSE to $n window(s)"
     if (Wait-Gone $WindowCloseSeconds) {
-      Write-Log 'closed after WM_CLOSE'
+      Write-Log "closed after WM_CLOSE elapsedMs=$($closeTimer.ElapsedMilliseconds)"
       Write-Output 'Hubchat closed.'
       exit 0
     }
