@@ -139,8 +139,8 @@ const cardsHeld = { mode: "", waiting: [] as (() => void)[] };
   hold: () => { cardsHeld.mode = "hold"; },
   fail: () => { cardsHeld.mode = "fail"; },
   release: () => { cardsHeld.mode = ""; cardsHeld.waiting.splice(0).forEach((go) => go()); },
-  card: (peer: string, id: string, body: string, options: string[]) => {
-    add(peer, false, now(), body, { id, kind: "question", question: options.length ? { options, multiple: false } : undefined });
+  card: (peer: string, id: string, body: string, options: string[], multiple = false) => {
+    add(peer, false, now(), body, { id, kind: "question", question: options.length ? { options, multiple } : undefined });
     chatEv(peer);
   },
 };
