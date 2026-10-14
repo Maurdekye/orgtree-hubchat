@@ -9,6 +9,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$JobRunner,
+    [Parameter(Mandatory)][string]$DependencyRoot,
     [Parameter(Mandatory)][string]$CacheRoot,
     [Parameter(Mandatory)][string]$OutputRoot,
     [int]$LimitMB = 4096,
@@ -20,6 +21,7 @@ $repo = Split-Path -Parent $PSScriptRoot
 $tmp = Join-Path $CacheRoot 'tmp'
 New-Item -ItemType Directory -Path $CacheRoot, $OutputRoot, $tmp -Force | Out-Null
 $env:HUBCHAT_VITE_CACHE = Join-Path $CacheRoot 'vite-cache'
+$env:HUBCHAT_DEPENDENCY_ROOT = $DependencyRoot
 $env:HUBCHAT_PROOF_OUT = $OutputRoot
 $env:HUBCHAT_JOB_CONTAINED = '1'
 $env:TEMP = $tmp

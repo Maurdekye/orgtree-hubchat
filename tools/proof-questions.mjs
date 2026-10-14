@@ -13,15 +13,24 @@
 // the same proof shows what the reviewed code did.
 // Run it only through tools/verify-questions.ps1, which starts it inside the
 // Orgtree kernel Job runner: bundling, the server and Chrome end with the job.
-for (const k of ['HUBCHAT_JOB_CONTAINED', 'HUBCHAT_VITE_CACHE', 'HUBCHAT_PROOF_OUT']) if (!process.env[k]) throw Error('Use tools/verify-questions.ps1; missing ' + k);
-import { createServer } from 'vite';
+for (const k of ['HUBCHAT_JOB_CONTAINED', 'HUBCHAT_VITE_CACHE', 'HUBCHAT_PROOF_OUT', 'HUBCHAT_DEPENDENCY_ROOT']) if (!process.env[k]) throw Error('Use tools/verify-questions.ps1; missing ' + k);
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { launch } from './cdp.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const out = process.env.HUBCHAT_PROOF_OUT;
 mkdirSync(out, { recursive: true });
-const server = await createServer({ cacheDir: process.env.HUBCHAT_VITE_CACHE, server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' });
+const deps = createRequire(join(process.env.HUBCHAT_DEPENDENCY_ROOT, 'package.json'));
+const { createServer } = await import(pathToFileURL(deps.resolve('vite')).href);
+const server = await createServer({ root: process.cwd(), configFile: false, cacheDir: process.env.HUBCHAT_VITE_CACHE,
+  esbuild: { jsx: 'automatic' }, plugins: [{ name: 'existing-dependencies', enforce: 'pre', resolveId(source) {
+    if (!source.startsWith('\0') && /^[^./][^:]*/.test(source)) {
+      try { return deps.resolve(source === 'qrcode' ? 'qrcode/lib/browser.js' : source); } catch { return null; }
+    }
+    return null;
+  } }], server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' });
 await server.listen();
 const base = server.resolvedUrls.local[0];
 const b = await launch();
