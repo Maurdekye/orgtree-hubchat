@@ -580,7 +580,11 @@ pub fn run() {
                     app: app.handle().clone(),
                     downloads,
                 };
-                core::init(dir, std::sync::Arc::new(platform))?;
+                // Attach at once: the tray popup's warm-up below creates a
+                // WebView, which pumps the UI thread, so the page can load and
+                // read the core's state before setup ends. A hub that connects
+                // before the attach would otherwise stay "Connecting…" there.
+                core::init(dir, std::sync::Arc::new(platform))?.attach_ui(app.handle().clone());
                 // Start with Windows is on by default, decided once on this
                 // device (autostart.rs): before the tray shows the switch, and
                 // before first_start_of_version writes last-run-version
@@ -598,17 +602,20 @@ pub fn run() {
                     desktop::hide(app.handle());
                 }
             }
-            let handle = app.handle().clone();
-            std::thread::spawn(move || {
-                // Android: the service may still be creating the core.
-                for _ in 0..200 {
-                    if let Ok(c) = core::get() {
-                        c.attach_ui(handle);
-                        return;
+            // Android: the service may still be creating the core.
+            #[cfg(mobile)]
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    for _ in 0..200 {
+                        if let Ok(c) = core::get() {
+                            c.attach_ui(handle);
+                            return;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-            });
+                });
+            }
             Ok(())
         })
         .build(tauri::generate_context!())

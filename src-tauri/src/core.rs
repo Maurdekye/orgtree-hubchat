@@ -387,11 +387,18 @@ impl Core {
         &*self.host.platform
     }
 
-    /// Called by the Tauri setup so events reach the UI.
+    /// Called by the Tauri setup so events reach the UI. Events the core sent
+    /// before this were dropped, and the page may already have read its state
+    /// (a WebView created during setup pumps the UI thread, so the page can
+    /// load before setup ends): tell it to read everything again.
     pub fn attach_ui(&self, app: AppHandle) {
         #[cfg(windows)]
         crate::tray_recent::changed(&app);
-        let _ = self.host.app.set(app);
+        if self.host.app.set(app).is_ok() {
+            if let Some(app) = self.host.app.get() {
+                let _ = app.emit("hc", serde_json::json!({"type": "attached"}));
+            }
+        }
     }
 
     /// Short tray reads/actions cannot cross identity adoption or sign-out.
