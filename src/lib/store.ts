@@ -347,6 +347,9 @@ function noteTyping(peer: string) {
 function typingEnded(peer: string) {
   if (typing.delete(peer)) typingChanged();
 }
+// a hidden window's timers may be held back: look again when it shows, so
+// a row whose second is up never lingers there
+document.addEventListener("visibilitychange", () => { if (typing.size) typingChanged(); });
 const subscribeTyping = (f: () => void) => { typingSubs.add(f); return () => { typingSubs.delete(f); }; };
 /** Whether `peer` is writing to us now. */
 export function useTyping(peer: string | null | undefined): boolean {

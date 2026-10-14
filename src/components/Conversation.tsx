@@ -471,7 +471,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
         ) : null}
         <FileBackgroundBanner />
         <div className="tl-wrap">
-          <div className="timeline" ref={tl} onScroll={onScroll} {...touch}><div>{rows}</div></div>
+          <div className="timeline" ref={tl} onScroll={onScroll} {...touch}><div>{rows}{typingNow ? <TypingRow name={name} /> : null}</div></div>
           {jumpBtn}
         </div>
         {composer}
