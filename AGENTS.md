@@ -345,3 +345,5 @@
   are coordinator choices; 30 days follows Orgtree. [decided: coordinator
   2026-10-11; verified: `trace.rs`, `diag.rs`; mapping from Orgtree, invariants
   and limits: `docs/logging.md`]
+
+- 2026-10-14: Desktop and Android Profile share SquareCrop: drag/resize corner handles over the native preview, arrow movement and Shift-arrow resize; no crop sliders. Native PictureCrop coordinates and original-byte saves stay unchanged. Pointer cancellation ends the gesture. Contract and unrun batch checks: docs/crop-square.md. [decided: user 2026-10-14; verified from source: PictureEditor.tsx, SquareCrop.tsx, cropmath.ts]

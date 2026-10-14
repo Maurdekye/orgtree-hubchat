@@ -72,7 +72,7 @@ try {
     await browser.send('Input.dispatchKeyEvent', { type: 'keyUp', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 }); await browser.sleep(80);
     check(label + ' Space opens chooser', await browser.eval('proof.chooser()') === count + 3);
     await browser.eval('proof.select()'); await browser.sleep(100);
-    check(label + ' existing preview/crop/save flow', !!await browser.count('img[alt="Selected profile picture crop"]') && !!await browser.count('input[aria-label="Crop size"]'));
+    check(label + ' existing preview/crop/save flow', !!await browser.count('img[alt="Selected profile picture crop"]') && !!await browser.count('.square-crop-move'));
     if (platform === 'desktop' && theme === 'dark') await browser.shot(out + '/desktop-crop.png');
     await browser.eval(`[...document.querySelectorAll('button')].find(b=>b.textContent==='Save picture').click()`); await browser.sleep(100);
     check(label + ' original bytes and crop sent to existing save API', await browser.eval(`proof.saved.at(-1).data==='BwgJ' && proof.saved.at(-1).crop.size===1 && !document.querySelector('img[alt="Selected profile picture crop"]')`));

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, type PictureCrop } from "../api";
 import { refreshAll } from "../lib/store";
 import { errText } from "../lib/native";
+import { SquareCrop } from "./SquareCrop";
 
 /** The shared desktop/Android Profile editor. Cropping uses oriented native
  * previews; full original bytes never enter an image element or canvas. */
@@ -58,12 +59,10 @@ export function PictureEditor({ owner, hasPicture, trigger }: {
     {!trigger && <label htmlFor="picture-file">Profile picture</label>}
     <div className="help">Static PNG, JPEG or WebP · up to 5 MiB and 16 megapixels. Shared across your devices and hubs.</div>
     {selected && <>
+      <SquareCrop key={selected.preview} src={selected.preview} width={selected.width} height={selected.height} value={crop} onChange={setCrop} disabled={busy} />
       <div aria-label="Square crop preview" style={{ position: "relative", width: 192, height: 192, overflow: "hidden", border: "1px solid var(--line)", margin: "12px 0" }}>
         <img alt="Selected profile picture crop" src={selected.preview} style={{ position: "absolute", maxWidth: "none", width: selected.width / side * 192, height: selected.height / side * 192, left: -(selected.width - side) * crop.x / side * 192, top: -(selected.height - side) * crop.y / side * 192 }} />
       </div>
-      <label>Crop size<input aria-label="Crop size" type="range" min="0.1" max="1" step="0.01" value={crop.size} disabled={busy} onChange={e => setCrop(c => ({ ...c, size: Number(e.target.value) }))} /></label>
-      <label>Horizontal position<input aria-label="Horizontal crop position" type="range" min="0" max="1" step="0.01" value={crop.x} disabled={busy} onChange={e => setCrop(c => ({ ...c, x: Number(e.target.value) }))} /></label>
-      <label>Vertical position<input aria-label="Vertical crop position" type="range" min="0" max="1" step="0.01" value={crop.y} disabled={busy} onChange={e => setCrop(c => ({ ...c, y: Number(e.target.value) }))} /></label>
       <button className="btn primary" disabled={busy} onClick={() => void save(false)}>Save picture</button>{" "}
     </>}
     {hasPicture && !trigger && <button className="btn" disabled={busy} onClick={() => void save(true)}>Remove picture</button>}
