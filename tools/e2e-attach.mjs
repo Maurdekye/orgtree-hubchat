@@ -93,20 +93,39 @@ await new Promise((r, j) => { proxy.once('error', j); proxy.listen(PROXY_PORT, '
 
 let app = null;
 let b = null;
+let page = null; // the page this start attached to, and the pages it refused first
 const until = async (f, ms, every = 300) => { const t = Date.now(); while (Date.now() - t < ms) { if (await f().catch(() => false)) return true; await sleep(every); } return false; };
 const start = async () => {
   answers = [];
   spawned = Date.now();
   app = spawn(EXE, [], { stdio: 'ignore', env: cdpEnv });
-  b = null;
-  for (let i = 0; i < 60 && !b; i++) { try { b = await attach(CDP); } catch { await sleep(500); } }
-  if (!b) throw new Error('could not attach to the e2e build');
-  if (!await until(() => b.eval(`typeof window.__TAURI_INTERNALS__?.invoke === 'function'`), 20000, 50)) throw new Error("the e2e build's page never loaded");
-  const loaded = Date.now() - spawned;
-  const id = await b.eval(`window.__TAURI_INTERNALS__.invoke('plugin:app|identifier')`);
-  if (id !== ID) throw new Error('this is not the e2e build: ' + id);
-  await until(() => b.eval(`window.__TAURI_INTERNALS__.invoke('hc_state').then(() => true)`), 20000, 100);
-  return loaded;
+  // Hubchat's own page, never the tray popup's: that page may not call
+  // plugin:app|identifier (capabilities/tray-menu.json), so a refused
+  // identifier is the wrong page. It is logged, with its URL and the refusal,
+  // and the attach is tried again.
+  const refused = [];
+  for (;;) {
+    b = null;
+    for (let i = 0; i < 60 && !b; i++) { try { b = await attach(CDP); } catch { await sleep(500); } }
+    if (!b) throw new Error('could not attach to the e2e build' + (refused.length ? ' after ' + J(refused) : ''));
+    if (!await until(() => b.eval(`typeof window.__TAURI_INTERNALS__?.invoke === 'function'`), 20000, 50)) throw new Error("the e2e build's page never loaded: " + J(b.target));
+    const loaded = Date.now() - spawned;
+    const seen = await b.eval(`window.__TAURI_INTERNALS__.invoke('plugin:app|identifier').then((id) => ({ id, href: location.href }),
+      (e) => ({ refused: typeof e === 'string' ? e : (e?.message ?? JSON.stringify(e)), href: location.href }))`)
+      .catch((e) => ({ refused: String(e.message || e).split('\n')[0], href: null }));
+    if (seen.id !== undefined && seen.id !== ID) throw new Error('this is not the e2e build: ' + seen.id);
+    if (seen.id === ID && !/\/tray-menu\.html/.test(seen.href)) {
+      page = { href: seen.href, listed: b.target.url, refused };
+      info('attached', `${J(seen.href)} (listed as ${J(b.target.url)})` + (refused.length ? `, after ${refused.length} refused: ${J(refused)}` : ''));
+      await until(() => b.eval(`window.__TAURI_INTERNALS__.invoke('hc_state').then(() => true)`), 20000, 100);
+      return loaded;
+    }
+    refused.push({ listed: b.target.url, href: seen.href, refused: seen.refused ?? null });
+    info("not Hubchat's page", J(refused.at(-1)));
+    try { await b.close(); } catch {}
+    if (refused.length === 3) throw new Error("no Hubchat page after 3 attaches: " + J(refused));
+    await sleep(300);
+  }
 };
 const stop = async () => {
   try { await inv('plugin:process|exit', { code: 0 }); } catch { /* the page goes with it */ }
@@ -158,7 +177,7 @@ try {
       await b.eval(`document.querySelector('button.hubpill')?.click(), true`);
       await until(() => b.eval(`document.querySelectorAll('.hubst').length > 0`), 5000, 100);
       const shown = await b.eval(`[...document.querySelectorAll('.hubst')].map((e) => ({ status: e.innerText.trim(), version: ((e.nextElementSibling || {}).innerText || '').match(/hub version (\\S+)/)?.[1] || null }))`);
-      const run = { round, delay: d, loaded_ms: loaded, healthz_answered_ms: answers, core: core && { state: core.state, version: core.version }, pill, shown, badge };
+      const run = { round, delay: d, loaded_ms: loaded, page, healthz_answered_ms: answers, core: core && { state: core.state, version: core.version }, pill, shown, badge };
       runs.push(run);
       const fresh = connected && shown.length === 1 && shown[0].status === 'Connected' && shown[0].version === VERSION
         && !!pill && /\bok\b/.test(pill.cls) && !!badge && !badge.includes('p-disconnected');

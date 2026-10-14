@@ -35,8 +35,22 @@ async function connect(port, proc, prof, { width, height, dpr }) {
   }
   if (!targets) { proc?.kill(); throw new Error('browser not reachable on port ' + port); }
   // A desktop build also hosts the tray popup's page, prepared at start since
-  // 1.2.0-alpha.5: attach to Hubchat's own page, never that one.
-  const page = targets.find((t) => t.type === 'page' && !/\/tray-menu\.html/.test(t.url));
+  // 1.2.0-alpha.5: attach to Hubchat's own page, never that one. A page is
+  // about:blank until its first navigation commits, so attaching to an app
+  // waits for a page whose URL has settled: the popup's page, still blank,
+  // was once taken for Hubchat's and refused its commands. If none settles,
+  // the old choice.
+  const own = (t) => t.type === 'page' && !/\/tray-menu\.html/.test(t.url);
+  let page = targets.find(own);
+  if (!proc) {
+    const settled = (t) => own(t) && !!t.url && t.url !== 'about:blank';
+    for (let i = 0; i < 60 && !targets.find(settled); i++) {
+      await sleep(150);
+      try { targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json(); } catch { /* keep the last list */ }
+    }
+    page = targets.find(settled) || targets.find(own);
+  }
+  if (!page) { proc?.kill(); throw new Error('no page on port ' + port + ': ' + JSON.stringify(targets.map((t) => [t.type, t.url]))); }
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });
   let id = 0; const pending = new Map(); const errors = []; const listeners = [];
@@ -55,6 +69,8 @@ async function connect(port, proc, prof, { width, height, dpr }) {
 
   const api = {
     errors,
+    /** The page this driver took: its URL as the browser listed it then. */
+    target: { id: page.id, url: page.url, title: page.title },
     send,
     sleep,
     async size(w, h, d = dpr) { await metrics(w, h, d); },
@@ -72,7 +88,12 @@ async function connect(port, proc, prof, { width, height, dpr }) {
     /** `gesture`: run as if the user had just acted (clipboard writes need it). */
     async eval(expr, { gesture = false } = {}) {
       const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true, userGesture: gesture });
-      if (r.exceptionDetails) throw new Error('eval failed: ' + (r.exceptionDetails.exception?.description || r.exceptionDetails.text) + '\n' + expr.slice(0, 200));
+      if (r.exceptionDetails) {
+        // a rejected invoke() is usually a plain string: a value, no description
+        const x = r.exceptionDetails.exception;
+        const why = x?.description || [r.exceptionDetails.text, x && 'value' in x ? JSON.stringify(x.value) : ''].filter(Boolean).join(' ');
+        throw new Error('eval failed: ' + why + '\n' + expr.slice(0, 200));
+      }
       return r.result.value;
     },
     async click(sel, wait = 250) {
