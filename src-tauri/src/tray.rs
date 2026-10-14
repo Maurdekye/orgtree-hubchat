@@ -309,6 +309,10 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
         .build(app)?;
     #[cfg(windows)]
     crate::tray_recent::sync(app);
+    #[cfg(windows)]
+    if crate::tray_popup::prepare(app).is_err() {
+        tracing::warn!("Tray popup warm-up failed; the next open will retry");
+    }
     Ok(())
 }
 

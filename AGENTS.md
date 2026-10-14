@@ -10,6 +10,14 @@
   [decided: user/coordinator 2026-10-14; verified: Conversation.tsx, answers.ts;
   docs/question-cards.md]
 
+- 2026-10-14: Prepare the hidden Windows tray WebView at startup. Right-menu
+  layout clamps its visible root to the event's actual cursor before placing
+  the larger submenu envelope; offsets are relative to that monitor's work
+  area and converted with its scale. Recent-chat positioning and double-click
+  discrimination keep their existing path. Native click-to-visible latency
+  remains a separate measurement from DOM paint samples.
+  [verified: tray_popup.rs, traymenu-view.ts; docs/tray-cursor.md]
+
 - 2026-10-14: Hide/show the main window only via `desktop::hide()`/`show()`,
   which hide/show the webview with it. Tauri's `WebviewWindow::hide()` leaves
   WebView2's IsVisible on: the page in the tray stayed "visible" (and focused

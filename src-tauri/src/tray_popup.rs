@@ -1,5 +1,5 @@
 //! Windows tray presentation. The native menu remains the single state/action
-//! authority. One lazy, hidden, idle WebView hosts tray surfaces; it never boots
+//! authority. One pre-created, hidden, idle WebView hosts tray surfaces; it never boots
 //! the main UI or gets filesystem/updater capabilities. The recent-chat
 //! surface receives bounded native metadata, never message contents.
 use serde::Serialize;
@@ -63,6 +63,8 @@ pub struct Snapshot {
     submenu_left: bool,
     max_width: f64,
     max_height: f64,
+    cursor_x: f64,
+    cursor_y: f64,
     kind: &'static str,
     recent: Vec<crate::tray_recent::RecentRow>,
     recent_available: bool,
@@ -78,14 +80,15 @@ fn dark() -> bool {
         .is_ok_and(|light| light == 0)
 }
 
-fn snapshot(app: &AppHandle) -> R<Snapshot> {
+fn snapshot(app: &AppHandle, warm: bool) -> R<Snapshot> {
     let p = app.try_state::<Popup>().ok_or("Tray menu is unavailable")?;
-    let s = {
+    let mut s = {
         let mut s = p.0.lock().map_err(|_| "Tray menu is unavailable")?;
-        if !s.open { return Err("Tray menu is closed".into()); }
+        if !s.open && !warm { return Err("Tray menu is closed".into()); }
         s.revision = s.revision.wrapping_add(1);
         s.clone()
     };
+    if !s.open { s.recent = false; s.owner.clear(); }
     let (rows, recent) = if s.recent {
         let (owner, recent) = crate::tray_recent::read(app)?;
         if owner != s.owner { return Err("Identity changed".into()); }
@@ -97,13 +100,15 @@ fn snapshot(app: &AppHandle) -> R<Snapshot> {
     Ok(Snapshot { generation: s.generation, revision: s.revision, rows,
         dark: dark(), submenu_left: s.left,
         max_width: s.work.2 as f64 / s.scale, max_height: s.work.3 as f64 / s.scale,
+        cursor_x: (s.anchor.0 - s.work.0 as f64) / s.scale,
+        cursor_y: (s.anchor.1 - s.work.1 as f64) / s.scale,
         kind: if s.recent { "recent" } else { "menu" }, recent,
         recent_available: crate::tray_recent::available(app) })
 }
 
 /// Publish only while open, after the existing native item writers finish.
 pub fn refresh(app: &AppHandle) {
-    if let Ok(view) = snapshot(app) {
+    if let Ok(view) = snapshot(app, false) {
         if let Some(w) = app.get_webview_window(LABEL) { let _ = w.emit("hc-tray-popup", view); }
     }
 }
@@ -164,10 +169,30 @@ fn open_surface(app: &AppHandle, point: PhysicalPosition<f64>, recent: bool, own
         s.recent = recent;
         s.owner = owner;
     }
-    if let Some(w) = app.get_webview_window(LABEL) {
-        let _ = w.hide(); // layout and populate before showing; no old-state flash
-        refresh(app);
-    } else {
+    let w = ensure_window(app)?;
+    let _ = w.hide(); // layout and populate before showing; no old-state flash
+    refresh(app);
+    Ok(())
+}
+
+/// Pay WebView creation/navigation at startup, never at the first tray click.
+/// The initial snapshot renders while hidden; ready still requires an open generation.
+pub fn prepare(app: &AppHandle) -> R<()> {
+    let monitor = app.primary_monitor().map_err(|e|e.to_string())?.ok_or("No monitor for tray warm-up")?;
+    {
+        let r = monitor.work_area();
+        let p = app.state::<Popup>();
+        let mut s = p.0.lock().map_err(|_| "Tray menu is unavailable")?;
+        if !s.open {
+            s.work = (r.position.x, r.position.y, r.size.width, r.size.height);
+            s.scale = monitor.scale_factor();
+        }
+    }
+    ensure_window(app).map(|_| ())
+}
+
+fn ensure_window(app: &AppHandle) -> R<WebviewWindow> {
+    if let Some(w) = app.get_webview_window(LABEL) { return Ok(w); }
         let built = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("tray-menu.html".into()))
             .title("Hubchat tray menu").visible(false).focused(false)
             .decorations(false).resizable(false).skip_taskbar(true)
@@ -192,14 +217,13 @@ fn open_surface(app: &AppHandle, point: PhysicalPosition<f64>, recent: bool, own
             tauri::WindowEvent::ThemeChanged(_) => refresh(&handle),
             _ => {}
         });
-    }
-    Ok(())
+    Ok(w)
 }
 
 #[tauri::command]
 pub fn hc_tray_popup_snapshot(window: WebviewWindow, app: AppHandle) -> R<Snapshot> {
     caller(&window)?;
-    snapshot(&app)
+    snapshot(&app, true)
 }
 
 /// Logical WebView measurements become physical desktop bounds using the
@@ -216,15 +240,36 @@ pub fn placement(work: (i32, i32, u32, u32), anchor: (f64, f64), scale: f64,
     (x, y, w, h)
 }
 
+fn cursor_placement(work: (i32, i32, u32, u32), scale: f64,
+    width: f64, height: f64, origin: (f64, f64)) -> (i32, i32, u32, u32) {
+    let w = (width * scale).ceil().clamp(1., work.2 as f64) as u32;
+    let h = (height * scale).ceil().clamp(1., work.3 as f64) as u32;
+    let x = (work.0 as f64 + origin.0 * scale).round()
+        .clamp(work.0 as f64, work.0 as f64 + (work.2-w) as f64) as i32;
+    let y = (work.1 as f64 + origin.1 * scale).round()
+        .clamp(work.1 as f64, work.1 as f64 + (work.3-h) as f64) as i32;
+    (x,y,w,h)
+}
+
 #[tauri::command]
 pub fn hc_tray_popup_ready(window: WebviewWindow, app: AppHandle, generation: u32, revision: u32,
-    width: f64, height: f64, root_x: f64) -> R<()> {
+    width: f64, height: f64, root_x: f64, origin_x: Option<f64>, origin_y: Option<f64>) -> R<()> {
     caller(&window)?;
     if ![width, height, root_x].iter().all(|v| v.is_finite()) || width <= 0. || height <= 0.
         || root_x < 0. || root_x >= width { return Err("Invalid tray geometry".into()); }
     let s = app.state::<Popup>().0.lock().map_err(|_| "Tray menu is unavailable")?.clone();
     if !s.open || s.generation != generation || s.revision != revision { return Err("Tray menu changed".into()); }
-    let (x, y, w, h) = placement(s.work, s.anchor, s.scale, width, height, root_x);
+    let (x, y, w, h) = if s.recent {
+        placement(s.work, s.anchor, s.scale, width, height, root_x)
+    } else {
+        let (ox, oy) = origin_x.zip(origin_y).ok_or("Missing cursor geometry")?;
+        if !ox.is_finite() || !oy.is_finite() || ox < 0. || oy < 0. {
+            return Err("Invalid cursor geometry".into());
+        }
+        // Root pane is already cursor-clamped independently by the renderer.
+        // Clamp the transparent submenu envelope without moving that root.
+        cursor_placement(s.work, s.scale, width, height, (ox,oy))
+    };
     let show = || {
         window.set_position(PhysicalPosition::new(x, y)).map_err(|e| e.to_string())?;
         window.set_size(PhysicalSize::new(w, h)).map_err(|e| e.to_string())?;
@@ -291,7 +336,15 @@ pub fn hc_tray_popup_action(window: WebviewWindow, app: AppHandle, generation: u
 
 #[cfg(test)]
 mod tests {
-    use super::{placement, allowed_command};
+    use super::{placement, cursor_placement, allowed_command};
+
+    #[test]
+    fn cursor_window_origin_preserves_monitor_coordinates_and_dpi() {
+        assert_eq!(cursor_placement((-1920,-200,1920,1040),1.5,648.,420.,(200.,100.)),
+            (-1620,-50,972,630));
+        assert_eq!(cursor_placement((40,48,1200,800),2.,648.,420.,(1100.,700.)),
+            (40,48,1200,800));
+    }
 
     #[test]
     fn popup_has_no_main_window_command_authority() {

@@ -7,6 +7,7 @@ export interface MenuRow {
 export interface MenuSnapshot {
   generation: number; revision: number; rows: MenuRow[]; dark: boolean;
   submenuLeft: boolean; maxWidth: number; maxHeight: number;
+  cursorX?: number; cursorY?: number;
 }
 export type MenuInvoke = (command: string, args: Record<string, unknown>) => Promise<unknown>;
 interface Pane { rows: MenuRow[]; el: HTMLElement; selected: number; parent?: string }
@@ -101,9 +102,20 @@ export function installMenu(host: HTMLElement, invoke: MenuInvoke) {
     const height = (rows: MenuRow[]) => rows.reduce((h, r) => h + (r.separator ? 17 : 28), 16);
     frameHeight = Math.min(next.maxHeight, Math.max(height(next.rows), ...next.rows.map(r => height(r.children))) + 16);
     host.style.width = `${frameWidth}px`; host.style.height = `${frameHeight}px`;
-    rootX = next.submenuLeft ? frameWidth - menuWidth - 12 : 12;
+    const rootHeight = Math.min(height(next.rows), frameHeight - 16);
+    const pointX = next.cursorX ?? (next.submenuLeft ? frameWidth - menuWidth - 12 : 12);
+    const pointY = next.cursorY ?? 8;
+    // Position the visible menu first, then fit the reserved submenu window
+    // around it. Clamping the whole two-pane window first displaced the root.
+    const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value));
+    const x = clamp(pointX, 12, next.maxWidth - menuWidth - 12);
+    const y = clamp(pointY + rootHeight <= next.maxHeight - 8 ? pointY : pointY - rootHeight,
+      8, next.maxHeight - rootHeight - 8);
+    const originX = clamp(x - (next.submenuLeft ? frameWidth - menuWidth - 12 : 12), 0, next.maxWidth - frameWidth);
+    const originY = clamp(y - 8, 0, next.maxHeight - frameHeight);
+    rootX = x - originX;
     const root = makePane(next.rows, 0);
-    root.el.style.left = `${rootX}px`; root.el.style.top = "8px";
+    root.el.style.left = `${rootX}px`; root.el.style.top = `${y - originY}px`;
     select(root, -1, false);
     for (let depth = 0; depth < trail.length; depth++) {
       const pane = panes[depth]; if (!pane) break;
@@ -112,7 +124,7 @@ export function installMenu(host: HTMLElement, invoke: MenuInvoke) {
       if (trail[depth + 1]?.parent === trail[depth].id && at >= 0) openChild(depth, at, false);
     }
     if (sameOpen && hadFocus) select(panes[panes.length - 1], panes[panes.length - 1].selected);
-    void run("hc_tray_popup_ready", { revision: next.revision, width: frameWidth, height: frameHeight, rootX }).catch(() => {});
+    void run("hc_tray_popup_ready", { revision: next.revision, width: frameWidth, height: frameHeight, rootX, originX, originY }).catch(() => {});
   }
   function key(event: KeyboardEvent) {
     if (!view || busy) return;

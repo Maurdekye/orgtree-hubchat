@@ -16,6 +16,49 @@ function setup(view = fixture()) {
   return { dom, calls, doc, menu, key, button, hover, close: () => { menu.dispose(); dom.window.close(); } };
 }
 
+test("right menu root follows cursor instead of the reserved submenu envelope", () => {
+  for (const submenuLeft of [false, true]) {
+    const view = { ...fixture(false, submenuLeft), cursorX: 1100, cursorY: 300 };
+    const t = setup(view); try {
+      const ready = t.calls.find(c => c.command.endsWith("ready"))!.args;
+      const root = t.doc.querySelector<HTMLElement>('.tray-pane')!;
+      assert.equal(Number(ready.originX) + parseFloat(root.style.left), 1100);
+      assert.equal(Number(ready.originY) + parseFloat(root.style.top), 300);
+      assert.equal(t.calls.filter(c => c.command.endsWith("ready")).length, 1,
+        'layout requests native show synchronously, with no timer');
+    } finally { t.close(); }
+  }
+});
+
+test("edge clamping uses root height even with a much taller submenu", () => {
+  const view = { ...fixture(), cursorX: 1910, cursorY: 1020 };
+  view.rows.find(r => r.id === 'notifications')!.children = Array.from({length: 24}, (_,i) =>
+    ({id:'child-'+i,label:'Child '+i,enabled:true,checked:null,separator:false,children:[]}));
+  const t = setup(view); try {
+    const ready = t.calls.find(c => c.command.endsWith('ready'))!.args;
+    const root = t.doc.querySelector<HTMLElement>('.tray-pane')!;
+    const rootHeight = view.rows.reduce((h,r)=>h+(r.separator?17:28),16);
+    const x = Number(ready.originX)+parseFloat(root.style.left);
+    const y = Number(ready.originY)+parseFloat(root.style.top);
+    assert.equal(x, 1920-312-12);
+    assert.equal(y+rootHeight, 1020, 'root bottom follows cursor, not the submenu height');
+    t.hover('notifications');
+    assert.equal(t.doc.querySelectorAll('.tray-pane').length,2);
+  } finally { t.close(); }
+});
+
+test("every open uses its own cursor and work-area coordinates", () => {
+  const t = setup({...fixture(),cursorX:100,cursorY:100}); try {
+    const next={...fixture(false,false),generation:2,cursorX:400,cursorY:210,maxWidth:900,maxHeight:700};
+    t.menu.update(next);
+    const ready=t.calls.filter(c=>c.command.endsWith('ready')).at(-1)!.args;
+    const root=t.doc.querySelector<HTMLElement>('.tray-pane')!;
+    assert.equal(Number(ready.originX)+parseFloat(root.style.left),400);
+    assert.equal(Number(ready.originY)+parseFloat(root.style.top),210);
+    assert.equal(ready.generation,2);
+  } finally { t.close(); }
+});
+
 test("menu keeps all native fixture labels, checked and disabled state", () => {
   const t = setup(); try {
     assert.equal(t.doc.querySelectorAll('[role="menu"] > button').length, 11);
