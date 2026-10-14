@@ -109,6 +109,14 @@ primary directly. Temporary trace instrumentation is not included. This is a
 candidate correction until the batched real-app control below passes; source
 inspection alone does not prove shutdown scheduling on Windows.
 
+Round 432 (2026-10-14) rejected that threaded candidate: both the combined
+branch and exact author tip `9dd42a2` left the primary alive after five seconds,
+while the forwarding process exited successfully. This does not establish that
+the primary received the request. The proof now captures disposable app log and
+crash-report tails before cleanup (up to 16 files, 1 MiB each, 8 MiB total),
+rejecting reparse sources and excluding databases and credentials. Preserve the
+failure receipt; the stronger quit checks must not be relaxed to make it pass.
+
 Run `tools/windows-installer-upgrade-proof.ps1 -RequireGracefulQuit` with the
 real Tauri `.test` binary in BOTH disposable setup packages (the prior setup
 uses an older bundle version). This adds three checks to the existing 19:

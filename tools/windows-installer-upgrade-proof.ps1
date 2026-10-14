@@ -141,6 +141,47 @@ function Stop-OwnedSetup([Diagnostics.Process] $process) {
   # This process object is one we just launched, never a global name lookup.
   if (-not $process.HasExited) { $process.Kill(); $process.WaitForExit(10000) | Out-Null }
 }
+function Save-OwnedDiagnostics {
+  # Preserve only disposable logs/crash reports, never databases or credentials.
+  # Read bounded tails with sharing while the app is still alive. Do not follow
+  # reparse points, even within the disposable roots.
+  $budget = 8MB
+  $count = 0
+  foreach ($root in @($roaming, $local)) {
+    foreach ($kind in @('logs', 'crash-reports')) {
+      $dir = Join-Path $root "diagnostics/$kind"
+      if (-not (Test-Path -LiteralPath $dir)) { continue }
+      $ancestor = Get-Item -LiteralPath $dir
+      while ($ancestor) {
+        if ($ancestor.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Refusing reparse diagnostic source' }
+        $ancestor = $ancestor.Parent
+      }
+      foreach ($file in @(Get-ChildItem -LiteralPath $dir -File | Sort-Object LastWriteTimeUtc -Descending)) {
+        if ($count -ge 16 -or $budget -le 0) { break }
+        if ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+        if ($file.Extension -notin @('.log', '.txt')) { continue }
+        $stream = [IO.File]::Open($file.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try {
+          $size = [int][Math]::Min([Math]::Min($stream.Length, 1MB), $budget)
+          [void]$stream.Seek(-$size, [IO.SeekOrigin]::End)
+          $bytes = New-Object byte[] $size
+          $read = 0
+          while ($read -lt $size) {
+            $n = $stream.Read($bytes, $read, $size - $read)
+            if ($n -eq 0) { break }
+            $read += $n
+          }
+          $count++
+          $destination = Join-Path $Evidence ("app-diagnostic-{0}-{1}{2}" -f $count, $kind, $file.Extension)
+          [IO.File]::WriteAllBytes($destination, $bytes)
+          $budget -= $size
+          Say "preserved disposable diagnostic $count ($kind, $read bytes; bounded tail)"
+        } finally { $stream.Dispose() }
+      }
+    }
+  }
+  Say "disposable diagnostic capture: $count files"
+}
 try {
   if ($WizardControls) {
     $fresh = Start-Process -FilePath $NewSetup -PassThru
@@ -323,6 +364,7 @@ try {
   $fail = $_.Exception.Message
   Say "ERROR: $fail"
 } finally {
+  try { Save-OwnedDiagnostics } catch { Say ("diagnostic capture failed: " + $_.Exception.Message) }
   if (-not $KeepForInspection) {
     # only what this run made: the disposable product's processes (by exact path), install, data
     Get-Process hubchat -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $installedExe } | Stop-Process -Force -ErrorAction SilentlyContinue
