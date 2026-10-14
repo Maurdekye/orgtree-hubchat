@@ -16,6 +16,11 @@
   area and converted with its scale. Recent-chat positioning and double-click
   discrimination keep their existing path. Native click-to-visible latency
   remains a separate measurement from DOM paint samples.
+  Rig round439: native library 88 passed/2 ignored, DOM19/19 and typecheck
+  passed; controlled predecessor gives exactly three cursor failures. Three
+  synthetic placement captures inspected; native Session1 acceptance remains
+  with the user on the next alpha. [verified: round439 receipts at 112e5dd;
+  docs/tray-cursor.md]
   [verified: tray_popup.rs, traymenu-view.ts; docs/tray-cursor.md]
 
 - 2026-10-14: Hide/show the main window only via `desktop::hide()`/`show()`,

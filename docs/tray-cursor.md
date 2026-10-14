@@ -36,3 +36,25 @@ source/DOM/geometry checks and renderer proxies as agent-side verification;
 native "instant at cursor" acceptance is the user's check on the next Hubchat
 alpha. No native latency numbers are claimed. No logging instrumentation is
 added unless continued slowness is reported and timing is separately assigned.
+
+## Measured agent-side verification (2026-10-14)
+
+Rig round439 tested Hubchat `112e5dd`, containing implementation `5c9c353`
+as `c09fca2` and the measurement disposition `0dde565` as `d562a7a`.
+The cursor implementation and proof files are identical between author and
+picked implementation commits. Typecheck passed; native library tests passed
+88 with 2 ignored and no failures; tray DOM tests passed 19/19. Replacing only
+`traymenu-view.ts` with its predecessor produced exactly three cursor-case
+failures (16 passed); the placement proof also failed at x=12 versus x=350.
+
+The green placement proof completed with 13 samples, three captures and zero
+browser errors. All three captures were inspected: the full menu stays on
+screen at the middle, bottom-right and top-left cases. Cursor (350,120) gives
+root (350,120); (890,640) flips to right=888, bottom=640; (0,0) clamps to
+(12,8). Five cold renderer mounts measured 8.5–32.6 ms and five warm renderer
+updates measured 31.7–33.6 ms through two animation frames. These synthetic
+renderer timings exclude native delivery, WebView startup and window show;
+they establish neither native latency nor native cold/warm improvement.
+
+No installation or live tray operation was performed. Native acceptance remains
+the user's check on the next Hubchat alpha under the disposition above.
