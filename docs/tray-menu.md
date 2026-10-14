@@ -163,8 +163,11 @@ reader: the phone's clock ran 2 s ahead, and these reads carried the PC's.
   focused. Android is unchanged.
 - **Proof.** `tools/e2e-hidden-read.mjs` runs a desktop test build under its
   own identifier (`tools/e2e-hidden-read.conf.json`) against a scratch hub.
-  It gives the hidden page focus the way the sign-in start did (CDP focus
-  emulation), so only the page's visibility decides the outcome.
+  Without the fix, a `--hidden` start there already shows the user's state: the
+  page says `{visible, focus: true}` (rig round 435). The test closes the
+  window with the title bar's own close button. It uses no CDP focus
+  emulation, because that keeps a page visible (it counts as a capture) and
+  hides the bug.
 
 Accepted limits:
 
