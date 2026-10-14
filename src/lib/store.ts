@@ -379,6 +379,7 @@ function onEvent(e: HcEvent) {
     case "file_lifecycle": schedule("state"); schedule("transfers"); break;
     case "hub": schedule("state"); schedule("transfers"); break;
     case "directory": schedule("dir"); schedule("state"); break;
+    case "attached": schedule("state"); schedule("chats"); schedule("dir"); schedule("transfers"); break;
     case "typing": noteTyping(e.peer); break;
     case "transfer":
       transfers.set(e.local_id, { done: e.done, total: e.total, upload: e.upload, message_id: e.message_id });
@@ -393,7 +394,10 @@ let started = false;
 export async function startStore(): Promise<void> {
   if (started) return;
   started = true;
-  void api.onEvent(onEvent);
+  // Listen before the first read: a change reported after that read would
+  // be lost for good, since a steady state (a hub that stays connected)
+  // reports nothing again.
+  try { await api.onEvent(onEvent); } catch (e) { console.warn("hc events", e); }
   await refreshState();
   if (snap.state && !snap.state.me) set({ onboarding: true });
   await Promise.all([refreshChats(), refreshDirectory(), refreshTransfers()]);

@@ -298,6 +298,9 @@ export type HcEvent =
   | { type: "incoming"; peer: string; id: string; preview: string }
   | { type: "hub"; url: string }
   | { type: "directory" }
+  /** The core has just attached to this window: what it reported before
+   *  never arrived here, so everything is read again. */
+  | { type: "attached" }
   /** A typing heartbeat from `peer` (hub feature `typing`): it is writing
    *  to us. Shown while the last one came within a second; never a
    *  notification. */
