@@ -19,6 +19,8 @@ import { pathToFileURL } from 'node:url';
 import { launch } from './cdp.mjs';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { multiReplies } from './multi-replies-browser.mjs';
 
 const out = process.env.HUBCHAT_PROOF_OUT;
 mkdirSync(out, { recursive: true });
@@ -34,6 +36,11 @@ const server = await createServer({ root: process.cwd(), configFile: false, cach
         dependencyAnchor, { skipSelf: true });
     }
     return null;
+  }, load(id) {
+    if (!process.env.HUBCHAT_MULTI_BASE || !id.replaceAll('\\', '/').endsWith('/src/components/Conversation.tsx')) return null;
+    const old = spawnSync('git', ['show', process.env.HUBCHAT_MULTI_BASE + ':src/components/Conversation.tsx'], { cwd: process.cwd(), encoding: 'utf8', windowsHide: true });
+    if (old.status !== 0) throw Error(old.stderr || String(old.error));
+    return old.stdout;
   } }], server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' });
 await server.listen();
 const base = server.resolvedUrls.local[0];
@@ -90,6 +97,10 @@ const longPress = async (js) => {
 };
 
 try {
+  if (process.env.HUBCHAT_MULTI_ONLY) {
+    await multiReplies({ b, base, out, check });
+    check('no console errors or exceptions', b.errors.length === 0);
+  } else {
   // ------------------------------------------------------------ desktop
   await b.nav(base); await theme('dark'); await ev(`localStorage.removeItem('hubchat-mock-draft-answers'), true`);
   await b.nav(base, 1200);
@@ -445,13 +456,13 @@ try {
     await clickAt(`document.querySelector('#m-q-p7 .kchip')`, 2);
     await clickAt(`document.querySelector('#m-q-p8 .kchip')`, 2);
     await b.click('.selbar .btn', 300);
-    check('R3: meanwhile the selection\'s Reply works too: "Replying to 2 messages"',
-      (await preparing()) && (await msgText('.composer .replybar.multi .rb-who')) === 'Replying to 2 messages');
+    check('R3: meanwhile selection Reply merges with the original target: "Replying to 3 messages"',
+      (await preparing()) && (await msgText('.composer .replybar.multi .rb-who')) === 'Replying to 3 messages');
     await files('fail()'); await sleep(700);
     const s4 = await saved();
-    check('R3 control: a failed preparation sends nothing, shows the error, and keeps the text, the file and the two replies chosen meanwhile (saved too)',
+    check('R3 control: a failed preparation keeps the text/file and original plus two appended targets (saved too)',
       (await outs()) === n0 && (await ev(`!!document.querySelector('.composer .comp-err')`)) && (await boxText()) === 'Yes, from 08:30.' && (await fileCount()) === 1
-        && (await ev(`document.querySelectorAll('.composer .rb-item').length`)) === 2 && s4?.replies?.join() === 'q-p7,q-p8');
+        && (await ev(`document.querySelectorAll('.composer .rb-item').length`)) === 3 && s4?.replies?.join() === 'q-p6,q-p7,q-p8');
   } catch (e) {
     check('R3 preparation scenario ran to the end: ' + e.message, false);
   }
@@ -648,11 +659,20 @@ try {
   const unexpected = b.errors.filter((e) => !e.includes('mock: cardAnswers failing on purpose'));
   check('no console errors or exceptions (other than the failures the R2 part causes)', unexpected.length === 0);
   if (unexpected.length) console.log(unexpected.join('\n'));
+  }
 } catch (e) {
   check('proof ran to the end: ' + e.message, false);
 } finally {
-  writeFileSync(join(out, 'result.json'), JSON.stringify({ checks, errors: b.errors }, null, 2));
+  const failures = checks.filter(c => !c.ok);
+  const expected = process.env.HUBCHAT_MULTI_ONLY && process.env.HUBCHAT_MULTI_BASE;
+  const passed = expected
+    ? checks.length === 19 && failures.length === 12 && checks.every(c => c.ok !== /^(desktop|android): append /.test(c.name))
+    : checks.length > 0 && failures.length === 0;
+  writeFileSync(join(out, 'result.json'), JSON.stringify({ checks, errors: b.errors, passed, expectedRed: expected ? 12 : 0 }, null, 2));
   console.log(`${checks.filter((c) => c.ok).length}/${checks.length} passed`);
   await b.close(); await server.close();
 }
-process.exit(checks.length && checks.every((c) => c.ok) ? 0 : 1);
+const expected = process.env.HUBCHAT_MULTI_ONLY && process.env.HUBCHAT_MULTI_BASE;
+process.exit(expected
+  ? (checks.length === 19 && checks.filter(c=>!c.ok).length === 12 && checks.every(c=>c.ok !== /^(desktop|android): append /.test(c.name)) ? 0 : 1)
+  : (checks.length && checks.every(c=>c.ok) ? 0 : 1));

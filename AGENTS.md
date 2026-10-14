@@ -1,5 +1,12 @@
 # Hubchat development invariants
 
+- 2026-10-14: Ordinary Reply appends/dedupes targets; selection Reply merges
+  into the same draft. Individual remove and Cancel All stay. Sending picks
+  still carries only picked cards; typed text/files/plain targets remain.
+  Generic wire references reuse first `reply_to` plus bounded `meta.replies`.
+  [decided: user/coordinator 2026-10-14; verified: Conversation.tsx, answers.ts;
+  docs/question-cards.md]
+
 - 2026-10-14: Hide/show the main window only via `desktop::hide()`/`show()`,
   which hide/show the webview with it. Tauri's `WebviewWindow::hide()` leaves
   WebView2's IsVisible on: the page in the tray stayed "visible" (and focused

@@ -22,6 +22,9 @@ Hubchat (which shows them and sends the answers).
 - A reply to a card with text answers it. A reply with no text **skips** it.
   A picked option answers it even without text.
 - **Multi-reply:** select several messages and reply to all of them at once.
+  Ordinary Reply adds a target instead of replacing the previous one; the
+  selection's Reply merges its targets into the existing draft. Repeating
+  Reply deduplicates; each target can be removed, and Cancel All clears them.
   The same text answers every card it replies to. Different answers go as
   separate replies.
 - A card **settles once, for good**: the first message that answers or skips

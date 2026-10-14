@@ -13,7 +13,7 @@ import { scanSetup } from "../lib/setup";
 import { refreshChats, useMessages, useSendRoute, useSnap, useTyping } from "../lib/store";
 import { replyIds } from "../lib/replies";
 import { cardOf, answerNotes, cardKnown, isOpen, isSettled, settlement } from "../lib/questions";
-import { loadDraftAnswers, pick, removeReply, sentDraftAnswers, setReplies, unpick, useDraftAnswers } from "../lib/answers";
+import { addReplies, loadDraftAnswers, pick, removeReply, sentDraftAnswers, setReplies, unpick, useDraftAnswers } from "../lib/answers";
 import { toast } from "../lib/toast";
 import { Composer, type ComposerApi } from "./Composer";
 import { HubHelpLink } from "./HubHelp";
@@ -218,12 +218,12 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   const del = useCallback((m: Message) => {
     api.deleteMessage(m.id).then(() => { reload(); void refreshChats(); setSel([]); }, (e) => toast(errText(e)));
   }, [reload]);
-  // Reply answers one message, as before; the selection's Reply answers all
-  // of it, oldest first (user 2026-10-11 13:18Z)
+  // Reply adds one message; selection Reply merges every selected message
+  // into this draft (user/coordinator 2026-10-14 multi-reply ruling).
   // (the box takes the focus only then: replies saved from before don't open the keyboard)
-  const reply = useCallback((m: Message) => { setReplies(peer, [m.id]); setSel([]); comp.current?.focus(); }, [peer]);
+  const reply = useCallback((m: Message) => { addReplies(peer, [m.id]); setSel([]); comp.current?.focus(); }, [peer]);
   const toggleSel = useCallback((m: Message) => setSel((s) => (s.includes(m.id) ? s.filter((x) => x !== m.id) : [...s, m.id])), []);
-  const replySel = () => { const ids = msgs.filter((m) => sel.includes(m.id)).map((m) => m.id); if (ids.length) setReplies(peer, ids); setSel([]); comp.current?.focus(); };
+  const replySel = () => { const ids = msgs.filter((m) => sel.includes(m.id)).map((m) => m.id); if (ids.length) addReplies(peer, ids); setSel([]); comp.current?.focus(); };
   const info = useCallback((m: Message) => { setSel([]); onInfo(m); }, [onInfo]);
 
   // ------------------------------------- desktop: Shift+Tab walks the bubbles

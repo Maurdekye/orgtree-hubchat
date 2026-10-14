@@ -33,10 +33,18 @@ function save(peer: string, d: DraftAnswers) {
   void api.setDraftAnswers(peer, d).catch(() => {});
 }
 
-/** What the next message replies to (Reply: one message; the selection's Reply: several). */
+/** Replace the held targets (explicit reset/Cancel All). */
 export function setReplies(peer: string, ids: string[]) {
   const d = cache.get(peer) ?? EMPTY;
   save(peer, { ...d, replies: ids });
+}
+/** Reply adds targets to the current draft; replying again never duplicates
+ *  one or drops another. The composer orders them by the chat timeline. */
+export function addReplies(peer: string, ids: string[]) {
+  const d = cache.get(peer) ?? EMPTY;
+  const replies = [...new Set([...d.replies, ...ids])];
+  if (replies.length === d.replies.length) return;
+  save(peer, { ...d, replies });
 }
 export function removeReply(peer: string, id: string) {
   const d = cache.get(peer) ?? EMPTY;
