@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 for (const k of ['HUBCHAT_DEPENDENCY_ROOT', 'HUBCHAT_DOM_DEPENDENCY_ROOT', 'HUBCHAT_PHONE_OUT']) if (!process.env[k]) throw Error('Missing ' + k);
 if (process.env.HUBCHAT_JOB_CONTAINED !== '1') throw Error('Existing shared lock and kernel Job required');
 const repo = process.env.HUBCHAT_PHONE_ROOT || process.cwd(), out = process.env.HUBCHAT_PHONE_OUT;
-if (!/^c:\/orgtree-build\/(hubchat-dm-sol|rig-opus)\//i.test(path.resolve(out).replaceAll('\\', '/'))) throw Error('Owned C output required');
+if (!/^c:\/orgtree-build\/(hubchat-dm-sol|rig-opus|rig-sol)\//i.test(path.resolve(out).replaceAll('\\', '/'))) throw Error('Owned C output required');
 const deps = createRequire(path.join(process.env.HUBCHAT_DEPENDENCY_ROOT, 'package.json'));
 const orgDeps = createRequire(path.join(process.env.HUBCHAT_DOM_DEPENDENCY_ROOT, 'package.json'));
 const esbuild = orgDeps('esbuild'), base = process.env.HUBCHAT_PHONE_BASE;

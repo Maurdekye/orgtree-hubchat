@@ -43,7 +43,9 @@
   into the same draft. Individual remove and Cancel All stay. Sending picks
   and text are exclusive per question, not per send: Reply unpicks that card,
   picking removes its text target. One send can carry picks, text and files
-  for different same-sender targets. Empty text targets visibly skip known
+  for different targets in one conversation, regardless of author. USER23:11Z
+  corrected the same-sender interpretation: one contact, no cross-chat targets
+  or multiple recipients. Empty text targets visibly skip known
   questions; unknown empty targets wait. This replaces alpha.4 separation.
   Generic wire references reuse first `reply_to` plus bounded `meta.replies`.
   [decided: user/coordinator 2026-10-14; verified: Conversation.tsx, answers.ts;

@@ -3,9 +3,11 @@
 Ordinary Reply appends a target. Selection Reply merges its targets into the
 draft, deduplicating overlaps. Remove clears an individual target; Cancel All
 clears the list. Replies survive reload with their chat. Every target in a
-send must come from the same sender in that chat; the collector explains a
-refusal, and core admission independently refuses unavailable, foreign-chat
-or mixed-sender targets before queuing or staging files.
+send must belong to that chat, regardless of sender; incoming and outgoing
+messages can be combined. Core admission independently refuses unavailable or
+foreign-chat targets before queuing or staging files. The open conversation's
+contact remains the one recipient. This is the USER correction at 23:11Z on
+2026-10-14, replacing the earlier same-sender interpretation.
 
 The final user ruling on 2026-10-14 makes exclusivity per question. One send
 may carry picks for one card, shared text for several other cards, ordinary
@@ -32,7 +34,22 @@ Preparation failure preserves the complete draft. Remount and identity
 guards remain. Queued completion clears only sent choices, keeping later
 ones. Text plus files count toward the existing message limit together.
 
-## Verification — 2026-10-14, Rig round 438
+## Sender correction verification — pending
+
+The browser fixture combines incoming/outgoing targets on both layouts, then
+sends once and checks the contact and every reference. With
+`HUBCHAT_MULTI_ONLY=1`, `HUBCHAT_SENDER_BASE=9d46e62` overrides only Conversation
+with the sender-restricting predecessor: four named acceptance checks should
+fail, with the other 31 controls passing; green should pass all 35 checks.
+Core cases accept mixed authors in one chat and retain missing/foreign-chat
+refusal controls. These counts are expectations for rig-sol, not measured
+results. No author runtime or build was run for this correction.
+
+## Historical verification — 2026-10-14, Rig round 438
+
+These receipts predate the 23:11Z correction. The old sender-refusal cases
+below verify the superseded interpretation and have now become acceptance
+cases with a one-contact send check.
 
 Rig-opus approved committed batch `c5cf473` on `4f3db23`, under the shared
 build lock and per-step kernel Jobs. Measured results:

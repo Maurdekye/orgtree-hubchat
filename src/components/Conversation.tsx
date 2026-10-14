@@ -140,7 +140,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   }, [settled, pending.picks, peer]);
   const onPick = useCallback((m: Message, label: string) => {
     const targets = [...pending.replies, ...Object.keys(pending.picks)].map(id => byId.get(id) ?? extra[id]);
-    if (targets.some(q => !q || q.peer !== peer || q.outgoing !== m.outgoing)) { toast("A multi-reply can only answer messages from the same sender."); return; }
+    if (m.peer !== peer || targets.some(q => !q || q.peer !== peer)) { toast("A multi-reply can only answer messages in this chat."); return; }
     const card = cardOf(m); if (card) pick(peer, m.id, label, card.multiple);
   }, [peer,pending,byId,extra]);
 
@@ -228,7 +228,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   const collectReplies = useCallback((ids: string[]) => {
     const all = [...new Set([...pending.replies, ...Object.keys(pending.picks), ...ids])].map(id => byId.get(id) ?? extra[id]);
     if (all.some(m => !m)) { toast("Wait for the reply targets to load before adding another."); return false; }
-    if (all.some(m => m!.peer !== peer || m!.outgoing !== all[0]!.outgoing)) { toast("A multi-reply can only answer messages from the same sender."); return false; }
+    if (all.some(m => m!.peer !== peer)) { toast("A multi-reply can only answer messages in this chat."); return false; }
     addReplies(peer, ids); return true;
   }, [peer,pending,byId,extra]);
   const reply = useCallback((m: Message) => { if (collectReplies([m.id])) { setSel([]); comp.current?.focus(); } },[collectReplies]);

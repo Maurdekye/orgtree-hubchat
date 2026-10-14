@@ -26,7 +26,7 @@ Hubchat (which shows them and sends the answers).
   Ordinary Reply adds a target instead of replacing the previous one; the
   selection's Reply merges its targets into the existing draft. Repeating
   Reply deduplicates; each target can be removed, and Cancel All clears them.
-  All targets must come from the same sender in this chat. The same text
+  All targets must belong to this chat, regardless of sender. The same text
   answers every text-target card; other cards can have their own picks in
   that same Send. Different typed answers go as separate replies.
 - A card **settles once, for good**: the first message that answers or skips

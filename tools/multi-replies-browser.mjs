@@ -57,9 +57,10 @@ export async function multiReplies({ b, base, out, check }) {
     check(p + 'control sent draft clears its targets', !(await ev(`!!document.querySelector('.composer .replybar')`)));
     await b.shot(join(out, `multi-after-${platform}.png`));
     const guard='guard-'+platform;
-    await ev(`window.__hcCards.card('orgtree.alex.7c41d2',${JSON.stringify(guard)},'Sender guard question',[]),true`);await wait(500);
+    const pickedGuard=guard+'-picked';
+    await ev(`window.__hcCards.card('orgtree.alex.7c41d2',${JSON.stringify(guard)},'Mixed author question',[]),window.__hcCards.card('orgtree.alex.7c41d2',${JSON.stringify(pickedGuard)},'Mixed author picked question',['Red','Blue']),true`);await wait(500);
     await b.click('#m-'+guard+' .q-hint',200);
-    const outgoing=await ev(`(()=>{const e=[...document.querySelectorAll('.timeline .msg.out .bubble')].pop();e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();return {x:r.left+25,y:r.bottom-30};})()`);
+    const outgoing=await ev(`(()=>{const e=[...document.querySelectorAll('.timeline .msg.out .bubble')].pop();e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();return {id:e.closest('.msg').id.slice(2),x:r.left+25,y:r.bottom-30};})()`);
     if(platform==='desktop') {
       await ev(`(()=>{const e=[...document.querySelectorAll('.timeline .msg.out .bubble')].pop();e.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:${outgoing.x},clientY:${outgoing.y}}));return true})()`);await wait(200);
       await ev(`(()=>{const e=[...document.querySelectorAll('[role=menuitem]')].find(e=>e.innerText.trim().endsWith('Reply'));if(!e)throw Error('Reply menu missing');e.click();return true})()`);
@@ -69,8 +70,15 @@ export async function multiReplies({ b, base, out, check }) {
       await b.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:outgoing.x+75,y:outgoing.y,button:'left',clickCount:1});
     }
     await wait(300);
-    check(p+'append sender guard refuses outgoing target and keeps the incoming one',(await replies()).join()===guard && await ev(`document.body.innerText.includes('same sender')`));
-    await b.shot(join(out,`multi-sender-refusal-${platform}.png`));
+    await b.click('#m-'+pickedGuard+' .q-opt',200);
+    const collected=await replies();
+    check(p+'append mixed authors collect incoming and outgoing targets',collected.length===2 && collected.includes(guard) && collected.includes(outgoing.id) && await ev(`!!document.querySelector('.composer .anschip')`));
+    const sentBefore=await ev(`window.__multiSent.length`);
+    await b.type('.composer textarea','One reply to both authors.');
+    await b.click('.composer .sendbtn',100);await wait(1000);
+    const mixed=await ev(`window.__multiSent.at(-1)`),sentAfter=await ev(`window.__multiSent.length`);
+    check(p+'append mixed authors send once to the open contact with every reference',sentAfter===sentBefore+1 && mixed.peer==='orgtree.alex.7c41d2' && mixed.replies?.length===3 && mixed.replies.includes(guard) && mixed.replies.includes(outgoing.id) && mixed.replies.includes(pickedGuard) && mixed.answers?.length===1 && mixed.answers[0].question===pickedGuard && mixed.answers[0].picked.join()==='Red');
+    await b.shot(join(out,`multi-mixed-authors-${platform}.png`));
   }
   // The final signed phone sequence: Reply Q1, then Q3, picks on Q2.
   // One Send carries text for Q1/Q3 and picks for Q2, exclusive per card.

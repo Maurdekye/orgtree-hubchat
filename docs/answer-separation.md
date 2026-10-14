@@ -4,8 +4,9 @@ Alpha.4 implemented per-send separation under the earlier 2026-10-14 ruling.
 The final user ruling at 16:15:55Z supersedes that policy: exclusivity is per
 question, and one send can combine picks for some cards with text for others.
 Reply moves a card from picks to text targets; picking moves it back. Empty
-text skips text-target questions, visibly noted before Send. The same-sender
-rule applies to every target. See [multi-replies.md](multi-replies.md) for the
+text skips text-target questions, visibly noted before Send. The 23:11Z user
+correction permits different authors within one conversation and keeps one
+recipient. See [multi-replies.md](multi-replies.md) for the
 current mechanics, compatibility and measured round 438 verification.
 
 The old separate-draft preparation field remains readable for compatibility,

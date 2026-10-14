@@ -37,8 +37,9 @@ const server = await createServer({ root: process.cwd(), configFile: false, cach
     }
     return null;
   }, load(id) {
-    if (!process.env.HUBCHAT_MULTI_BASE || !id.replaceAll('\\', '/').endsWith('/src/components/Conversation.tsx')) return null;
-    const old = spawnSync('git', ['show', process.env.HUBCHAT_MULTI_BASE + ':src/components/Conversation.tsx'], { cwd: process.cwd(), encoding: 'utf8', windowsHide: true });
+    const predecessor=process.env.HUBCHAT_SENDER_BASE || process.env.HUBCHAT_MULTI_BASE;
+    if (!predecessor || !id.replaceAll('\\', '/').endsWith('/src/components/Conversation.tsx')) return null;
+    const old = spawnSync('git', ['show', predecessor + ':src/components/Conversation.tsx'], { cwd: process.cwd(), encoding: 'utf8', windowsHide: true });
     if (old.status !== 0) throw Error(old.stderr || String(old.error));
     return old.stdout;
   } }], server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' });
@@ -647,15 +648,19 @@ try {
   check('proof ran to the end: ' + e.message, false);
 } finally {
   const failures = checks.filter(c => !c.ok);
-  const expected = process.env.HUBCHAT_MULTI_ONLY && process.env.HUBCHAT_MULTI_BASE;
+  const expected = process.env.HUBCHAT_MULTI_ONLY && (process.env.HUBCHAT_SENDER_BASE || process.env.HUBCHAT_MULTI_BASE);
+  const targets=process.env.HUBCHAT_SENDER_BASE ? /^(desktop|android): append mixed authors / : /^(desktop|android): append /;
+  const expectedCount=process.env.HUBCHAT_SENDER_BASE ? 4 : 24;
   const passed = expected
-    ? checks.length === 33 && failures.length === 22 && checks.every(c => c.ok !== /^(desktop|android): append /.test(c.name))
+    ? checks.length === 35 && failures.length === expectedCount && checks.every(c => c.ok !== targets.test(c.name))
     : checks.length > 0 && failures.length === 0;
-  writeFileSync(join(out, 'result.json'), JSON.stringify({ checks, errors: b.errors, passed, expectedRed: expected ? 22 : 0 }, null, 2));
+  writeFileSync(join(out, 'result.json'), JSON.stringify({ checks, errors: b.errors, passed, expectedRed: expected ? expectedCount : 0 }, null, 2));
   console.log(`${checks.filter((c) => c.ok).length}/${checks.length} passed`);
   await b.close(); await server.close();
 }
-const expected = process.env.HUBCHAT_MULTI_ONLY && process.env.HUBCHAT_MULTI_BASE;
+const expected = process.env.HUBCHAT_MULTI_ONLY && (process.env.HUBCHAT_SENDER_BASE || process.env.HUBCHAT_MULTI_BASE);
+const targets=process.env.HUBCHAT_SENDER_BASE ? /^(desktop|android): append mixed authors / : /^(desktop|android): append /;
+const expectedCount=process.env.HUBCHAT_SENDER_BASE ? 4 : 24;
 process.exit(expected
-  ? (checks.length === 33 && checks.filter(c=>!c.ok).length === 22 && checks.every(c=>c.ok !== /^(desktop|android): append /.test(c.name)) ? 0 : 1)
+  ? (checks.length === 35 && checks.filter(c=>!c.ok).length === expectedCount && checks.every(c=>c.ok !== targets.test(c.name)) ? 0 : 1)
   : (checks.length && checks.every(c=>c.ok) ? 0 : 1));
