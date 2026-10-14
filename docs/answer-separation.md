@@ -33,8 +33,19 @@ failure; green requires every check to pass. The old question browser proof
 is updated for the changed flow; ordinary file-preparation, settlement and
 identity controls remain there. Exact batch commands are supplied to rig-opus.
 
-Verification is pending the assigned single batch. Static JavaScript syntax
-and whitespace checks pass; no runtime pass is claimed. Dependencies are read
-in place, with no links or copies. Build/evidence outputs require the assigned
-C scope and the shared lock/kernel Job. No native Android build, installation,
-real chat send or device acceptance has been performed.
+Rig-opus approved round 120a6b on 2026-10-14. On the composed Hubchat batch,
+the mounted predecessor proof ran 36 checks with exactly 18 expected failures
+and every control passing; the fix passed 36/36. Source typecheck passed,
+Escape-reply passed 8/8 and first-send passed 6/6. The full question browser
+proof passed 87/87 at batch `543fa9b`, including the retained reply and file
+as separate later sends, unknown-card waiting, paging, settlement and identity
+controls. Its test-only fixes corrected dependency import conditions, CDP
+boolean serialization and old bundled-send expectations; earlier failed
+receipts are preserved with the final receipt.
+
+The owner inspected the final JSON/logs and desktop/Android-layout screenshots;
+these are synthetic renderer checks, not device acceptance. Dependencies were
+read in place, with no links or copies, under the shared lock/kernel Job and
+assigned C build/evidence scope. No native Android build, installation or real
+chat send has been performed. Coordinator integration remains separate from
+this verification result.
