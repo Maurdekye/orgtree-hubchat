@@ -12,6 +12,11 @@
   and Android. [decided: user 2026-10-14 22:30Z (badge); verified: lib.rs,
   core.rs, store.ts, peers.ts; docs/startup-attach.md; rig pending]
 
+- 2026-10-14: A desktop build's debug port lists two pages since alpha.5: the
+  main window and the tray popup (`tray-menu.html`, prepared at start).
+  `tools/cdp.mjs` `attach()` skips the popup's page; an e2e tool that lists
+  targets itself must too. [verified: cdp.mjs, tray_popup.rs]
+
 - 2026-10-14: Ordinary Reply appends/dedupes targets; selection Reply merges
   into the same draft. Individual remove and Cancel All stay. Sending picks
   and text are exclusive per question, not per send: Reply unpicks that card,

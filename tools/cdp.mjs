@@ -34,7 +34,9 @@ async function connect(port, proc, prof, { width, height, dpr }) {
     try { targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json(); } catch { /* not up yet */ }
   }
   if (!targets) { proc?.kill(); throw new Error('browser not reachable on port ' + port); }
-  const page = targets.find((t) => t.type === 'page');
+  // A desktop build also hosts the tray popup's page, prepared at start since
+  // 1.2.0-alpha.5: attach to Hubchat's own page, never that one.
+  const page = targets.find((t) => t.type === 'page' && !/\/tray-menu\.html/.test(t.url));
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });
   let id = 0; const pending = new Map(); const errors = []; const listeners = [];

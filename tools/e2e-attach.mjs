@@ -102,6 +102,7 @@ const start = async () => {
   const loaded = Date.now() - spawned;
   const id = await b.eval(`window.__TAURI_INTERNALS__.invoke('plugin:app|identifier')`);
   if (id !== ID) throw new Error('this is not the e2e build: ' + id);
+  await until(() => b.eval(`window.__TAURI_INTERNALS__.invoke('hc_state').then(() => true)`), 20000, 100);
   return loaded;
 };
 const stop = async () => {
