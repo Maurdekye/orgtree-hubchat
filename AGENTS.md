@@ -15,7 +15,13 @@
 - 2026-10-14: A desktop build's debug port lists two pages since alpha.5: the
   main window and the tray popup (`tray-menu.html`, prepared at start).
   `tools/cdp.mjs` `attach()` skips the popup's page; an e2e tool that lists
-  targets itself must too. [verified: cdp.mjs, tray_popup.rs]
+  targets itself must too. A page is `about:blank` until its first navigation
+  commits, so the popup's page can be listed under no name of its own:
+  `attach()` waits for a page whose URL has settled. The popup's page has
+  `__TAURI_INTERNALS__` but may call only event listen/unlisten
+  (`capabilities/tray-menu.json`): a refused `plugin:app|identifier` means
+  the wrong page (rig round 441). [verified: cdp.mjs, tray_popup.rs,
+  capabilities]
 
 - 2026-10-14: Ordinary Reply appends/dedupes targets; selection Reply merges
   into the same draft. Individual remove and Cancel All stay. Sending picks
