@@ -7,17 +7,19 @@
 //
 // Desktop test build under its own identifier (tools/e2e-hidden-read.conf.json,
 // so neither the real Hubchat nor an installed Hubchat Test is touched),
-// against a scratch hub, driven through WebView2's debug port. A sign-in start
-// left the hidden page with focus; the test gives it focus the same way every
-// time (CDP focus emulation), so only the page's visibility decides.
+// against a scratch hub, driven through WebView2's debug port. A hidden start
+// leaves the page focused: without the fix it said {visible, focus: true}
+// (rig round 435, session 0), as on the user's PC. No focus emulation: CDP's
+// keeps the page visible (it counts as a capture), which hides the bug.
 //   0. an identity on the hub; a normal start: Pat's first message, Pat's
 //      chat opened (the chat a restart reopens)
 //   1. a --hidden start (Start with Windows): the page says hidden, and
 //      Pat's chat is open again
-//   2. the page given focus: Pat's next message stays unread
+//   2. Pat's next message stays unread
 //   3. a second launch shows the window: the page says visible, and the open
 //      chat is read
-//   4. closed to the tray: the page says hidden; Pat's next message stays unread
+//   4. the title bar's close button (to the tray): the page says hidden; Pat's
+//      next message stays unread
 //   5. shown, focused and untouched past the in-use limit (150 s): Pat's next
 //      message stays unread (IDLE_STOPS_READING on; IDLE_READS=1 expects it
 //      read instead); a mouse move then reads it. E2E_IDLE=0 skips this step.
@@ -96,13 +98,8 @@ const stop = async () => {
 const inv = (cmd, args = {}) => b.eval(`window.__TAURI_INTERNALS__.invoke(${J(cmd)}, ${J(args)})`);
 const page = () => b.eval(`({ visibility: document.visibilityState, focus: document.hasFocus() })`);
 const openChat = () => b.eval(`(document.querySelector('.conv-head') || {}).innerText || ''`);
-// the focus a sign-in start left the hidden page with; the focus event makes
-// the UI read it again (useForeground listens for focus and blur)
-const giveFocus = async () => {
-  await b.send('Emulation.setFocusEmulationEnabled', { enabled: true });
-  await b.eval(`window.dispatchEvent(new Event('focus')), true`);
-  await sleep(500);
-};
+// Pat's row in the chat list, once the list has rendered it
+const patRow = `[...document.querySelectorAll('.crow')].find((e) => e.innerText.includes('Pat Hidden') || e.innerText.includes(PAT))`;
 const send = (text) => JSON.parse(peer('send', me, text)).sent;
 const arrived = (id) => until(() => inv('hc_message', { id }).then((m) => !!m), 20000);
 const seen = async (id) => (await inv('hc_message', { id }))?.seen === true;
@@ -125,8 +122,10 @@ try {
   pat = peer('whoami');
   const first = send('hello, open my chat');
   check("0. Pat's first message arrived", await arrived(first), pat);
-  const opened = await b.eval(`(() => { const r = [...document.querySelectorAll('.crow')].find((e) => e.innerText.includes('Pat Hidden') || e.innerText.includes(${J(pat)})); if (r) r.click(); return !!r; })()`);
-  check("0. Pat's chat opens", opened && await until(async () => isPat(await openChat()), 5000), J(await openChat()));
+  const row = patRow.replace('PAT', J(pat));
+  const listed = await until(() => b.eval(`!!${row}`), 10000);
+  const opened = listed && await b.eval(`(() => { const r = ${row}; if (r) r.click(); return !!r; })()`);
+  check("0. Pat's chat opens", opened && await until(async () => isPat(await openChat()), 5000), `listed ${listed}, head ${J(await openChat())}`);
   info('0. a normal start', J(await page()));
   await sleep(3000);
   await stop();
@@ -139,9 +138,8 @@ try {
   check('1. a --hidden start: the page says hidden', p1.visibility === 'hidden', J(p1));
   check("1. Pat's chat is open again", await until(async () => isPat(await openChat()), 8000), J(await openChat()));
 
-  // 2. with the focus a sign-in start leaves, Pat writes
-  await giveFocus();
-  info('2. the hidden page, given focus', J(await page()));
+  // 2. hidden in the tray, Pat writes
+  info('2. the hidden page', J(await page()));
   const second = send('are you there? (hidden)');
   check("2. Pat's message arrived", await arrived(second));
   check('2. hidden, it stays unread', await staysUnread(second), `seen ${await seen(second)}`);
@@ -151,12 +149,14 @@ try {
   const relaunch = spawnSync(EXE, [], { env: plainEnv, timeout: 30000 });
   info('3. the second launch exited', `status ${relaunch.status}`);
   check('3. shown: the page says visible', await until(async () => (await page()).visibility === 'visible', 8000), J(await page()));
+  check("3. Pat's chat is still open", isPat(await openChat()), J(await openChat()));
   check('3. shown: the open chat is read', await until(() => seen(second), 8000));
   await shot('3-shown.png');
 
-  // 4. the window's close button: to the tray
-  await inv('plugin:window|close', { label: 'main' });
+  // 4. the title bar's close button, clicked as a person does: to the tray
+  await b.mouse('button.window-control.close', 'click', 500);
   check('4. closed to the tray: the page says hidden', await until(async () => (await page()).visibility === 'hidden', 8000), J(await page()));
+  check("4. Pat's chat is still open", isPat(await openChat()), J(await openChat()));
   const fourth = send('still there? (closed)');
   check("4. Pat's message arrived", await arrived(fourth));
   check('4. in the tray, it stays unread', await staysUnread(fourth), `seen ${await seen(fourth)}`);
@@ -165,6 +165,7 @@ try {
   if (IDLE) {
     spawnSync(EXE, [], { env: plainEnv, timeout: 30000 });
     check('5. shown again: the page says visible', await until(async () => (await page()).visibility === 'visible', 8000), J(await page()));
+    info('5. the shown page', J(await page()));
     check('5. shown again: the open chat is read', await until(() => seen(fourth), 8000));
     info('5. untouched for 170 s', 'no input reaches the page meanwhile');
     await sleep(170_000);
