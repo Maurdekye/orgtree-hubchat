@@ -212,15 +212,22 @@ try {
     const dropped = c1.length === 1 && c1[0].includes('Keep') && !!s1 && !('q-old' in s1.picks) && s1.picks['q-fresh']?.join() === 'Keep';
     check('beyond the page: after a restart the saved pick on the card another device answered is gone (chip and saved); the open card keeps "Keep"', dropped);
     if (!dropped) console.log('   chips:', JSON.stringify(c1), 'saved:', JSON.stringify(s1));
-    check('beyond the page: the saved reply to the open free-response card is back, and sending it empty would skip it',
-      (await msgText('.composer .replybar .rb-txt'))?.includes('Anything to add to the runbook?') && (await msgText('.composer .skipnote')) === 'Sending with no text skips the question you reply to');
+    check('beyond the page: the saved free-response reply is back and stays for later while Send carries only the pick',
+      (await msgText('.composer .replybar .rb-txt'))?.includes('Anything to add to the runbook?') && (await msgText('.composer .skipnote')) === 'Send sends only your answers; your message and files stay here.');
     await b.shot(join(out, '11-beyond-page-desktop-light.png'));
     await sendNow();
     const got = await ev(`[...${sent}.querySelectorAll('.quote')].map((q) => q.querySelector('.q-ans')?.innerText ?? '')`);
-    check('beyond the page: one empty send answers the open card and skips the free one, each quote noted ("Answer: Keep", "Skipped"); the answered card is not in it',
-      got.join('|') === 'Answer: Keep|Skipped');
-    if (got.join('|') !== 'Answer: Keep|Skipped') console.log('   got:', JSON.stringify(got));
-    check('beyond the page: nothing stays saved for the chat', (await saved()) === null);
+    check('beyond the page: the first send answers only the picked card ("Answer: Keep"), without either other card',
+      got.join('|') === 'Answer: Keep' && (await ev(`${sent}.querySelectorAll('.quote').length`)) === 1);
+    if (got.join('|') !== 'Answer: Keep') console.log('   got:', JSON.stringify(got));
+    const retained = await saved();
+    check('beyond the page: only the free-response reply stays saved, with no pick; its later empty Send would skip it',
+      retained?.replies?.join() === 'q-free' && Object.keys(retained?.picks ?? {}).length === 0 && (await chips()).length === 0
+        && (await msgText('.composer .skipnote')) === 'Sending with no text skips the question you reply to');
+    await b.shot(join(out, '11a-beyond-page-retained-reply-desktop-light.png'));
+    await sendNow();
+    check('beyond the page: the later empty Send skips only the retained free-response card and clears its saved reply',
+      (await ev(`[...${sent}.querySelectorAll('.quote')].map((q) => q.querySelector('.q-ans')?.innerText ?? '')`)).join('|') === 'Skipped' && (await saved()) === null);
     // older pages until the cards show: they read as the store said
     for (let i = 0; i < 12 && !(await ev(`!!document.querySelector('#m-q-old')`)); i++) {
       await ev(`document.querySelector('.timeline').scrollTop = 0, true`); await sleep(700);
@@ -237,8 +244,9 @@ try {
   // ------------- review R2: an empty send to a card the store hasn't answered for
   // window.__hcCards (the mock) holds the store's answer back or makes it
   // fail, and adds a card as if it had just come in. While a card's state is
-  // unknown, an empty message replying to it must wait, whatever else it
-  // answers, and keep everything; once the store answers it goes.
+  // unknown, an empty plain reply (files or not) must wait and keep its
+  // draft. A known picked answer goes separately and retains that reply;
+  // once the store answers, the retained empty reply can go.
   try {
     const CI = 'nightly-ci.alex.8d21e0';
     await ev(`localStorage.removeItem('hubchat-mock-draft-answers'), true`);
@@ -251,7 +259,10 @@ try {
     const note = () => msgText('.composer .skipnote');
     const CHECKING = 'Checking whether the question you reply to is still open';
     const SKIPS = 'Sending with no text skips the question you reply to';
+    const ANSWERS = 'Send sends only your answers; your message and files stay here.';
     const notes = () => ev(`[...${sent}.querySelectorAll('.quote')].map((q) => q.querySelector('.q-ans')?.innerText ?? '')`);
+    const fileCount = () => ev(`document.querySelectorAll('.composer .attchip, .composer .attthumb').length`);
+    const sentFiles = () => ev(`${sent}.querySelectorAll('[data-att]').length`);
     const newCard = async (id, body, options) => { await cards(`card(${JSON.stringify(CI)}, '${id}', ${JSON.stringify(body)}, ${JSON.stringify(options)})`); await sleep(700); };
 
     // a pick on a known card, a reply to a card not known yet (query held)
@@ -291,19 +302,33 @@ try {
     check('R2, query failing: the reply with text answers both cards', (await outs()) === n0 + 1 && (await ev(`${sent}.querySelectorAll('.quote').length`)) === 2);
     await cards('release()'); await sleep(700);
 
-    // files and no text: the same wait (query held)
+    // files and no text: the known pick goes first; the retained empty
+    // reply/file still waits for its own unknown card (query held).
     await newCard('q-k3', 'Archive last week\'s logs?', ['Archive', 'Keep']);
     await cards('hold()');
     await newCard('q-u3', 'Anything for the on-call notes?', []);
     await pickOpt('q-k3', 'Archive');
     await b.click('#m-q-u3 .q-hint', 300);
     await b.click('.composer [aria-label="Attach files"]', 500);
-    check('R2, query held: a file but no text, a pick, and a reply to a card not known yet: Send waits',
-      (await waits()) && (await note()) === CHECKING && (await ev(`document.querySelectorAll('.composer .attchip, .composer .attthumb').length`)) === 1);
-    await cards('release()'); await sleep(700);
-    check('R2: once known, a file with no text says it skips the open card, and can go', !(await waits()) && (await note()) === SKIPS);
+    n0 = await outs();
+    check('R2, query held: the known pick can send separately while the file and unrelated unknown reply stay',
+      !(await waits()) && (await note()) === ANSWERS && (await fileCount()) === 1 && (await chips()).length === 1);
     await sendNow();
-    check('R2: the file goes with the pick ("Answer: Archive") and the skip ("Skipped")', (await notes()).join('|') === 'Answer: Archive|Skipped');
+    check('R2: the answer-only send has no file or skip; the retained empty file/reply now waits on its unknown card',
+      (await outs()) === n0 + 1 && (await notes()).join('|') === 'Answer: Archive' && (await sentFiles()) === 0
+        && !(await ev(`${sent}.querySelector('.mtext, .mbody') !== null`)) && (await fileCount()) === 1 && (await chips()).length === 0
+        && (await saved())?.replies?.join() === 'q-u3' && (await waits()) && (await note()) === CHECKING);
+    await ev(`document.querySelector('.composer textarea').focus(), true`); await b.key('Enter'); await sleep(500);
+    check('R2, query held: Enter cannot send the retained file with an empty unknown-card reply',
+      (await outs()) === n0 + 1 && (await fileCount()) === 1 && (await saved())?.replies?.join() === 'q-u3' && (await waits()));
+    await b.shot(join(out, '13a-files-retained-after-answer-desktop-light.png'));
+    await cards('release()'); await sleep(700);
+    check('R2: once known, the retained file with no text says it skips its open card, and can go',
+      !(await waits()) && (await note()) === SKIPS && (await fileCount()) === 1);
+    await sendNow();
+    check('R2: the later send carries the file and only the retained skip, then clears the file and saved reply',
+      (await outs()) === n0 + 2 && (await notes()).join('|') === 'Skipped' && (await sentFiles()) === 1 && (await fileCount()) === 0 && (await saved()) === null);
+    await b.shot(join(out, '13b-file-skip-desktop-light.png'));
 
     // a pick on a card not known yet: a text message can't carry it, and keeps it
     await cards('hold()');
