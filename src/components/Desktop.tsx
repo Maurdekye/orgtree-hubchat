@@ -11,7 +11,7 @@ import { hubSummary } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { closeDm, openDm } from "../lib/dm";
 import { useNavigationIntent } from "../lib/navigationIntent";
-import { useActive, useForeground, useLastChat, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
+import { IDLE_STOPS_READING, useActive, useForeground, useLastChat, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { isSetupLink, startSetup, useSetupChat } from "../lib/setup";
 import { chatLinkTarget } from "../lib/chatlink";
 import { startUpdateChecks } from "../lib/updates";
@@ -91,8 +91,8 @@ export function Desktop() {
   const [info, setPanel] = useState<Info>(null);
   const setInfo = useCallback((value: Info | ((prev: Info) => Info)) => { intent.invalidate(); setPanel(value); }, [intent]);
   const fg = useForeground("desktop");
-  useActive(fg);
-  useReadTracking(ov ? null : chat, fg);
+  const inUse = useActive(fg);
+  useReadTracking(ov ? null : chat, fg, IDLE_STOPS_READING ? inUse : fg);
   useEffect(() => { startUpdateChecks("desktop"); }, []);
 
   // the panel stays open across chats: Contact info follows the open chat,

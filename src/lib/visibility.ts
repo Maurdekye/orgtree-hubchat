@@ -1,6 +1,7 @@
 // Tell the core what is on screen: it decides notifications and read
 // receipts from this. A chat counts as read only while it is visible and the
-// window is focused (desktop) or the app is in the foreground (Android).
+// window is focused (desktop) or the app is in the foreground (Android); on
+// desktop also only while the window is in use (IDLE_STOPS_READING).
 import { useEffect, useRef, useState } from "react";
 import { api, type Message } from "../api";
 import { getSnap, onChatChange, useSnap } from "./store";
@@ -23,10 +24,16 @@ export function useForeground(platform: "desktop" | "android"): boolean {
  *  stops counting as in use. */
 const IDLE_MS = 150_000;
 
+/** Desktop: a window on screen that nobody has touched for IDLE_MS stops
+ *  marking new messages read until it is touched again, so a PC left open in
+ *  front doesn't take the phone's notifications away (coordinator 2026-10-14,
+ *  pending the user's answer; false: read whenever on screen and focused). */
+export const IDLE_STOPS_READING = true;
+
 /** In use (user 23:50Z): on screen (focused, on desktop) and touched in the
  *  last few minutes. While it is, our other devices don't notify; the core
- *  tells the hubs that can carry it. */
-export function useActive(foreground: boolean): void {
+ *  tells the hubs that can carry it. Returns whether it is. */
+export function useActive(foreground: boolean): boolean {
   const last = useRef(Date.now());
   const fg = useRef(foreground);
   fg.current = foreground;
@@ -41,14 +48,17 @@ export function useActive(foreground: boolean): void {
   // coming to the front counts as use; leaving it ends it at once
   useEffect(() => { if (foreground) last.current = Date.now(); setActive(foreground); }, [foreground]);
   useEffect(() => { void api.setActive(active).catch(() => {}); }, [active]);
+  return active;
 }
 
-/** Report foreground + visible chat; mark it read on open and as messages arrive. */
-export function useReadTracking(peer: string | null, foreground: boolean): void {
+/** Report foreground + visible chat; mark it read on open and as messages
+ *  arrive, while `reading` (the foreground; on desktop, in use). */
+export function useReadTracking(peer: string | null, foreground: boolean, reading = foreground): void {
   const snap = useSnap();
   const unread = peer ? snap.chats.find((c) => c.peer === peer)?.unread ?? 0 : 0;
   const inflight = useRef(false);
   const visible = foreground && !!peer && !!snap.state?.me;
+  const read = visible && reading;
 
   useEffect(() => { void api.uiState(foreground, visible ? peer : null).catch(() => {}); }, [foreground, visible, peer]);
 
@@ -57,10 +67,10 @@ export function useReadTracking(peer: string | null, foreground: boolean): void 
     inflight.current = true;
     api.markRead(p).catch(() => {}).finally(() => { inflight.current = false; });
   };
-  // on open (and when coming back to the window)
-  useEffect(() => { if (visible && peer) mark(peer); }, [visible, peer]); // eslint-disable-line react-hooks/exhaustive-deps
+  // on open (and when coming back to the window, or to the keyboard)
+  useEffect(() => { if (read && peer) mark(peer); }, [read, peer]); // eslint-disable-line react-hooks/exhaustive-deps
   // when new messages arrive while it is on screen
-  useEffect(() => { if (visible && peer && unread > 0) mark(peer); }, [visible, peer, unread]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (read && peer && unread > 0) mark(peer); }, [read, peer, unread]); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 /** One message, kept current (Message info). */
