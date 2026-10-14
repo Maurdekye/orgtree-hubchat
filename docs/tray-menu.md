@@ -153,8 +153,8 @@ reader: the phone's clock ran 2 s ahead, and these reads carried the PC's.
   the tray, and every show (a second launch, the tray, a notification or link).
   In the tray the page is `hidden`. It reads nothing, it doesn't count as in
   use, and the desktop's own notifications cover its open chat again.
-- **Untouched on screen** (decided by coordinator-opus 2026-10-14; the user's
-  answer is pending). On desktop, reading also needs the window to be in use:
+- **Untouched on screen** (the user ruled yes on 2026-10-14, through
+  coordinator-opus). On desktop, reading also needs the window to be in use:
   on screen, focused and touched within 150 s, the in-use limit. A window left
   in front marks nothing read until someone touches it, then reads the open
   chat at once. It still tells the core that the chat is on screen, so it
@@ -168,6 +168,12 @@ reader: the phone's clock ran 2 s ahead, and these reads carried the PC's.
   window with the title bar's own close button. It uses no CDP focus
   emulation, because that keeps a page visible (it counts as a capture) and
   hides the bug.
+- **Verified** (rig round 435 re-run, 2026-10-14, session 0): the fixed
+  build passes 21/21. Without the fix (the same test on 70260cb) exactly 5
+  checks fail: the page stays `visible` after a `--hidden` start and after a
+  close, it reads Pat's message both times, and an untouched window reads it.
+  Not covered: the user's own sign-in session and the phone. The final check
+  is the phone keeping its notifications once the PC runs the fixed build.
 
 Accepted limits:
 

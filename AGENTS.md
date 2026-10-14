@@ -5,10 +5,11 @@
   WebView2's IsVisible on: the page in the tray stayed "visible" (and focused
   after a sign-in start), read its reopened chat, and read-anywhere took the
   phone's notification away. On desktop, reading also needs "in use" (touched
-  within 150 s) while `IDLE_STOPS_READING` is on. [decided: coordinator
-  2026-10-14, user answer pending; verified from pinned source: tauri 2.12.1,
-  tauri-runtime-wry 2.12.1, wry 0.57.0; native proof tools/e2e-hidden-read.mjs,
-  rig round pending; docs/tray-menu.md]
+  within 150 s) while `IDLE_STOPS_READING` is on. [decided: user 2026-10-14
+  (idle rule, via coordinator); verified from pinned source: tauri 2.12.1,
+  tauri-runtime-wry 2.12.1, wry 0.57.0; verified: rig round 435 re-run,
+  tools/e2e-hidden-read.mjs 21/21, without the fix the 5 hidden/read checks
+  fail; docs/tray-menu.md]
 
 - 2026-10-14: Tauri event snapshots must derive `Clone` as well as `Serialize`.
   A stored `generate_handler!` closure needs an explicit `Invoke` input type
