@@ -56,6 +56,21 @@ export async function multiReplies({ b, base, out, check }) {
     check(p + 'append received rendering shows both reply quotes', (await ev(`[...document.querySelectorAll('.timeline .msg.out')].pop().querySelectorAll('.quote').length`)) === 2);
     check(p + 'control sent draft clears its targets', !(await ev(`!!document.querySelector('.composer .replybar')`)));
     await b.shot(join(out, `multi-after-${platform}.png`));
+    const guard='guard-'+platform;
+    await ev(`window.__hcCards.card('orgtree.alex.7c41d2',${JSON.stringify(guard)},'Sender guard question',[]),true`);await wait(500);
+    await b.click('#m-'+guard+' .q-hint',200);
+    const outgoing=await ev(`(()=>{const e=[...document.querySelectorAll('.timeline .msg.out .bubble')].pop();e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();return {x:r.left+25,y:r.bottom-30};})()`);
+    if(platform==='desktop') {
+      await ev(`(()=>{const e=[...document.querySelectorAll('.timeline .msg.out .bubble')].pop();e.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:${outgoing.x},clientY:${outgoing.y}}));return true})()`);await wait(200);
+      await ev(`(()=>{const e=[...document.querySelectorAll('[role=menuitem]')].find(e=>e.innerText.trim().endsWith('Reply'));if(!e)throw Error('Reply menu missing');e.click();return true})()`);
+    } else {
+      await b.send('Input.dispatchMouseEvent',{type:'mousePressed',x:outgoing.x,y:outgoing.y,button:'left',clickCount:1});
+      await b.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:outgoing.x+75,y:outgoing.y,button:'left',buttons:1});
+      await b.send('Input.dispatchMouseEvent',{type:'mouseReleased',x:outgoing.x+75,y:outgoing.y,button:'left',clickCount:1});
+    }
+    await wait(300);
+    check(p+'append sender guard refuses outgoing target and keeps the incoming one',(await replies()).join()===guard && await ev(`document.body.innerText.includes('same sender')`));
+    await b.shot(join(out,`multi-sender-refusal-${platform}.png`));
   }
   // The final signed phone sequence: Reply Q1, then Q3, picks on Q2.
   // One Send carries text for Q1/Q3 and picks for Q2, exclusive per card.

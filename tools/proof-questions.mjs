@@ -649,13 +649,13 @@ try {
   const failures = checks.filter(c => !c.ok);
   const expected = process.env.HUBCHAT_MULTI_ONLY && process.env.HUBCHAT_MULTI_BASE;
   const passed = expected
-    ? checks.length === 31 && failures.length === 20 && checks.every(c => c.ok !== /^(desktop|android): append /.test(c.name))
+    ? checks.length === 33 && failures.length === 22 && checks.every(c => c.ok !== /^(desktop|android): append /.test(c.name))
     : checks.length > 0 && failures.length === 0;
-  writeFileSync(join(out, 'result.json'), JSON.stringify({ checks, errors: b.errors, passed, expectedRed: expected ? 20 : 0 }, null, 2));
+  writeFileSync(join(out, 'result.json'), JSON.stringify({ checks, errors: b.errors, passed, expectedRed: expected ? 22 : 0 }, null, 2));
   console.log(`${checks.filter((c) => c.ok).length}/${checks.length} passed`);
   await b.close(); await server.close();
 }
 const expected = process.env.HUBCHAT_MULTI_ONLY && process.env.HUBCHAT_MULTI_BASE;
 process.exit(expected
-  ? (checks.length === 31 && checks.filter(c=>!c.ok).length === 20 && checks.every(c=>c.ok !== /^(desktop|android): append /.test(c.name)) ? 0 : 1)
+  ? (checks.length === 33 && checks.filter(c=>!c.ok).length === 22 && checks.every(c=>c.ok !== /^(desktop|android): append /.test(c.name)) ? 0 : 1)
   : (checks.length && checks.every(c=>c.ok) ? 0 : 1));
