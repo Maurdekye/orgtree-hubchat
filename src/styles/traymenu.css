@@ -1,0 +1,18 @@
+/* Light measurements: supplied Orgtree context-menu screenshots, 2026-10-14.
+   28px rows, 17px separator bands, 12px Segoe UI, white/#1f1f1f,
+   #d3e3fd dividers. Dark uses Chromium-like neutrals; no dark reference exists. */
+:root { color-scheme: light; --menu-bg:#fff; --menu-fg:#1f1f1f; --menu-disabled:#8c8c8c; --menu-hover:#f2f2f2; --menu-separator:#d3e3fd; --menu-tick:#666; }
+:root[data-menu-theme="dark"] { color-scheme:dark; --menu-bg:#292929; --menu-fg:#e8eaed; --menu-disabled:#93969a; --menu-hover:#414141; --menu-separator:#4b4d50; --menu-tick:#bdc1c6; }
+* { box-sizing:border-box; }
+html, body { margin:0; padding:0; background:transparent; overflow:hidden; user-select:none; font:12px "Segoe UI",sans-serif; }
+.tray-pane { position:absolute; padding:8px 0; color:var(--menu-fg); background:var(--menu-bg); border-radius:12px; box-shadow:0 4px 16px #0004,0 1px 3px #0002; overflow:auto; scrollbar-width:thin; }
+.tray-pane > button { appearance:none; display:grid; grid-template-columns:36px minmax(0,1fr) 28px; align-items:center; width:100%; height:28px; padding:0 8px 0 12px; margin:0; border:0; border-radius:0; background:transparent; color:inherit; font:inherit; text-align:left; cursor:default; outline:none; }
+.tray-pane > button.selected[aria-disabled="false"] { background:var(--menu-hover); }
+.tray-pane > button[aria-disabled="true"] { color:var(--menu-disabled); }
+.tray-label { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.tray-tick { display:flex; width:28px; justify-content:center; color:var(--menu-tick); }
+.tray-arrow { display:flex; justify-content:center; color:var(--menu-tick); }
+.tray-tick svg, .tray-arrow svg { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+.tray-separator { height:17px; position:relative; }
+.tray-separator::after { content:""; position:absolute; top:8px; left:0; right:0; height:1px; background:var(--menu-separator); }
+@media (forced-colors:active) { .tray-pane { background:Canvas; color:CanvasText; border:1px solid CanvasText; } .tray-pane > button.selected[aria-disabled="false"] { background:Highlight; color:HighlightText; } .tray-pane > button[aria-disabled="true"] { color:GrayText; } }

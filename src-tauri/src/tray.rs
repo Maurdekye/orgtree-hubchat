@@ -144,7 +144,7 @@ pub fn update_rows(u: Option<&Updates>) -> UpdateRows {
 
 /// The menu's live items.
 pub struct Tray {
-    menu: Menu<Wry>,
+    pub(crate) menu: Menu<Wry>,
     status: MenuItem<Wry>,
     install: MenuItem<Wry>,
     auto: CheckMenuItem<Wry>,
@@ -255,13 +255,31 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
         notify_sound,
         updates: Mutex::new((None, false)),
     });
-    TrayIconBuilder::with_id("main")
+    #[cfg(windows)]
+    app.manage(crate::tray_popup::Popup::default());
+    let builder = TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().cloned().expect("icon"))
-        .tooltip("Hubchat")
-        .menu(&menu)
+        .tooltip("Hubchat");
+    // Electron uses Chromium's drawn menus on Windows. Keep the same native
+    // handles for state/actions, but present them in the separate menu window.
+    #[cfg(not(windows))]
+    let builder = builder.menu(&menu);
+    builder
         .show_menu_on_left_click(false)
         .on_menu_event(|app, ev| on_menu(app, ev.id().as_ref()))
         .on_tray_icon_event(|tray, ev| match ev {
+            #[cfg(windows)]
+            TrayIconEvent::Click {
+                button: MouseButton::Right,
+                button_state: MouseButtonState::Up,
+                position,
+                ..
+            } => {
+                show_autostart(tray.app_handle());
+                if crate::tray_popup::open(tray.app_handle(), position).is_err() {
+                    warn(tray.app_handle(), "Hubchat couldn't open its tray menu.".into());
+                }
+            }
             TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
@@ -278,7 +296,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-fn on_menu(app: &AppHandle, id: &str) {
+pub(crate) fn on_menu(app: &AppHandle, id: &str) {
     let Some(t) = app.try_state::<Tray>() else {
         return;
     };
@@ -359,6 +377,8 @@ pub fn notifications_changed(app: &AppHandle) {
     if let (Some(t), Ok(c)) = (app.try_state::<Tray>(), core::get()) {
         t.show_notifications(c.notify_settings());
     }
+    #[cfg(windows)]
+    crate::tray_popup::refresh(app);
 }
 
 fn show_autostart(app: &AppHandle) {
@@ -471,12 +491,17 @@ pub fn hc_tray_updates(app: AppHandle, updates: Updates) {
         t.show_updates(Some(&updates), shown);
         g.0 = Some(updates);
     }
+    #[cfg(windows)]
+    crate::tray_popup::refresh(&app);
 }
 
 /// Settings › General: Start with Windows on or off; the value now in effect.
 #[tauri::command]
 pub fn hc_set_autostart(app: AppHandle, on: bool) -> R<bool> {
-    set_autostart(&app, on)
+    let result = set_autostart(&app, on);
+    #[cfg(windows)]
+    crate::tray_popup::refresh(&app);
+    result
 }
 
 /// Settings › General: whether closing the window quits Hubchat.
@@ -487,7 +512,10 @@ pub fn hc_exit_on_close() -> bool {
 
 #[tauri::command]
 pub fn hc_set_exit_on_close(app: AppHandle, on: bool) -> R<bool> {
-    set_exit_on_close(&app, on)
+    let result = set_exit_on_close(&app, on);
+    #[cfg(windows)]
+    crate::tray_popup::refresh(&app);
+    result
 }
 
 #[cfg(test)]

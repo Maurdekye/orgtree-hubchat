@@ -1,5 +1,15 @@
 # Hubchat development invariants
 
+- 2026-10-14: Windows tray presentation uses the separate `tray-menu.html`
+  surface; native menu handles remain the sole state/action authority.
+  Custom check actions establish the requested tick before the unchanged
+  dispatcher, and re-resolve live membership/enabled parents. Popup requests
+  bind to an open generation; main commands and plugin capabilities stay out
+  of that WebView. Never send an auxiliary Close through main Exit on close.
+  Keep native macOS/Linux menus. Light styling follows supplied Orgtree pixels;
+  dark is inferred and follows Windows app theme. [verified: tray.rs,
+  tray_popup.rs, traymenu-view.ts; contract/verification limits: docs/tray-style.md]
+
 - 2026-10-14: TransfersChip (both desktop placements) and TransfersStrip
   (Android chat list) already start collapsed with local open=false. Keep
   expansion during the mounted view; a newly mounted view starts collapsed.

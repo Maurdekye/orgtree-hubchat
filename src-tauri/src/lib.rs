@@ -16,6 +16,8 @@ mod trace;
 #[cfg(desktop)]
 mod tray;
 #[cfg(windows)]
+mod tray_popup;
+#[cfg(windows)]
 mod windows_icon;
 
 #[cfg(desktop)]
@@ -377,6 +379,8 @@ pub fn run() {
         )
         .plugin(tauri_plugin_notification::init())
         .on_window_event(|w, ev| {
+            // Auxiliary menus must never take the main window's Exit on close path.
+            if w.label() != "main" { return; }
             if let tauri::WindowEvent::CloseRequested { api, .. } = ev {
                 api.prevent_close();
                 // Exit on close (the tray, Settings › General) quits as Quit
@@ -395,7 +399,8 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(trace::commands(tauri::generate_handler![
+        .invoke_handler(trace::commands({
+            let handler = tauri::generate_handler![
             commands::hc_state,
             commands::hc_ui_state,
             commands::hc_check_id,
@@ -464,6 +469,14 @@ pub fn run() {
             tray::hc_exit_on_close,
             #[cfg(desktop)]
             tray::hc_set_exit_on_close,
+            #[cfg(windows)]
+            tray_popup::hc_tray_popup_snapshot,
+            #[cfg(windows)]
+            tray_popup::hc_tray_popup_ready,
+            #[cfg(windows)]
+            tray_popup::hc_tray_popup_close,
+            #[cfg(windows)]
+            tray_popup::hc_tray_popup_action,
             link::hc_link_start,
             link::hc_link_cancel,
             link::hc_link_lookup,
@@ -493,7 +506,15 @@ pub fn run() {
             trace::hc_log_info,
             trace::hc_set_verbose_logging,
             trace::hc_open_logs_folder,
-        ]))
+            ];
+            move |invoke: tauri::ipc::Invoke| {
+                #[cfg(windows)]
+                if !tray_popup::allowed_command(invoke.message.webview_ref().label(), invoke.message.command()) {
+                    return false;
+                }
+                handler(invoke)
+            }
+        }))
         .setup(|app| {
             // On Android the ConnectionService creates the core (it outlives
             // the activity); here we only attach the UI to it.

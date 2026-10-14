@@ -1,0 +1,7 @@
+{
+  "identifier": "tray-menu",
+  "description": "The Windows tray menu receives its own state only; no file, updater or window-control permissions.",
+  "platforms": ["windows"],
+  "windows": ["tray-menu"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}
