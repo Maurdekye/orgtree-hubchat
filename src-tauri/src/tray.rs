@@ -410,6 +410,9 @@ fn set_autostart(app: &AppHandle, on: bool) -> R<bool> {
         let changed = if on { a.enable() } else { a.disable() };
         changed.map_err(|e| e.to_string())?;
     }
+    // the person's choice: Hubchat never turns it on by itself again
+    #[cfg(windows)]
+    crate::autostart::chosen(app, on);
     let now = a.is_enabled().map_err(|e| e.to_string())?;
     if let Some(t) = app.try_state::<Tray>() {
         let _ = t.autostart.set_checked(now);

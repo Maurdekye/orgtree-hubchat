@@ -1,6 +1,8 @@
 #[cfg(target_os = "android")]
 mod android;
 mod appupdate;
+#[cfg(windows)]
+mod autostart;
 mod clip;
 mod commands;
 mod core;
@@ -324,10 +326,14 @@ mod desktop {
         !first_of_version && args.into_iter().any(|a| a == "--hidden")
     }
 
+    /// The version that last ran with this data folder. Every start since
+    /// 1.0.0 writes it, so a folder without it is a new install's.
+    pub const LAST_RUN: &str = "last-run-version";
+
     /// True when `dir` holds no record of having run `version` before (a new
     /// install, an update, a downgrade); records it either way.
     pub fn first_start_of_version(dir: &std::path::Path, version: &str) -> bool {
-        let file = dir.join("last-run-version");
+        let file = dir.join(LAST_RUN);
         let first = std::fs::read_to_string(&file).map_or(true, |v| v.trim() != version);
         if first {
             let _ = std::fs::create_dir_all(dir);
@@ -558,6 +564,11 @@ pub fn run() {
                     downloads,
                 };
                 core::init(dir, std::sync::Arc::new(platform))?;
+                // Start with Windows is on by default, decided once on this
+                // device (autostart.rs): before the tray shows the switch, and
+                // before first_start_of_version writes last-run-version
+                #[cfg(windows)]
+                autostart::settle(app.handle());
                 tray::build(app.handle())?;
                 #[cfg(windows)]
                 desktop::register_scheme(app.handle());
