@@ -57,10 +57,11 @@ async function mount(peer, platform, limit = 1000000) {
 }
 try {
   for (const platform of ['desktop', 'android']) {
+    const attemptedStart=attempted.length, acceptedStart=accepted.length;
     const p = platform + ': '; await mount('mixed-' + platform, platform);
     await type('  One text for two cards  '); await step(() => ref.current.addFiles(['file']));
     await step(() => { answers.addReplies(current.peer, ['q1','q3']); answers.pick(current.peer,'q2','One',true); answers.pick(current.peer,'q2','Three',true); });
-    check(p+'control picks wait for Send', attempted.length===accepted.length && document.querySelectorAll('.anschip').length===1);
+    check(p+'control picks wait for Send', attempted.length===attemptedStart && accepted.length===acceptedStart && document.querySelectorAll('.anschip').length===1);
     const n=accepted.length; await clickSend(); const m=accepted[n];
     check(p+'mixed send carries typed text and file', m?.body==='One text for two cards' && m.attachments?.length===1,true,m);
     check(p+'mixed send carries all three references and only Q2 picks', m?.reply_to==='q1' && m.replies?.join()==='q1,q2,q3' && m.answers?.length===1 && m.answers[0].question==='q2' && m.answers[0].picked.join()==='One,Three',true);
@@ -97,9 +98,9 @@ try {
     check(p+'blank mixed waits for unknown card before skipping',document.querySelector('.sendbtn').disabled,true);
     await clickSend();check(p+'blank unknown does not admit a partial picked send',attempted.length===u,true);
     // Independently reset any base admission so the known-card control is real.
-    await step(()=>{answers.addReplies(current.peer,['q3']);answers.pick(current.peer,'q1','One',false)});
+    await step(()=>{answers.unpick(current.peer,['q1']);answers.setReplies(current.peer,['q3']);answers.pick(current.peer,'q1','One',false)});
     cardState=()=> 'open';await step(()=>root.render(createElement(Fixture,{...current,composerRef:ref,cardState})));
-    await clickSend();check(p+'known mixed reply includes intended Skip and pick',accepted.at(-1)?.body==='' && accepted.at(-1)?.replies?.join()==='q1,q3',true);
+    const known=accepted.length;await clickSend();const knownReply=accepted[known];check(p+'known mixed reply includes intended Skip and pick',accepted.length===known+1 && knownReply?.body==='' && knownReply.replies?.join()==='q1,q3' && knownReply.answers?.length===1 && knownReply.answers[0].question==='q1' && knownReply.answers[0].picked.join()==='One',true);
     await unmount();
     await mount('ordinary-'+platform,platform);await type('Ordinary text');await step(()=>answers.addReplies(current.peer,['ordinary']));await clickSend();
     check(p+'control ordinary single reply unchanged',accepted.at(-1)?.body==='Ordinary text' && accepted.at(-1)?.reply_to==='ordinary' && !accepted.at(-1)?.answers?.length);await unmount();

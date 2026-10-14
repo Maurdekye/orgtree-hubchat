@@ -29,7 +29,7 @@ export async function multiReplies({ b, base, out, check }) {
     check(p + 'control repeating Reply dedupes the target', JSON.stringify(await replies()) === JSON.stringify(before));
     const file = row('Done. Here is the change');
     if (platform === 'desktop') {
-      await ev(`(() => { const e = ${file}; e.dispatchEvent(new MouseEvent('click',{bubbles:true,ctrlKey:true})); document.querySelector('#m-q-notes .kchip').dispatchEvent(new MouseEvent('click',{bubbles:true,ctrlKey:true})); return true; })()`);
+      await ev(`(() => { const e = (${file}).querySelector('.bubble'); e.dispatchEvent(new MouseEvent('click',{bubbles:true,ctrlKey:true})); document.querySelector('#m-q-notes .kchip').dispatchEvent(new MouseEvent('click',{bubbles:true,ctrlKey:true})); return true; })()`);
       await wait(200);
       await b.click('.selbar .btn', 250);
     } else {
@@ -94,7 +94,7 @@ export async function multiReplies({ b, base, out, check }) {
   check('android: control phone picked card settles with all three picked options', await ev(`/^Answered/.test(document.querySelector('#m-repro-q2 .q-state')?.innerText||'') && [...document.querySelectorAll('#m-repro-q2 .q-opt.on')].map(e=>e.innerText.trim()).join()==='Red,Green,Blue'`));
   check('android: append phone mixed send shows all three quotes', (await ev(`[...document.querySelectorAll('.timeline .msg.out')].pop().querySelectorAll('.quote').length`))===3);
   await b.shot(join(out,'phone-sequence-two-text-answers.png'));
-  await ev(`window.__hcCards.card('orgtree.alex.7c41d2','empty-q1','Empty question one',[]), window.__hcCards.card('orgtree.alex.7c41d2','empty-q2','Empty question two',['Red']), window.__hcCards.card('orgtree.alex.7c41d2','empty-q3','Empty question three',[]), true`);
+  await ev(`window.__hcCards.card('orgtree.alex.7c41d2','empty-q1','Empty question one',[]), window.__hcCards.card('orgtree.alex.7c41d2','empty-q2','Empty question two',['Red','Blue']), window.__hcCards.card('orgtree.alex.7c41d2','empty-q3','Empty question three',[]), true`);
   await wait(600);await b.click('#m-empty-q1 .q-hint',200);await b.click('#m-empty-q3 .q-hint',200);await b.click('#m-empty-q2 .q-opt',200);
   check('android: append blank mixed warns of both intended skips',await ev(`/skips 2 questions/.test(document.querySelector('.skipnote')?.innerText||'')`));
   await b.click('.composer .sendbtn',100);await wait(1000);
@@ -103,7 +103,7 @@ export async function multiReplies({ b, base, out, check }) {
   check('android: append blank mixed settles both text targets as Skipped',await ev(`/^Skipped/.test(document.querySelector('#m-empty-q1 .q-state')?.innerText||'') && /^Skipped/.test(document.querySelector('#m-empty-q3 .q-state')?.innerText||'')`));
   check('android: control blank picked card is Answered',await ev(`/^Answered/.test(document.querySelector('#m-empty-q2 .q-state')?.innerText||'')`));
   await b.shot(join(out,'phone-empty-mixed-skips.png'));
-  await ev(`window.__hcCards.card('orgtree.alex.7c41d2','mode-q','Mode question',['Red']), true`);await wait(500);
+  await ev(`window.__hcCards.card('orgtree.alex.7c41d2','mode-q','Mode question',['Red','Blue']), true`);await wait(500);
   await b.click('#m-mode-q .q-hint',200);await b.click('#m-mode-q .q-opt',200);
   check('android: control picking moves the card out of text targets',await ev(`!document.querySelector('.composer .replybar') && !!document.querySelector('.composer .anschip')`));
   await b.click('#m-mode-q .q-hint',200);
