@@ -1,5 +1,14 @@
 # Hubchat development invariants
 
+- 2026-10-14: Windows tray single click toggles six recent open chats of all
+  kinds, ordered by last message either direction; double click shows main.
+  Delay single-click display by Windows' double-click interval to avoid flash.
+  Recent metadata, actions and late pictures bind to the current identity and
+  popup generation. Native monotonic typing leases expire at one second;
+  the icon dot counts unread everywhere, including closed/history-only chats.
+  Do not mark a chat read from the popup. [verified: store_tray.rs,
+  tray_recent.rs, trayrecent-view.ts; contract/limits: docs/tray-recent.md]
+
 - 2026-10-14: Windows tray presentation uses the separate `tray-menu.html`
   surface; native menu handles remain the sole state/action authority.
   Custom check actions establish the requested tick before the unchanged

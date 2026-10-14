@@ -4,7 +4,9 @@ Right-clicking Hubchat's tray icon opens a menu in line with Orgtree's tray,
 made of Hubchat's own settings and behaviour (docket
 bring-hubchat-tray-menu-in-line-with-orgtree; user 2026-10-11, mappings
 approved by lead-astra 2026-10-11 22:36Z). A left click still shows the
-window. The code is `src-tauri/src/tray.rs` (the menu), `src-tauri/src/crash.rs`
+window on macOS/Linux. On Windows single click opens [recent chats](tray-recent.md)
+and double click shows the window (user 2026-10-14); the [right-click restyle](tray-style.md)
+keeps the same menu state and actions. The code is `src-tauri/src/tray.rs` (the menu), `src-tauri/src/crash.rs`
 (crash reports) and `src/lib/tray.ts` (the UI's side).
 
 | Row | What it does | Where the value lives |

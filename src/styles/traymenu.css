@@ -16,3 +16,22 @@ html, body { margin:0; padding:0; background:transparent; overflow:hidden; user-
 .tray-separator { height:17px; position:relative; }
 .tray-separator::after { content:""; position:absolute; top:8px; left:0; right:0; height:1px; background:var(--menu-separator); }
 @media (forced-colors:active) { .tray-pane { background:Canvas; color:CanvasText; border:1px solid CanvasText; } .tray-pane > button.selected[aria-disabled="false"] { background:Highlight; color:HighlightText; } .tray-pane > button[aria-disabled="true"] { color:GrayText; } }
+
+/* Orgtree main/traylist.ts: dark list, 28px rows, 5px pane padding,
+   6px row rounding, 16px numbered badge and 1.6s working glyph. */
+.recent-pane { position:absolute; padding:5px; border:1px solid #333; border-radius:10px; overflow:auto; scrollbar-width:thin; background:#181818; color:#dedede; box-shadow:0 4px 16px #0005; font:13px "Segoe UI",system-ui,sans-serif; }
+.recent-row { appearance:none; width:100%; height:28px; border:0; border-radius:6px; padding:0 5px; display:grid; grid-template-columns:18px 20px minmax(0,1fr); align-items:center; gap:5px; color:inherit; background:transparent; font:inherit; cursor:default; text-align:left; }
+.recent-row:hover, .recent-row.selected { background:#d9775726; color:#fff; outline:none; }
+.recent-row.unread { background:#d9775724; color:#fff; font-weight:600; }
+.recent-activity { display:inline-flex; align-items:center; justify-content:center; }
+.recent-badge { display:inline-flex; align-items:center; justify-content:center; min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:#d97757; color:#181818; font-size:10.5px; font-weight:700; line-height:1; }
+.recent-name { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.recent-spin { width:13px; height:13px; fill:#d97757; animation:recent-spin 1.6s linear infinite; }
+@keyframes recent-spin { to { transform:rotate(360deg); } }
+.recent-avatar { width:20px; height:20px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:600; overflow:hidden; }
+.recent-avatar.k-person { background:#3a3a3d; color:#d4d4d4; }
+.recent-avatar.k-org { background:#d9775733; color:#e3896b; border-radius:28%; }
+.recent-avatar.k-chat { background:#7cc0ff2b; color:#7cc0ff; border-radius:28%; }
+.recent-avatar img { width:100%; height:100%; object-fit:cover; }
+.recent-empty { height:28px; display:flex; align-items:center; color:#9a9a9a; white-space:nowrap; font-size:12px; }
+@media (prefers-reduced-motion:reduce) { .recent-spin { animation:none; } }

@@ -2170,3 +2170,7 @@ mod store_pictures;
 #[path = "store_questions.rs"]
 mod store_questions;
 pub use store_questions::DraftAnswers;
+
+#[path = "store_tray.rs"]
+mod store_tray;
+pub use store_tray::TrayChat;

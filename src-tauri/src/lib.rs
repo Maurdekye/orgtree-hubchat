@@ -18,6 +18,8 @@ mod tray;
 #[cfg(windows)]
 mod tray_popup;
 #[cfg(windows)]
+mod tray_recent;
+#[cfg(windows)]
 mod windows_icon;
 
 #[cfg(desktop)]
@@ -341,6 +343,13 @@ mod desktop {
             let _ = w.set_focus();
         }
     }
+
+    #[cfg(windows)]
+    pub fn open_chat_from_tray(app: &AppHandle, peer: &str) {
+        *PENDING.lock().unwrap() = Some(toast::chat_link(peer));
+        let _ = app.emit("hc-link-pending", ());
+        show(app);
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -477,6 +486,8 @@ pub fn run() {
             tray_popup::hc_tray_popup_close,
             #[cfg(windows)]
             tray_popup::hc_tray_popup_action,
+            #[cfg(windows)]
+            tray_recent::hc_tray_recent_picture,
             link::hc_link_start,
             link::hc_link_cancel,
             link::hc_link_lookup,

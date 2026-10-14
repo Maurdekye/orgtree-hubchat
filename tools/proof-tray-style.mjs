@@ -17,7 +17,7 @@ const require = createRequire(path.resolve(deps, '../package.json'));
 const esbuild = require('esbuild');
 if (mode === 'tests') {
   const outfile = path.join(output, 'tray-style-tests.mjs');
-  await esbuild.build({ entryPoints: [root + '/tools/tray-style.test.ts'], outfile,
+  await esbuild.build({ stdin: { contents:'import "./tools/tray-style.test.ts";import "./tools/tray-recent.test.ts";', resolveDir:root, loader:'ts' }, outfile,
     bundle: true, platform: 'node', format: 'esm', target: 'node22', nodePaths: [deps],
     external: ['node:*'], plugins: [{ name: 'real-jsdom', setup(build) {
       build.onResolve({ filter: /^jsdom$/ }, () => ({ path: pathToFileURL(require.resolve('jsdom')).href, external: true }));
@@ -31,8 +31,10 @@ if (mode === 'tests') {
   if (!refs) throw Error('Supplied Orgtree reference directory required');
   const build = await esbuild.build({ stdin: { contents:
     'import {installMenu} from "./src/traymenu-view";import{fixture}from"./tools/tray-style-fixture";' +
+    'import {installRecent} from "./src/trayrecent-view";import{recentFixture}from"./tools/tray-recent-fixture";' +
     'window.calls=[];window.menu=installMenu(document.body,async(command,args)=>window.calls.push({command,args}));' +
-    'window.fixture=fixture;window.menu.update(fixture());', resolveDir: root, loader: 'ts' },
+    'window.fixture=fixture;window.menu.update(fixture());' +
+    'window.showRecent=()=>{menu.dispose();window.recent=installRecent(document.body,async(command,args)=>window.calls.push({command,args}));window.recentFixture=recentFixture;recent.update(recentFixture())};', resolveDir: root, loader: 'ts' },
     bundle: true, write: false, platform: 'browser', format: 'iife', target: 'chrome130', nodePaths: [deps] });
   esbuild.stop();
   const js = build.outputFiles[0].contents;
@@ -42,11 +44,13 @@ if (mode === 'tests') {
     if (req.url === '/menu.js') { res.setHeader('content-type', 'text/javascript'); return res.end(js); }
     if (req.url === '/menu.css') { res.setHeader('content-type', 'text/css'); return res.end(css); }
     if (req.url === '/favicon.ico') { res.writeHead(204); return res.end(); }
-    if (req.url === '/comparison') {
+    if (req.url === '/comparison' || req.url === '/comparison-recent') {
       res.setHeader('content-type', 'text/html');
+      if (req.url === '/comparison-recent') return res.end('<!doctype html><meta charset="utf-8"><style>body{background:#d8dce1;font:14px Segoe UI;margin:24px}main{display:flex;gap:32px;align-items:start}figure{margin:0}figcaption{margin-bottom:12px}</style><main><figure><figcaption>Orgtree left-click reference</figcaption><img src="/reference-recent.png"></figure><figure><figcaption>Hubchat recent chats · synthetic</figcaption><img src="/recent.png"></figure></main>');
       return res.end('<!doctype html><meta charset="utf-8"><style>body{background:#d8dce1;font:14px Segoe UI;margin:24px}main{display:flex;gap:32px;align-items:start}figure{margin:0}figcaption{margin-bottom:12px}img{display:block;max-width:600px}</style><main><figure><figcaption>Orgtree user reference · LIGHT</figcaption><img src="/reference.png"></figure><figure><figcaption>Hubchat synthetic popup · LIGHT</figcaption><img src="/main-light.png"><p>Dark variant is inferred; no dark context-menu reference was supplied.</figure></main>');
     }
-    const files = { '/reference.png': path.join(refs, '3-main-only.png'), '/main-light.png': path.join(output, 'main-light.png') };
+    const files = { '/reference.png': path.join(refs, '3-main-only.png'), '/main-light.png': path.join(output, 'main-light.png'),
+      '/reference-recent.png':path.join(refs,'4-hover-org-popup-dark.png'),'/recent.png':path.join(output,'recent-six.png') };
     if (files[req.url]) { res.setHeader('content-type', 'image/png'); return res.end(fs.readFileSync(files[req.url])); }
     res.writeHead(404); res.end();
   });
@@ -75,11 +79,21 @@ if (mode === 'tests') {
     const narrow = await b.eval('Array.from(document.querySelectorAll(".tray-pane")).map(p=>p.getBoundingClientRect().toJSON())');
     assert.ok(narrow.every(r => r.x >= 0 && r.y >= 0 && r.right <= 280 && r.bottom <= 240), JSON.stringify(narrow));
     await b.shot(path.join(output, 'narrow-short.png'));
+    await b.size(900,650);
+    await b.eval('showRecent()');
+    await b.shot(path.join(output,'recent-six.png'),'.recent-pane',8);
+    const recentGeometry=await b.eval('({box:document.querySelector(".recent-pane").getBoundingClientRect().toJSON(),rows:[...document.querySelectorAll(".recent-row")].map(r=>({height:r.getBoundingClientRect().height,overflow:r.scrollWidth>r.clientWidth})),badges:document.querySelectorAll(".recent-badge").length,typing:document.querySelectorAll(".recent-spin").length})');
+    assert.equal(recentGeometry.rows.length,6);assert.ok(recentGeometry.rows.every(r=>r.height===28&&!r.overflow));
+    await b.eval('{const v=recentFixture();v.revision=2;v.recent.forEach(r=>{r.unread=0;r.typing=false});recent.update(v)}');
+    await b.shot(path.join(output,'recent-clear.png'),'.recent-pane',8);
+    await b.eval('{const v=recentFixture();v.revision=3;v.recent=[];recent.update(v)}');
+    await b.shot(path.join(output,'recent-empty.png'),'.recent-pane',8);
     await b.size(1100, 700); await b.nav(base + '/comparison');
     await b.shot(path.join(output, 'comparison-light.png'));
+    await b.nav(base+'/comparison-recent');await b.shot(path.join(output,'comparison-recent.png'));
     assert.equal(b.errors.length, 0, b.errors.join('\n'));
     assert.ok(measurements.flat().every(m => m.rowHeight === 28 && !m.overflow));
-    fs.writeFileSync(path.join(output, 'visual.json'), JSON.stringify({ measurements, narrow, errors: b.errors, dark: 'inferred; no supplied dark context-menu reference' }, null, 2));
-    console.log(JSON.stringify({ captures: 11, measurements: measurements.flat().length, errors: b.errors.length }));
+    fs.writeFileSync(path.join(output, 'visual.json'), JSON.stringify({ measurements, narrow, recentGeometry, errors: b.errors, dark: 'inferred; no supplied dark context-menu reference' }, null, 2));
+    console.log(JSON.stringify({ captures: 15, measurements: measurements.flat().length, errors: b.errors.length }));
   } finally { if (b) await b.close(); await new Promise(r => server.close(r)); }
 }

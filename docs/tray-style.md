@@ -8,8 +8,9 @@ macOS and Linux retain their native menus. Android is unchanged.
 The user requested Orgtree's look on 2026-10-13. On October 14 the coordinator
 supplied three user screenshots of its light right-click menu. A fourth dark
 image is its **left-click org list**, not a context-menu colour reference.
-The separate recent-chat feature will reuse the popup layer; this commit
-retains Hubchat's existing left-click show-window behavior.
+The separate [recent-chat feature](tray-recent.md) reuses this popup layer.
+The original restyle commit retained left-click show-window; the later recent-chat
+commit supplies Windows single-click recent chats and double-click show-window.
 
 ## Route and appearance
 

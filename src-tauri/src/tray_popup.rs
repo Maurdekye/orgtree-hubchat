@@ -1,6 +1,7 @@
 //! Windows tray presentation. The native menu remains the single state/action
 //! authority. One lazy, hidden, idle WebView hosts tray surfaces; it never boots
-//! the main UI, reads messages or gets filesystem/updater capabilities.
+//! the main UI or gets filesystem/updater capabilities. The recent-chat
+//! surface receives bounded native metadata, never message contents.
 use serde::Serialize;
 use std::sync::Mutex;
 use tauri::menu::MenuItemKind;
@@ -22,6 +23,8 @@ struct Session {
     work: (i32, i32, u32, u32),
     scale: f64,
     left: bool,
+    recent: bool,
+    owner: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -60,6 +63,9 @@ pub struct Snapshot {
     submenu_left: bool,
     max_width: f64,
     max_height: f64,
+    kind: &'static str,
+    recent: Vec<crate::tray_recent::RecentRow>,
+    recent_available: bool,
 }
 
 fn dark() -> bool {
@@ -80,11 +86,19 @@ fn snapshot(app: &AppHandle) -> R<Snapshot> {
         s.revision = s.revision.wrapping_add(1);
         s.clone()
     };
-    let t = app.state::<crate::tray::Tray>();
-    let rows = rows(t.menu.items().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    let (rows, recent) = if s.recent {
+        let (owner, recent) = crate::tray_recent::read(app)?;
+        if owner != s.owner { return Err("Identity changed".into()); }
+        (vec![], recent)
+    } else {
+        let t = app.state::<crate::tray::Tray>();
+        (rows(t.menu.items().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?, vec![])
+    };
     Ok(Snapshot { generation: s.generation, revision: s.revision, rows,
         dark: dark(), submenu_left: s.left,
-        max_width: s.work.2 as f64 / s.scale, max_height: s.work.3 as f64 / s.scale })
+        max_width: s.work.2 as f64 / s.scale, max_height: s.work.3 as f64 / s.scale,
+        kind: if s.recent { "recent" } else { "menu" }, recent,
+        recent_available: crate::tray_recent::available(app) })
 }
 
 /// Publish only while open, after the existing native item writers finish.
@@ -102,7 +116,7 @@ fn caller(w: &WebviewWindow) -> R<()> {
 /// Keep the auxiliary surface out of the main window's command namespace.
 pub fn allowed_command(label: &str, command: &str) -> bool {
     label != LABEL || matches!(command, "hc_tray_popup_snapshot" | "hc_tray_popup_ready" |
-        "hc_tray_popup_close" | "hc_tray_popup_action")
+        "hc_tray_popup_close" | "hc_tray_popup_action" | "hc_tray_recent_picture")
 }
 
 pub fn close(app: &AppHandle) {
@@ -113,6 +127,26 @@ pub fn close(app: &AppHandle) {
 }
 
 pub fn open(app: &AppHandle, point: PhysicalPosition<f64>) -> R<()> {
+    open_surface(app, point, false, String::new())
+}
+
+pub fn open_recent(app: &AppHandle, point: PhysicalPosition<f64>) -> R<()> {
+    let (owner, _) = crate::tray_recent::read(app)?;
+    open_surface(app, point, true, owner)
+}
+
+pub fn is_recent(app: &AppHandle) -> bool {
+    app.try_state::<Popup>().is_some_and(|p|p.0.lock().map(|s|s.open && s.recent).unwrap_or(false))
+}
+
+pub fn close_recent(app: &AppHandle) { if is_recent(app) { close(app); } }
+
+pub fn recent_owner(app: &AppHandle, generation: u32) -> R<String> {
+    let p = app.state::<Popup>(); let s = p.0.lock().map_err(|_| "Tray unavailable")?;
+    if s.open && s.recent && s.generation == generation { Ok(s.owner.clone()) } else { Err("Popup changed".into()) }
+}
+
+fn open_surface(app: &AppHandle, point: PhysicalPosition<f64>, recent: bool, owner: String) -> R<()> {
     let monitor = app.monitor_from_point(point.x, point.y).map_err(|e| e.to_string())?
         .ok_or("No monitor at tray icon")?;
     let r = monitor.work_area();
@@ -127,6 +161,8 @@ pub fn open(app: &AppHandle, point: PhysicalPosition<f64>) -> R<()> {
         s.work = (r.position.x, r.position.y, r.size.width, r.size.height);
         s.scale = monitor.scale_factor();
         s.left = point.x > r.position.x as f64 + r.size.width as f64 / 2.;
+        s.recent = recent;
+        s.owner = owner;
     }
     if let Some(w) = app.get_webview_window(LABEL) {
         let _ = w.hide(); // layout and populate before showing; no old-state flash
@@ -146,7 +182,10 @@ pub fn open(app: &AppHandle, point: PhysicalPosition<f64>) -> R<()> {
             tauri::WindowEvent::Focused(false) => {
                 if let Some(w) = handle.get_webview_window(LABEL) {
                     let shown = handle.state::<Popup>().0.lock().map(|s| s.shown).unwrap_or(false);
-                    if shown && !w.is_focused().unwrap_or(false) { close(&handle); }
+                    if shown && !w.is_focused().unwrap_or(false) {
+                        crate::tray_recent::blur(&handle);
+                        close(&handle);
+                    }
                 }
             }
             tauri::WindowEvent::CloseRequested { api, .. } => { api.prevent_close(); close(&handle); }
@@ -186,10 +225,14 @@ pub fn hc_tray_popup_ready(window: WebviewWindow, app: AppHandle, generation: u3
     let s = app.state::<Popup>().0.lock().map_err(|_| "Tray menu is unavailable")?.clone();
     if !s.open || s.generation != generation || s.revision != revision { return Err("Tray menu changed".into()); }
     let (x, y, w, h) = placement(s.work, s.anchor, s.scale, width, height, root_x);
-    window.set_position(PhysicalPosition::new(x, y)).map_err(|e| e.to_string())?;
-    window.set_size(PhysicalSize::new(w, h)).map_err(|e| e.to_string())?;
-    window.show().map_err(|e| e.to_string())?;
-    window.set_focus().map_err(|e| e.to_string())?;
+    let show = || {
+        window.set_position(PhysicalPosition::new(x, y)).map_err(|e| e.to_string())?;
+        window.set_size(PhysicalSize::new(w, h)).map_err(|e| e.to_string())?;
+        window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())
+    };
+    if s.recent && !s.owner.is_empty() { crate::core::get()?.tray_with_identity(Some(&s.owner), |_|show())?; }
+    else { show()?; }
     app.state::<Popup>().0.lock().map_err(|_| "Tray menu is unavailable")?.shown = true;
     Ok(())
 }
@@ -225,12 +268,18 @@ fn activate(items: Vec<MenuItemKind<Wry>>, id: &str, checked: Option<bool>) -> t
 pub fn hc_tray_popup_action(window: WebviewWindow, app: AppHandle, generation: u32,
     id: String, checked: Option<bool>) -> R<()> {
     caller(&window)?;
-    {
+    let session = {
         let p = app.state::<Popup>();
         let mut s = p.0.lock().map_err(|_| "Tray menu is unavailable")?;
         if !s.open || !s.shown || s.generation != generation { return Err("Tray menu changed".into()); }
         // One activation per open, including duplicate Enter/clicks.
         s.open = false;
+        s.clone()
+    };
+    if session.recent {
+        close(&app);
+        if checked.is_some() { return Err("Invalid chat action".into()); }
+        return crate::tray_recent::open_chat(&app, &session.owner, &id);
     }
     let t = app.state::<crate::tray::Tray>();
     let result = activate(t.menu.items().map_err(|e| e.to_string())?, &id, checked).map_err(|e| e.to_string());

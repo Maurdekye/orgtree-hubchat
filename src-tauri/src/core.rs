@@ -292,6 +292,8 @@ impl Host for ShellHost {
         }
         if let Some(app) = self.app.get() {
             let _ = app.emit("hc", &ev);
+            #[cfg(windows)]
+            crate::tray_recent::event(app, &ev);
         }
     }
     fn open_source(&self, source: &str) -> std::io::Result<std::fs::File> {
@@ -387,7 +389,21 @@ impl Core {
 
     /// Called by the Tauri setup so events reach the UI.
     pub fn attach_ui(&self, app: AppHandle) {
+        #[cfg(windows)]
+        crate::tray_recent::changed(&app);
         let _ = self.host.app.set(app);
+    }
+
+    /// Short tray reads/actions cannot cross identity adoption or sign-out.
+    /// Never put an await/network call inside this closure.
+    #[cfg(windows)]
+    pub fn tray_with_identity<T>(&self, expected: Option<&str>, f: impl FnOnce(&str) -> Result<T, String>) -> Result<T, String> {
+        let current = self.engine.lock().unwrap();
+        let owner = current.as_ref().ok_or("No identity")?.me().address();
+        if expected.is_some_and(|e| e != owner) || self.store.meta("identity.address").map_err(|e|e.to_string())?.as_deref() != Some(owner.as_str()) {
+            return Err("Identity changed".into());
+        }
+        f(&owner)
     }
 
     pub fn notify_settings(&self) -> NotifySettings {
@@ -618,6 +634,8 @@ impl Core {
         let Some(e) = self.engine.lock().unwrap().take() else {
             return Ok(());
         };
+        #[cfg(windows)]
+        if let Some(app) = self.host.app.get() { crate::tray_recent::reset(app); }
         let e2 = e.clone();
         let _ = self
             .rt
@@ -694,6 +712,8 @@ impl Core {
             .platform
             .status(&format!("Connected as {}", engine.me().address()));
         *self.engine.lock().unwrap() = Some(engine);
+        #[cfg(windows)]
+        if let Some(app) = self.host.app.get() { crate::tray_recent::changed(app); }
         self.refresh_file_lifetime();
         Ok(())
     }

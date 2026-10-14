@@ -14,7 +14,8 @@
 //! - Crash reports… (crash.rs);
 //! - Restart Hubchat and Quit Hubchat.
 //!
-//! A left click shows the window, as before. The menu is built once and
+//! Windows single left click shows recent chats; double click shows main.
+//! Other desktops keep left-click show-window. The menu is built once and
 //! never replaced: whatever changes what a row shows (this menu, Settings,
 //! Windows' Startup apps, the updater) updates the same live items, so the
 //! menu is right whenever it opens, and an open menu is never torn down
@@ -257,6 +258,8 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     });
     #[cfg(windows)]
     app.manage(crate::tray_popup::Popup::default());
+    #[cfg(windows)]
+    app.manage(crate::tray_recent::Recent::default());
     let builder = TrayIconBuilder::with_id("main")
         .icon(app.default_window_icon().cloned().expect("icon"))
         .tooltip("Hubchat");
@@ -275,11 +278,22 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
                 position,
                 ..
             } => {
+                crate::tray_recent::cancel_click(tray.app_handle());
                 show_autostart(tray.app_handle());
                 if crate::tray_popup::open(tray.app_handle(), position).is_err() {
                     warn(tray.app_handle(), "Hubchat couldn't open its tray menu.".into());
                 }
             }
+            #[cfg(windows)]
+            TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                position,
+                ..
+            } => crate::tray_recent::left_click(tray.app_handle(), position),
+            #[cfg(windows)]
+            TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } => crate::tray_recent::double_click(tray.app_handle()),
+            #[cfg(not(windows))]
             TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
@@ -293,6 +307,8 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
             _ => {}
         })
         .build(app)?;
+    #[cfg(windows)]
+    crate::tray_recent::sync(app);
     Ok(())
 }
 
