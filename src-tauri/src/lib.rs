@@ -342,9 +342,25 @@ mod desktop {
         first
     }
 
+    /// The main window and the page in it hide and show together. Tauri's
+    /// window `hide()` leaves WebView2 telling the page it is visible, and a
+    /// page that thinks it is on screen keeps reading its open chat: hidden
+    /// in the tray after a sign-in start, Hubchat marked each new message
+    /// read at once and so took the phone's notification away (2026-10-14).
+    /// Hiding the webview too (WebView2's IsVisible) makes the page hidden:
+    /// it reads nothing, isn't in use, and the desktop notifies again.
+    pub fn hide(app: &AppHandle) {
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.hide();
+            let _ = w.as_ref().hide();
+        }
+    }
+
     pub fn show(app: &AppHandle) {
         if let Some(w) = app.get_webview_window("main") {
             let _ = w.unminimize();
+            // the page first: a window shown around a hidden page is blank
+            let _ = w.as_ref().show();
             let _ = w.show();
             let _ = w.set_focus();
         }
@@ -401,11 +417,11 @@ pub fn run() {
                 // Exit on close (the tray, Settings › General) quits as Quit
                 // does; otherwise closing hides the window, so messages and
                 // transfers keep going (design §7)
+                use tauri::Manager;
                 if tray::exit_on_close() {
-                    use tauri::Manager;
                     w.app_handle().exit(0);
                 } else {
-                    let _ = w.hide();
+                    desktop::hide(w.app_handle());
                 }
             }
         });
@@ -579,9 +595,7 @@ pub fn run() {
                 );
                 desktop::take_link_arg(desktop::start_link_arg(std::env::args(), first));
                 if desktop::stays_hidden(std::env::args(), first) {
-                    if let Some(w) = app.get_webview_window("main") {
-                        let _ = w.hide();
-                    }
+                    desktop::hide(app.handle());
                 }
             }
             let handle = app.handle().clone();
