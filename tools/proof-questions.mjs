@@ -1,6 +1,6 @@
 // Question cards and multi-reply against the browser mock (docket
 // hubchat-question-messages-carry-preset-answers-y): picking options, saved
-// picks after a reload, answering and skipping in one send, first answer
+// picks after a reload, answer bundles and independent empty replies, first answer
 // final, desktop Ctrl+click and Android long-press selection, stacked quotes;
 // review R1: cards and answers beyond the first page after a restart, and the
 // real answers.ts and questions.ts modules (saved answers across an identity
@@ -101,9 +101,9 @@ try {
   const before = await ev(`document.querySelectorAll('.timeline .msg').length`);
   await pickOpt('q-channel', 'Stable');
   let c = await chips();
-  check('picking an option marks it and puts an answer chip in the composer; nothing is sent; the box says "(optional)"',
+  check('picking marks the option and stages a separate answer; nothing is sent immediately',
     (await opts('q-channel')).find((o) => o.l === 'Stable').on && c.length === 1 && c[0].includes('Stable') && (await ev(`document.querySelectorAll('.timeline .msg').length`)) === before
-      && (await ev(`document.querySelector('.composer textarea').placeholder`)) === 'Add a message (optional)' && (await msgText('#m-q-channel .q-note')) === 'Your answer goes with your next message');
+      && !(await ev(`document.querySelector('.composer textarea').placeholder`)).includes('optional') && (await msgText('#m-q-channel .q-note')) === 'Send your answer separately');
   await pickOpt('q-channel', 'Beta');
   c = await chips();
   check('single-choice: another option replaces the pick',
@@ -122,15 +122,15 @@ try {
   await b.click('#m-q-notes .q-hint', 400);
   check('the header hint starts a reply to that card, like Reply, and focuses the box',
     (await msgText('.composer .replybar .rb-txt'))?.includes('Anything else for the rc4 release notes?') && (await ev(`document.activeElement === document.querySelector('.composer textarea')`)));
-  check('with no text: Send is enabled and the composer warns that sending skips the question',
-    !(await ev(`document.querySelector('.composer .sendbtn').disabled`)) && (await msgText('.composer .skipnote')) === 'Sending with no text skips the question you reply to');
+  check('Send stages only picked answers and keeps the unrelated plain reply',
+    !(await ev(`document.querySelector('.composer .sendbtn').disabled`)) && (await msgText('.composer .skipnote')) === 'Send sends only your answers; your message and files stay here.');
   await b.shot(join(out, '02-composer-answers-desktop-dark.png'));
   await sendNow();
   const sent = `[...document.querySelectorAll('.timeline .msg.out')].pop()`;
   const notes = await ev(`[...${sent}.querySelectorAll('.quote')].map((q) => q.querySelector('.q-ans')?.innerText ?? '')`);
-  check('one send answers two cards and skips the third: 3 quotes "Answer: Beta", "Answer: Windows", "Skipped"',
-    notes.join('|') === 'Answer: Beta|Answer: Windows|Skipped');
-  if (notes.join('|') !== 'Answer: Beta|Answer: Windows|Skipped') console.log('   got:', JSON.stringify(notes));
+  check('one send answers two cards without skipping the third',
+    notes.join('|') === 'Answer: Beta|Answer: Windows' && !!(await ev(`document.querySelector('.composer .replybar')`)));
+  await sendNow(); // the independent empty reply skips the third card
   check('the cards settle: two "Answered", one "Skipped", options locked, no hints',
     /^Answered/.test(await msgText('#m-q-channel .q-state')) && /^Answered/.test(await msgText('#m-q-platforms .q-state')) && /^Skipped/.test(await msgText('#m-q-notes .q-state'))
       && (await opts('q-channel')).every((o) => o.dis) && !(await ev(`!!document.querySelector('#m-q-channel .q-hint, #m-q-platforms .q-hint, #m-q-notes .q-hint')`)));
@@ -248,16 +248,17 @@ try {
     await pickOpt('q-k1', 'Rotate');
     await b.click('#m-q-u1 .q-hint', 300);
     let n0 = await outs();
-    check('R2, query held: a pick on a known card plus an empty reply to one not known yet: Send waits and says it is checking; pick and reply stay',
-      (await waits()) && (await note()) === CHECKING && (await chips()).length === 1 && (await msgText('.composer .replybar .rb-txt'))?.includes('Anything to add to the runbook today?'));
+    check('known pick can send separately while the unrelated unknown reply stays',
+      !(await waits()) && (await chips()).length === 1 && (await msgText('.composer .replybar .rb-txt'))?.includes('Anything to add to the runbook today?'));
     await b.shot(join(out, '13-unknown-card-waits-desktop-light.png'));
     await ev(`document.querySelector('.composer textarea').focus(), true`); await b.key('Enter'); await sleep(500);
-    check('R2, query held: Enter with no text sends nothing', (await outs()) === n0);
+    check('Enter sends only the known answer; the empty unknown reply still waits',
+      (await outs()) === n0 + 1 && (await notes()).join('|') === 'Answer: Rotate' && (await waits()) && (await note()) === CHECKING);
     await cards('release()'); await sleep(700);
     check('R2: once the store answers, Send is open and says the empty reply skips the now known open card',
-      !(await waits()) && (await note()) === SKIPS && (await chips()).length === 1);
+      !(await waits()) && (await note()) === SKIPS && (await chips()).length === 0);
     await sendNow();
-    check('R2: then one empty send answers the first card ("Answer: Rotate") and skips the second ("Skipped")', (await notes()).join('|') === 'Answer: Rotate|Skipped');
+    check('the later independent empty reply skips only the second card', (await notes()).join('|') === 'Skipped');
 
     // an empty reply to a known open card and to one not known (query failing)
     await newCard('q-k2', 'Keep the canary hub running?', ['Keep it', 'Stop it']);
@@ -341,12 +342,11 @@ try {
       await sleep(500);
     };
 
-    // the message: a reply to one card and a pick on another, text and a file
+    // a normal text/file message; picks made while it prepares stay separate
     await newCard('q-p0', 'Anything QA should know about tonight\'s build?', []);
     await newCard('q-p1', 'Which build goes to QA?', ['Nightly', 'RC']);
     await newCard('q-p2', 'Who signs off on the QA run?', []);
     await newCard('q-p3', 'Rerun the flaky upload test?', ['Rerun', 'Skip it']);
-    await pickOpt('q-p1', 'RC');
     await b.click('#m-q-p0 .q-hint', 300);
     await b.type('.composer textarea', 'Nothing unusual. QA gets the RC.');
     await b.click('.composer [aria-label="Attach files"]', 500);
@@ -363,35 +363,36 @@ try {
       (await preparing()) && (await bar()).some((t) => t.includes('Who signs off on the QA run?')) && (await chips()).some((x) => x.includes('Rerun')));
     await b.shot(join(out, '14-reply-while-preparing-desktop-light.png'));
     await letGo(n0);
-    check('R3: the message goes as it was sent: it quotes the first two cards ("Answer: RC" on the second), and the box is empty',
-      (await outs()) === n0 + 1 && (await notes()).join('|') === '|Answer: RC' && (await boxText()) === '' && (await fileCount()) === 0);
+    check('normal text/files go as sent, without answers picked while preparing',
+      (await outs()) === n0 + 1 && (await notes()).join('|') === '' && (await boxText()) === '' && (await fileCount()) === 0);
     check('R3: the reply chosen meanwhile is still in the composer (the third card)',
       (await bar()).some((t) => t.includes('Who signs off on the QA run?')));
     const c3 = await chips();
-    check('R3: the pick made meanwhile on the fourth card is still a chip; the one on the card the message answered is gone (first answer final)',
-      c3.length === 1 && c3[0].includes('Rerun'));
+    check('both picks made meanwhile stay staged for a separate answer send',
+      c3.length === 2 && c3.some(c => c.includes('Rerun')) && c3.some(c => c.includes('Nightly')));
     const s3 = await saved();
-    const kept = s3?.replies?.join() === 'q-p2' && Object.keys(s3?.picks ?? {}).join() === 'q-p3' && s3.picks['q-p3'].join() === 'Rerun';
-    check('R3: and both are still saved (a restart brings them back): replies "q-p2", a pick only on "q-p3"', kept);
+    const kept = s3?.replies?.join() === 'q-p2' && Object.keys(s3?.picks ?? {}).sort().join() === 'q-p1,q-p3' && s3.picks['q-p3'].join() === 'Rerun';
+    check('reply and both later picks remain saved', kept);
     if (!kept) console.log('   saved:', JSON.stringify(s3));
     await b.shot(join(out, '15-kept-after-queued-desktop-light.png'));
     await b.type('.composer textarea', 'Sam signs off.');
     await sendNow();
-    check('R3: the next message carries them: it answers the third card with its text and the fourth with "Rerun"; nothing stays saved',
-      (await notes()).join('|') === '|Answer: Rerun' && (await saved()) === null);
+    check('the next Send carries only the staged answers and retains typed reply',
+      (await notes()).join('|') === 'Answer: Nightly|Answer: Rerun' && (await boxText()) === 'Sam signs off.');
+    await sendNow();
+    check('the later typed reply carries the third card and clears normally', (await notes()).join('|') === '' && (await saved()) === null);
 
     // control: nothing chosen meanwhile, so all the message carried clears
     await newCard('q-p4', 'Tag the release candidate?', ['Tag it', 'Not yet']);
     await newCard('q-p5', 'Anything for the changelog?', []);
-    await pickOpt('q-p4', 'Tag it');
     await b.click('#m-q-p5 .q-hint', 300);
     await b.type('.composer textarea', 'The upload fix.');
     await b.click('.composer [aria-label="Attach files"]', 500);
     n0 = await outs();
     await sendAndHold();
     await letGo(n0);
-    check('R3 control: with nothing chosen meanwhile, the message carries the pick and the reply, and then the composer and the saved answers are empty',
-      (await notes()).join('|') === 'Answer: Tag it|' && !(await ev(`!!document.querySelector('.composer .replybar')`)) && (await chips()).length === 0 && (await saved()) === null);
+    check('normal text/file reply clears when nothing else is chosen meanwhile',
+      (await notes()).join('|') === '' && !(await ev(`!!document.querySelector('.composer .replybar')`)) && (await chips()).length === 0 && (await saved()) === null);
 
     // a failed preparation sends nothing and keeps the current choice, here
     // two cards picked with Ctrl+click and the selection's Reply meanwhile

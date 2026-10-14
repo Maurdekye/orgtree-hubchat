@@ -1,5 +1,13 @@
 # Hubchat development invariants
 
+- 2026-10-14: Send with picked question answers queues only those answers
+  (empty body, no files); typed text/files and unrelated plain replies remain
+  for a later Send. Keep pick+Send confirmation, multi-select and bundles across
+  cards. Answer-only preparation retains its separate draft locally and never
+  clears the native text draft; generation/slot guards still apply after awaits.
+  [decided: user/coordinator 2026-10-14; verified: Composer.tsx, store.ts;
+  docs/question-cards.md]
+
 - 2026-10-13: Typing is heartbeats, never start and stop (user 2026-10-13
   22:34Z): a writer sends one about every 500 ms and the window shows the
   row while the last one ARRIVED under 1 s ago by its own clock

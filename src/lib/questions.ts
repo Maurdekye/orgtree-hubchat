@@ -1,7 +1,8 @@
 // Question cards (docket hubchat-question-messages-carry-preset-answers-y):
 // a message of kind "question" is a card. With preset options it is
 // single-choice or multiple-choice; without, it is free-response. Picking
-// options attaches them to the composer; they go out with the next message.
+// options attaches them to the composer; Send sends those answers separately
+// from any typed text/files draft (user/coordinator 2026-10-14).
 // A card settles once, for good (user 2026-10-11 22:44Z): the first message
 // that answers it (a picked option, a reply with text) or skips it (a reply
 // with no text). Later replies are ordinary chat and change nothing.

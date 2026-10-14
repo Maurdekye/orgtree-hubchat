@@ -1,6 +1,7 @@
 // A chat's unsent answers: the messages the next message replies to and the
-// options picked on question cards. They wait in the composer until that
-// message goes, and survive a restart (user 2026-10-11 22:42Z), so the core
+// options picked on question cards. Send sends picks separately from the
+// typed text/files draft (user/coordinator 2026-10-14). They survive a restart
+// (user 2026-10-11 22:42Z), so the core
 // keeps them beside the chat's draft.
 import { useSyncExternalStore } from "react";
 import { api, type DraftAnswers, type NewOutgoing } from "../api";

@@ -125,7 +125,8 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
       if (saveT.current) { clearTimeout(saveT.current); saveT.current = null; void api.setDraft(peer, textRef.current).catch(() => {}); }
     };
   }, [peer]);
-  // queued: the box empties, but the replies are left to onSent: Reply in the
+  // queued: ordinary messages empty the box; answer-only sends retain the
+  // separate text/files draft. Replies are left to onSent: Reply in the
   // chat still works while the files are prepared, and a reply chosen then
   // isn't part of this message (review R3)
   useEffect(() => {
@@ -160,10 +161,10 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
   const overNote = lim ? "This message is " + bytes(total) + ". Hub " + lim.hub.name + " takes up to " + bytes(lim.bytes) + " per message, text and files together." : "";
   // a message may go with no text when it answers or skips a question card
   // (user 2026-10-11 22:42Z): a picked option answers even without text, a
-  // plain reply to an open card with no text skips it. With no text, files or
-  // not, every card it plainly replies to is skipped if open, so each must be
-  // known first: while the store hasn't said for one, the message waits,
-  // whatever else it answers, and keeps everything it holds (review R2)
+  // plain reply to an open card with no text skips it. With no picked answers,
+  // an empty normal reply (files or not) skips every open card it replies to:
+  // each must be known first, or that message waits and retains its draft
+  // (review R2). Answer-only sends have no unrelated plain replies.
   // Answer-only sends reply just to their picked cards. Plain replies wait
   // with the text/files draft and must not be silently skipped by this send.
   const plain = answering ? [] : replies.filter((r) => !!cardOf(r) && !r.outgoing);

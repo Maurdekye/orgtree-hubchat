@@ -10,7 +10,13 @@ Hubchat (which shows them and sends the answers).
   preset options it is **single-choice** (pick one) or **multiple-choice**
   (pick one or more). Without options it is **free-response**.
 - Tapping an option sends nothing. It attaches the answer to the composer,
-  and the answer goes out with the next message. The card's header says
+  and Send sends the picked answers as their own message, with no typed text
+  or files. The typed draft and files stay for a separate later Send. Several
+  cards' picks still go together, and multi-select still waits for Send.
+  This replaces the earlier combined-answer-and-text flow (user correction
+  and coordinator mechanics ruling 2026-10-14). Plain replies not among the
+  picked cards stay with that draft; the answer send never skips them.
+  The card's header says
   "Reply to answer something else" (free-response: "Reply to answer"), and
   tapping it starts a reply.
 - A reply to a card with text answers it. A reply with no text **skips** it.
