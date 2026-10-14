@@ -40,11 +40,29 @@ test("edge clamping uses root height even with a much taller submenu", () => {
     const rootHeight = view.rows.reduce((h,r)=>h+(r.separator?17:28),16);
     const x = Number(ready.originX)+parseFloat(root.style.left);
     const y = Number(ready.originY)+parseFloat(root.style.top);
-    assert.equal(x, 1920-312-12);
+    assert.equal(x + 312, 1910, 'root right follows cursor instead of the work-area edge');
     assert.equal(y+rootHeight, 1020, 'root bottom follows cursor, not the submenu height');
     t.hover('notifications');
     assert.equal(t.doc.querySelectorAll('.tray-pane').length,2);
   } finally { t.close(); }
+});
+
+test("near-right cursor anchoring composes physical monitor origins at 125 and 150 percent", () => {
+  for (const scale of [1, 1.25, 1.5]) for (const workLeft of [0, -1920]) {
+    for (const distanceFromRight of [32, 100, 200]) {
+      const width = 1920 / scale;
+      const cursorX = width - distanceFromRight;
+      const cursorY = 900 / scale;
+      const t = setup({ ...fixture(false, true), maxWidth: width, maxHeight: 1040 / scale, cursorX, cursorY });
+      try {
+        const ready = t.calls.find(c => c.command.endsWith('ready'))!.args;
+        const root = t.doc.querySelector<HTMLElement>('.tray-pane')!;
+        const right = Number(ready.originX) + parseFloat(root.style.left) + 312;
+        assert.ok(Math.abs(workLeft + right * scale - (workLeft + cursorX * scale)) < 0.001,
+          `root corner misses physical cursor at scale ${scale}, origin ${workLeft}, right offset ${distanceFromRight}`);
+      } finally { t.close(); }
+    }
+  }
 });
 
 test("every open uses its own cursor and work-area coordinates", () => {
