@@ -1,5 +1,11 @@
 # Hubchat development invariants
 
+- 2026-10-14: TransfersChip (both desktop placements) and TransfersStrip
+  (Android chat list) already start collapsed with local open=false. Keep
+  expansion during the mounted view; a newly mounted view starts collapsed.
+  No persisted preference or transfer-state changes. Audit fixture:
+  tools/transfers-default-fixture.tsx; docs/transfers-default.md.
+
 - 2026-10-14: Send with picked question answers queues only those answers
   (empty body, no files); typed text/files and unrelated plain replies remain
   for a later Send. Keep pick+Send confirmation, multi-select and bundles across
