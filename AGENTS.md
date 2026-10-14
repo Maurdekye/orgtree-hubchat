@@ -165,8 +165,16 @@
   originating cancellation token; late status/clock callbacks cannot change a
   replacement runtime. Only intentional removal unregisters. No migration16.
   Link-start resolves retained saved policy before engine availability, including
-  lost-key recovery. Saved enabled hubs require an active bound client; only
-  genuinely unsaved setup may construct an unbound client.
+  lost-key recovery: a disabled saved hub refuses with or without an engine.
+  While an identity runs, saved enabled hubs require an active bound client.
+  With no identity running (the lost-key screen relinking or restoring) an
+  enabled saved hub gets a setup client like an unsaved one: no runtime exists
+  for a disable to cancel, and the switch needs a running identity. This
+  replaces "saved enabled hubs always require a bound client; only genuinely
+  unsaved setup may construct an unbound client", which made the lost-key
+  relink review show the user's working hubs as "invalid input: This saved hub
+  is unavailable" [coordinator ruling 2026-10-14, Orgtree docket
+  phone-linking-says-existing-hubs-are-invalid-whe; `link::start_client`].
   Received-link acknowledgement, discovery (including spawned requests) and
   review publication retain both the originating hub token and listener attempt.
   Each probe also honors its destination's saved policy. Bounded synchronous

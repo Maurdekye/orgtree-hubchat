@@ -34,8 +34,11 @@ saved retains its independent setup path. Intentional remove/unregister has an
 explicit cleanup client rather than reusing a cancelled runtime token.
 Link-start resolves saved existence and enabled state before engine lookup.
 Missing/unreadable-key recovery retains saved hubs, so an absent engine cannot
-turn a retained hub into unsaved setup. Disabled saved hubs refuse immediately;
-enabled saved hubs require an available, uncancelled bound runtime client.
+turn a retained disabled hub into unsaved setup: disabled saved hubs refuse
+immediately, with or without an engine. While an identity runs, enabled saved
+hubs require an available, uncancelled bound runtime client. With no identity
+running (lost-key recovery), an enabled saved hub gets a setup client, as an
+unsaved one does (coordinator ruling 2026-10-14, see "Lost-key relink" below).
 
 Settings update only after the command succeeds, disable the switch while its
 command is pending, preserve it after failure, and refresh state/directory.
@@ -175,7 +178,9 @@ native factory always supplies the policy-first `start_client` resolver; it
 does not condition saved policy on a Reception. Every candidate resolves current
 saved state when its request is polled. Enabled saved candidates retain their
 active bound token; disabled, cancelled or unavailable saved candidates refuse.
-Only genuinely unsaved candidates receive an independent setup client.
+Only genuinely unsaved candidates receive an independent setup client. (Since
+2026-10-14 so do enabled saved candidates while no identity runs; see
+"Lost-key relink" below.)
 With an originating Reception, resolution and the actual destination request
 both run inside its hub/listener guard. Door helpers require this context and
 clone it into each spawned same-hub request. Direct initial, hostname and
@@ -218,17 +223,67 @@ Rust, classifying test sections separately:
 | commands: probeHub, probeLinkHubs, received probe and setupCheck | One policy Discovery factory; every actual candidate uses its health request. No Reception=None bypass. |
 | link: linkStart, aliases_for and linkOffer | Policy-first selection; aliases supply the originating Reception and policy resolver to door requests. Received publication remains guarded. |
 | door: initial health, qr_hubs, same_hub, answering children, hostname and advertised address | Required Discovery context propagated through every direct and spawned request; no direct fresh-client construction in production door code. |
-| core link::start_client | The sole auxiliary fresh-client branch first establishes that the normalized address has no saved row. |
+| core link::start_client | The sole auxiliary fresh-client branches: the normalized address has no saved row, or (no identity running, 2026-10-14) its saved row is enabled. A disabled saved row refuses before either. |
 | Engine::spawn_hub | New client immediately binds the new runtime token under saved-policy/runtime-map admission. |
 | Engine session health and register_push health | Existing bound runtime clones; transport token guard applies. |
 | Engine::remove_hub cleanup | Intentional explicit removal/unregister may detach or construct a cleanup client. Disable never invokes this path. |
 | door, commands, download, transfer, first-send and engine fixtures; door_e2e | Synthetic/test-only unbound resolvers or clients, outside product dispatch. The environment-gated external door test was adapted but not run. |
 
 No remaining product discovery site constructs an unbound client outside the
-genuinely-unsaved policy branch. This is finite source inspection plus the
+genuinely-unsaved policy branch (and, since 2026-10-14, the no-identity branch
+for enabled saved hubs). This is finite source inspection plus the
 measured component schedules, not complete native IPC/WebView/UI/link/door
 device or installed-app acceptance. Previous renderer16/16 receipts remain;
 tsc0 remains author-reported without a supplied execution log. No live service,
 settings/message, app/APK/install/publication or author integration occurred.
 Exact corrections return to coordinator disposition; profile composition stays
 held until coordinator approval.
+
+## Lost-key relink (2026-10-14)
+
+User report 2026-10-14 (Orgtree docket
+`phone-linking-says-existing-hubs-are-invalid-whe`): after installing desktop
+1.2.0-alpha.3 the user relinked the PC from the phone, through the lost-key
+screen's Link through a hub with the bare host `pendragon`. The hub step found
+`pendragon` on port 7371. The review then showed the PC's saved hubs
+`pendragon:7370` and `star-system:7378` as "invalid input: This saved hub is
+unavailable; restore the identity and connect it before linking.", and Check
+again repeated it. After Confirm all three connected normally.
+
+The cause was `link::start_client`. The lost-key screen keeps the device's
+saved hubs but runs no identity, and every saved enabled hub needed a running
+identity's runtime client, so each one was refused without being asked. Every
+hub check during linking resolves through that function: the link-hub step's
+Check, the review's checks, Check again, and link-start itself. So a bare host
+skipped its saved main port 7370 and took Orgtree's relay-only door (7371),
+which wasn't saved. Typing a saved address refused to start linking at all.
+
+Coordinator ruling 2026-10-14: with no identity running, an enabled saved hub
+gets a setup client, as an unsaved one does. The per-device policy holds: no
+runtime exists for a disable to cancel, and changing the switch needs a running
+identity (`hc_set_hub_enabled`). A disabled saved hub still refuses before the
+engine lookup. While an identity runs, a saved hub still needs its live,
+uncancelled runtime client. The review UI is unchanged: every hub is still
+checked live, and a hub that really fails still shows its error and Check
+again.
+
+One edge is inferred from the source, not measured. A key store that starts
+answering again (Try again on the lost-key screen) starts the identity while a
+link may still be listening on a setup client. The app then leaves the
+onboarding screen, and that cancels the listener (`LinkWait` unmount,
+`hc_link_cancel`).
+
+Tests: in the core, `relink_lost_key_saved_enabled_gets_a_fresh_client` and
+`relink_lost_key_review_reaches_saved_hubs` (the review's request path against
+scratch /healthz servers) fail on 78474d3 and pass with the change. Three
+controls must pass on both:
+- `link_start_cold_retained_disabled_refuses_before_engine_lookup` (lost key, disabled);
+- `link_start_saved_enabled_without_runtime_refuses` (running identity, no runtime);
+- `link_start_saved_client_retains_runtime_cancellation` (running identity, live runtime client).
+
+`tests/relink_v2.rs` (`HUBCHAT_V2_HUB`) runs the relink for real on a scratch
+hub v2. The phone's engine sends the sealed identity, and the lost-key PC takes
+it as the shell does: its saved enabled hubs answer, one disabled on the PC
+stays unasked, and the PC can also link through a hub it has saved. A rig-opus
+batch round runs these checks; its receipts are on the docket item. No native
+shell, WebView, device or installed-app run is claimed.
