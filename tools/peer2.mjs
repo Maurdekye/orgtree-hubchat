@@ -1,6 +1,8 @@
 // A scripted chat partner for device tests on a scratch hub, kept across
 // runs (tools/peer2.json): registers once, then sends text or an image.
 // PEER=<name> is another partner, with its own identity (tools/peer2-<name>.json).
+// PEER_STATE=<file> keeps the identity in that file instead, for a runner that
+// must not write into the checkout.
 //   node peer2.mjs <hub> whoami
 //   node peer2.mjs <hub> send <to-address> "<text>" [image-file]
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -8,7 +10,7 @@ import { randomBytes, createHash, randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
 
 const NAME = process.env.PEER || 'Pat Peer';
-const STATE = new URL(process.env.PEER ? `./peer2-${NAME.replace(/[^A-Za-z0-9]+/g, '-').toLowerCase()}.json` : './peer2.json', import.meta.url);
+const STATE = process.env.PEER_STATE || new URL(process.env.PEER ? `./peer2-${NAME.replace(/[^A-Za-z0-9]+/g, '-').toLowerCase()}.json` : './peer2.json', import.meta.url);
 const [hub, cmd, to, text, image] = process.argv.slice(2).map((a, i) => (i === 0 ? a.replace(/\/$/, '') : a));
 let me = existsSync(STATE) ? JSON.parse(readFileSync(STATE, 'utf8')) : null;
 if (!me) {

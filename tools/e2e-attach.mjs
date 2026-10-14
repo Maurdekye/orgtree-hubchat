@@ -26,6 +26,7 @@
 //   and a scratch hub (the mail hub binary) at <hub host:port>
 //   node tools/e2e-attach.mjs <hubchat.exe e2e build> <hub host:port> <proxy port> <out dir>
 //   E2E_DELAYS=0,100,... (ms, the default sweep below)  E2E_ROUNDS=2
+//   PEER_STATE=<file> (Pat's identity; default <out dir>/peer2-pat-attach.json)
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
@@ -58,7 +59,9 @@ const check = (name, ok, detail = '') => { results.push(ok); console.log(`${ok ?
 const info = (name, detail) => console.log(`INFO ${name} — ${detail}`);
 const cdpEnv = { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP}` };
 const sh = (cmd, args) => spawnSync(cmd, args, { encoding: 'utf8' }).stdout || '';
-const peer = (...a) => spawnSync('node', [join(import.meta.dirname, 'peer2.mjs'), HUB, ...a], { encoding: 'utf8', env: { ...process.env, PEER: 'Pat Attach' } }).stdout.trim().split('\n').pop();
+// Pat's identity is kept in the out dir, never in the checkout (PEER_STATE wins)
+const PEER_STATE = process.env.PEER_STATE || resolve(outDir, 'peer2-pat-attach.json');
+const peer = (...a) => spawnSync('node', [join(import.meta.dirname, 'peer2.mjs'), HUB, ...a], { encoding: 'utf8', env: { ...process.env, PEER: 'Pat Attach', PEER_STATE } }).stdout.trim().split('\n').pop();
 
 // only this build's own data, by exact name
 if (!ID.endsWith('.test') || ID === 'dev.orgtree.hubchat.test') throw new Error('not the e2e identifier: ' + ID);
