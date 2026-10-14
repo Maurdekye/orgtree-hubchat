@@ -1492,16 +1492,14 @@ impl Engine {
         }
         let set: Vec<&String> = if reply.replies.is_empty() { msg.reply_to.iter().collect() } else { reply.replies.iter().collect() };
         reply.answers.retain(|a| set.contains(&&a.question) && !a.picked.is_empty());
-        // Every target belongs to this chat and one sender. Validate before
+        // Every target belongs to this chat, regardless of sender. Validate before
         // staging files/admission, including restored or malicious drafts.
-        let mut sender = None;
         if set.len()>crate::questions::MAX_REPLIES { return Err(Error::Invalid("A multi-reply can answer at most 50 messages.".into())); }
         for id in set.iter().filter(|_| set.len()>1) {
             let Some(target) = self.store.message(id)? else { return Err(Error::Invalid("A reply target is unavailable; remove it before sending.".into())); };
-            if target.peer != msg.peer || sender.is_some_and(|s| s != target.outgoing) {
-                return Err(Error::Invalid("A multi-reply can only answer messages from the same sender in this chat.".into()));
+            if target.peer != msg.peer {
+                return Err(Error::Invalid("A multi-reply can only answer messages in this chat.".into()));
             }
-            sender = Some(target.outgoing);
         }
         if !crate::questions::fits(&reply) {
             return Err(Error::Invalid("This message answers too much at once. Send it as two messages.".into()));
