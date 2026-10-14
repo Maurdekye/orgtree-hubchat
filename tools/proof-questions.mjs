@@ -22,12 +22,16 @@ import { join } from 'node:path';
 
 const out = process.env.HUBCHAT_PROOF_OUT;
 mkdirSync(out, { recursive: true });
-const deps = createRequire(join(process.env.HUBCHAT_DEPENDENCY_ROOT, 'package.json'));
+const dependencyAnchor = join(process.env.HUBCHAT_DEPENDENCY_ROOT, 'package.json');
+const deps = createRequire(dependencyAnchor);
 const { createServer } = await import(pathToFileURL(deps.resolve('vite')).href);
 const server = await createServer({ root: process.cwd(), configFile: false, cacheDir: process.env.HUBCHAT_VITE_CACHE,
-  esbuild: { jsx: 'automatic' }, plugins: [{ name: 'existing-dependencies', enforce: 'pre', resolveId(source) {
+  esbuild: { jsx: 'automatic' }, plugins: [{ name: 'existing-dependencies', enforce: 'pre', async resolveId(source) {
     if (!source.startsWith('\0') && /^[^./][^:]*/.test(source)) {
-      try { return deps.resolve(source === 'qrcode' ? 'qrcode/lib/browser.js' : source); } catch { return null; }
+      // Resolve from the in-place dependencies using Vite's browser/import
+      // conditions. Node require resolution selects Tauri's CommonJS build.
+      return this.resolve(source === 'qrcode' ? 'qrcode/lib/browser.js' : source,
+        dependencyAnchor, { skipSelf: true });
     }
     return null;
   } }], server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' });
