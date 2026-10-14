@@ -2,7 +2,10 @@
 
 - 2026-10-14: Ordinary Reply appends/dedupes targets; selection Reply merges
   into the same draft. Individual remove and Cancel All stay. Sending picks
-  still carries only picked cards; typed text/files/plain targets remain.
+  and text are exclusive per question, not per send: Reply unpicks that card,
+  picking removes its text target. One send can carry picks, text and files
+  for different same-sender targets. Empty text targets visibly skip known
+  questions; unknown empty targets wait. This replaces alpha.4 separation.
   Generic wire references reuse first `reply_to` plus bounded `meta.replies`.
   [decided: user/coordinator 2026-10-14; verified: Conversation.tsx, answers.ts;
   docs/question-cards.md]
@@ -50,12 +53,9 @@
   No persisted preference or transfer-state changes. Audit fixture:
   tools/transfers-default-fixture.tsx; docs/transfers-default.md.
 
-- 2026-10-14: Send with picked question answers queues only those answers
-  (empty body, no files); typed text/files and unrelated plain replies remain
-  for a later Send. Keep pick+Send confirmation, multi-select and bundles across
-  cards. Answer-only preparation retains its separate draft locally and never
-  clears the native text draft; generation/slot guards still apply after awaits.
-  [decided: user/coordinator 2026-10-14; verified: Composer.tsx, store.ts;
+- 2026-10-14: Keep pick+Send confirmation, multi-select and bundles across
+  cards. Preparation/generation/slot guards still apply after awaits, including
+  choices made while files prepare. [verified: Composer.tsx, store.ts;
   docs/question-cards.md]
 
 - 2026-10-13: Typing is heartbeats, never start and stop (user 2026-10-13

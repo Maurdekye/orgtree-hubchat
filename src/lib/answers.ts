@@ -43,8 +43,9 @@ export function setReplies(peer: string, ids: string[]) {
 export function addReplies(peer: string, ids: string[]) {
   const d = cache.get(peer) ?? EMPTY;
   const replies = [...new Set([...d.replies, ...ids])];
-  if (replies.length === d.replies.length) return;
-  save(peer, { ...d, replies });
+  const picks = { ...d.picks };
+  for (const id of ids) delete picks[id];
+  save(peer, { ...d, replies, picks });
 }
 export function removeReply(peer: string, id: string) {
   const d = cache.get(peer) ?? EMPTY;
@@ -59,7 +60,7 @@ export function pick(peer: string, card: string, label: string, multiple: boolea
   const next = cur.includes(label) ? cur.filter((l) => l !== label) : multiple ? [...cur, label] : [label];
   const picks = { ...d.picks };
   if (next.length) picks[card] = next; else delete picks[card];
-  save(peer, { ...d, picks });
+  save(peer, { ...d, replies: next.length ? d.replies.filter(id => id !== card) : d.replies, picks });
 }
 export function unpick(peer: string, cards: string[]) {
   const d = cache.get(peer) ?? EMPTY;

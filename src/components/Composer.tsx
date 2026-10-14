@@ -125,8 +125,8 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
       if (saveT.current) { clearTimeout(saveT.current); saveT.current = null; void api.setDraft(peer, textRef.current).catch(() => {}); }
     };
   }, [peer]);
-  // queued: ordinary messages empty the box; answer-only sends retain the
-  // separate text/files draft. Replies are left to onSent: Reply in the
+  // Queued messages empty the box. Legacy retained preparation state remains
+  // readable. Replies are left to onSent: Reply in the
   // chat still works while the files are prepared, and a reply chosen then
   // isn't part of this message (review R3)
   useEffect(() => {
@@ -155,19 +155,15 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
   };
 
   const lim = limitFor(c, hubs);
-  const answering = picked.length > 0;
-  const total = answering ? 0 : utf8Len(text) + atts.reduce((n, a) => n + a.bytes, 0);
+  const total = utf8Len(text) + atts.reduce((n, a) => n + a.bytes, 0);
   const over = lim ? total > lim.bytes : false;
   const overNote = lim ? "This message is " + bytes(total) + ". Hub " + lim.hub.name + " takes up to " + bytes(lim.bytes) + " per message, text and files together." : "";
   // a message may go with no text when it answers or skips a question card
   // (user 2026-10-11 22:42Z): a picked option answers even without text, a
-  // plain reply to an open card with no text skips it. With no picked answers,
-  // an empty normal reply (files or not) skips every open card it replies to:
+  // plain reply to an open card with no text skips it (files or not):
   // each must be known first, or that message waits and retains its draft
-  // (review R2). Answer-only sends have no unrelated plain replies.
-  // Answer-only sends reply just to their picked cards. Plain replies wait
-  // with the text/files draft and must not be silently skipped by this send.
-  const plain = answering ? [] : replies.filter((r) => !!cardOf(r) && !r.outgoing);
+  // (review R2). Picks and text are exclusive per card, not per send.
+  const plain = replies.filter((r) => !!cardOf(r) && !r.outgoing);
   const skips = plain.filter((r) => cardState(r.id) === "open").length;
   const checking = text.trim() ? 0 : plain.filter((r) => cardState(r.id) === "unknown").length;
   const answersCard = picked.length > 0 || skips > 0;
@@ -212,16 +208,16 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
     composing(false);
     if (saveT.current) { clearTimeout(saveT.current); saveT.current = null; }
     // every card answered is also replied to; the whole set goes oldest first
-    const all = answering ? [] : [...replies];
+    const all = [...replies];
     for (const p of picked) if (!all.some((r) => r.id === p.card.id)) all.push(p.card);
     all.sort((a, b) => (pos.get(a.id) ?? -1) - (pos.get(b.id) ?? -1) || msgTime(a) - msgTime(b));
     const ids = all.map((r) => r.id), prev = preparation?.retainedDraft ? undefined : preparation?.message;
     await prepareSend({
-      id: newId(), peer, body: answering ? "" : text.trim(), attachments: answering ? [] : atts,
+      id: newId(), peer, body: text.trim(), attachments: atts,
       reply_to: ids[0] ?? prev?.reply_to ?? null,
       replies: ids.length > 1 ? ids : ids.length ? undefined : prev?.replies,
       answers: picked.length ? picked.map((p) => ({ question: p.card.id, picked: p.labels })) : ids.length ? undefined : prev?.answers,
-    }, answering ? { body: text, attachments: atts } : undefined);
+    });
   };
 
   const one = replies.length === 1 ? replies[0] : null;
@@ -280,7 +276,7 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
     ? <span style={{ color: "var(--bad)" }}>{overNote}</span>
     : <>
         {platform === "desktop" ? <span><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line</span> : null}
-        {answering ? <span className="skipnote">Send sends only your answers; your message and files stay here.</span> : null}
+        {picked.length ? <span className="answer-note">Picked cards use their options; other reply targets use your message.</span> : null}
         {checking ? <span className="skipnote">Checking whether {checking === 1 ? "the question you reply to is" : checking + " questions you reply to are"} still open</span>
           : skips && !text.trim() ? <span className="skipnote">Sending with no text skips {skips === 1 ? "the question" : skips + " questions"} you reply to</span> : null}
         {isLong(text) ? <span className="count">{num(text.length)} characters · shows collapsed</span> : null}

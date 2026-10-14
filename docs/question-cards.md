@@ -10,12 +10,13 @@ Hubchat (which shows them and sends the answers).
   preset options it is **single-choice** (pick one) or **multiple-choice**
   (pick one or more). Without options it is **free-response**.
 - Tapping an option sends nothing. It attaches the answer to the composer,
-  and Send sends the picked answers as their own message, with no typed text
-  or files. The typed draft and files stay for a separate later Send. Several
-  cards' picks still go together, and multi-select still waits for Send.
-  This replaces the earlier combined-answer-and-text flow (user correction
-  and coordinator mechanics ruling 2026-10-14). Plain replies not among the
-  picked cards stay with that draft; the answer send never skips them.
+  and Send combines picks, typed replies and files in one message. Each card
+  uses either its picks or the shared typed reply, never both. Reply on a
+  picked card clears its picks; picking an option removes its text target.
+  This supersedes alpha.4's per-send separation (user 2026-10-14 16:15:55Z).
+  With empty text the text-target cards are skipped, visibly noted before Send;
+  picked cards still receive their picks. Unknown empty-reply cards wait for
+  their state, preserving the entire draft. Multi-select still waits for Send.
   The card's header says
   "Reply to answer something else" (free-response: "Reply to answer"), and
   tapping it starts a reply.
@@ -25,8 +26,9 @@ Hubchat (which shows them and sends the answers).
   Ordinary Reply adds a target instead of replacing the previous one; the
   selection's Reply merges its targets into the existing draft. Repeating
   Reply deduplicates; each target can be removed, and Cancel All clears them.
-  The same text answers every card it replies to. Different answers go as
-  separate replies.
+  All targets must come from the same sender in this chat. The same text
+  answers every text-target card; other cards can have their own picks in
+  that same Send. Different typed answers go as separate replies.
 - A card **settles once, for good**: the first message that answers or skips
   it decides. Later replies are ordinary chat. The sender can't withdraw a
   card. To change an answer, the agent asks a new question.

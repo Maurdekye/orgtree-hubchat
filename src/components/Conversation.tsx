@@ -138,7 +138,11 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
     const done = Object.keys(pending.picks).filter((id) => isSettled(settled, id));
     if (done.length) unpick(peer, done);
   }, [settled, pending.picks, peer]);
-  const onPick = useCallback((m: Message, label: string) => { const card = cardOf(m); if (card) pick(peer, m.id, label, card.multiple); }, [peer]);
+  const onPick = useCallback((m: Message, label: string) => {
+    const targets = [...pending.replies, ...Object.keys(pending.picks)].map(id => byId.get(id) ?? extra[id]);
+    if (targets.some(q => !q || q.peer !== peer || q.outgoing !== m.outgoing)) { toast("A multi-reply can only answer messages from the same sender."); return; }
+    const card = cardOf(m); if (card) pick(peer, m.id, label, card.multiple);
+  }, [peer,pending,byId,extra]);
 
   // keep pinned to the newest message while at the bottom
   useLayoutEffect(() => {
@@ -221,9 +225,15 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   // Reply adds one message; selection Reply merges every selected message
   // into this draft (user/coordinator 2026-10-14 multi-reply ruling).
   // (the box takes the focus only then: replies saved from before don't open the keyboard)
-  const reply = useCallback((m: Message) => { addReplies(peer, [m.id]); setSel([]); comp.current?.focus(); }, [peer]);
+  const collectReplies = useCallback((ids: string[]) => {
+    const all = [...new Set([...pending.replies, ...Object.keys(pending.picks), ...ids])].map(id => byId.get(id) ?? extra[id]);
+    if (all.some(m => !m)) { toast("Wait for the reply targets to load before adding another."); return false; }
+    if (all.some(m => m!.peer !== peer || m!.outgoing !== all[0]!.outgoing)) { toast("A multi-reply can only answer messages from the same sender."); return false; }
+    addReplies(peer, ids); return true;
+  }, [peer,pending,byId,extra]);
+  const reply = useCallback((m: Message) => { if (collectReplies([m.id])) { setSel([]); comp.current?.focus(); } },[collectReplies]);
   const toggleSel = useCallback((m: Message) => setSel((s) => (s.includes(m.id) ? s.filter((x) => x !== m.id) : [...s, m.id])), []);
-  const replySel = () => { const ids = msgs.filter((m) => sel.includes(m.id)).map((m) => m.id); if (ids.length) addReplies(peer, ids); setSel([]); comp.current?.focus(); };
+  const replySel = () => { const ids = msgs.filter((m) => sel.includes(m.id)).map((m) => m.id); if (ids.length && collectReplies(ids)) { setSel([]); comp.current?.focus(); } };
   const info = useCallback((m: Message) => { setSel([]); onInfo(m); }, [onInfo]);
 
   // ------------------------------------- desktop: Shift+Tab walks the bubbles

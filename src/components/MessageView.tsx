@@ -201,7 +201,7 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
           })}
         </div>
       );
-      if (canPick) qfoot = <div className="q-note">{picks?.length ? "Send your answer separately" : qc.multiple ? "Pick one or more" : "Pick one"}</div>;
+      if (canPick) qfoot = <div className="q-note">{picks?.length ? "Send your picked answer" : qc.multiple ? "Pick one or more" : "Pick one"}</div>;
       else if (settled?.st === "answered" && !settled.picked) qfoot = <div className="q-note">Answered in a reply</div>;
     }
   }

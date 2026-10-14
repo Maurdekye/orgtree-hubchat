@@ -57,8 +57,8 @@ export async function multiReplies({ b, base, out, check }) {
     check(p + 'control sent draft clears its targets', !(await ev(`!!document.querySelector('.composer .replybar')`)));
     await b.shot(join(out, `multi-after-${platform}.png`));
   }
-  // The reported alpha.4 phone sequence: type to two cards and pick answers
-  // on a third. The picks go first; the text then answers both original cards.
+  // The final signed phone sequence: Reply Q1, then Q3, picks on Q2.
+  // One Send carries text for Q1/Q3 and picks for Q2, exclusive per card.
   await b.size(390,844,1);
   await b.nav(base,900); await ev(`localStorage.removeItem('hubchat-mock-draft-answers'), true`);
   await b.nav(base+'?platform=android',1200); await open();
@@ -72,12 +72,26 @@ export async function multiReplies({ b, base, out, check }) {
   }
   await ev(`(async()=>{ const {api}=await import('/src/api.ts'); window.__multiSent=[]; const send=api.send; api.send=async m=>{window.__multiSent.push(structuredClone(m)); return send(m);}; return true; })()`);
   await b.click('.composer .sendbtn',100); await wait(1000);
-  let phone = await ev(`window.__multiSent`);
-  check('android: control phone picks send only third-card answers and retain all typed bytes', phone.length===1 && phone[0].reply_to==='repro-q2' && phone[0].body==='' && !phone[0].attachments?.length && phone[0].answers?.[0]?.picked.join()==='Red,Green,Blue' && (await ev(`document.querySelector('.composer textarea').value`))==='One typed answer to questions one and three.');
-  check('android: append phone answer send retains both independent reply targets', (await ev(`document.querySelector('.composer .rb-who')?.innerText`))==='Replying to 2 messages');
-  await b.shot(join(out,'phone-sequence-retained-text.png'));
-  await b.click('.composer .sendbtn',100); await wait(1000); phone=await ev(`window.__multiSent`);
-  check('android: append phone later Send carries typed text to both cards without a skip', phone.length===2 && phone[1].body==='One typed answer to questions one and three.' && phone[1].reply_to==='repro-q1' && phone[1].replies?.join()==='repro-q1,repro-q3' && !phone[1].answers?.length);
+  const phone = await ev(`window.__multiSent`);
+  check('android: control phone typed bytes survive one mixed send', phone.length===1 && phone[0].body==='One typed answer to questions one and three.');
+  check('android: append phone one Send replies to all three with picks only on Q2', phone.length===1 && phone[0].reply_to==='repro-q1' && phone[0].replies?.join()==='repro-q1,repro-q2,repro-q3' && phone[0].answers?.length===1 && phone[0].answers[0].question==='repro-q2' && phone[0].answers[0].picked.join()==='Red,Green,Blue');
   check('android: append phone both text targets settle as answers, not skips', await ev(`/^Answered/.test(document.querySelector('#m-repro-q1 .q-state')?.innerText||'') && /^Answered/.test(document.querySelector('#m-repro-q3 .q-state')?.innerText||'')`));
+  check('android: control phone picked card settles with all three picked options', await ev(`/^Answered/.test(document.querySelector('#m-repro-q2 .q-state')?.innerText||'') && [...document.querySelectorAll('#m-repro-q2 .q-opt.on')].map(e=>e.innerText.trim()).join()==='Red,Green,Blue'`));
+  check('android: append phone mixed send shows all three quotes', (await ev(`[...document.querySelectorAll('.timeline .msg.out')].pop().querySelectorAll('.quote').length`))===3);
   await b.shot(join(out,'phone-sequence-two-text-answers.png'));
+  await ev(`window.__hcCards.card('orgtree.alex.7c41d2','empty-q1','Empty question one',[]), window.__hcCards.card('orgtree.alex.7c41d2','empty-q2','Empty question two',['Red']), window.__hcCards.card('orgtree.alex.7c41d2','empty-q3','Empty question three',[]), true`);
+  await wait(600);await b.click('#m-empty-q1 .q-hint',200);await b.click('#m-empty-q3 .q-hint',200);await b.click('#m-empty-q2 .q-opt',200);
+  check('android: append blank mixed warns of both intended skips',await ev(`/skips 2 questions/.test(document.querySelector('.skipnote')?.innerText||'')`));
+  await b.click('.composer .sendbtn',100);await wait(1000);
+  const blank=await ev(`window.__multiSent.at(-1)`);
+  check('android: append blank mixed sends every skip and only the picked answer',blank?.body==='' && blank.replies?.join()==='empty-q1,empty-q2,empty-q3' && blank.answers?.length===1 && blank.answers[0].question==='empty-q2');
+  check('android: append blank mixed settles both text targets as Skipped',await ev(`/^Skipped/.test(document.querySelector('#m-empty-q1 .q-state')?.innerText||'') && /^Skipped/.test(document.querySelector('#m-empty-q3 .q-state')?.innerText||'')`));
+  check('android: control blank picked card is Answered',await ev(`/^Answered/.test(document.querySelector('#m-empty-q2 .q-state')?.innerText||'')`));
+  await b.shot(join(out,'phone-empty-mixed-skips.png'));
+  await ev(`window.__hcCards.card('orgtree.alex.7c41d2','mode-q','Mode question',['Red']), true`);await wait(500);
+  await b.click('#m-mode-q .q-hint',200);await b.click('#m-mode-q .q-opt',200);
+  check('android: control picking moves the card out of text targets',await ev(`!document.querySelector('.composer .replybar') && !!document.querySelector('.composer .anschip')`));
+  await b.click('#m-mode-q .q-hint',200);
+  check('android: append Reply clears that card pick and restores its text target',await ev(`!!document.querySelector('.composer .replybar') && !document.querySelector('.composer .anschip')`));
+  await b.shot(join(out,'phone-exclusive-card-slot.png'));
 }

@@ -125,9 +125,9 @@ try {
   const before = await ev(`document.querySelectorAll('.timeline .msg').length`);
   await pickOpt('q-channel', 'Stable');
   let c = await chips();
-  check('picking marks the option and stages a separate answer; nothing is sent immediately',
+  check('picking marks the option and stages an answer; nothing is sent immediately',
     (await opts('q-channel')).find((o) => o.l === 'Stable').on && c.length === 1 && c[0].includes('Stable') && (await ev(`document.querySelectorAll('.timeline .msg').length`)) === before
-      && !(await ev(`document.querySelector('.composer textarea').placeholder`)).includes('optional') && (await msgText('#m-q-channel .q-note')) === 'Send your answer separately');
+      && !(await ev(`document.querySelector('.composer textarea').placeholder`)).includes('optional') && (await msgText('#m-q-channel .q-note')) === 'Send your picked answer');
   await pickOpt('q-channel', 'Beta');
   c = await chips();
   check('single-choice: another option replaces the pick',
@@ -146,15 +146,14 @@ try {
   await b.click('#m-q-notes .q-hint', 400);
   check('the header hint starts a reply to that card, like Reply, and focuses the box',
     (await msgText('.composer .replybar .rb-txt'))?.includes('Anything else for the rc4 release notes?') && (await ev(`document.activeElement === document.querySelector('.composer textarea')`)));
-  check('Send stages only picked answers and keeps the unrelated plain reply',
-    !(await ev(`document.querySelector('.composer .sendbtn').disabled`)) && (await msgText('.composer .skipnote')) === 'Send sends only your answers; your message and files stay here.');
+  check('Send includes the picks and visibly skips the empty text target',
+    !(await ev(`document.querySelector('.composer .sendbtn').disabled`)) && (await msgText('.composer .skipnote')) === 'Sending with no text skips the question you reply to');
   await b.shot(join(out, '02-composer-answers-desktop-dark.png'));
   await sendNow();
   const sent = `[...document.querySelectorAll('.timeline .msg.out')].pop()`;
   const notes = await ev(`[...${sent}.querySelectorAll('.quote')].map((q) => q.querySelector('.q-ans')?.innerText ?? '')`);
-  check('one send answers two cards without skipping the third',
-    notes.join('|') === 'Answer: Beta|Answer: Windows' && (await ev(`!!document.querySelector('.composer .replybar')`)));
-  await sendNow(); // the independent empty reply skips the third card
+  check('one send answers two picked cards and skips the empty text target',
+    notes.join('|') === 'Answer: Beta|Answer: Windows|Skipped' && !(await ev(`!!document.querySelector('.composer .replybar')`)));
   check('the cards settle: two "Answered", one "Skipped", options locked, no hints',
     /^Answered/.test(await msgText('#m-q-channel .q-state')) && /^Answered/.test(await msgText('#m-q-platforms .q-state')) && /^Skipped/.test(await msgText('#m-q-notes .q-state'))
       && (await opts('q-channel')).every((o) => o.dis) && !(await ev(`!!document.querySelector('#m-q-channel .q-hint, #m-q-platforms .q-hint, #m-q-notes .q-hint')`)));
@@ -178,7 +177,7 @@ try {
 
   // desktop multi-select
   await clickAt(bubble('Done. Here is the change'), 2);
-  await clickAt(bubble('Thanks! Can you also check the updater manifest?'), 2);
+  await clickAt(`document.querySelector('#m-q-notes .kchip')`, 2);
   check('Ctrl+click selects two messages; a bar above the composer says "2 selected"',
     (await ev(`document.querySelectorAll('.timeline .msg.sel').length`)) === 2 && (await msgText('.selbar .sb-n')) === '2 selected');
   await b.shot(join(out, '03-selection-desktop-dark.png'));
@@ -223,22 +222,14 @@ try {
     const dropped = c1.length === 1 && c1[0].includes('Keep') && !!s1 && !('q-old' in s1.picks) && s1.picks['q-fresh']?.join() === 'Keep';
     check('beyond the page: after a restart the saved pick on the card another device answered is gone (chip and saved); the open card keeps "Keep"', dropped);
     if (!dropped) console.log('   chips:', JSON.stringify(c1), 'saved:', JSON.stringify(s1));
-    check('beyond the page: the saved free-response reply is back and stays for later while Send carries only the pick',
-      (await msgText('.composer .replybar .rb-txt'))?.includes('Anything to add to the runbook?') && (await msgText('.composer .skipnote')) === 'Send sends only your answers; your message and files stay here.');
+    check('beyond the page: the saved free-response reply is back and marked to skip beside the pick',
+      (await msgText('.composer .replybar .rb-txt'))?.includes('Anything to add to the runbook?') && (await msgText('.composer .skipnote')) === 'Sending with no text skips the question you reply to');
     await b.shot(join(out, '11-beyond-page-desktop-light.png'));
     await sendNow();
     const got = await ev(`[...${sent}.querySelectorAll('.quote')].map((q) => q.querySelector('.q-ans')?.innerText ?? '')`);
-    check('beyond the page: the first send answers only the picked card ("Answer: Keep"), without either other card',
-      got.join('|') === 'Answer: Keep' && (await ev(`${sent}.querySelectorAll('.quote').length`)) === 1);
-    if (got.join('|') !== 'Answer: Keep') console.log('   got:', JSON.stringify(got));
-    const retained = await saved();
-    check('beyond the page: only the free-response reply stays saved, with no pick; its later empty Send would skip it',
-      retained?.replies?.join() === 'q-free' && Object.keys(retained?.picks ?? {}).length === 0 && (await chips()).length === 0
-        && (await msgText('.composer .skipnote')) === 'Sending with no text skips the question you reply to');
-    await b.shot(join(out, '11a-beyond-page-retained-reply-desktop-light.png'));
-    await sendNow();
-    check('beyond the page: the later empty Send skips only the retained free-response card and clears its saved reply',
-      (await ev(`[...${sent}.querySelectorAll('.quote')].map((q) => q.querySelector('.q-ans')?.innerText ?? '')`)).join('|') === 'Skipped' && (await saved()) === null);
+    check('beyond the page: one send answers the picked card and skips only the free response',
+      got.join('|') === 'Answer: Keep|Skipped');
+    check('beyond the page: both sent targets clear from the saved draft', (await saved()) === null);
     // older pages until the cards show: they read as the store said
     for (let i = 0; i < 12 && !(await ev(`!!document.querySelector('#m-q-old')`)); i++) {
       await ev(`document.querySelector('.timeline').scrollTop = 0, true`); await sleep(700);
@@ -270,7 +261,6 @@ try {
     const note = () => msgText('.composer .skipnote');
     const CHECKING = 'Checking whether the question you reply to is still open';
     const SKIPS = 'Sending with no text skips the question you reply to';
-    const ANSWERS = 'Send sends only your answers; your message and files stay here.';
     const notes = () => ev(`[...${sent}.querySelectorAll('.quote')].map((q) => q.querySelector('.q-ans')?.innerText ?? '')`);
     const fileCount = () => ev(`document.querySelectorAll('.composer .attchip, .composer .attthumb').length`);
     const sentFiles = () => ev(`${sent}.querySelectorAll('[data-att]').length`);
@@ -283,17 +273,17 @@ try {
     await pickOpt('q-k1', 'Rotate');
     await b.click('#m-q-u1 .q-hint', 300);
     let n0 = await outs();
-    check('known pick can send separately while the unrelated unknown reply stays',
-      !(await waits()) && (await chips()).length === 1 && (await msgText('.composer .replybar .rb-txt'))?.includes('Anything to add to the runbook today?'));
+    check('known pick plus empty unknown reply waits before the combined send',
+      (await waits()) && (await note()) === CHECKING && (await chips()).length === 1 && (await msgText('.composer .replybar .rb-txt'))?.includes('Anything to add to the runbook today?'));
     await b.shot(join(out, '13-unknown-card-waits-desktop-light.png'));
     await ev(`document.querySelector('.composer textarea').focus(), true`); await b.key('Enter'); await sleep(500);
-    check('Enter sends only the known answer; the empty unknown reply still waits',
-      (await outs()) === n0 + 1 && (await notes()).join('|') === 'Answer: Rotate' && (await waits()) && (await note()) === CHECKING);
+    check('Enter cannot skip an unknown card or lose its staged pick',
+      (await outs()) === n0 && (await waits()) && (await note()) === CHECKING && (await chips()).length === 1);
     await cards('release()'); await sleep(700);
     check('R2: once the store answers, Send is open and says the empty reply skips the now known open card',
-      !(await waits()) && (await note()) === SKIPS && (await chips()).length === 0);
+      !(await waits()) && (await note()) === SKIPS && (await chips()).length === 1);
     await sendNow();
-    check('the later independent empty reply skips only the second card', (await notes()).join('|') === 'Skipped');
+    check('the combined send picks the first card and skips the empty second card', (await notes()).join('|') === 'Answer: Rotate|Skipped');
 
     // an empty reply to a known open card and to one not known (query failing)
     await newCard('q-k2', 'Keep the canary hub running?', ['Keep it', 'Stop it']);
@@ -322,23 +312,18 @@ try {
     await b.click('#m-q-u3 .q-hint', 300);
     await b.click('.composer [aria-label="Attach files"]', 500);
     n0 = await outs();
-    check('R2, query held: the known pick can send separately while the file and unrelated unknown reply stay',
-      !(await waits()) && (await note()) === ANSWERS && (await fileCount()) === 1 && (await chips()).length === 1);
-    await sendNow();
-    check('R2: the answer-only send has no file or skip; the retained empty file/reply now waits on its unknown card',
-      (await outs()) === n0 + 1 && (await notes()).join('|') === 'Answer: Archive' && (await sentFiles()) === 0
-        && !(await ev(`${sent}.querySelector('.mtext, .mbody') !== null`)) && (await fileCount()) === 1 && (await chips()).length === 0
-        && (await saved())?.replies?.join() === 'q-u3' && (await waits()) && (await note()) === CHECKING);
+    check('R2, query held: the combined file/pick/empty reply waits for its unknown card',
+      (await waits()) && (await note()) === CHECKING && (await fileCount()) === 1 && (await chips()).length === 1);
     await ev(`document.querySelector('.composer textarea').focus(), true`); await b.key('Enter'); await sleep(500);
     check('R2, query held: Enter cannot send the retained file with an empty unknown-card reply',
-      (await outs()) === n0 + 1 && (await fileCount()) === 1 && (await saved())?.replies?.join() === 'q-u3' && (await waits()));
-    await b.shot(join(out, '13a-files-retained-after-answer-desktop-light.png'));
+      (await outs()) === n0 && (await fileCount()) === 1 && (await saved())?.replies?.join() === 'q-u3' && (await waits()));
+    await b.shot(join(out, '13a-files-waiting-desktop-light.png'));
     await cards('release()'); await sleep(700);
     check('R2: once known, the retained file with no text says it skips its open card, and can go',
       !(await waits()) && (await note()) === SKIPS && (await fileCount()) === 1);
     await sendNow();
-    check('R2: the later send carries the file and only the retained skip, then clears the file and saved reply',
-      (await outs()) === n0 + 2 && (await notes()).join('|') === 'Skipped' && (await sentFiles()) === 1 && (await fileCount()) === 0 && (await saved()) === null);
+    check('R2: one send carries the file, picked answer and known-card skip, then clears the draft',
+      (await outs()) === n0 + 1 && (await notes()).join('|') === 'Answer: Archive|Skipped' && (await sentFiles()) === 1 && (await fileCount()) === 0 && (await saved()) === null);
     await b.shot(join(out, '13b-file-skip-desktop-light.png'));
 
     // a pick on a card not known yet: a text message can't carry it, and keeps it
@@ -426,10 +411,8 @@ try {
     await b.shot(join(out, '15-kept-after-queued-desktop-light.png'));
     await b.type('.composer textarea', 'Sam signs off.');
     await sendNow();
-    check('the next Send carries only the staged answers and retains typed reply',
-      (await notes()).join('|') === 'Answer: Nightly|Answer: Rerun' && (await boxText()) === 'Sam signs off.');
-    await sendNow();
-    check('the later typed reply carries the third card and clears normally', (await notes()).join('|') === '' && (await saved()) === null);
+    check('the next Send carries picks and the independent typed reply together',
+      (await notes()).join('|') === 'Answer: Nightly||Answer: Rerun' && (await boxText()) === '' && (await saved()) === null);
 
     // control: nothing chosen meanwhile, so all the message carried clears
     await newCard('q-p4', 'Tag the release candidate?', ['Tag it', 'Not yet']);
@@ -558,7 +541,7 @@ try {
     await longPress(find('Done. Here is the change'));
     check('phone: long-press selects a message ("1 selected", with Copy and Message info)',
       (await msgText('.appbar.select .title')) === '1 selected' && (await ev(`!!document.querySelector('.appbar.select [aria-label=Copy]')`)));
-    await clickAt(find('Thanks! Can you also check the updater manifest?'));
+    await clickAt(`document.querySelector('#m-q-notes .kchip')`);
     check('phone: a tap adds a second one ("2 selected"); Copy and Message info step aside',
       (await msgText('.appbar.select .title')) === '2 selected' && !(await ev(`!!document.querySelector('.appbar.select [aria-label=Copy]')`)));
     await b.click('.appbar.select [aria-label=Reply]', 300);
@@ -666,13 +649,13 @@ try {
   const failures = checks.filter(c => !c.ok);
   const expected = process.env.HUBCHAT_MULTI_ONLY && process.env.HUBCHAT_MULTI_BASE;
   const passed = expected
-    ? checks.length === 24 && failures.length === 16 && checks.every(c => c.ok !== /^(desktop|android): append /.test(c.name))
+    ? checks.length === 31 && failures.length === 20 && checks.every(c => c.ok !== /^(desktop|android): append /.test(c.name))
     : checks.length > 0 && failures.length === 0;
-  writeFileSync(join(out, 'result.json'), JSON.stringify({ checks, errors: b.errors, passed, expectedRed: expected ? 16 : 0 }, null, 2));
+  writeFileSync(join(out, 'result.json'), JSON.stringify({ checks, errors: b.errors, passed, expectedRed: expected ? 20 : 0 }, null, 2));
   console.log(`${checks.filter((c) => c.ok).length}/${checks.length} passed`);
   await b.close(); await server.close();
 }
 const expected = process.env.HUBCHAT_MULTI_ONLY && process.env.HUBCHAT_MULTI_BASE;
 process.exit(expected
-  ? (checks.length === 24 && checks.filter(c=>!c.ok).length === 16 && checks.every(c=>c.ok !== /^(desktop|android): append /.test(c.name)) ? 0 : 1)
+  ? (checks.length === 31 && checks.filter(c=>!c.ok).length === 20 && checks.every(c=>c.ok !== /^(desktop|android): append /.test(c.name)) ? 0 : 1)
   : (checks.length && checks.every(c=>c.ok) ? 0 : 1));
