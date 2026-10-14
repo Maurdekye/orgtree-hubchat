@@ -142,7 +142,7 @@ try {
   const sent = `[...document.querySelectorAll('.timeline .msg.out')].pop()`;
   const notes = await ev(`[...${sent}.querySelectorAll('.quote')].map((q) => q.querySelector('.q-ans')?.innerText ?? '')`);
   check('one send answers two cards without skipping the third',
-    notes.join('|') === 'Answer: Beta|Answer: Windows' && !!(await ev(`document.querySelector('.composer .replybar')`)));
+    notes.join('|') === 'Answer: Beta|Answer: Windows' && (await ev(`!!document.querySelector('.composer .replybar')`)));
   await sendNow(); // the independent empty reply skips the third card
   check('the cards settle: two "Answered", one "Skipped", options locked, no hints',
     /^Answered/.test(await msgText('#m-q-channel .q-state')) && /^Answered/.test(await msgText('#m-q-platforms .q-state')) && /^Skipped/.test(await msgText('#m-q-notes .q-state'))
