@@ -29,5 +29,10 @@ native DPI/work-area geometry and command guards, shell compilation and tray
 regressions. `tools/proof-tray-cursor.mjs` captures three synthetic placements
 and takes five renderer cold-mount and five warm-update paint samples. Those
 samples exclude native event delivery, WebView creation and window show.
-Actual native click-to-visible cold/warm measurement is required separately.
-No runtime result or instant-open claim is made before those receipts.
+Agent/rig processes run in Session 0 while Explorer's notification area runs
+in Session 1, so the supported isolated rig cannot measure real tray placement
+or native click-to-visible latency. Coordinator 2026-10-14 18:11Z accepts the
+source/DOM/geometry checks and renderer proxies as agent-side verification;
+native "instant at cursor" acceptance is the user's check on the next Hubchat
+alpha. No native latency numbers are claimed. No logging instrumentation is
+added unless continued slowness is reported and timing is separately assigned.
