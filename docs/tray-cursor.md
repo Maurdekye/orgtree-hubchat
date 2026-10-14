@@ -12,6 +12,9 @@ snapshot while hidden. A ready request still requires an open generation and
 revision, so warming cannot show the window. Opening pays no creation or
 navigation cost once preparation has completed. A failed preparation retries
 at open; a click during startup may still await initial navigation.
+Creating that WebView pumps the UI thread while setup still runs, so the main
+page can load and read the core before setup ends: the UI is attached to the
+core before the warm-up ([startup-attach.md](startup-attach.md)).
 
 Right-menu layout positions its root at the event cursor, flips above it when
 needed and clamps the root to the monitor work area. It then places the larger

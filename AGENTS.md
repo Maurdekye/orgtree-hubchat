@@ -1,5 +1,17 @@
 # Hubchat development invariants
 
+- 2026-10-14: Attach the UI to the core before anything in setup can pump the
+  UI thread; creating a window or WebView does (the tray popup warm-up). An
+  event the core sends before the attach is dropped, and a steady state never
+  reports again. Alpha.5 showed connected hubs as "Connecting… · hub version
+  unknown", and their contacts with the status-unknown badge. Desktop attaches
+  right after `core::init`. Attaching emits `{"type":"attached"}`, and the page
+  re-reads state, chats, directory and transfers. `startStore` awaits its `hc`
+  listener before the first read. The status-unknown badge shows only when no
+  enabled, connected hub lists the contact; `presence()` is shared by desktop
+  and Android. [decided: user 2026-10-14 22:30Z (badge); verified: lib.rs,
+  core.rs, store.ts, peers.ts; docs/startup-attach.md; rig pending]
+
 - 2026-10-14: Ordinary Reply appends/dedupes targets; selection Reply merges
   into the same draft. Individual remove and Cancel All stay. Sending picks
   and text are exclusive per question, not per send: Reply unpicks that card,
