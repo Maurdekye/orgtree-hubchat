@@ -133,6 +133,39 @@ the rule for them, and coordinator-opus approved it on 2026-10-14. The code is
 - **Platforms.** Windows only: "Start at login" on macOS and Linux is as
   before, and Android has none.
 
+## In the tray, the page is hidden too (2026-10-14)
+
+The user's phone sounded for new messages, but the notification was gone
+before they could see it (docket hubchat-android-notifications-stopped-appearing-o).
+The PC Hubchat had started at sign-in with `--hidden`. Its page still
+counted itself on screen and focused, so it marked each new message in the
+chat it had reopened read within ~0.1 s. Reading on any device takes the
+phone's notification away. Hub logs and read times showed the PC as the
+reader: the phone's clock ran 2 s ahead, and these reads carried the PC's.
+
+- **The cause.** Tauri's `WebviewWindow::hide()` hides only the window.
+  WebView2 learns that its page is hidden only from the webview's own
+  `hide()` (wry `set_visible` → `IsVisible`), so the page stayed `visible`.
+- **The rule.** Hide and show the main window only through
+  `desktop::hide()` and `desktop::show()` (`src-tauri/src/lib.rs`). They hide
+  and show the webview together with the window: the page first when showing,
+  the window first when hiding. This covers the `--hidden` start, close to
+  the tray, and every show (a second launch, the tray, a notification or link).
+  In the tray the page is `hidden`. It reads nothing, it doesn't count as in
+  use, and the desktop's own notifications cover its open chat again.
+- **Untouched on screen** (decided by coordinator-opus 2026-10-14; the user's
+  answer is pending). On desktop, reading also needs the window to be in use:
+  on screen, focused and touched within 150 s, the in-use limit. A window left
+  in front marks nothing read until someone touches it, then reads the open
+  chat at once. It still tells the core that the chat is on screen, so it
+  shows no toast for that chat. `IDLE_STOPS_READING` in `src/lib/visibility.ts`
+  is the one switch: `false` reads whenever the window is on screen and
+  focused. Android is unchanged.
+- **Proof.** `tools/e2e-hidden-read.mjs` runs a desktop test build under its
+  own identifier (`tools/e2e-hidden-read.conf.json`) against a scratch hub.
+  It gives the hidden page focus the way the sign-in start did (CDP focus
+  emulation), so only the page's visibility decides the outcome.
+
 Accepted limits:
 
 - **No StartupApproved key.** The plugin writes no StartupApproved record
