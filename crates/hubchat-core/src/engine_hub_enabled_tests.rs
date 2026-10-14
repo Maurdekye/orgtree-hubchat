@@ -181,10 +181,76 @@ fn link_start_cold_retained_disabled_refuses_before_engine_lookup() {
 
 #[test]
 fn link_start_saved_enabled_without_runtime_refuses() {
+    // An identity runs here but this saved hub has no runtime: refused. With
+    // no identity at all see relink_lost_key_saved_enabled_gets_a_fresh_client.
     let e = engine();
-    assert!(crate::link::start_client(&e.store, HubAddress::parse(A).unwrap(), || None).is_err());
     assert!(crate::link::start_client(&e.store, HubAddress::parse(A).unwrap(), || Some(e.clone())).is_err());
     assert!(e.store.hub_enabled(A).unwrap());
+}
+
+/// What a device keeps when its key is lost (the lost-key screen): its noted
+/// address and saved hubs (`enabled` per hub), reopened with no engine.
+fn lost_key_store(dir: &std::path::Path, hubs: &[(&str, bool)]) -> Store {
+    let path = dir.join("retained.sqlite");
+    {
+        let s = Store::open(&path).unwrap();
+        s.set_meta("identity.address", "alex.abcdef").unwrap();
+        for (url, enabled) in hubs {
+            s.add_hub(url, "saved").unwrap();
+            s.set_hub_enabled(url, *enabled).unwrap();
+        }
+    }
+    Store::open(&path).unwrap()
+}
+
+// Coordinator ruling 2026-10-14 (Orgtree docket
+// phone-linking-says-existing-hubs-are-invalid-whe): with no identity running,
+// an enabled saved hub is reached as setup reaches it. Refusing it showed the
+// user's working hubs as "invalid input: This saved hub is unavailable" while
+// relinking from the lost-key screen.
+#[test]
+fn relink_lost_key_saved_enabled_gets_a_fresh_client() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = lost_key_store(dir.path(), &[(A, true)]);
+    let looked_up = std::cell::Cell::new(false);
+    let client = crate::link::start_client(&s, HubAddress::parse(A).unwrap(), || {
+        looked_up.set(true);
+        None // Missing/unreadable key: retained store, no engine.
+    })
+    .unwrap_or_else(|e| panic!("a lost-key device must reach its enabled saved hub: {e}"));
+    assert!(!client.session_cancelled());
+    assert!(looked_up.get(), "an enabled saved hub looks for the running identity first");
+    assert_eq!(s.hubs().unwrap().len(), 1);
+    assert!(s.hub_enabled(A).unwrap());
+}
+
+/// The relink review on the lost-key screen (src-tauri link.rs `arrived`):
+/// each hub the identity brings is checked through the link's reception and
+/// resolved by `link::start_client` with no engine. The saved enabled hubs
+/// answer the check themselves; one disabled on this device stays refused
+/// without a request.
+#[tokio::test]
+async fn relink_lost_key_review_reaches_saved_hubs() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let (pendragon, star, off) = (discovery_hub().await, discovery_hub().await, discovery_hub().await);
+    let dir = tempfile::tempdir().unwrap();
+    let saved = [(pendragon.url.as_str(), true), (star.url.as_str(), true), (off.url.as_str(), false)];
+    let store = Arc::new(lost_key_store(dir.path(), &saved));
+    // the link went through an address this device hasn't saved (the user's: a door)
+    let via = HubClient::new(HubAddress::parse("http://127.0.0.1:7999").unwrap());
+    let resolver = store.clone();
+    let review = crate::link::Discovery::new(move |address| crate::link::start_client(&resolver, address, || None))
+        .with_origin(crate::link::Reception::new(via, CancelFlag::default()));
+    assert!(review.health(HubAddress::parse(&off.url).unwrap()).await.is_err(), "a hub disabled here stays refused");
+    assert_eq!(off.requests.load(SeqCst), 0);
+    for hub in [&pendragon, &star] {
+        let health = review.health(HubAddress::parse(&hub.url).unwrap()).await
+            .unwrap_or_else(|e| panic!("the saved hub {} was refused: {e}", hub.url));
+        assert!(health.ok);
+        assert_eq!(health.name, "discovery-proof");
+        assert_eq!(hub.requests.load(SeqCst), 1, "{} answered the check itself", hub.url);
+    }
+    assert!(store.hubs().unwrap().iter().all(|h| h.enabled == (h.url != off.url)));
 }
 
 #[test]

@@ -31,16 +31,27 @@ pub fn start_client(
     engine: impl FnOnce() -> Option<std::sync::Arc<crate::engine::Engine>>,
 ) -> Result<crate::HubClient> {
     // Lost-key recovery retains saved rows even when there is no engine.
-    // Resolve that policy first: engine absence is never new-device setup.
+    // Resolve that policy first: a disabled saved hub refuses with or
+    // without one.
     let saved = store.hubs()?.into_iter().find(|h| h.url == address.as_str());
     let Some(saved) = saved else { return Ok(crate::HubClient::new(address)); };
     if !saved.enabled {
         return Err(Error::Invalid("Enable this saved hub on this device before linking.".into()));
     }
-    // A saved hub needs its live generation; never replace a missing or
-    // canceled runtime with a fresh unbound client. Later disable cancels
-    // this clone as well, through the normal transport guard.
-    engine().and_then(|e| e.hub_client(address.as_str()))
+    // While an identity runs, a saved hub needs its live generation; never
+    // replace a missing or canceled runtime with a fresh unbound client.
+    // Later disable cancels this clone as well, through the normal
+    // transport guard.
+    let Some(running) = engine() else {
+        // No identity runs here (its key is lost: the lost-key screen links
+        // or restores it). No runtime exists for a disable to cancel, and the
+        // switch can't change without one: an enabled saved hub is reached
+        // as setup reaches it. Refusing showed the user's own working hubs
+        // as "unavailable" while relinking (coordinator ruling 2026-10-14,
+        // Orgtree docket phone-linking-says-existing-hubs-are-invalid-whe).
+        return Ok(crate::HubClient::new(address));
+    };
+    running.hub_client(address.as_str())
         .filter(|client| !client.session_cancelled())
         .ok_or_else(|| Error::Invalid("This saved hub is unavailable; restore the identity and connect it before linking.".into()))
 }
