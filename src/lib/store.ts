@@ -248,6 +248,8 @@ export async function cancelTransfer(localId: string): Promise<void> {
 // until the core has safely copied all files; progress is not a send receipt.
 export interface Preparation {
   message: NewOutgoing;
+  /** Answer-only sends leave this separate text/files draft in the composer. */
+  retainedDraft?: Pick<NewOutgoing, "body" | "attachments">;
   phase: "preparing" | "queued" | "failed";
   done: number;
   total: number;
@@ -267,9 +269,9 @@ export function clearPreparation(peer: string) {
   if (preparations.get(peer)?.phase === "preparing") return;
   preparations.delete(peer); preparationChanged();
 }
-export async function prepareSend(message: NewOutgoing): Promise<void> {
+export async function prepareSend(message: NewOutgoing, retainedDraft?: Preparation["retainedDraft"]): Promise<void> {
   if (preparations.get(message.peer)?.phase === "preparing") return;
-  const p: Preparation = { message, phase: "preparing", done: 0, total: (message.attachments ?? []).reduce((n, a) => n + a.bytes, 0), name: message.attachments?.[0]?.name ?? "", error: null };
+  const p: Preparation = { message, retainedDraft, phase: "preparing", done: 0, total: (message.attachments ?? []).reduce((n, a) => n + a.bytes, 0), name: message.attachments?.[0]?.name ?? "", error: null };
   preparations.set(message.peer, p); preparationChanged();
   // A command completed after an identity switch must not touch the new UI:
   // after every wait, go on only while the identity that sent this is still
@@ -278,13 +280,15 @@ export async function prepareSend(message: NewOutgoing): Promise<void> {
   const gen = generation;
   const mine = () => gen === generation && preparations.get(message.peer)?.message.id === message.id;
   try {
-    await api.setDraft(message.peer, message.body);
+    await api.setDraft(message.peer, retainedDraft?.body ?? message.body);
     if (!mine()) return;
     await api.send(message);
     if (!mine()) return;
-    noteDraft(message.peer, "");
-    await api.setDraft(message.peer, "").catch(() => {});
-    if (!mine()) return;
+    if (!retainedDraft) {
+      noteDraft(message.peer, "");
+      await api.setDraft(message.peer, "").catch(() => {});
+      if (!mine()) return;
+    }
     preparations.set(message.peer, { ...p, phase: "queued" });
     void refreshChats();
   } catch (e) {

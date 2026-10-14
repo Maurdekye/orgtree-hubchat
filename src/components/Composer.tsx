@@ -113,7 +113,10 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
     let live = true;
     setText(""); setAtts([]); setErr(null);
     const saved = getPreparation(peer);
-    if (saved && saved.phase !== "queued") { setText(saved.message.body); setAtts(saved.message.attachments ?? []); }
+    if (saved && saved.phase !== "queued") {
+      const draft = saved.retainedDraft ?? saved.message;
+      setText(draft.body); setAtts(draft.attachments ?? []);
+    }
     else api.draft(peer).then((d) => { if (live && d && !getPreparation(peer)) { setText(d); noteDraft(peer, d); } }, () => {});
     return () => {
       live = false;
@@ -127,7 +130,8 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
   // isn't part of this message (review R3)
   useEffect(() => {
     if (preparation?.phase !== "queued") return;
-    setText(""); setAtts([]); setErr(null);
+    setText(preparation.retainedDraft?.body ?? "");
+    setAtts(preparation.retainedDraft?.attachments ?? []); setErr(null);
     clearPreparation(peer);
     onSent(preparation.message);
     ta.current?.focus();
@@ -150,7 +154,8 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
   };
 
   const lim = limitFor(c, hubs);
-  const total = utf8Len(text) + atts.reduce((n, a) => n + a.bytes, 0);
+  const answering = picked.length > 0;
+  const total = answering ? 0 : utf8Len(text) + atts.reduce((n, a) => n + a.bytes, 0);
   const over = lim ? total > lim.bytes : false;
   const overNote = lim ? "This message is " + bytes(total) + ". Hub " + lim.hub.name + " takes up to " + bytes(lim.bytes) + " per message, text and files together." : "";
   // a message may go with no text when it answers or skips a question card
@@ -159,7 +164,9 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
   // not, every card it plainly replies to is skipped if open, so each must be
   // known first: while the store hasn't said for one, the message waits,
   // whatever else it answers, and keeps everything it holds (review R2)
-  const plain = replies.filter((r) => !!cardOf(r) && !r.outgoing && !picked.some((p) => p.card.id === r.id));
+  // Answer-only sends reply just to their picked cards. Plain replies wait
+  // with the text/files draft and must not be silently skipped by this send.
+  const plain = answering ? [] : replies.filter((r) => !!cardOf(r) && !r.outgoing);
   const skips = plain.filter((r) => cardState(r.id) === "open").length;
   const checking = text.trim() ? 0 : plain.filter((r) => cardState(r.id) === "unknown").length;
   const answersCard = picked.length > 0 || skips > 0;
@@ -204,16 +211,16 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
     composing(false);
     if (saveT.current) { clearTimeout(saveT.current); saveT.current = null; }
     // every card answered is also replied to; the whole set goes oldest first
-    const all = [...replies];
+    const all = answering ? [] : [...replies];
     for (const p of picked) if (!all.some((r) => r.id === p.card.id)) all.push(p.card);
     all.sort((a, b) => (pos.get(a.id) ?? -1) - (pos.get(b.id) ?? -1) || msgTime(a) - msgTime(b));
-    const ids = all.map((r) => r.id), prev = preparation?.message;
+    const ids = all.map((r) => r.id), prev = preparation?.retainedDraft ? undefined : preparation?.message;
     await prepareSend({
-      id: newId(), peer, body: text.trim(), attachments: atts,
+      id: newId(), peer, body: answering ? "" : text.trim(), attachments: answering ? [] : atts,
       reply_to: ids[0] ?? prev?.reply_to ?? null,
       replies: ids.length > 1 ? ids : ids.length ? undefined : prev?.replies,
       answers: picked.length ? picked.map((p) => ({ question: p.card.id, picked: p.labels })) : ids.length ? undefined : prev?.answers,
-    });
+    }, answering ? { body: text, attachments: atts } : undefined);
   };
 
   const one = replies.length === 1 ? replies[0] : null;
@@ -272,6 +279,7 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
     ? <span style={{ color: "var(--bad)" }}>{overNote}</span>
     : <>
         {platform === "desktop" ? <span><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line</span> : null}
+        {answering ? <span className="skipnote">Send sends only your answers; your message and files stay here.</span> : null}
         {checking ? <span className="skipnote">Checking whether {checking === 1 ? "the question you reply to is" : checking + " questions you reply to are"} still open</span>
           : skips && !text.trim() ? <span className="skipnote">Sending with no text skips {skips === 1 ? "the question" : skips + " questions"} you reply to</span> : null}
         {isLong(text) ? <span className="count">{num(text.length)} characters · shows collapsed</span> : null}
@@ -280,7 +288,7 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
     <div className="comp-row">
       <div className="comp-box">
         <button className="icon-btn" disabled={sending} onClick={attach} title="Attach files" aria-label="Attach files"><Icon name="attach" /></button>
-        <textarea disabled={sending} ref={ta} rows={1} value={text} spellCheck dir="auto" aria-label={"Message " + displayName(c, peer)} placeholder={picked.length ? "Add a message (optional)" : "Message " + displayName(c, peer)}
+        <textarea disabled={sending} ref={ta} rows={1} value={text} spellCheck dir="auto" aria-label={"Message " + displayName(c, peer)} placeholder={"Message " + displayName(c, peer)}
           onChange={(e) => change(e.target.value)}
           onPaste={(e) => { const imgs = pastedImages(e.clipboardData); if (imgs.length) { e.preventDefault(); void paste(imgs); } }}
           onKeyDown={(e) => {
