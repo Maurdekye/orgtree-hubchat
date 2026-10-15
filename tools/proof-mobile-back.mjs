@@ -9,7 +9,18 @@ const orgdeps=createRequire(path.join(process.env.HUBCHAT_DOM_DEPENDENCY_ROOT,'p
 const deps=process.env.HUBCHAT_DEPENDENCY_ROOT,esbuild=orgdeps('esbuild');
 fs.mkdirSync(out,{recursive:true});
 try{await esbuild.build({entryPoints:[path.join(repo,'tools/mobile-back-entry.tsx')],outfile:path.join(out,'entry.mjs'),bundle:true,
-  format:'esm',platform:'browser',jsx:'automatic',loader:{'.md':'text','.css':'empty'},nodePaths:[path.join(deps,'node_modules')]});}finally{esbuild.stop();}
+  format:'esm',platform:'browser',jsx:'automatic',loader:{'.md':'text','.css':'empty'},nodePaths:[path.join(deps,'node_modules')],
+  plugins:[{name:'synthetic-restored-route-initializer',setup(build){
+    build.onLoad({filter:/[/\\]src[/\\]components[/\\]Android\.tsx$/},args=>{
+      const text=fs.readFileSync(args.path,'utf8');
+      const initializer='useState<Scr[]>([{ s: "chats" }])';
+      if(!text.includes(initializer))throw Error('Android initializer seam no longer matches');
+      // v1.2.0 does NOT persist Contact info. This deliberately models the
+      // coordinator's missing-history/restored-visible-route hypothesis;
+      // it is not proof that a real cold start creates this state.
+      return {contents:text.replace(initializer,'useState<Scr[]>(() => globalThis.__proofInitialStack ?? [{ s: "chats" }])'),loader:'tsx',resolveDir:path.dirname(args.path)};
+    });
+  }}]});}finally{esbuild.stop();}
 const {JSDOM}=orgdeps('jsdom');
 const dom=new JSDOM('<div id="root"></div>',{url:'http://scratch.invalid/?platform=android',pretendToBeVisual:true});
 for(const k of ['window','document','navigator','history','HTMLElement','HTMLTextAreaElement','HTMLInputElement','localStorage','sessionStorage','location','Event','MouseEvent','KeyboardEvent','PopStateEvent','MutationObserver'])Object.defineProperty(globalThis,k,{value:dom.window[k],configurable:true});
@@ -116,6 +127,35 @@ try{
       if(edge==='hub-status'){await act(async()=>store.refreshState());await tick();}
     }
   }
+  // Explicitly synthetic cold-restored Contact info with no traversable
+  // history. A new native WebView with canGoBack()==false calls __hcBack.
+  // A normal browser history.back() emits no popstate when nothing is under it.
+  const originalBack=history.back.bind(history),readMessages=api.messages;
+  const org='orgtree.alex.7c41d2';
+  api.messages=async(peer,...args)=>{
+    const list=await readMessages(peer,...args);
+    if(peer!==org||!list.length)return list;
+    const first=list[0];
+    return [{...first,attachments:[{local_id:'proof-file',name:'contact-evidence.txt',bytes:123,state:'done',local_path:null,hub_id:null,source:null,download:null}]},...list.slice(1)];
+  };
+  try{
+    for(const mode of ['corner','fallback','webview-empty']){
+      for(const previous of ['conversation','none']){
+        globalThis.__proofInitialStack=previous==='conversation'?[{s:'chats'},{s:'conv',p:org},{s:'info',p:org}]:[{s:'info',p:org}];
+        await fresh();await tick();
+        const prefix='synthetic-cold/'+mode+'/'+previous;
+        check(prefix+' renders org Contact info with file',title()==='Contact info'&&document.body.textContent.includes('contact-evidence.txt'));
+        check(prefix+' has no route predecessor in history state',history.state?.hc===1);
+        let attempts=0;history.back=()=>{attempts++;};
+        try{
+          if(mode==='corner')await click(button('Back'));
+          else{await act(async()=>check(prefix+' page handles native Back with empty history',window.__hcBack()));await tick();}
+          check(prefix+' leaves Contact info for '+previous,previous==='conversation'?!!document.querySelector('.composer')&&document.querySelector('.appbar .who .ell')?.textContent==='Orgtree':!!button('New chat')&&!!button('Settings'));
+          console.log('SYNTHETIC_COLD '+JSON.stringify({mode,previous,attempts,...snapshot()}));
+        }finally{history.back=originalBack;}
+      }
+    }
+  }finally{delete globalThis.__proofInitialStack;api.messages=readMessages;}
 }finally{
   if(root)await act(async()=>root.unmount());
   fs.writeFileSync(path.join(out,'result.json'),JSON.stringify({checks,failed:checks.filter(c=>!c.ok).length},null,2));
