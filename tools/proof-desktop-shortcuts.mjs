@@ -80,10 +80,14 @@ try{
     await act(async()=>{timeline.scrollTop=650;timeline.dispatchEvent(new window.Event('scroll',{bubbles:true}));});
     await act(async()=>{Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set.call(text,'unsaved latest draft');text.dispatchEvent(new window.Event('input',{bubbles:true}));});
     await click(refresh());
+    const savedRefresh=JSON.parse(sessionStorage.getItem('hubchat.refresh-state')||'{}');
+    console.log('SCROLL_SAVED',JSON.stringify({before:timeline.scrollTop,values:savedRefresh}));
     check('refresh snapshots latest draft before debounce',sessionStorage.getItem('hubchat.refresh-state')?.includes('unsaved latest draft'));
     await act(async()=>root.unmount());root=createRoot(document.getElementById('root'));await mount();await tick();
     check('open chat and latest draft survive stale core remount',document.querySelector('.composer textarea')?.value==='unsaved latest draft');
     check('reading scroll position survives remount',document.querySelector('.timeline')?.scrollTop===650);
+    console.log('SCROLL_RESTORED',JSON.stringify({after:document.querySelector('.timeline')?.scrollTop,
+      height:document.querySelector('.timeline')?.scrollHeight,client:document.querySelector('.timeline')?.clientHeight}));
     api.draft=readDraft;api.setDraft=writeDraft;
   }
   const css=fs.readFileSync(path.join(repo,'src/styles/app-desktop.css'),'utf8');
