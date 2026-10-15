@@ -124,11 +124,21 @@ def capture(hwnd):
     bitmap = native.check(native.create_dib(dc, C.byref(info), 0, C.byref(bits), None, 0))
     previous = native.select_object(dc, bitmap)
     try:
-        native.check(print_window(hwnd, dc, 2) or print_window(hwnd, dc, 0))
+        attempts = [{'flags': 2, 'returned': bool(print_window(hwnd, dc, 2))}]
+        if not attempts[0]['returned']:
+            attempts.append({'flags': 0, 'returned': bool(print_window(hwnd, dc, 0))})
         native.flush_gdi()
         image = native.Image.frombytes('RGBA', (width, height), C.string_at(bits, width * height * 4), 'raw', 'BGRA').convert('RGB')
-        assert len(image.getcolors(width * height) or []) > 10, 'blank window capture'
+        colors = len(image.getcolors(width * height) or [])
+        result['capture'] = {'attempts': attempts, 'width': width, 'height': height,
+                             'distinct_colors': colors, 'nonblank': colors > 10,
+                             'pixels_sha256': hashlib.sha256(image.tobytes()).hexdigest(),
+                             'png': str(out / 'welcome-window.png')}
+        # Retain even a blank frame as evidence; neither a successful API return
+        # nor the independently measured icon makes a blank GUI capture pass.
         image.save(out / 'welcome-window.png')
+        assert any(attempt['returned'] for attempt in attempts), 'PrintWindow failed'
+        assert colors > 10, 'blank window capture'
     finally:
         native.select_object(dc, previous)
         native.delete_object(bitmap)
@@ -237,7 +247,6 @@ try:
         time.sleep(0.1)
     assert welcome, 'disposable Welcome page did not appear'
     time.sleep(0.2)
-    capture(welcome)
     icon_result = C.c_size_t()
     native.check(send(welcome, 0x7F, 2, 0, 2, 1000, C.byref(icon_result)))  # WM_GETICON, ICON_SMALL2
     icon_handle = icon_result.value or class_long(welcome, -34)  # GCLP_HICONSM
@@ -259,6 +268,9 @@ try:
         native.destroy_icon(owned_icon)
         if reference:
             native.destroy_icon(reference)
+    # Icon pixels must be measured even when Session0 cannot paint the window.
+    # Capture acceptance remains a separate assertion and may still fail.
+    capture(welcome)
 except BaseException as failure:
     error = failure
     result['error'] = repr(failure)
