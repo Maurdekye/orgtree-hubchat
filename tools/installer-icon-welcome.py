@@ -64,7 +64,7 @@ out.mkdir(parents=True)
 (out / 'tmp').mkdir()
 result = {'setup': str(setup), 'setup_sha256': hashlib.sha256(setup.read_bytes()).hexdigest(),
           'scope': 'Disposable Welcome page only; no Next, install, ARP or live-product writes',
-          'before': before, 'forced_cleanup': [], 'icons': []}
+          'before': before, 'forced_cleanup': [], 'icons': [], 'window_observations': []}
 
 class ProcessEntry(C.Structure):
     _fields_ = [('size', W.DWORD), ('usage', W.DWORD), ('pid', W.DWORD),
@@ -93,6 +93,8 @@ post = native.api(native.user, 'PostMessageW', W.BOOL, W.HWND, W.UINT, C.c_size_
 dialog_item = native.api(native.user, 'GetDlgItem', W.HWND, W.HWND, C.c_int)
 class_long = native.api(native.user, 'GetClassLongPtrW' if C.sizeof(C.c_void_p) == 8 else 'GetClassLongW',
                         C.c_size_t, W.HWND, C.c_int)
+window_long = native.api(native.user, 'GetWindowLongPtrW' if C.sizeof(C.c_void_p) == 8 else 'GetWindowLongW',
+                         C.c_ssize_t, W.HWND, C.c_int)
 copy_icon = native.api(native.user, 'CopyIcon', W.HICON, W.HICON)
 rect = native.api(native.user, 'GetWindowRect', W.BOOL, W.HWND, C.POINTER(W.RECT))
 print_window = native.api(native.user, 'PrintWindow', W.BOOL, W.HWND, W.HDC, W.UINT)
@@ -194,6 +196,21 @@ def windows():
     enum_windows(collect, 0)
     return found
 
+observed = set()
+
+def observe(hwnd):
+    pid = W.DWORD()
+    window_pid(hwnd, C.byref(pid))
+    style = window_long(hwnd, -16) & 0xFFFFFFFF  # GWL_STYLE
+    row = {'hwnd': int(hwnd), 'pid': pid.value, 'title': text(hwnd), 'controls': children(hwnd),
+           'is_window_visible': bool(visible(hwnd)), 'style': f'0x{style:08x}',
+           'ws_visible': bool(style & 0x10000000), 'root_exit_code': root.poll()}
+    signature = json.dumps(row, sort_keys=True)
+    if signature not in observed:
+        observed.add(signature)
+        result['window_observations'].append(row)
+    return row
+
 try:
     environment = {**os.environ, 'TEMP': str(out / 'tmp'), 'TMP': str(out / 'tmp')}
     startup = subprocess.STARTUPINFO()
@@ -205,10 +222,15 @@ try:
     while time.monotonic() < deadline:
         refresh_tree()
         for hwnd in windows():
-            labels = children(hwnd)
-            if visible(hwnd) and 'Hubchat Icon Test' in text(hwnd) and any('welcome' in label.lower() for label in labels):
+            row = observe(hwnd)
+            # Session0's desktop/ancestors may make IsWindowVisible false even
+            # when this window's WS_VISIBLE flag is set. Require the real
+            # Welcome controls and exact test title as well; icon pixels and
+            # the nonblank PrintWindow assertion remain the acceptance checks.
+            if (row['is_window_visible'] or row['ws_visible']) and 'Hubchat Icon Test' in row['title'] and any('welcome' in label.lower() for label in row['controls']):
                 welcome = hwnd
-                result.update({'window_title': text(hwnd), 'controls': labels})
+                result.update({'window_title': row['title'], 'controls': row['controls'],
+                               'welcome_visibility': {key: row[key] for key in ['is_window_visible', 'ws_visible', 'style']}})
                 break
         if welcome:
             break
@@ -263,6 +285,7 @@ finally:
         if root:
             root.wait(timeout=5)
         result['remaining_pids'] = [pid for pid, (handle, _) in processes.items() if wait(handle, 0) == 258]
+        result['root_exit_code'] = root.poll() if root else None
         result['processes'] = [{'pid': pid, 'exe': executable} for pid, (_, executable) in processes.items()]
         result['after'] = install_state()
         assert result['after'] == before, 'disposable installation/key state changed'
