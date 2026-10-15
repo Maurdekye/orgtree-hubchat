@@ -11,6 +11,14 @@ fs.mkdirSync(out,{recursive:true});
 try{await esbuild.build({entryPoints:[path.join(repo,'tools/mobile-back-entry.tsx')],outfile:path.join(out,'entry.mjs'),bundle:true,
   format:'esm',platform:'browser',jsx:'automatic',loader:{'.md':'text','.css':'empty'},nodePaths:[path.join(deps,'node_modules')],
   plugins:[{name:'synthetic-restored-route-initializer',setup(build){
+    build.onLoad({filter:/[/\\]src[/\\]lib[/\\]visibility\.ts$/},args=>{
+      // Each fresh() models a new page boot. Reset only the module's startup
+      // take list, which would otherwise remember notifications from an
+      // earlier case in this one-process fixture and suppress last-chat restore.
+      const text=fs.readFileSync(args.path,'utf8');
+      if(!text.includes('const startTakes:'))throw Error('Startup take reset seam no longer matches');
+      return {contents:text+'\nglobalThis.__proofResetStartupTakes = () => { startTakes.length = 0; };',loader:'ts',resolveDir:path.dirname(args.path)};
+    });
     build.onLoad({filter:/[/\\]src[/\\]components[/\\]Android\.tsx$/},args=>{
       const text=fs.readFileSync(args.path,'utf8');
       const initializer='useState<Scr[]>([{ s: "chats" }])';
@@ -45,6 +53,7 @@ const title=()=>document.querySelector('.appbar .title')?.textContent||document.
 const snapshot=()=>({title:title(),state:history.state,length:history.length,conversation:!!document.querySelector('.composer')});
 const fresh=async(saved=null)=>{
   if(root)await act(async()=>root.unmount());
+  globalThis.__proofResetStartupTakes();
   localStorage.clear();history.replaceState(null,'');
   if(saved)localStorage.setItem('hubchat.lastchat.'+store.getSnap().state.me.address,saved);
   root=createRoot(document.getElementById('root'));
