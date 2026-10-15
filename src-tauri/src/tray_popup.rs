@@ -228,11 +228,16 @@ pub fn hc_tray_popup_snapshot(window: WebviewWindow, app: AppHandle) -> R<Snapsh
     snapshot(&app, true)
 }
 
-/// The rectangle the right-click menu is placed in.
+/// The rectangle the right-click menu is placed in. Chromium's menus (and so
+/// Orgtree's tray menu) use the work area, or the whole monitor when the
+/// anchor lies outside the work area but on the monitor. A tray click always
+/// does: the cursor is on the taskbar. Clamping to the work area there kept
+/// the menu above the taskbar instead of at the cursor.
 pub fn menu_bounds(anchor: (f64, f64), work: (i32, i32, u32, u32), monitor: (i32, i32, u32, u32))
     -> (i32, i32, u32, u32) {
-    let _ = (anchor, monitor);
-    work
+    let inside = |r: (i32, i32, u32, u32)| anchor.0 >= r.0 as f64 && anchor.0 < r.0 as f64 + r.2 as f64
+        && anchor.1 >= r.1 as f64 && anchor.1 < r.1 as f64 + r.3 as f64;
+    if !inside(work) && inside(monitor) { monitor } else { work }
 }
 
 /// Logical WebView measurements become physical desktop bounds using the
