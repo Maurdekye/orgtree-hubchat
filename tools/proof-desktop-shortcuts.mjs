@@ -59,6 +59,8 @@ try{
   const modal=document.createElement('div');modal.setAttribute('role','dialog');modal.setAttribute('aria-modal','true');document.body.append(modal);
   before=reloads;
   for(const key of ['F1','F2','F3','F4','F5'])check('modal blocks '+key,(await press(key,{},input)).defaultPrevented&&reloads===before&&!document.querySelector('.modal'));
+  const filterBefore=document.querySelector('.filters .on')?.textContent;
+  check('modal blocks Alt+Right and native navigation',(await press('ArrowRight',{altKey:true},input)).defaultPrevented&&document.querySelector('.filters .on')?.textContent===filterBefore);
   modal.remove();
   const active=()=>document.querySelector('.filters .on')?.textContent.replace(/\d/g,'').trim();
   for(const [key,want] of [['ArrowRight','Agents'],['ArrowRight','People'],['ArrowRight','All'],['ArrowLeft','People'],['ArrowLeft','Agents'],['ArrowLeft','All']]){
@@ -69,11 +71,15 @@ try{
   const row=document.querySelector('.crow');await click(row);await tick();
   const text=document.querySelector('.composer textarea');check('draft fixture opens real conversation',!!text);
   if(text){
+    const timeline=document.querySelector('.timeline');
+    Object.defineProperties(timeline,{scrollHeight:{configurable:true,value:2000},clientHeight:{configurable:true,value:400}});
+    await act(async()=>{timeline.scrollTop=650;timeline.dispatchEvent(new window.Event('scroll',{bubbles:true}));});
     await act(async()=>{Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set.call(text,'unsaved latest draft');text.dispatchEvent(new window.Event('input',{bubbles:true}));});
     await click(refresh());
     check('refresh snapshots latest draft before debounce',sessionStorage.getItem('hubchat.refresh-state')?.includes('unsaved latest draft'));
     await act(async()=>root.unmount());root=createRoot(document.getElementById('root'));await mount();await tick();
     check('open chat and latest draft survive remount',document.querySelector('.composer textarea')?.value==='unsaved latest draft');
+    check('reading scroll position survives remount',document.querySelector('.timeline')?.scrollTop===650);
   }
   const css=fs.readFileSync(path.join(repo,'src/styles/app-desktop.css'),'utf8');
   check('Refresh has both no-drag properties',/\.titlebar \.tb-refresh\s*\{[^}]*-webkit-app-region:\s*no-drag;[^}]*\bapp-region:\s*no-drag;/s.test(css));

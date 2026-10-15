@@ -207,7 +207,7 @@ export function Desktop() {
   rowsRef.current = rows;
   const hs = hubSummary(hubs);
   const fchip = (k: ChatFilter, label: string) => (
-    <button className={"fchip" + (filter === k ? " on" : "")} onClick={() => setFilter(k)}>{label}{counts[k] ? <span className="n">{counts[k]}</span> : null}</button>
+    <button className={"fchip" + (filter === k ? " on" : "")} title="Cycle filters (Alt+Left / Alt+Right)" onClick={() => setFilter(k)}>{label}{counts[k] ? <span className="n">{counts[k]}</span> : null}</button>
   );
 
   return (
