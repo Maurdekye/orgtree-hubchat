@@ -11,6 +11,18 @@
   [decided: coordinator 2026-10-15; verified: tauri.conf.json,
   windows/installer.nsi; docs/windows-installer-icon.md]
 
+- 2026-10-15: The desktop title bar is a native caption: `app-region: drag`
+  on `.titlebar`, `no-drag` on its window buttons. WebView2's non-client
+  regions (wry turns them on) let Windows move, snap and maximise the window,
+  and right-clicking the bar shows the system menu. Anything clickable added
+  to the bar needs `app-region: no-drag`. `data-tauri-drag-region` stays as
+  the path for a WebView2 without non-client regions. Agents cannot test a
+  window drag: their window station is non-interactive (`GetCursorPos`
+  error 1459, no move loop, rig round 446). `tools/e2e-drag-region.mjs`
+  checks the computed style and Windows' hit test; the drag is the user's
+  check. [verified: app-desktop.css, TitleBar.tsx, wry webview2/mod.rs;
+  docs/title-bar.md; rig pending]
+
 - 2026-10-15: Message bubbles show a kind tag only for Question, on desktop
   and Android. Other and unknown kinds have no tag or spoken kind prefix.
   All non-question kinds group as plain messages; Message Info omits Kind.
