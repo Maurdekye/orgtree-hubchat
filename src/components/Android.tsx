@@ -155,6 +155,7 @@ export function Android() {
 
   const stackRef = useRef(stack);
   stackRef.current = stack;
+  const pendingFallback = useRef<{ stack: Scr[]; current: () => boolean } | null>(null);
   const commitStack = useCallback((next: Scr[]) => {
     stackRef.current = next;
     depth.current = next.length;
@@ -221,10 +222,12 @@ export function Android() {
     const st = stackRef.current;
     if (st.length === 1 && st[0].s === "chats") return false;
     intent.invalidate();
-    const current = intent.capture();
+    const attempt = { stack: st, current: intent.capture() };
+    pendingFallback.current = attempt;
     const fallback = () => {
       // A real pop, a newer navigation or unmount invalidates this attempt.
-      if (current() && parent(st)) history.replaceState({ hc: stackRef.current.length }, "");
+      if (pendingFallback.current === attempt && attempt.current() && parent(st)) history.replaceState({ hc: stackRef.current.length }, "");
+      if (pendingFallback.current === attempt) pendingFallback.current = null;
     };
     if (history.state?.hc !== st.length || history.length <= 1) fallback();
     else {
@@ -240,13 +243,22 @@ export function Android() {
   useEffect(() => {
     history.replaceState({ hc: 1 }, "");
     const pop = (e: PopStateEvent) => {
-      intent.invalidate();
       // back with the menu open: close it and keep the screen (put back the
       // history entry the system back button took)
-      if (menuRef.current) { closeMenu(); history.pushState({ hc: depth.current }, ""); return; }
+      if (menuRef.current) { intent.invalidate(); pendingFallback.current = null; closeMenu(); history.pushState({ hc: depth.current }, ""); return; }
       const d = (e.state && typeof e.state.hc === "number" ? e.state.hc : 1) as number;
+      const st = stackRef.current;
+      const attempt = pendingFallback.current;
+      // A duplicate/skipped history entry can emit popstate without leaving
+      // the route. Preserve only the still-current Back attempt across that
+      // event; a newer intent must never be revived by a later pop.
+      const unchanged = d >= st.length;
+      const keepFallback = unchanged && attempt?.stack === st && attempt.current();
+      intent.invalidate();
+      if (keepFallback) attempt.current = intent.capture();
+      else pendingFallback.current = null;
       setDir("back");
-      commitStack(stackRef.current.slice(0, Math.max(1, d)));
+      if (!unchanged) commitStack(st.slice(0, Math.max(1, d)));
     };
     const key = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || document.querySelector(".dialog")) return;

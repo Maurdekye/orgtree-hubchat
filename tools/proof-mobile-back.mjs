@@ -166,6 +166,13 @@ try{
       }finally{history.back=original;}
     }
   }
+  await fresh();await click(document.querySelector('.crow'));await click(document.querySelector('.appbar .who'));
+  const duplicateBack=history.back.bind(history),duplicateDepth=history.state.hc;
+  history.back=()=>window.dispatchEvent(new PopStateEvent('popstate',{state:{hc:duplicateDepth}}));
+  try{
+    await act(async()=>check('duplicate pop native route handled',window.__hcBack()));await tick();
+    check('unchanged popstate still falls back to conversation within frame',!!document.querySelector('.composer')&&history.state.hc===2);
+  }finally{history.back=duplicateBack;}
   await fresh();await click(document.querySelector('.crow'));
   const menuDepth=history.state.hc;
   await click(button('More'));
