@@ -12,20 +12,25 @@
   windows/installer.nsi; docs/windows-installer-icon.md]
 
 - 2026-10-15: The desktop title bar is a native caption: `app-region: drag`
-  on `.titlebar`, `no-drag` on its window buttons. WebView2's non-client
-  regions (wry turns them on) let Windows move, snap and maximise the window,
-  and right-clicking the bar shows the system menu. Anything clickable added
-  to the bar needs `app-region: no-drag`. `data-tauri-drag-region` stays as
-  the path for a WebView2 without non-client regions. Agents cannot test a
-  window drag: their window station is non-interactive (`GetCursorPos`
-  error 1459, no move loop, rig round 446). `tools/e2e-drag-region.mjs`
-  checks the computed style and Windows' hit test; the drag is the user's
-  check. WebView2 covers a drag region with child windows of its own that
-  answer HTCAPTION wherever they are asked, so a hit test may ask only the
-  windows under the point (rig round 447). [verified: app-desktop.css,
-  TitleBar.tsx, wry webview2/mod.rs; docs/title-bar.md; rig round 447:
+  on `.titlebar`, `no-drag` on its window buttons and on the version label
+  (so its tooltip shows; a press on the label takes Tauri's drag path).
+  WebView2's non-client regions (wry turns them on) let Windows move, snap
+  and maximise the window. Right-clicking the bar opens the system menu, as
+  Orgtree's title bar does: the user wants it (2026-10-15 11:30Z, reversing
+  11:04Z), so don't suppress it. Anything clickable added to the bar needs
+  `app-region: no-drag`. `data-tauri-drag-region` stays as the path for a
+  WebView2 without non-client regions. Agents cannot test a window drag:
+  their window station is non-interactive (`GetCursorPos` error 1459, no
+  move loop, rig round 446). `tools/e2e-drag-region.mjs` checks the computed
+  style, Windows' hit test and posted clicks (the right-click's menu,
+  double-click maximise); the drag is the user's check. WebView2 covers a
+  drag region with child windows of its own that answer HTCAPTION wherever
+  they are asked, so a hit test may ask only the windows under the point
+  (rig round 447). [verified: app-desktop.css, TitleBar.tsx, wry
+  webview2/mod.rs; docs/title-bar.md; rig rounds 447 and 450:
   e2e-drag-region tip 11/11, base 5/11 with the 6 expected failures; the
-  drag itself not measured]
+  version label and right-click round pending; the drag itself not
+  measured]
 
 - 2026-10-15: Message bubbles show a kind tag only for Question, on desktop
   and Android. Other and unknown kinds have no tag or spoken kind prefix.
