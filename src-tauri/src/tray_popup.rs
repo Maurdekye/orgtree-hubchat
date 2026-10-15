@@ -155,6 +155,8 @@ fn open_surface(app: &AppHandle, point: PhysicalPosition<f64>, recent: bool, own
     let monitor = app.monitor_from_point(point.x, point.y).map_err(|e| e.to_string())?
         .ok_or("No monitor at tray icon")?;
     let r = monitor.work_area();
+    let work = (r.position.x, r.position.y, r.size.width, r.size.height);
+    let full = (monitor.position().x, monitor.position().y, monitor.size().width, monitor.size().height);
     {
         let p = app.state::<Popup>();
         let mut s = p.0.lock().map_err(|_| "Tray menu is unavailable")?;
@@ -163,7 +165,7 @@ fn open_surface(app: &AppHandle, point: PhysicalPosition<f64>, recent: bool, own
         s.open = true;
         s.shown = false;
         s.anchor = (point.x, point.y);
-        s.work = (r.position.x, r.position.y, r.size.width, r.size.height);
+        s.work = if recent { work } else { menu_bounds((point.x, point.y), work, full) };
         s.scale = monitor.scale_factor();
         s.left = point.x > r.position.x as f64 + r.size.width as f64 / 2.;
         s.recent = recent;
@@ -224,6 +226,13 @@ fn ensure_window(app: &AppHandle) -> R<WebviewWindow> {
 pub fn hc_tray_popup_snapshot(window: WebviewWindow, app: AppHandle) -> R<Snapshot> {
     caller(&window)?;
     snapshot(&app, true)
+}
+
+/// The rectangle the right-click menu is placed in.
+pub fn menu_bounds(anchor: (f64, f64), work: (i32, i32, u32, u32), monitor: (i32, i32, u32, u32))
+    -> (i32, i32, u32, u32) {
+    let _ = (anchor, monitor);
+    work
 }
 
 /// Logical WebView measurements become physical desktop bounds using the
@@ -336,7 +345,55 @@ pub fn hc_tray_popup_action(window: WebviewWindow, app: AppHandle, generation: u
 
 #[cfg(test)]
 mod tests {
-    use super::{placement, cursor_placement, allowed_command};
+    use super::{placement, cursor_placement, allowed_command, menu_bounds};
+
+    fn contains(r: (i32, i32, u32, u32), p: (f64, f64)) -> bool {
+        p.0 >= r.0 as f64 && p.0 < r.0 as f64 + r.2 as f64 && p.1 >= r.1 as f64 && p.1 < r.1 as f64 + r.3 as f64
+    }
+
+    /// A tray click lands on the taskbar, outside the work area. Like
+    /// Chromium's menus (Orgtree's tray), the menu then uses the whole
+    /// monitor so its corner can sit on the cursor; clamping to the work
+    /// area left it floating above the taskbar, off the cursor.
+    #[test]
+    fn taskbar_cursor_keeps_the_menu_corner_on_the_cursor_at_every_edge_and_scale() {
+        for scale in [1f64, 1.25, 1.5, 1.75] {
+            for (mx, my) in [(0, 0), (-2560, -300), (1920, 0)] {
+                let (mw, mh) = (2560u32, 1440u32);
+                let bar = (48. * scale).round() as u32;
+                let mid = |a: i32, len: u32| a as f64 + len as f64 * 0.8;
+                // (work area, cursor in the taskbar) for bottom, top, left, right
+                let edges = [
+                    ((mx, my, mw, mh - bar), (mid(mx, mw), (my + mh as i32) as f64 - bar as f64 / 2.)),
+                    ((mx, my + bar as i32, mw, mh - bar), (mid(mx, mw), my as f64 + bar as f64 / 2.)),
+                    ((mx + bar as i32, my, mw - bar, mh), (mx as f64 + bar as f64 / 2., mid(my, mh))),
+                    ((mx, my, mw - bar, mh), ((mx + mw as i32) as f64 - bar as f64 / 2., mid(my, mh))),
+                ];
+                for (work, cursor) in edges {
+                    let b = menu_bounds(cursor, work, (mx, my, mw, mh));
+                    assert!(contains(b, cursor), "cursor {cursor:?} outside bounds {b:?} at scale {scale}");
+                    // The renderer flips left/up when the root cannot fit
+                    // right/below (traymenu-view.ts); its corner stays on the
+                    // cursor only if no edge clamp then moves it.
+                    let (cx, cy) = ((cursor.0 - b.0 as f64) / scale, (cursor.1 - b.1 as f64) / scale);
+                    let (maxw, maxh) = (b.2 as f64 / scale, b.3 as f64 / scale);
+                    let (menu_w, menu_h) = (312., 375.);
+                    let x = if cx + menu_w <= maxw - 12. { cx } else { cx - menu_w };
+                    let y = if cy + menu_h <= maxh - 8. { cy } else { cy - menu_h };
+                    assert!(x >= 12. && x + menu_w <= maxw - 12., "x {x} clamped at scale {scale}");
+                    assert!(y >= 8. && y + menu_h <= maxh - 8., "y {y} clamped at scale {scale}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cursor_inside_the_work_area_keeps_the_work_area() {
+        let work = (0, 0, 1920, 1032);
+        assert_eq!(menu_bounds((900., 500.), work, (0, 0, 1920, 1080)), work);
+        // No monitor contains it either: nothing better than the work area.
+        assert_eq!(menu_bounds((5000., 500.), work, (0, 0, 1920, 1080)), work);
+    }
 
     #[test]
     fn cursor_window_origin_preserves_monitor_coordinates_and_dpi() {
