@@ -16,7 +16,7 @@ import { cardOf, answerNotes, cardKnown, isOpen, isSettled, settlement } from ".
 import { addReplies, loadDraftAnswers, pick, removeReply, sentDraftAnswers, setReplies, unpick, useDraftAnswers } from "../lib/answers";
 import { toast } from "../lib/toast";
 import { Composer, type ComposerApi } from "./Composer";
-import { refreshKey, takeRefreshState, useRefreshState } from "../lib/refresh";
+import { refreshKey, useRestoredRefreshState, useRefreshState } from "../lib/refresh";
 import { HubHelpLink } from "./HubHelp";
 import { HubChip, routeLabel, routeVia } from "./HubPicker";
 import { MessageView } from "./MessageView";
@@ -50,7 +50,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   const typingNow = useTyping(peer);
   const kind = kindOf(c);
   const refreshId = refreshKey("timeline", snap.state?.me?.address ?? "", peer);
-  const [refreshed] = useState(() => takeRefreshState<{count:number;top:number;pinned:boolean}>(refreshId));
+  const refreshed = useRestoredRefreshState<{count:number;top:number;pinned:boolean}>(refreshId);
   const restoreScroll = useRef(refreshed);
   const { msgs, loaded, reload, more, loadingOlder, loadOlder, unreachable, retryOlder } = useMessages(peer, refreshed?.count || undefined);
   // what the next message answers: the messages it replies to and the

@@ -11,7 +11,7 @@ import { hubSummary } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { closeDm, openDm } from "../lib/dm";
 import { desktopShortcut } from "../lib/desktopShortcuts";
-import { refreshKey, refreshView, takeRefreshState, useRefreshState } from "../lib/refresh";
+import { refreshKey, refreshView, useRestoredRefreshState, useRefreshState } from "../lib/refresh";
 import { useNavigationIntent } from "../lib/navigationIntent";
 import { IDLE_STOPS_READING, useActive, useForeground, useLastChat, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { isSetupLink, startSetup, useSetupChat } from "../lib/setup";
@@ -78,7 +78,7 @@ export function Desktop() {
   const me = snap.state!.me!;
   const hubs = snap.state!.hubs;
   const viewKey = refreshKey("desktop", me.address);
-  const [restored] = useState(() => takeRefreshState<{chat:string|null;filter:ChatFilter;q:string}>(viewKey));
+  const restored = useRestoredRefreshState<{chat:string|null;filter:ChatFilter;q:string}>(viewKey);
   const [chat, setChat] = useState<string | null>(restored?.chat ?? null);
   const [filter, setFilter] = useState<ChatFilter>(restored?.filter ?? "all");
   const [q, setQ] = useState(restored?.q ?? "");

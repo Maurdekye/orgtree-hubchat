@@ -114,6 +114,7 @@ try {
       { name: 'bar: just below the version', drag: true, x: ver.left + ver.width / 2, y: (ver.bottom + bar.bottom) / 2 },
       { name: 'bar: the version (no-drag, for its tooltip)', drag: false, ...c('.titlebar .ver') },
       { name: 'button: minimize', drag: false, ...c('.titlebar .window-control', 0) },
+      { name: 'button: refresh', drag: false, ...c('.titlebar .tb-refresh') },
       { name: 'button: maximize', drag: false, ...c('.titlebar .window-control', 1) },
       { name: 'button: close', drag: false, ...c('.titlebar .window-control', 2) },
       { name: 'window body', drag: false, x: body.left + Math.min(200, body.width / 2), y: body.top + Math.min(120, body.height / 2) },

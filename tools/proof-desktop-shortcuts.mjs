@@ -29,12 +29,12 @@ globalThis.requestAnimationFrame=f=>setTimeout(f,0);globalThis.cancelAnimationFr
 dom.window.HTMLElement.prototype.scrollIntoView=function(){};
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 let reloads=0;globalThis.__proofReload=()=>{reloads++};
-const {Desktop,TitleBar,api,mockApi,store,PlatformCtx,act,createElement:h,createRoot}=await import(pathToFileURL(path.join(out,'entry.mjs')));
+const {Desktop,TitleBar,api,mockApi,store,PlatformCtx,act,createElement:h,createRoot,StrictMode}=await import(pathToFileURL(path.join(out,'entry.mjs')));
 Object.assign(api,mockApi);
 const checks=[],check=(name,ok)=>{checks.push({name,ok:!!ok});console.log(`${ok?'PASS':'FAIL'} ${name}`)};
 const tick=()=>act(async()=>{await new Promise(r=>setTimeout(r,25))});
 let root=createRoot(document.getElementById('root'));
-const mount=()=>act(async()=>{root.render(h(PlatformCtx.Provider,{value:'desktop'},h('div',null,h(TitleBar),h(Desktop))))});
+const mount=()=>act(async()=>{root.render(h(StrictMode,null,h(PlatformCtx.Provider,{value:'desktop'},h('div',null,h(TitleBar),h(Desktop)))))});
 const press=async(key,opts={},target=document.body)=>{const event=new window.KeyboardEvent('keydown',{key,...opts,bubbles:true,cancelable:true});await act(async()=>{target.dispatchEvent(event)});await tick();return event};
 const click=async(el)=>{if(el)await act(async()=>el.click());await tick()};
 const button=(label)=>document.querySelector(`[aria-label="${label}"]`);

@@ -1,6 +1,6 @@
 // Match Orgtree's full view reload, retaining the current unsent/view state
 // synchronously first. This is per-window session storage, scoped by identity.
-import {useLayoutEffect,useRef} from "react";
+import {useEffect,useLayoutEffect,useRef,useState} from "react";
 import {toast} from "./toast";
 import {errText} from "./native";
 import {hasPreparingMessages} from "./store";
@@ -8,13 +8,20 @@ import {hasPreparingMessages} from "./store";
 const KEY="hubchat.refresh-state";
 const readers=new Map<string,()=>unknown>();
 export const refreshKey=(kind:string,identity:string,peer?:string)=>JSON.stringify([kind,identity,peer]);
-export function takeRefreshState<T>(key:string):T|undefined {
+export function useRestoredRefreshState<T>(key:string):T|undefined {
+  // Rendering (including StrictMode's repeated initializer) must not consume
+  // the saved value. Remove it only after this mount commits.
+  const [value]=useState<T|undefined>(()=>{
+    try {return JSON.parse(sessionStorage.getItem(KEY)||"{}")[key];}catch{return undefined;}
+  });
+  useEffect(()=>{
   try {
     const values=JSON.parse(sessionStorage.getItem(KEY)||"{}");
-    const value=values[key];delete values[key];
+    delete values[key];
     if(Object.keys(values).length)sessionStorage.setItem(KEY,JSON.stringify(values));else sessionStorage.removeItem(KEY);
-    return value;
-  }catch{return undefined;}
+  }catch{/* A failed read leaves ordinary core-backed restoration available. */}
+  },[key]);
+  return value;
 }
 export function useRefreshState(key:string,read:()=>unknown):void {
   const current=useRef(read);current.current=read;

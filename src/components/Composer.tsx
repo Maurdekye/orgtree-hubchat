@@ -14,7 +14,7 @@ import { cardOf, type CardKnown } from "../lib/questions";
 import { noteDraft, usePreparation, getPreparation, prepareSend, clearPreparation } from "../lib/store";
 import { usePlatform } from "./ui";
 import { getSnap } from "../lib/store";
-import { refreshKey, takeRefreshState, useRefreshState } from "../lib/refresh";
+import { refreshKey, useRestoredRefreshState, useRefreshState } from "../lib/refresh";
 
 interface Props {
   peer: string;
@@ -86,7 +86,7 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
   const textRef = useRef(text);
   textRef.current = text;
   const refreshId = refreshKey("composer", getSnap().state?.me?.address ?? "", peer);
-  const retainedRefresh = useRef(takeRefreshState<{text:string;atts:NewAttachment[]}>(refreshId));
+  const retainedRefresh = useRestoredRefreshState<{text:string;atts:NewAttachment[]}>(refreshId);
   useRefreshState(refreshId, () => {
     if (sending) throw Error("Wait for the message to finish preparing before refreshing.");
     return {text:textRef.current,atts:attsRef.current};
@@ -121,7 +121,7 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
     let live = true;
     setText(""); setAtts([]); setErr(null);
     const saved = getPreparation(peer);
-    const refreshed = retainedRefresh.current; retainedRefresh.current = undefined;
+    const refreshed = retainedRefresh;
     if (refreshed) {
       setText(refreshed.text); setAtts(refreshed.atts); noteDraft(peer, refreshed.text);
       void api.setDraft(peer, refreshed.text).catch(() => {});
