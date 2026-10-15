@@ -1,6 +1,8 @@
 // The desktop window's own title bar (user 18:23Z: frameless, like Orgtree).
 // The bar is a native caption (app-region in app-desktop.css): Windows moves
-// the window with snap, and double-click maximises/restores. The
+// the window with snap, double-click maximises/restores, and a right-click
+// opens the window's system menu, as Orgtree's title bar does (user 2026-10-15
+// 11:30Z). The version label is a no-drag island, so its tooltip shows. The
 // data-tauri-drag-region attributes are the path for a WebView2 without
 // non-client regions. Close hides to the tray (the Rust side turns
 // CloseRequested into hide), exactly like the old frame's X.

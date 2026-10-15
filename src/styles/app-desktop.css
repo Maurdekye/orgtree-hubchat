@@ -44,6 +44,10 @@
    ignores app-region and keeps Tauri's data-tauri-drag-region path. */
 .titlebar { -webkit-app-region: drag; app-region: drag; }
 .titlebar .window-controls { -webkit-app-region: no-drag; app-region: no-drag; }
+/* The version label keeps its tooltip (user 2026-10-15 11:04Z): a drag region
+   gets no hover in the page, so the label is a no-drag island. A press on it
+   takes Tauri's data-tauri-drag-region path; the bar around it stays caption. */
+.titlebar .ver { -webkit-app-region: no-drag; app-region: no-drag; }
 .tb-brand { display: flex; align-items: center; gap: 7px; padding: 0 12px; color: var(--dim); font: 600 12px/1 var(--font-ui, inherit); letter-spacing: .02em; }
 .tb-fill { flex: 1; }
 /* the app's version beside its name (user 2026-10-09 19:00Z; was beside "Chats") */
