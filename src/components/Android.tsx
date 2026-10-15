@@ -225,7 +225,7 @@ export function Android() {
     const attempt = { stack: st, current: intent.capture() };
     pendingFallback.current = attempt;
     const fallback = () => {
-      // A real pop, a newer navigation or unmount invalidates this attempt.
+      // A route-changing pop, newer navigation or unmount invalidates this attempt.
       if (pendingFallback.current === attempt && attempt.current() && parent(st)) history.replaceState({ hc: stackRef.current.length }, "");
       if (pendingFallback.current === attempt) pendingFallback.current = null;
     };

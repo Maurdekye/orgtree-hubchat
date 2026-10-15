@@ -20,7 +20,7 @@ are updated together so consecutive navigation uses the current parent.
 System Back asks the page first. The conversation menu and history-owning
 overlays keep priority over the screen beneath them. The page uses normal
 history traversal for its route; missing history or no route change within
-one animation frame invokes the same explicit parent navigation. A real pop,
+one animation frame invokes the same explicit parent navigation. A route-changing pop,
 newer intent or unmount cancels the delayed fallback. At the chat-list root,
 unhandled Back retains WebView history and Android's normal background action.
 Desktop source and behavior are outside this change.
@@ -41,6 +41,8 @@ bookkeeping. It includes normal name/menu/directory entry, org/person/agent,
 last-chat restoration, notification/chat links, draft/history state and
 JavaScript viewport/resume/hub-state events. Additional tests cover stalled
 traversal, immediate arrows, late pops, overlay priority and cancelled fallbacks.
+An unchanged-depth popstate must retain the still-current fallback rather
+than cancel it merely because an event fired.
 The synthetic restored Contact-info initializer and no-op history seam are
 explicit: production does not persist a Contact-info route. They establish
 the behavior under assumed missing history, not its origin on the phone.
