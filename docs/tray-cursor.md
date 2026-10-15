@@ -141,7 +141,13 @@ the cursor. The left-click recent-chats surface keeps the work area.
 
 Native tests: `taskbar_cursor_keeps_the_menu_corner_on_the_cursor_at_every_edge_and_scale`
 covers the bottom, top, left and right taskbar at 100/125/150/175% scale with
-primary, negative and side monitor origins. It fails on the work-area rule
-(`fa1d904`) and passes on the monitor rule. A real cursor on a real taskbar
-can't be produced in Session 0, so native acceptance remains the user's check
-on the next alpha.
+primary, negative and side monitor origins. Rig-sol-b measured it on
+2026-10-15. At the test-only red `62e87a6` (`menu_bounds` still returns the
+work area) the native library ran 90 passed, 1 failed and 2 ignored (DPAPI,
+not executed). The only failure was the new test, at its first case: cursor
+(2048,1416) outside work area (0,0,2560,1392). At the fix plus these docs
+(`311aa40`) it ran 91 passed, 0 failed and 2 ignored, with no compiler
+warnings. The tray DOM suites (style and recent) passed 21/21; no TypeScript
+changed. These are synthetic geometry checks. A real cursor on a real
+taskbar, real monitor DPI and a second monitor can't be produced in
+Session 0, so native acceptance remains the user's check on the next alpha.
