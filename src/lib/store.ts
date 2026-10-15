@@ -262,6 +262,7 @@ let generation = 0;
 const psubs = new Set<() => void>();
 const preparationChanged = () => psubs.forEach((f) => f());
 export const getPreparation = (peer: string) => preparations.get(peer) ?? null;
+export const hasPreparingMessages = () => [...preparations.values()].some(p => p.phase === "preparing");
 export function usePreparation(peer: string) {
   return useSyncExternalStore((f) => { psubs.add(f); return () => { psubs.delete(f); }; }, () => preparations.get(peer) ?? null);
 }

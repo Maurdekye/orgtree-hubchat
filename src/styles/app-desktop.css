@@ -50,6 +50,7 @@
 .titlebar .ver { -webkit-app-region: no-drag; app-region: no-drag; }
 .tb-brand { display: flex; align-items: center; gap: 7px; padding: 0 12px; color: var(--dim); font: 600 12px/1 var(--font-ui, inherit); letter-spacing: .02em; }
 .tb-fill { flex: 1; }
+.titlebar .tb-refresh { -webkit-app-region: no-drag; app-region: no-drag; align-self: center; flex: none; margin: 0 4px; }
 /* the app's version beside its name (user 2026-10-09 19:00Z; was beside "Chats") */
 .tb-brand .ver { font: 400 11px/1 var(--font); color: var(--faint); letter-spacing: 0; }
 .titlebar .window-controls { display: flex; flex: 0 0 auto; height: 100%; }

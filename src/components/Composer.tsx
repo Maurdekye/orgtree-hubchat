@@ -13,6 +13,8 @@ import { foldAt } from "../lib/replies";
 import { cardOf, type CardKnown } from "../lib/questions";
 import { noteDraft, usePreparation, getPreparation, prepareSend, clearPreparation } from "../lib/store";
 import { usePlatform } from "./ui";
+import { getSnap } from "../lib/store";
+import { refreshKey, takeRefreshState, useRefreshState } from "../lib/refresh";
 
 interface Props {
   peer: string;
@@ -83,6 +85,12 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
   const saveT = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textRef = useRef(text);
   textRef.current = text;
+  const refreshId = refreshKey("composer", getSnap().state?.me?.address ?? "", peer);
+  const retainedRefresh = useRef(takeRefreshState<{text:string;atts:NewAttachment[]}>(refreshId));
+  useRefreshState(refreshId, () => {
+    if (sending) throw Error("Wait for the message to finish preparing before refreshing.");
+    return {text:textRef.current,atts:attsRef.current};
+  });
   // typing heartbeats while our user writes (hub feature `typing`, user
   // 2026-10-13 22:33Z): an edit with text tells the core, at most every
   // 250 ms; a cleared box, a sent message, another chat or the app leaving
@@ -113,7 +121,11 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
     let live = true;
     setText(""); setAtts([]); setErr(null);
     const saved = getPreparation(peer);
-    if (saved && saved.phase !== "queued") {
+    const refreshed = retainedRefresh.current; retainedRefresh.current = undefined;
+    if (refreshed) {
+      setText(refreshed.text); setAtts(refreshed.atts); noteDraft(peer, refreshed.text);
+      void api.setDraft(peer, refreshed.text).catch(() => {});
+    } else if (saved && saved.phase !== "queued") {
       const draft = saved.retainedDraft ?? saved.message;
       setText(draft.body); setAtts(draft.attachments ?? []);
     }

@@ -16,6 +16,7 @@ import { cardOf, answerNotes, cardKnown, isOpen, isSettled, settlement } from ".
 import { addReplies, loadDraftAnswers, pick, removeReply, sentDraftAnswers, setReplies, unpick, useDraftAnswers } from "../lib/answers";
 import { toast } from "../lib/toast";
 import { Composer, type ComposerApi } from "./Composer";
+import { refreshKey, takeRefreshState, useRefreshState } from "../lib/refresh";
 import { HubHelpLink } from "./HubHelp";
 import { HubChip, routeLabel, routeVia } from "./HubPicker";
 import { MessageView } from "./MessageView";
@@ -48,7 +49,10 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   // they are writing to us now (hub feature `typing`)
   const typingNow = useTyping(peer);
   const kind = kindOf(c);
-  const { msgs, loaded, reload, more, loadingOlder, loadOlder, unreachable, retryOlder } = useMessages(peer);
+  const refreshId = refreshKey("timeline", snap.state?.me?.address ?? "", peer);
+  const [refreshed] = useState(() => takeRefreshState<{count:number;top:number;pinned:boolean}>(refreshId));
+  const restoreScroll = useRef(refreshed);
+  const { msgs, loaded, reload, more, loadingOlder, loadOlder, unreachable, retryOlder } = useMessages(peer, refreshed?.count || undefined);
   // what the next message answers: the messages it replies to and the
   // options picked on question cards, kept per chat across restarts
   const pending = useDraftAnswers(peer);
@@ -62,6 +66,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   const [extra, setExtra] = useState<Record<string, Message | null>>({});
   const tl = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
+  useRefreshState(refreshId, () => ({count:msgs.length,top:tl.current?.scrollTop ?? 0,pinned:pinned.current}));
   const [far, setFar] = useState(false);
   const newMark = useRef<{ peer: string; id: string | null } | null>(null);
 
@@ -146,6 +151,11 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   // keep pinned to the newest message while at the bottom
   useLayoutEffect(() => {
     const el = tl.current; if (!el || !loaded) return;
+    if (restoreScroll.current) {
+      const saved = restoreScroll.current; restoreScroll.current = undefined;
+      pinned.current = saved.pinned; el.scrollTop = saved.pinned ? el.scrollHeight : saved.top;
+      el.dataset.opened = peer; return;
+    }
     const nm = newMark.current?.id && document.getElementById("m-" + newMark.current.id);
     if (nm && pinned.current === true && el.dataset.opened !== peer) { el.scrollTop = Math.max(0, nm.offsetTop - 120); pinned.current = false; }
     else if (pinned.current) el.scrollTop = el.scrollHeight;

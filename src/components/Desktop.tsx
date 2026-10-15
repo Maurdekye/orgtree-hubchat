@@ -10,6 +10,8 @@ import { toast } from "../lib/toast";
 import { hubSummary } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { closeDm, openDm } from "../lib/dm";
+import { desktopShortcut } from "../lib/desktopShortcuts";
+import { refreshKey, refreshView, takeRefreshState, useRefreshState } from "../lib/refresh";
 import { useNavigationIntent } from "../lib/navigationIntent";
 import { IDLE_STOPS_READING, useActive, useForeground, useLastChat, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { isSetupLink, startSetup, useSetupChat } from "../lib/setup";
@@ -75,9 +77,12 @@ export function Desktop() {
   const snap = useSnap();
   const me = snap.state!.me!;
   const hubs = snap.state!.hubs;
-  const [chat, setChat] = useState<string | null>(null);
-  const [filter, setFilter] = useState<ChatFilter>("all");
-  const [q, setQ] = useState("");
+  const viewKey = refreshKey("desktop", me.address);
+  const [restored] = useState(() => takeRefreshState<{chat:string|null;filter:ChatFilter;q:string}>(viewKey));
+  const [chat, setChat] = useState<string | null>(restored?.chat ?? null);
+  const [filter, setFilter] = useState<ChatFilter>(restored?.filter ?? "all");
+  const [q, setQ] = useState(restored?.q ?? "");
+  useRefreshState(viewKey, () => ({chat,filter,q}));
   // the chat list as a narrow rail of avatars (user 2026-10-09 08:39Z), kept across restarts
   const [rail, setRailState] = useState(() => localStorage.getItem(RAIL_KEY) === "1");
   const setRail = useCallback((on: boolean) => {
@@ -155,6 +160,15 @@ export function Desktop() {
   }, [chat]);
 
   useEffect(() => {
+    const shortcut = (e: KeyboardEvent) => {
+      desktopShortcut(e, {
+        settings: () => settings("profile"), directory: () => setOv({k:"directory"}),
+        newChat: () => setOv({k:"newchat",q:""}), hubs: () => settings("hubs"), refresh: refreshView,
+        cycleFilter: step => { const order:ChatFilter[]=["all","agents","people"];
+          if (railRef.current) setRail(false);
+          setFilter(value => order[(order.indexOf(value)+step+order.length)%order.length]); },
+      }, !!ov || !!join || !!document.querySelector('[aria-modal="true"],.scrim,.sheet,.imgview'));
+    };
     const key = (e: KeyboardEvent) => {
       if (e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
         // under a modal, the picture viewer or a join the list isn't in play
@@ -184,8 +198,9 @@ export function Desktop() {
         if (ov) { e.preventDefault(); setOv(null); } else if (info) setInfo(null);
       }
     };
+    window.addEventListener("keydown", shortcut, true);
     window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
+    return () => { window.removeEventListener("keydown", shortcut, true); window.removeEventListener("keydown", key); };
   }, [ov, join, info, chat, open, toggleContact, setRail, setOv, setInfo, intent]);
 
   const { rows, counts, total } = useFilteredChats(filter, q, chat);
@@ -207,10 +222,10 @@ export function Desktop() {
             <button className="icon-btn" onClick={() => setRail(false)} title="Show the chat list" aria-label="Show the chat list"><Icon name="chevron_right" /></button>
             <span className="rail-me" onClick={() => settings("profile")} title="Profile"><Avatar kind="me" name={me.name || me.id} size={32} /></span>
             <TransfersChip onOpen={open} />
-            <button className="icon-btn" onClick={() => setOv({ k: "newchat", q: "" })} title="New chat (Ctrl+N)" aria-label="New chat"><Icon name="new_chat" /></button>
-            <button className="icon-btn" onClick={() => setOv({ k: "directory" })} title="Directory: everyone on your hubs" aria-label="Directory"><Icon name="contacts" /></button>
-            <button className="icon-btn" onClick={() => settings("profile")} title="Settings (Ctrl+,)" aria-label="Settings"><Icon name="settings" /></button>
-            <button className={"hubpill rail-hub " + hs.state} onClick={() => settings("hubs")} title={hs.text + " · Hub connections"} aria-label="Hub connections"><span className="dot" /></button>
+            <button className="icon-btn" onClick={() => setOv({ k: "newchat", q: "" })} title="New chat (F3, Ctrl+N)" aria-label="New chat"><Icon name="new_chat" /></button>
+            <button className="icon-btn" onClick={() => setOv({ k: "directory" })} title="Directory (F2): everyone on your hubs" aria-label="Directory"><Icon name="contacts" /></button>
+            <button className="icon-btn" onClick={() => settings("profile")} title="Settings (F1, Ctrl+,)" aria-label="Settings"><Icon name="settings" /></button>
+            <button className={"hubpill rail-hub " + hs.state} onClick={() => settings("hubs")} title={hs.text + " Â· Hub connections"} aria-label="Hub connections"><span className="dot" /></button>
             <div className="clist scroll rail-list">
               <RailRows rows={rows} selected={chat} onOpen={open} onInfo={contactInfo} onCloseDm={close} />
             </div>
@@ -221,12 +236,12 @@ export function Desktop() {
             <span onClick={() => settings("profile")} title="Profile" style={{ cursor: "pointer", marginRight: 8 }}><Avatar kind="me" name={me.name || me.id} size={32} /></span>
             <div className="side-title">Chats</div>
             <TransfersChip onOpen={open} />
-            <button className="icon-btn" onClick={() => setOv({ k: "newchat", q: "" })} title="New chat (Ctrl+N)" aria-label="New chat"><Icon name="new_chat" /></button>
-            <button className="icon-btn" onClick={() => setOv({ k: "directory" })} title="Directory: everyone on your hubs" aria-label="Directory"><Icon name="contacts" /></button>
-            <button className="icon-btn" onClick={() => settings("profile")} title="Settings (Ctrl+,)" aria-label="Settings"><Icon name="settings" /></button>
+            <button className="icon-btn" onClick={() => setOv({ k: "newchat", q: "" })} title="New chat (F3, Ctrl+N)" aria-label="New chat"><Icon name="new_chat" /></button>
+            <button className="icon-btn" onClick={() => setOv({ k: "directory" })} title="Directory (F2): everyone on your hubs" aria-label="Directory"><Icon name="contacts" /></button>
+            <button className="icon-btn" onClick={() => settings("profile")} title="Settings (F1, Ctrl+,)" aria-label="Settings"><Icon name="settings" /></button>
           </div>
           <div className="side-sub">
-            <button className={"hubpill " + hs.state} onClick={() => settings("hubs")} title="Hub connections">
+            <button className={"hubpill " + hs.state} onClick={() => settings("hubs")} title="Hub connections (F4)">
               <span className="dot" /><span>{hs.text}</span><Icon name="chevron_right" />
             </button>
             <button className="icon-btn" onClick={() => setRail(true)} title="Shrink the chat list to icons" aria-label="Shrink the chat list"><Icon name="chevron_left" /></button>

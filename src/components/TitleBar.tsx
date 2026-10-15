@@ -8,7 +8,8 @@
 // CloseRequested into hide), exactly like the old frame's X.
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Logo } from "../lib/icons";
+import { Icon, Logo } from "../lib/icons";
+import { refreshView } from "../lib/refresh";
 import { AppVersion } from "./ui";
 
 const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -42,6 +43,8 @@ export function TitleBar() {
         <AppVersion drag />
       </div>
       <div className="tb-fill" data-tauri-drag-region />
+      <button type="button" className="icon-btn tb-refresh" aria-label="Refresh app view" title="Refresh (F5)"
+        onClick={refreshView}><Icon name="refresh" /></button>
       <div className="window-controls" role="group" aria-label="Window controls">
         <button type="button" className="window-control" aria-label="Minimize window" title="Minimize"
           onClick={() => void w?.minimize()}><Ic d={MIN} /></button>
