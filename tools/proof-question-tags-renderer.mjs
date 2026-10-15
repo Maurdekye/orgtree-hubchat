@@ -132,5 +132,7 @@ const failed = checks.filter(c => !c.ok).map(c => c.name).sort();
 const expected = predecessor ? checks.filter(c => c.target).map(c => c.name).sort() : [];
 const passed = JSON.stringify(failed) === JSON.stringify(expected);
 fs.writeFileSync(path.join(out, 'result.json'), JSON.stringify({ predecessor: predecessor ?? null, passed, checks, failed, expected }, null, 2));
-console.log(JSON.stringify({ passed, checks: checks.length, failed: failed.length, expected: expected.length }));
-process.exitCode = passed ? 0 : 1;
+await new Promise(resolve => process.stdout.write(JSON.stringify({ passed, checks: checks.length, failed: failed.length, expected: expected.length }) + '\n', resolve));
+// This isolated runner is finished even if imported renderer resources keep
+// Node alive after unmount. The receipt and final stdout have both flushed.
+process.exit(passed ? 0 : 1);
