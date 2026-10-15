@@ -34,16 +34,25 @@ Preparation failure preserves the complete draft. Remount and identity
 guards remain. Queued completion clears only sent choices, keeping later
 ones. Text plus files count toward the existing message limit together.
 
-## Sender correction verification — pending
+## Sender correction verification — 2026-10-15, Rig round 445
 
 The browser fixture combines incoming/outgoing targets on both layouts, then
 sends once and checks the contact and every reference. With
 `HUBCHAT_MULTI_ONLY=1`, `HUBCHAT_SENDER_BASE=9d46e62` overrides only Conversation
-with the sender-restricting predecessor: four named acceptance checks should
-fail, with the other 31 controls passing; green should pass all 35 checks.
-Core cases accept mixed authors in one chat and retain missing/foreign-chat
-refusal controls. These counts are expectations for rig-sol, not measured
-results. No author runtime or build was run for this correction.
+with the sender-restricting predecessor. Rig-sol-b measured green35/35 and
+exactly4 named acceptance failures at red, with all31 controls passing. The
+final candidate is `0ddfa14`; its product source matches tested `5b2b907`.
+Core mixed-reply cases pass4/4, retaining missing/foreign-chat refusal
+controls. Mounted preparation regression passes40/40. Hubchat typecheck passes.
+Rig inspected all18 green/red browser captures: mixed-author references are
+visible at green and the old sender refusal is visible at red, on both layouts.
+
+These are synthetic core/browser/DOM proofs, not a real-device or external-hub
+conversation acceptance run. Kind transport, schema and pin are unchanged.
+The source author ran syntax/whitespace checks only; measured runtime results
+above come from Rig445's shared-lock, kernel-Job verification.
+The coordinator integrated the checked source locally at main `0ddfa14`;
+inclusion in a built alpha remains a separate delivery step.
 
 ## Historical verification — 2026-10-14, Rig round 438
 
