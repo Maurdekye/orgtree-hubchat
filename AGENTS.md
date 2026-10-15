@@ -1,5 +1,13 @@
 # Hubchat development invariants
 
+- 2026-10-15: Message bubbles show a kind tag only for Question, on desktop
+  and Android. Other and unknown kinds have no tag or spoken kind prefix.
+  All non-question kinds group as plain messages; Message Info omits Kind.
+  Keep stored/wire kind and question interactions. Remove unused non-question
+  tag colors. [decided: user 2026-10-15 00:25/00:27Z; verified from source:
+  MessageView.tsx, Conversation.tsx, MessageInfo.tsx, base.css;
+  scope and pending proof: docs/question-kind-tags.md]
+
 - 2026-10-15: Round443 tray flip verification: DOM21/21, controlled old-source
   red19/2; native89 passed/2 ignored; typecheck passes. Exact anchoring outside
   shadow margins and extreme-edge clamping have separate controls. CDP DSF
