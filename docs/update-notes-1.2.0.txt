@@ -1,0 +1,1 @@
+Profile pictures, question cards, typing indicators and multi-replies, plus improved Windows tray controls, dragging and desktop shortcuts. Profile pictures, question cards and typing indicators need mail hub 2.2.0 or later.
