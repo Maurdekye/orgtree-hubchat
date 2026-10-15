@@ -1,5 +1,11 @@
 # Hubchat development invariants
 
+- 2026-10-15: Round443 tray flip verification: DOM21/21, controlled old-source
+  red19/2; native89 passed/2 ignored; typecheck passes. Exact anchoring outside
+  shadow margins and extreme-edge clamping have separate controls. CDP DSF
+  and synthetic native origins do not establish real DPI or click latency.
+  [verified: round443 receipts at fb96c3a; docs/tray-cursor.md]
+
 - 2026-10-14: A tray context menu that cannot fit right of the cursor must
   flip left before work-area clamping, matching the vertical flip above it.
   Clamping alone fixes its right edge at the work-area edge and misses the

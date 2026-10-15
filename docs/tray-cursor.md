@@ -89,3 +89,30 @@ Session0 has one 1024x768 display at 100%, with Explorer in Session1. Browser
 DSF emulation and synthetic origins do not measure native DPI or a second
 monitor. Coordinator 2026-10-14 22:38Z accepts these bounded proofs, with native
 125%/150% and multi-monitor acceptance left to the user on the next alpha.
+
+## Round443 bounded verification (2026-10-15)
+
+Coordinator approved and locally integrated `fb96c3a` onto `c2c5f6c`.
+The five author picks are patch-identical, including horizontal fix `5a9fd5c`
+as `d323311` and test-only fixture correction `9b19eea` as `fb96c3a`.
+The corrected tall-submenu case anchors exactly at x=1888; the separate
+extreme-edge control retains right=1908 and bottom=1032 inside the shadow
+margins. The existing near-right offset assertions remain unchanged.
+
+Rig-sol-b measured DOM green21/21, with no skipped or cancelled tests.
+Restoring only the old placement source produces19 passes and exactly two
+failures: tall-submenu anchoring and the near-right scale/origin matrix.
+The cursor proof passes27 DOM corner cases at CDP DSF1/1.25/1.5 and54
+physical-origin compositions, with13 renderer samples and no browser errors.
+Its old-source control fails at the first near-right corner: right888 !=700.
+Native library tests pass89 with2 ignored DPAPI tests (not executed).
+The new native rounding test actually executes its27 synthetic cases;
+typecheck passes. Rig-sol-b viewed all six captures and reports the complete
+light menu visible and readable. Raw hand-in: round443, exact `fb96c3a`.
+
+Five renderer cold mounts measure6.1–33.5ms and five warm updates31.6–34ms
+through two animation frames. These exclude native event delivery, WebView
+startup and window show. Native real125%/150% monitor DPI, second-monitor
+placement, GetCursorPos comparison and click-to-visible latency remain
+unmeasured; acceptance stays with the user on the next alpha. Local source
+integration is not an app build, installation or native acceptance result.
