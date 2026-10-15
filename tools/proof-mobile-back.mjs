@@ -3,10 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {createRequire} from 'node:module';
 import {pathToFileURL} from 'node:url';
+import {spawnSync} from 'node:child_process';
 const repo=process.cwd(),out=path.resolve(process.env.HUBCHAT_RENDERER_OUT||'');
 if(!process.env.HUBCHAT_JOB_CONTAINED||!/^C:[\\/]orgtree-build[\\/]/i.test(out))throw Error('Requires contained C output');
 const orgdeps=createRequire(path.join(process.env.HUBCHAT_DOM_DEPENDENCY_ROOT,'package.json'));
-const deps=process.env.HUBCHAT_DEPENDENCY_ROOT,esbuild=orgdeps('esbuild');
+const deps=process.env.HUBCHAT_DEPENDENCY_ROOT,esbuild=orgdeps('esbuild'),base=process.env.HUBCHAT_MOBILE_BACK_BASE;
 fs.mkdirSync(out,{recursive:true});
 try{await esbuild.build({entryPoints:[path.join(repo,'tools/mobile-back-entry.tsx')],outfile:path.join(out,'entry.mjs'),bundle:true,
   format:'esm',platform:'browser',jsx:'automatic',loader:{'.md':'text','.css':'empty'},nodePaths:[path.join(deps,'node_modules')],
@@ -15,7 +16,8 @@ try{await esbuild.build({entryPoints:[path.join(repo,'tools/mobile-back-entry.ts
       // Each fresh() models a new page boot. Reset only the module's startup
       // take list, which would otherwise remember notifications from an
       // earlier case in this one-process fixture and suppress last-chat restore.
-      const text=fs.readFileSync(args.path,'utf8');
+      let text=fs.readFileSync(args.path,'utf8');
+      if(base){const r=spawnSync('git',['show',base+':src/components/Android.tsx'],{cwd:repo,encoding:'utf8',windowsHide:true});if(r.status!==0)throw Error(r.stderr);text=r.stdout;}
       if(!text.includes('const startTakes:'))throw Error('Startup take reset seam no longer matches');
       return {contents:text+'\nglobalThis.__proofResetStartupTakes = () => { startTakes.length = 0; };',loader:'ts',resolveDir:path.dirname(args.path)};
     });
@@ -36,7 +38,7 @@ globalThis.getComputedStyle=dom.window.getComputedStyle.bind(dom.window);
 globalThis.requestAnimationFrame=f=>setTimeout(f,0);globalThis.cancelAnimationFrame=clearTimeout;
 dom.window.HTMLElement.prototype.scrollIntoView=function(){};
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
-const {Android,api,mockApi,store,PlatformCtx,act,createElement:h,createRoot,StrictMode}=await import(pathToFileURL(path.join(out,'entry.mjs')));
+const {Android,api,mockApi,store,PlatformCtx,openHubHelp,act,createElement:h,createRoot,StrictMode}=await import(pathToFileURL(path.join(out,'entry.mjs')));
 Object.assign(api,mockApi);
 const org='orgtree.alex.7c41d2',readChat=api.chat;
 api.chat=async(peer,...args)=>{
@@ -143,6 +145,46 @@ try{
       if(edge==='hub-status'){await act(async()=>store.refreshState());await tick();}
     }
   }
+  // A valid route/history mirror whose traversal stalls: parent navigation
+  // must work without a popstate event, and a late matching pop must not pop twice.
+  for(const mode of ['corner','fallback']){
+    for(const screen of ['Contact info','New chat','Directory','Settings','About']){
+      await fresh();
+      if(screen==='Contact info'){await click(document.querySelector('.crow'));await click(document.querySelector('.appbar .who'));}
+      else if(screen==='About'){await click(button('Settings'));await click([...document.querySelectorAll('.li')].find(e=>e.querySelector('.t1')?.textContent==='About'));}
+      else await click(button(screen));
+      const d=history.state.hc,original=history.back.bind(history),parentLabel=screen==='About'?'Settings':screen==='Contact info'?'conversation':'chats';
+      history.back=()=>{};
+      try{
+        await act(async()=>{if(mode==='corner')button('Back').click();else check('stalled/'+screen+' native route handled',window.__hcBack());});
+        const arrived=()=>parentLabel==='Settings'?title()==='Settings':parentLabel==='conversation'?!!document.querySelector('.composer'):!!button('New chat')&&!!button('Settings');
+        if(mode==='corner')check('stalled/'+screen+' corner navigates without awaiting history',arrived());
+        await tick();
+        check('stalled/'+mode+'/'+screen+' reaches explicit parent within frame',arrived()&&history.state?.hc===d-1);
+        await act(async()=>window.dispatchEvent(new PopStateEvent('popstate',{state:{hc:d-1}})));
+        check('stalled/'+mode+'/'+screen+' late pop keeps parent',arrived());
+      }finally{history.back=original;}
+    }
+  }
+  await fresh();await click(document.querySelector('.crow'));
+  const menuDepth=history.state.hc;
+  await click(button('More'));
+  await act(async()=>check('native Back handles conversation menu',window.__hcBack()));await tick();
+  check('native Back closes menu without leaving conversation',!document.querySelector('.sheet[role="menu"]')&&!!document.querySelector('.composer')&&history.state.hc===menuDepth);
+  await act(async()=>openHubHelp('android'));await tick();
+  check('hub help overlay has its own history entry',!!document.querySelector('.hubhelp-root [role="dialog"]')&&typeof history.state?.hubhelp==='number');
+  await act(async()=>check('native Back handles hub help overlay',window.__hcBack()));await tick();await tick();
+  check('native Back closes hub help without leaving conversation',!document.querySelector('.hubhelp-root [role="dialog"]')&&!!document.querySelector('.composer')&&history.state.hc===menuDepth);
+  await fresh();await click(document.querySelector('.crow'));await click(document.querySelector('.appbar .who'));
+  const stalledBack=history.back.bind(history);history.back=()=>{};
+  try{
+    await act(async()=>{window.__hcBack();button('Back').click();});await tick();
+    check('newer corner Back cancels pending system fallback',!!document.querySelector('.composer')&&history.state.hc===2);
+    await click(document.querySelector('.appbar .who'));
+    await act(async()=>{window.__hcBack();root.unmount();});root=null;
+    const before=JSON.stringify(history.state);await tick();
+    check('unmount cancels pending system fallback',JSON.stringify(history.state)===before);
+  }finally{history.back=stalledBack;}
   // Explicitly synthetic cold-restored Contact info with no traversable
   // history. A new native WebView with canGoBack()==false calls __hcBack.
   // A normal browser history.back() emits no popstate when nothing is under it.
@@ -168,7 +210,7 @@ try{
 }finally{
   api.chat=readChat;
   if(root)await act(async()=>root.unmount());
-  fs.writeFileSync(path.join(out,'result.json'),JSON.stringify({checks,failed:checks.filter(c=>!c.ok).length},null,2));
+  fs.writeFileSync(path.join(out,'result.json'),JSON.stringify({base:base??null,checks,failed:checks.filter(c=>!c.ok).length},null,2));
   dom.window.close();
 }
 console.log(JSON.stringify({checks:checks.length,failed:checks.filter(c=>!c.ok).length}));
