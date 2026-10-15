@@ -48,8 +48,24 @@ node tools/proof-question-tags-renderer.mjs
 Green leaves `HUBCHAT_KIND_TAG_BASE` unset. Red sets it to `c2c5f6c`;
 `MessageView.tsx`, `Conversation.tsx` and `MessageInfo.tsx` are substituted
 through the bundler, with no source mutation; the CSS check reads the base blob.
-Expected: green 147 checks pass; red exactly 45 failures (24 removed tag/prefix
-checks, 14 redundant info rows, 6 grouping checks, 1 CSS check), with 102 controls
-passing. These counts and runtime behavior are **pending Rig's
-execution**, not measured in the source-only author task. Typecheck is also
-delegated to Rig. No native build, install, transport or device claim.
+## Measured verification: 2026-10-15, Rig round 445
+
+Rig-sol-b verified committed Hubchat `0ddfa14` with the original product patch
+and runner-only `6856b2f`, using the shared lock and kernel Job. Green passes
+147/147 and exits0 in1s. Exact `c2c5f6c` components/CSS produce exactly45
+expected failures:24 removed tag/prefix checks,14 redundant info rows,6
+grouping checks and1 CSS check. All102 controls pass; red exits0 in2s because
+the failed names match exactly. Normal Hubchat typecheck passes.
+
+The initial runner completed147 assertions but remained alive until Job
+timeout124/91s. That receipt is preserved and excluded as a complete run.
+The corrected runner unmounts, closes the DOM, writes JSON synchronously and
+flushes final stdout before exiting with the computed status. Both committed
+green/red reruns finish normally with unchanged product code and assertions.
+
+These are mounted synthetic desktop/Android context fixtures, not native
+device acceptance. There was no app build, install, live-data change or real
+conversation send. Exact receipts are in Rig's round445 hand-in; no transport
+or native behavior changed in this feature.
+The coordinator integrated the checked source locally at main `0ddfa14`;
+it was not yet included in a built alpha at that point.

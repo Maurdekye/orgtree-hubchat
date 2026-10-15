@@ -6,7 +6,7 @@
   Keep stored/wire kind and question interactions. Remove unused non-question
   tag colors. [decided: user 2026-10-15 00:25/00:27Z; verified from source:
   MessageView.tsx, Conversation.tsx, MessageInfo.tsx, base.css;
-  scope and pending proof: docs/question-kind-tags.md]
+  scope and measured round445 proof: docs/question-kind-tags.md]
 
 - 2026-10-15: Round443 tray flip verification: DOM21/21, controlled old-source
   red19/2; native89 passed/2 ignored; typecheck passes. Exact anchoring outside
