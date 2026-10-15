@@ -12,7 +12,7 @@
 //   - Windows' hit test (WM_NCHITTEST, tools/e2e-drag-region.ps1) as Windows
 //     makes it: the window under the point (from the main window down, each
 //     time the topmost child that takes the point) answers HTCAPTION at the
-//     bar's empty part, the name, the logo and just above the version; at the
+//     bar's empty part, the name, the logo and just below the version; at the
 //     version, the three window buttons and in the window body it doesn't, and
 //     no window that takes the point does. WebView2 makes a drag region out of
 //     child windows of its own, on the app's UI thread, that answer HTCAPTION
@@ -109,7 +109,9 @@ try {
       { name: 'bar: empty part', drag: true, act: 'right double', ...c('.titlebar .tb-fill') },
       { name: 'bar: the name', drag: true, act: 'right', ...c('.titlebar .tb-brand [role=heading]') },
       { name: 'bar: the logo', drag: true, act: 'right', ...c('.titlebar .tb-brand svg') },
-      { name: 'bar: just above the version', drag: true, x: ver.left + ver.width / 2, y: bar.top + Math.max(2, (ver.top - bar.top) / 2) },
+      // below the label, not above it: the bar's top pixels are the window's top
+      // resize border, where WebView2's caption window answers HTTOP (both builds, 2026-10-15)
+      { name: 'bar: just below the version', drag: true, x: ver.left + ver.width / 2, y: (ver.bottom + bar.bottom) / 2 },
       { name: 'bar: the version (no-drag, for its tooltip)', drag: false, ...c('.titlebar .ver') },
       { name: 'button: minimize', drag: false, ...c('.titlebar .window-control', 0) },
       { name: 'button: maximize', drag: false, ...c('.titlebar .window-control', 1) },
