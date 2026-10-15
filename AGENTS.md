@@ -5,6 +5,9 @@
   stock header/sidebar BMP artwork. Add/Remove Programs uses the installed
   main executable's DisplayIcon. Contained proof uses a stand-in payload,
   real Tauri bundling, and native PE/shell extraction; no install.
+  Measured resources6/6 and actual Welcome class small-icon match, with
+  old-config red controls. Session0 PrintWindow stays black: capture check
+  explicitly fails; full wizard/Explorer/installed ARP UI is unmeasured.
   [decided: coordinator 2026-10-15; verified: tauri.conf.json,
   windows/installer.nsi; docs/windows-installer-icon.md]
 

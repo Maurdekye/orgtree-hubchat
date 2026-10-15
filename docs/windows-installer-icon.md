@@ -41,7 +41,8 @@ into standalone ICOs and compares Windows shell-extracted16/32px pixels with
 native decoding of the source app ICO. Preserve red and green resource
 receipts. `tools/installer-icon-welcome.py --setup <contained-setup.exe>
 --output <new-own-C-output>` opens only the disposable setup Welcome page,
-captures its title-bar icon via WM_GETICON/native pixels and the window PNG,
+reads its title-bar icon via WM_GETICON or the native class-icon fallback and
+attempts a separate window PNG capture,
 then closes without advancing installation. It checks the test ProductName,
 requires absent disposable install/uninstall keys, tracks descendants with
 stable process handles and lifetime checks, and records any forced cleanup.
@@ -50,10 +51,44 @@ Add/Remove Programs routing is source-checked against
 the bundled app resource; do not install or create an uninstall registry key
 to exercise the control-panel entry.
 
-Rig-sol-b's first contained NSIS green bundle passed in6s. Its first offline
-helper stopped before pixel comparisons: ExtractIconEx returned2 with both
-valid handles, while the helper incorrectly required1. The helper correction
-requires a positive count and both handles, retaining exact pixel comparisons
-and cleanup. Resource and Welcome pixel results remain pending rig-sol-b.
-No Explorer UI, installed-program entry, production installer,
-installation or release result is claimed by the source tests.
+## Measured contained proof (2026-10-15)
+
+Rig-sol-b built the contained setup through the real Tauri NSIS bundler:
+green exits0 in6s. Final proof helper source is `1b54f69`, with the same
+two-field product configuration as `25b88bd`. Red control `9d086a3` removes
+only those settings to restore the base configuration; instrumentation and
+the app-icon stand-in payload remain the same.
+
+Native resource comparisons pass6/6: setup, exported uninstaller and stand-in
+app each match the existing app ICO at16 and32px. The old-config control
+fails the four setup/uninstaller comparisons while both app controls pass.
+The corresponding shell icon PNGs were viewed by rig-sol-b. Its initial
+ExtractIconEx count assertion was a helper defect (returned2 with both
+handles valid); the corrected positive-count/both-handles check preserves
+the exact pixel comparisons and cleanup.
+
+The actual disposable Welcome window is identified by its title and real
+controls. Its `GCLP_HICONSM` native small-icon binding matches the app's16px
+pixels exactly (SHA256 prefix `c94ba9cb`). The old-config Welcome icon differs
+(`d0b9f8b`), showing the default NSIS icon. This measures the native class-icon
+fallback, not a nonzero WM_GETICON response. Author and rig viewed the four
+icon comparison PNGs.
+
+The separate full-window capture **fails**. In Session0, IsWindowVisible is
+false despite WS_VISIBLE=true (`0x94ca084c`). PrintWindow flags2 returns true
+but yields a503x390, single-color black frame, saved as evidence and viewed
+by author and rig. The green helper therefore exits1 solely on the retained
+blank-capture assertion after recording the matching icon; it is not an
+all-tests-green result. The red helper exits1 on the expected native-icon
+mismatch before capture. Both runs close by Cancel with setup exit1, no
+forced termination, no remaining processes, and disposable install/uninstall
+keys absent before and after.
+
+Raw receipts live under the rig's `batch-installer-icon/logs` packet and its
+`installer-icon` evidence: `resources-green-3`, `resources-red-1`,
+`welcome-green3` and `welcome-red`, each with raw JSON and PNGs. These prove
+contained PE/shell resources and the actual Welcome native small-icon binding.
+Full wizard rendering, Explorer UI and the installed Add/Remove Programs UI
+remain unmeasured. The ARP DisplayIcon routing is source-checked against the
+correct app resource; no install or registry write was performed. No production
+installer, release, installation or publication result is claimed.
