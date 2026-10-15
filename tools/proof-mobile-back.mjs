@@ -26,9 +26,10 @@ const click=async(el)=>{if(!el)throw Error('Missing control at '+title());await 
 const button=(label)=>document.querySelector(`[aria-label="${label}"]`);
 const title=()=>document.querySelector('.appbar .title')?.textContent||document.querySelector('.appbar .who')?.textContent||'';
 const snapshot=()=>({title:title(),state:history.state,length:history.length,conversation:!!document.querySelector('.composer')});
-const fresh=async()=>{
+const fresh=async(saved=null)=>{
   if(root)await act(async()=>root.unmount());
   localStorage.clear();history.replaceState(null,'');
+  if(saved)localStorage.setItem('hubchat.lastchat.'+store.getSnap().state.me.address,saved);
   root=createRoot(document.getElementById('root'));
   await act(async()=>root.render(h(StrictMode,null,h(PlatformCtx.Provider,{value:'android'},h(Android)))));
   await tick();await tick();
@@ -61,8 +62,58 @@ try{
       check(mode+'/'+label+' returns to Settings',title()==='Settings');
     }
     for(const label of ['Directory','New chat','Settings']){
-      await fresh();await click(button(label));check(mode+'/'+label+' opens screen',title()===label);
+      await fresh();await click(button(label));check(mode+'/'+label+' opens screen',label==='Directory'?document.querySelector('.appbar .title')?.firstChild?.textContent===label:title()===label);
       await back(mode);check(mode+'/'+label+' returns to chats',!!button('New chat')&&!!button('Settings'));
+    }
+    for(const edge of ['directory-person','directory-org','directory-agent','notification','chat-link','last-chat','rotation','resume','hub-status']){
+      const peer=edge==='directory-org'?'orgtree.alex.7c41d2':edge==='directory-agent'?'hubchat-ui.alex.a3f9c1':'maya.e71f2b';
+      await fresh(edge==='last-chat'?peer:null);
+      if(edge.startsWith('directory-')){
+        await click(button('Directory'));
+        await click([...document.querySelectorAll('.dir-row')].find(e=>e.querySelector('.t2')?.textContent===peer));
+      }else if(edge==='notification'||edge==='chat-link'){
+        await act(async()=>window.__hcIntent(edge==='notification'?{peer}:{link:'hubchat://chat?to='+peer}));await tick();await tick();
+      }else if(edge!=='last-chat'){
+        await click([...document.querySelectorAll('.crow')].find(e=>e.querySelector('.crow-name')?.textContent==='Maya Lin'));
+      }
+      await tick();
+      const who=document.querySelector('.appbar .who .ell')?.textContent;
+      check(mode+'/'+edge+' reaches requested conversation',!!who&&!!document.querySelector('.composer')&&history.state?.hc===2);
+      const draft=mode+'/'+edge+' unsaved draft';
+      const input=document.querySelector('.composer textarea');
+      if(input)await act(async()=>{
+        Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set.call(input,draft);
+        input.dispatchEvent(new Event('input',{bubbles:true}));
+      });
+      await click(document.querySelector('.appbar .who'));
+      check(mode+'/'+edge+' opens Contact info at depth3',title()==='Contact info'&&history.state?.hc===3);
+      if(edge==='rotation'){
+        // JS viewport/orientation notifications only, not native Activity recreation.
+        await act(async()=>{
+          Object.defineProperty(window,'innerWidth',{configurable:true,value:844});
+          Object.defineProperty(window,'innerHeight',{configurable:true,value:390});
+          window.dispatchEvent(new Event('resize'));window.dispatchEvent(new Event('orientationchange'));
+        });await tick();
+      }else if(edge==='resume'){
+        await act(async()=>{
+          Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});
+          document.dispatchEvent(new Event('visibilitychange'));window.dispatchEvent(new Event('blur'));
+        });
+        await act(async()=>{
+          Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});
+          document.dispatchEvent(new Event('visibilitychange'));window.dispatchEvent(new Event('focus'));
+        });await tick();
+      }else if(edge==='hub-status'){
+        // Synthetic mock-core reconnect/route state refresh; never connects a hub.
+        const readState=api.state;
+        api.state=async()=>{const s=await readState();return {...s,hubs:s.hubs.map(h=>({...h,state:h.state==='connected'?'disconnected':'connected'}))};};
+        try{await act(async()=>store.refreshState());await tick();}finally{api.state=readState;}
+      }
+      check(mode+'/'+edge+' retains info and history before Back',title()==='Contact info'&&history.state?.hc===3);
+      await back(mode);
+      check(mode+'/'+edge+' returns to same conversation/depth2',!!document.querySelector('.composer')&&document.querySelector('.appbar .who .ell')?.textContent===who&&history.state?.hc===2);
+      check(mode+'/'+edge+' retains composer draft',document.querySelector('.composer textarea')?.value===draft);
+      if(edge==='hub-status'){await act(async()=>store.refreshState());await tick();}
     }
   }
 }finally{
