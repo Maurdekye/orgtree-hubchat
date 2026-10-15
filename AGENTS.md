@@ -33,9 +33,10 @@
   `app-region` declarations in the bundle, not rules. [verified:
   app-desktop.css, TitleBar.tsx, wry webview2/mod.rs; docs/title-bar.md; rig
   rounds 447 and 450: e2e-drag-region tip 11/11, base 5/11 with the 6
-  expected failures; title-bar-menu round 2026-10-15 13:48Z: tip 14/18, base
-  12/18, differing by exactly the version label's 2 checks; rerun with the
-  corrected point pending; the drag and a real right-click not measured]
+  expected failures; title-bar-menu rerun 2026-10-15 14:05Z with the
+  corrected point: tip 15/18, base 13/18, differing by exactly the version
+  label's 2 checks, the 3 right-clicks failing in both (the rig's limit);
+  the drag and a real right-click not measured]
 
 - 2026-10-15: Message bubbles show a kind tag only for Question, on desktop
   and Android. Other and unknown kinds have no tag or spoken kind prefix.

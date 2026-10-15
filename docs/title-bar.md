@@ -225,9 +225,27 @@ checked).
   in both builds.
 - **Leftovers:** none, and the installed Hubchat Test profile was untouched.
 
-### Rerun with the point below the version: pending
+### Measured: the rerun with the point below the version (2026-10-15)
 
-Tip: 524557a plus c70cc6a and these docs. Red control 0ac604c: 203b8bf plus
-c70cc6a. The app source is unchanged, so the same two binaries apply.
-Expected: tip 15/18 and red 13/18. The three right-clicks fail in both, as
-above; the red also fails the version label's two checks.
+Rig-sol-b, 14:04 to 14:06Z. Tip a8f0fe1 (524557a plus c70cc6a and docs);
+red control 0ac604c (203b8bf plus c70cc6a). No build: the app source is
+unchanged, so the first run's two binaries were reused, after their sha256
+and the empty app-source and tools diffs were checked.
+
+- **Tip 15/18, red 13/18.** Both e2e runs exit 1, as expected. The tip's
+  only failures are the three right-clicks. The red fails those three and
+  the version label's two checks, so the builds again differ by exactly the
+  version label's two checks.
+- **Just below the version** (page y 26.5, screen y 27): a caption window
+  answers `HTCAPTION` in both builds. At the tip it is the band below the
+  label, `[0,21,890,31]` in page coordinates; at the red, the one caption
+  window across the bar.
+- The rest repeats the first run. The styles and the other hit tests pass.
+  Alt+Space opens and recognises the system menu (flags 12), and the
+  double-click maximises the window within 50 ms and restores it, in both
+  builds. The tip's five caption windows have the same rectangles.
+- **Leftovers:** none, and the installed Hubchat Test profile was untouched.
+
+Not measured: the drag, and a real right-click's system menu. Both need
+real mouse input, which agents do not have, so they are the user's checks
+on the next alpha.
