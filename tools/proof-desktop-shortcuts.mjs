@@ -71,6 +71,10 @@ try{
   const row=document.querySelector('.crow');await click(row);await tick();
   const text=document.querySelector('.composer textarea');check('draft fixture opens real conversation',!!text);
   if(text){
+    // A real page reload does not run React's unmount cleanup. Make the core
+    // stay stale so that cleanup's mock setDraft cannot fake preservation.
+    const readDraft=api.draft,writeDraft=api.setDraft;
+    api.draft=async()=> 'stale core draft';api.setDraft=async()=>{};
     const timeline=document.querySelector('.timeline');
     Object.defineProperties(timeline,{scrollHeight:{configurable:true,value:2000},clientHeight:{configurable:true,value:400}});
     await act(async()=>{timeline.scrollTop=650;timeline.dispatchEvent(new window.Event('scroll',{bubbles:true}));});
@@ -78,8 +82,9 @@ try{
     await click(refresh());
     check('refresh snapshots latest draft before debounce',sessionStorage.getItem('hubchat.refresh-state')?.includes('unsaved latest draft'));
     await act(async()=>root.unmount());root=createRoot(document.getElementById('root'));await mount();await tick();
-    check('open chat and latest draft survive remount',document.querySelector('.composer textarea')?.value==='unsaved latest draft');
+    check('open chat and latest draft survive stale core remount',document.querySelector('.composer textarea')?.value==='unsaved latest draft');
     check('reading scroll position survives remount',document.querySelector('.timeline')?.scrollTop===650);
+    api.draft=readDraft;api.setDraft=writeDraft;
   }
   const css=fs.readFileSync(path.join(repo,'src/styles/app-desktop.css'),'utf8');
   check('Refresh has both no-drag properties',/\.titlebar \.tb-refresh\s*\{[^}]*-webkit-app-region:\s*no-drag;[^}]*\bapp-region:\s*no-drag;/s.test(css));
