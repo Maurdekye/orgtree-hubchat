@@ -26,7 +26,6 @@ export function MessageInfoBody({ m }: { m: Message }) {
         {kv("Hub has it", when(m.received_at) || "—")}
         {kv("Read", when(m.read_at) || (m.seen ? "Yes (the time wasn't kept)" : "Not read yet"))}
         {kv("Hub", hub || "—")}
-        {kv("Kind", m.kind || "message")}
       </div>
     );
   }

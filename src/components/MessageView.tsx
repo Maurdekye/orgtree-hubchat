@@ -1,4 +1,4 @@
-// One message: kind chip, reply quotes, file cards, markdown body with the
+// One message: question tag, reply quotes, file cards, markdown body with the
 // time and ticks, a question card's options, the failed line, and
 // (desktop) the hover actions.
 import { memo, useState, type KeyboardEvent, type MouseEvent } from "react";
@@ -16,8 +16,6 @@ import { useTransfer } from "../lib/store";
 import { toast } from "../lib/toast";
 import { AttImage } from "./AttImage";
 import { pressKeys, usePlatform } from "./ui";
-
-const KCHIP: Record<string, [string, string]> = { question: ["Question", "kc-q"], request: ["Request", "kc-q"], decision: ["Decision", "kc-d"], status: ["Status", "kc-s"] };
 
 function metaHTML(m: Message): string {
   let h = '<span class="meta"><span class="mt">' + time(msgTime(m)) + "</span>";
@@ -140,7 +138,6 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
     else if (t.matches("a.addr")) { e.preventDefault(); onOpenAddr(t.dataset.slug || ""); }
   };
 
-  const k = m.kind ? KCHIP[m.kind] : undefined;
   // what this reply did to a question card it answers
   const noteEl = (id: string) => {
     const n = notes?.find((x) => x.id === id);
@@ -262,8 +259,8 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
       {platform === "android" ? <span className="swipe-ic"><Icon name="reply" /></span> : null}
       <div className="row">
         <div className={"bubble" + (m.attachments.length && !m.body ? " only-att" : "") + (m.reply_to ? " has-quote" : "") + (qc ? " qcard" : "")} onClick={delegate} onKeyDown={keyOpen} onContextMenu={menu}>
-          <span className="sr">{(m.outgoing ? "You" : peerName) + (k ? ", " + k[0] : "") + ": "}</span>
-          {qhead ?? (k ? <div className={"kchip " + k[1]}>{k[0]}</div> : null)}
+          <span className="sr">{(m.outgoing ? "You" : peerName) + (qc ? ", Question" : "") + ": "}</span>
+          {qhead}
           {quote}
           {m.attachments.length ? <div className="atts">{m.attachments.map((a) => <AttCard key={a.local_id} a={a} m={m} />)}</div> : null}
           {body}

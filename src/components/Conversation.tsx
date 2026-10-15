@@ -23,7 +23,6 @@ import { Addr, KindChip, KindGlyph, NoteCard, PeerAvatar, PresText, pressKeys, u
 
 const GROUP_GAP = 5 * 60000;
 const NONE: Message[] = [];
-const CHIP_KINDS = new Set(["question", "request", "decision", "status"]);
 
 interface Props {
   peer: string;
@@ -366,7 +365,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
       const n = msgs.filter((x) => !x.outgoing && msgTime(x) >= t).length;
       rows.push(<div className="newmark" key="new">{n} new message{n > 1 ? "s" : ""}</div>);
     }
-    const first = !prev || prev.outgoing !== m.outgoing || t - msgTime(prev) > GROUP_GAP || (!m.outgoing && !!m.kind && CHIP_KINDS.has(m.kind));
+    const first = !prev || prev.outgoing !== m.outgoing || t - msgTime(prev) > GROUP_GAP || (!m.outgoing && m.kind === "question");
     rows.push(
       <MessageView key={m.id} m={m} first={first} peerName={name} peerKind={kind} quoted={quoted(m.reply_to)} quotes={quoteLists.get(m.id)} card={cards.get(m.id)} picks={pending.picks[m.id]} notes={notes.get(m.id)} hover={platform === "desktop"} selected={sel.includes(m.id)} highlighted={hl === m.id}
         onReply={reply} onSelect={toggleSel} onPick={onPick} onInfo={info} onDelete={del} onJump={jump} onOpenAddr={onOpenAddr} />,
