@@ -1,19 +1,30 @@
 // The title bar is a native caption (user 2026-10-14 22:31Z: Hubchat
-// 1.2.0-alpha.5's window could not be dragged by its title bar). Checked in
-// the real WebView2 of a desktop test build, without a mouse: agents run in a
-// non-interactive window station, where Windows cannot move a window at all
-// (GetCursorPos fails with error 1459 and a posted WM_NCLBUTTONDOWN starts no
-// move loop, measured in rig round 446), so the drag itself is the user's check.
-//   - computed style: .titlebar app-region drag, .window-controls no-drag
+// 1.2.0-alpha.5's window could not be dragged by its title bar). A right-click
+// on it opens the window's system menu, as Orgtree's title bar does (user
+// 2026-10-15 11:30Z), and the version label shows its tooltip again.
+// Checked in the real WebView2 of a desktop test build, without a mouse:
+// agents run in a non-interactive window station, where Windows cannot move a
+// window at all (GetCursorPos fails with error 1459 and a posted
+// WM_NCLBUTTONDOWN starts no move loop, measured in rig round 446), so the drag
+// itself is the user's check.
+//   - computed style: .titlebar app-region drag, .window-controls no-drag, and
+//     the version label no-drag, so it gets hover and shows its tooltip
 //   - Windows' hit test (WM_NCHITTEST, tools/e2e-drag-region.ps1) as Windows
 //     makes it: the window under the point (from the main window down, each
 //     time the topmost child that takes the point) answers HTCAPTION at the
-//     bar's empty part, the name, the logo and the version; at the three window
-//     buttons and in the window body it doesn't, and no window that takes the
-//     point does. WebView2 makes a drag region out of child windows of its own,
-//     on the app's UI thread, that answer HTCAPTION wherever they are asked, so
-//     only windows that take the point count (rig round 447).
-// The red control (the base build) shows no caption anywhere.
+//     bar's empty part, the name, the logo and just above the version; at the
+//     version, the three window buttons and in the window body it doesn't, and
+//     no window that takes the point does. WebView2 makes a drag region out of
+//     child windows of its own, on the app's UI thread, that answer HTCAPTION
+//     wherever they are asked, so only windows that take the point count (rig
+//     round 447).
+//   - clicks posted as real input would deliver them (e2e-drag-region.ps1
+//     -Mode clicks): Alt+Space (SC_KEYMENU) opens the system menu, which shows
+//     the rig can see and recognise one; then a right-click at the bar's empty
+//     part, name and logo opens the window's system menu too; a double-click on
+//     the caption maximises the window and a second one restores it.
+// The red control (the caption without the version label's fix) has the
+// version label inside the caption; everything else is the same.
 //
 //   needs: the e2e build, from the worktree:
 //     npx tauri build --debug --no-bundle --config src-tauri/tauri.test.conf.json
@@ -45,6 +56,14 @@ const results = [];
 const check = (name, ok, detail = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`); };
 const sh = (cmd, args) => spawnSync(cmd, args, { encoding: 'utf8' }).stdout || '';
 const until = async (f, ms, every = 100) => { const t = Date.now(); while (Date.now() - t < ms) { if (await f().catch(() => false)) return true; await sleep(every); } return false; };
+const native = (mode, ptsFile, outFile, pid) => {
+  const ps = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(import.meta.dirname, 'e2e-drag-region.ps1'),
+    '-TargetPid', String(pid), '-Points', ptsFile, '-Out', outFile, '-Mode', mode], { encoding: 'utf8', timeout: 90000 });
+  if (!existsSync(outFile)) throw new Error(`no ${mode} answers: ` + (ps.stderr || ps.stdout || String(ps.error || '')).slice(0, 800));
+  const r = JSON.parse(readFileSync(outFile, 'utf8'));
+  if (r.error) throw new Error(`${mode}: ` + r.error);
+  return r;
+};
 
 // only this build's own data, by exact name
 if (!ID.endsWith('.test') || ID === 'dev.orgtree.hubchat.test') throw new Error('not the e2e identifier: ' + ID);
@@ -56,7 +75,7 @@ const wipe = () => {
 
 let app = null;
 let b = null;
-const report = { styles: null, hittest: null };
+const report = { styles: null, hittest: null, clicks: null };
 try {
   wipe();
   app = spawn(EXE, [], { stdio: 'ignore', env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP}` } });
@@ -71,21 +90,27 @@ try {
   // the page's own view of the regions
   report.styles = await b.eval(`(() => {
     const st = (sel) => { const s = getComputedStyle(document.querySelector(sel)); return { webkit: s.getPropertyValue('-webkit-app-region'), plain: s.getPropertyValue('app-region') }; };
-    return { titlebar: st('.titlebar'), controls: st('.titlebar .window-controls') };
+    return { titlebar: st('.titlebar'), controls: st('.titlebar .window-controls'), version: st('.titlebar .ver'),
+      versionTitle: document.querySelector('.titlebar .ver').title };
   })()`);
   const is = (v, want) => v.webkit === want || v.plain === want;
   check('the title bar is app-region drag', is(report.styles.titlebar, 'drag'), J(report.styles.titlebar));
   check('the window buttons are app-region no-drag', is(report.styles.controls, 'no-drag'), J(report.styles.controls));
+  check('the version label is app-region no-drag, so it gets hover for its tooltip', is(report.styles.version, 'no-drag'),
+    `${J(report.styles.version)}, tooltip ${J(report.styles.versionTitle)}`);
 
-  // points on the bar and below it, in page coordinates
+  // points on the bar and below it, in page coordinates; act: what the clicks pass does there
   const pts = await b.eval(`(() => {
-    const c = (sel, i = 0) => { const e = document.querySelectorAll(sel)[i]; const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+    const box = (sel, i = 0) => document.querySelectorAll(sel)[i].getBoundingClientRect();
+    const c = (sel, i = 0) => { const r = box(sel, i); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; };
+    const bar = box('.titlebar'), ver = box('.titlebar .ver');
     const body = document.querySelector('.win-body').getBoundingClientRect();
     return { dpr: devicePixelRatio, points: [
-      { name: 'bar: empty part', drag: true, ...c('.titlebar .tb-fill') },
-      { name: 'bar: the name', drag: true, ...c('.titlebar .tb-brand [role=heading]') },
-      { name: 'bar: the logo', drag: true, ...c('.titlebar .tb-brand svg') },
-      { name: 'bar: the version', drag: true, ...c('.titlebar .ver') },
+      { name: 'bar: empty part', drag: true, act: 'right double', ...c('.titlebar .tb-fill') },
+      { name: 'bar: the name', drag: true, act: 'right', ...c('.titlebar .tb-brand [role=heading]') },
+      { name: 'bar: the logo', drag: true, act: 'right', ...c('.titlebar .tb-brand svg') },
+      { name: 'bar: just above the version', drag: true, x: ver.left + ver.width / 2, y: bar.top + Math.max(2, (ver.top - bar.top) / 2) },
+      { name: 'bar: the version (no-drag, for its tooltip)', drag: false, ...c('.titlebar .ver') },
       { name: 'button: minimize', drag: false, ...c('.titlebar .window-control', 0) },
       { name: 'button: maximize', drag: false, ...c('.titlebar .window-control', 1) },
       { name: 'button: close', drag: false, ...c('.titlebar .window-control', 2) },
@@ -94,12 +119,7 @@ try {
   })()`);
   const ptsFile = join(OUT, 'points.json');
   writeFileSync(ptsFile, J(pts, null, 2));
-  const ansFile = join(OUT, 'hittest.json');
-  const ps = spawnSync('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', join(import.meta.dirname, 'e2e-drag-region.ps1'),
-    '-TargetPid', String(app.pid), '-Points', ptsFile, '-Out', ansFile], { encoding: 'utf8', timeout: 60000 });
-  if (!existsSync(ansFile)) throw new Error('no hit test answers: ' + (ps.stderr || ps.stdout || '').slice(0, 800));
-  report.hittest = JSON.parse(readFileSync(ansFile, 'utf8'));
-  if (report.hittest.error) throw new Error('hit test: ' + report.hittest.error);
+  report.hittest = native('hittest', ptsFile, join(OUT, 'hittest.json'), app.pid);
   for (const [i, p] of report.hittest.points.entries()) {
     const want = pts.points[i].drag;
     const caption = p.answers.filter((a) => a.ht === HTCAPTION);
@@ -107,6 +127,23 @@ try {
     check(`${p.name}: ${want ? 'Windows sees a caption' : 'no caption'}`,
       want ? p.hit.ht === HTCAPTION : p.hit.ht !== HTCAPTION && caption.length === 0, all);
   }
+
+  // right-clicks, the keyboard's system menu and the double-click, as Windows would deliver them
+  report.clicks = native('clicks', ptsFile, join(OUT, 'clicks.json'), app.pid);
+  const k = report.clicks;
+  // the menu seen: the thread's flags, its owner, each menu window with its items
+  const menu = (s) => `system menu: ${s.system}; flags ${s.flags}, owner ${s.menuOwner}${s.ownerCls ? ' ' + s.ownerCls : ''}; `
+    + (s.menus.map((m) => `menu ${m.hwnd} at ${J(m.rect)} with ${m.count} items ${m.items.join(' ')}`).join('; ') || 'no menu window');
+  check('control: Alt+Space opens the system menu, so this rig can see and recognise one', k.control.opened && k.control.seen.system && k.control.dismissed,
+    `${k.control.opened ? `opened after ${k.control.ms} ms (${menu(k.control.seen)})` : 'no menu in 1.5 s'}, closed again: ${k.control.dismissed}; main window style ${k.style}`);
+  for (const r of k.right) {
+    const how = `${r.press} then ${r.release.msg} to ${r.release.cls} ${r.release.to} (window under the point ${r.hit.cls}=${r.hit.ht}, capture after the press ${r.captureAfterPress})`;
+    check(`${r.name}: a right-click opens the window's system menu`, !r.menuBefore && r.opened && r.seen.system && r.dismissed,
+      `${how}; ${r.menuBefore ? 'a menu was still open before the press; ' : ''}${r.opened ? `a menu opened ${r.openAfterPress ? 'on the press' : `${r.ms} ms after the release`} (${menu(r.seen)}), closed again: ${r.dismissed}` : 'no menu in 1.5 s'}${k.control.opened ? '' : '; the control saw no menu either'}`);
+  }
+  const d = k.double;
+  check('a double-click on the caption maximizes the window, and a second one restores it', !!d && d.maximized && d.restored,
+    d ? `${d.name}: ` + d.clicks.map((c, i) => `${i ? 'second' : 'first'} on ${c.hit.cls}=${c.hit.ht}: zoomed ${c.zoomed} after ${c.ms} ms ${J(c.rect)}`).join('; ') + `; before ${J(d.rectBefore)}` : 'no double-click point');
 } catch (e) {
   check('ran to the end', false, String(e));
 } finally {
