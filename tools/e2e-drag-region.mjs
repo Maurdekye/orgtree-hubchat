@@ -5,10 +5,14 @@
 // (GetCursorPos fails with error 1459 and a posted WM_NCLBUTTONDOWN starts no
 // move loop, measured in rig round 446), so the drag itself is the user's check.
 //   - computed style: .titlebar app-region drag, .window-controls no-drag
-//   - Windows' hit test (WM_NCHITTEST, tools/e2e-drag-region.ps1), asked of the
-//     main window and every window under it: some window answers HTCAPTION at
-//     the bar's empty part, the name, the logo and the version; none does at
-//     the three window buttons or in the window body
+//   - Windows' hit test (WM_NCHITTEST, tools/e2e-drag-region.ps1) as Windows
+//     makes it: the window under the point (from the main window down, each
+//     time the topmost child that takes the point) answers HTCAPTION at the
+//     bar's empty part, the name, the logo and the version; at the three window
+//     buttons and in the window body it doesn't, and no window that takes the
+//     point does. WebView2 makes a drag region out of child windows of its own,
+//     on the app's UI thread, that answer HTCAPTION wherever they are asked, so
+//     only windows that take the point count (rig round 447).
 // The red control (the base build) shows no caption anywhere.
 //
 //   needs: the e2e build, from the worktree:
@@ -98,9 +102,10 @@ try {
   if (report.hittest.error) throw new Error('hit test: ' + report.hittest.error);
   for (const [i, p] of report.hittest.points.entries()) {
     const want = pts.points[i].drag;
-    const caption = p.answers.filter((a) => a.ht === HTCAPTION).map((a) => a.cls);
-    const all = p.answers.map((a) => `${a.cls}=${a.ht}`).join(' ');
-    check(`${p.name}: ${want ? 'Windows sees a caption' : 'no caption'}`, want ? caption.length > 0 : caption.length === 0, all);
+    const caption = p.answers.filter((a) => a.ht === HTCAPTION);
+    const all = `under the point ${p.hit.cls} ${p.hit.hwnd}=${p.hit.ht}; taking it: ` + p.answers.map((a) => `${a.cls}=${a.ht}`).join(' ');
+    check(`${p.name}: ${want ? 'Windows sees a caption' : 'no caption'}`,
+      want ? p.hit.ht === HTCAPTION : p.hit.ht !== HTCAPTION && caption.length === 0, all);
   }
 } catch (e) {
   check('ran to the end', false, String(e));
