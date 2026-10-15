@@ -8,6 +8,13 @@
   MessageView.tsx, Conversation.tsx, MessageInfo.tsx, base.css;
   scope and measured round445 proof: docs/question-kind-tags.md]
 
+- 2026-10-15: A tray right-click's cursor is on the taskbar, outside the work
+  area. Place the right-click menu in the whole monitor when the anchor is
+  outside the work area but on the monitor (Chromium's rule, so Orgtree's
+  tray). Work-area clamping kept the menu above the taskbar, off the cursor.
+  Tray placement tests must put the cursor IN a taskbar on every edge.
+  [verified: tray_popup.rs menu_bounds; docs/tray-cursor.md]
+
 - 2026-10-15: Round443 tray flip verification: DOM21/21, controlled old-source
   red19/2; native89 passed/2 ignored; typecheck passes. Exact anchoring outside
   shadow margins and extreme-edge clamping have separate controls. CDP DSF

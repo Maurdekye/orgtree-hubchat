@@ -116,3 +116,32 @@ startup and window show. Native real125%/150% monitor DPI, second-monitor
 placement, GetCursorPos comparison and click-to-visible latency remain
 unmeasured; acceptance stays with the user on the next alpha. Local source
 integration is not an app build, installation or native acceptance result.
+
+## Taskbar cursor: monitor bounds, not the work area (2026-10-15)
+
+The user reported again on 2026-10-15 that the menu still missed the cursor.
+Their alpha.5 predates `d323311`, but `d323311` has the same vertical problem.
+A tray right-click's cursor is ON the taskbar, so it lies outside the monitor
+work area. The snapshot measured the cursor from the work-area origin, and
+both the DOM and native clamps held the menu inside the work area. With a
+bottom taskbar the root was therefore pushed up to 8px above the taskbar,
+half a taskbar or more above the cursor. The same applied horizontally or at
+the top for a side or top taskbar. Every earlier test put its cursor inside
+the work area (for example 32px above its bottom), so none could see it.
+
+Orgtree has no placement code of its own. Its right-click is
+`tray.setContextMenu(Menu)`, which Electron shows as a Chromium menu at the
+cursor. Chromium's MenuController places a menu in the display work area, or
+in the whole display when the anchor is outside the work area but on that
+display (its launcher/shelf case). This is inferred from Chromium's
+`menu_controller.cc` as remembered, not read from source here. Hubchat now
+applies the same rule in `menu_bounds` (`tray_popup.rs`) for the right-click
+menu only. The menu may then overlap the taskbar, with its flipped corner on
+the cursor. The left-click recent-chats surface keeps the work area.
+
+Native tests: `taskbar_cursor_keeps_the_menu_corner_on_the_cursor_at_every_edge_and_scale`
+covers the bottom, top, left and right taskbar at 100/125/150/175% scale with
+primary, negative and side monitor origins. It fails on the work-area rule
+(`fa1d904`) and passes on the monitor rule. A real cursor on a real taskbar
+can't be produced in Session 0, so native acceptance remains the user's check
+on the next alpha.
