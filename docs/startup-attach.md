@@ -66,4 +66,24 @@ there; the false badge came from the stale hub list above.
   across the start-up window. Every start must show the hub connected: the row,
   its version, the pill and the contact's badge. On the base, how many starts
   are stale is timing; the run lists it per delay.
-- Rig results: pending.
+- Each e2e start attaches to Hubchat's own page and logs it. The tray popup's
+  page is `about:blank` until it navigates and may not call
+  `plugin:app|identifier`; a refused page is logged and the attach retried.
+
+### Measured: rig round 441 (2026-10-15)
+
+Tip d8a7f57 and red 2b8e303 (the base plus the same tools). The binaries were
+built at f281a53 and d1161cc; nothing they are built from changed since.
+
+- Renderer proof: tip 28/28. Base 19/28, exactly the 9 expected failures; the
+  13 badge-ruling checks pass on both.
+- Desktop e2e, 11 delays × 2 rounds: tip 27/27, 0 of 22 starts stale, every
+  start on `http://tauri.localhost/` and no refused page. The page loaded
+  309–366 ms after the spawn; the hub's `/healthz` was answered 263 ms to
+  2.27 s after it, so the connection landed both before and after the load.
+- Shell tests 88 passed, 2 ignored (DPAPI), on tip and base. Clippy has no
+  warning in a changed hunk. The Android library checks.
+- Limit: the base also passed, 0 of 22 stale, so the real app does not
+  reproduce the race on the rig (inferred: the gap did not open there, or no
+  connection landed in it). The red/green proof of the fix is the renderer
+  proof; the e2e shows the real start-up is not broken by it.

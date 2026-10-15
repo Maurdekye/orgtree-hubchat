@@ -10,7 +10,9 @@
   listener before the first read. The status-unknown badge shows only when no
   enabled, connected hub lists the contact; `presence()` is shared by desktop
   and Android. [decided: user 2026-10-14 22:30Z (badge); verified: lib.rs,
-  core.rs, store.ts, peers.ts; docs/startup-attach.md; rig pending]
+  core.rs, store.ts, peers.ts; docs/startup-attach.md; rig round 441: renderer
+  proof 28/28 (base 19/28), desktop e2e 27/27; the base's race did not
+  reproduce on the rig]
 
 - 2026-10-14: A desktop build's debug port lists two pages since alpha.5: the
   main window and the tray popup (`tray-menu.html`, prepared at start).
