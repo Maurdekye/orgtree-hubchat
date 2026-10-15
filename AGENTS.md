@@ -20,8 +20,10 @@
   window drag: their window station is non-interactive (`GetCursorPos`
   error 1459, no move loop, rig round 446). `tools/e2e-drag-region.mjs`
   checks the computed style and Windows' hit test; the drag is the user's
-  check. [verified: app-desktop.css, TitleBar.tsx, wry webview2/mod.rs;
-  docs/title-bar.md; rig pending]
+  check. WebView2 covers a drag region with child windows of its own that
+  answer HTCAPTION wherever they are asked, so a hit test may ask only the
+  windows under the point (rig round 447). [verified: app-desktop.css,
+  TitleBar.tsx, wry webview2/mod.rs; docs/title-bar.md; rig pending]
 
 - 2026-10-15: Message bubbles show a kind tag only for Question, on desktop
   and Android. Other and unknown kinds have no tag or spoken kind prefix.

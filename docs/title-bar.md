@@ -68,9 +68,22 @@ measured this for alpha.4, alpha.5 and main 94696b0, in three scenarios each
 desktop test build's real WebView2:
 
 - the computed `app-region` of the bar and of its buttons;
-- Windows' hit test (`WM_NCHITTEST`, asked of the main window and every
-  window under it by `tools/e2e-drag-region.ps1`). It must answer
-  `HTCAPTION` at the bar's empty part, name, logo and version, and nowhere
-  at the buttons or in the window body.
+- Windows' hit test (`WM_NCHITTEST`, `tools/e2e-drag-region.ps1`), made the
+  way Windows makes it. The window under the point must answer `HTCAPTION`
+  at the bar's empty part, name, logo and version. At the buttons and in the
+  window body, neither it nor any other window that takes the point may.
+
+How WebView2 does it (measured, rig round 447): with `app-region: drag`,
+WebView2 covers the drag region with child windows of its own. They are
+`Chrome_WidgetWin_0` windows on the app's UI thread, above the browser's
+window. On a 1028-pixel-wide page there were two:
+
+- `[0,0,890,31]`: the bar minus the three 46-pixel buttons;
+- `[0,31,1028,32]`: the bar's one-pixel bottom border.
+
+They answer `HTCAPTION` to every `WM_NCHITTEST`, wherever the point is,
+because Windows only ever asks them about points they cover. So a hit test
+may only ask the windows that take the point. Without `app-region` there are
+no such windows.
 
 The drag itself is the user's check.
