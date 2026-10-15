@@ -37,6 +37,13 @@
 .win-body > .app { height: 100%; }
 .win-body > .boot { position: absolute; }
 .titlebar { flex: none; height: 32px; display: flex; align-items: stretch; background: var(--side); border-bottom: 1px solid var(--line-soft); user-select: none; position: relative; z-index: 100; }
+/* The bar is a native caption (user 2026-10-14 22:31Z: alpha.5's window could
+   not be dragged): WebView2's non-client regions, which wry turns on, let
+   Windows itself move, snap and maximise the window from it, with no IPC round
+   trip. The window buttons stay clickable. A runtime without that support
+   ignores app-region and keeps Tauri's data-tauri-drag-region path. */
+.titlebar { -webkit-app-region: drag; app-region: drag; }
+.titlebar .window-controls { -webkit-app-region: no-drag; app-region: no-drag; }
 .tb-brand { display: flex; align-items: center; gap: 7px; padding: 0 12px; color: var(--dim); font: 600 12px/1 var(--font-ui, inherit); letter-spacing: .02em; }
 .tb-fill { flex: 1; }
 /* the app's version beside its name (user 2026-10-09 19:00Z; was beside "Chats") */

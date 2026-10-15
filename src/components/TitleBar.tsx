@@ -1,7 +1,9 @@
 // The desktop window's own title bar (user 18:23Z: frameless, like Orgtree).
-// The bar is a native drag region: dragging moves the window with Windows
-// snap, double-click maximises/restores. Close hides to the tray (the Rust
-// side turns CloseRequested into hide), exactly like the old frame's X.
+// The bar is a native caption (app-region in app-desktop.css): Windows moves
+// the window with snap, and double-click maximises/restores. The
+// data-tauri-drag-region attributes are the path for a WebView2 without
+// non-client regions. Close hides to the tray (the Rust side turns
+// CloseRequested into hide), exactly like the old frame's X.
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Logo } from "../lib/icons";
