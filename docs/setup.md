@@ -132,3 +132,19 @@ Don't scan Orgtree's setup code with a second phone: it would make a second iden
 - **Tailscale's key expired.** Tailscale signs each device out after 180 days by default, and the phone then loses the PC without warning. In Tailscale's admin console, open **Machines**, then your PC's **…** menu, and choose **Disable key expiry**.
 - **Android's one-VPN limit.** Another VPN app (a work VPN, an ad blocker) switches Tailscale off. For Tailscale to come back by itself after a restart, turn on **Always-on VPN** for it in Android Settings › VPN.
 - **Orgtree isn't running.** The hub runs only while Orgtree runs on the PC.
+
+## 8. Desktop keyboard shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| F1 | Settings |
+| F2 | Directory |
+| F3 | New chat |
+| F4 | Hubs |
+| F5 | Refresh, like the title-bar Refresh button |
+| Alt+Left / Alt+Right | Previous / next chat-list filter: All, Agents, People; wraps at either end |
+
+These keys work while typing in the composer. They pause while a dialog is
+open. Refresh reloads the view while keeping the open chat, reading position
+and unsent draft; wait for any message still preparing its files to finish.
+Android keeps its current controls.

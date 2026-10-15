@@ -11,6 +11,17 @@
   [decided: coordinator 2026-10-15; verified: tauri.conf.json,
   windows/installer.nsi; docs/windows-installer-icon.md]
 
+- 2026-10-15: Desktop Refresh/F5 mirrors Orgtree's location.reload, retaining
+  active composer text/files, current chat/filter/search and timeline count/
+  reading offset in per-window session storage scoped by identity. Consume
+  snapshots after commit, never in a render initializer (StrictMode). Do not
+  reload during an in-memory message preparation. F1 Settings, F2 Directory,
+  F3 New chat, F4 Hubs; Alt+Left/Right wraps All/Agents/People. These shortcuts
+  work from the composer, consume defaults/repeats, and do no action under
+  modals. Keep ordinary editor keys and earlier shortcuts unchanged.
+  Refresh is its own no-drag island outside native window-control indices.
+  Contract and verification limits: docs/desktop-shortcuts.md.
+
 - 2026-10-15: The desktop title bar is a native caption: `app-region: drag`
   on `.titlebar`, `no-drag` on its window buttons and on the version label
   (so its tooltip shows; a press on the label takes Tauri's drag path).
