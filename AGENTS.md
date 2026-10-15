@@ -1,5 +1,13 @@
 # Hubchat development invariants
 
+- 2026-10-15: NSIS setup and uninstaller icons explicitly reuse
+  `icons/icon.ico`; bundle app icons do not set these automatically. Keep
+  stock header/sidebar BMP artwork. Add/Remove Programs uses the installed
+  main executable's DisplayIcon. Contained proof uses a stand-in payload,
+  real Tauri bundling, and native PE/shell extraction; no install.
+  [decided: coordinator 2026-10-15; verified: tauri.conf.json,
+  windows/installer.nsi; docs/windows-installer-icon.md]
+
 - 2026-10-15: Message bubbles show a kind tag only for Question, on desktop
   and Android. Other and unknown kinds have no tag or spoken kind prefix.
   All non-question kinds group as plain messages; Message Info omits Kind.

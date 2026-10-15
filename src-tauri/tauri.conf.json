@@ -41,6 +41,8 @@
     "createUpdaterArtifacts": true,
     "windows": {
       "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
         "template": "windows/installer.nsi",
         "installerHooks": "windows/installer-hooks.nsh"
       }
