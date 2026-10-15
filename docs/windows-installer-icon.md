@@ -39,12 +39,21 @@ config with those two settings absent using the identical helper.
 The resource helper loads PEs only as data, extracts RT_GROUP_ICON/RT_ICON
 into standalone ICOs and compares Windows shell-extracted16/32px pixels with
 native decoding of the source app ICO. Preserve red and green resource
-receipts. The rig should also open only the disposable setup Welcome page,
-capture its title-bar icon via WM_GETICON/native pixels, and close without
-advancing installation. Add/Remove Programs routing is source-checked against
+receipts. `tools/installer-icon-welcome.py --setup <contained-setup.exe>
+--output <new-own-C-output>` opens only the disposable setup Welcome page,
+captures its title-bar icon via WM_GETICON/native pixels and the window PNG,
+then closes without advancing installation. It checks the test ProductName,
+requires absent disposable install/uninstall keys, tracks descendants with
+stable process handles and lifetime checks, and records any forced cleanup.
+It sends only Close and Yes-to-quit, never Next. Run in the rig's outer Job.
+Add/Remove Programs routing is source-checked against
 the bundled app resource; do not install or create an uninstall registry key
 to exercise the control-panel entry.
 
-At author hand-in, contained bundle/resource/window checks remain pending
-rig-sol-b. No Explorer UI, installed-program entry, production installer,
+Rig-sol-b's first contained NSIS green bundle passed in6s. Its first offline
+helper stopped before pixel comparisons: ExtractIconEx returned2 with both
+valid handles, while the helper incorrectly required1. The helper correction
+requires a positive count and both handles, retaining exact pixel comparisons
+and cleanup. Resource and Welcome pixel results remain pending rig-sol-b.
+No Explorer UI, installed-program entry, production installer,
 installation or release result is claimed by the source tests.
