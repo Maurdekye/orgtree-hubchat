@@ -16,13 +16,13 @@ try{await esbuild.build({entryPoints:[path.join(repo,'tools/mobile-back-entry.ts
       // Each fresh() models a new page boot. Reset only the module's startup
       // take list, which would otherwise remember notifications from an
       // earlier case in this one-process fixture and suppress last-chat restore.
-      let text=fs.readFileSync(args.path,'utf8');
-      if(base){const r=spawnSync('git',['show',base+':src/components/Android.tsx'],{cwd:repo,encoding:'utf8',windowsHide:true});if(r.status!==0)throw Error(r.stderr);text=r.stdout;}
+      const text=fs.readFileSync(args.path,'utf8');
       if(!text.includes('const startTakes:'))throw Error('Startup take reset seam no longer matches');
       return {contents:text+'\nglobalThis.__proofResetStartupTakes = () => { startTakes.length = 0; };',loader:'ts',resolveDir:path.dirname(args.path)};
     });
     build.onLoad({filter:/[/\\]src[/\\]components[/\\]Android\.tsx$/},args=>{
-      const text=fs.readFileSync(args.path,'utf8');
+      let text=fs.readFileSync(args.path,'utf8');
+      if(base){const r=spawnSync('git',['show',base+':src/components/Android.tsx'],{cwd:repo,encoding:'utf8',windowsHide:true});if(r.status!==0)throw Error(r.stderr);text=r.stdout;}
       const initializer='useState<Scr[]>([{ s: "chats" }])';
       if(!text.includes(initializer))throw Error('Android initializer seam no longer matches');
       // v1.2.0 does NOT persist Contact info. This deliberately models the

@@ -1,5 +1,13 @@
 # Hubchat development invariants
 
+- 2026-10-15: Android secondary-screen arrows navigate to their stack parent
+  immediately; history is a best-effort mirror. Native Back asks the page
+  first, preserving menu/overlay priority; no history or a stalled route after
+  one animation frame uses the same parent. Real pop/new intent/unmount
+  cancels the fallback. This is defensive: the user's Contact-info trap was
+  not reproduced in 282 normal mounted cases at 1.2.0. Phone acceptance and
+  native compilation remain separate. See docs/android-back-defense.md.
+
 - 2026-10-15: NSIS setup and uninstaller icons explicitly reuse
   `icons/icon.ico`; bundle app icons do not set these automatically. Keep
   stock header/sidebar BMP artwork. Add/Remove Programs uses the installed
