@@ -30,6 +30,12 @@ dom.window.HTMLElement.prototype.scrollIntoView=function(){};
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 const {Android,api,mockApi,store,PlatformCtx,act,createElement:h,createRoot,StrictMode}=await import(pathToFileURL(path.join(out,'entry.mjs')));
 Object.assign(api,mockApi);
+const org='orgtree.alex.7c41d2',readChat=api.chat;
+api.chat=async(peer,...args)=>{
+  const list=await readChat(peer,...args);
+  if(peer!==org||!list.length)return list;
+  return [{...list[0],attachments:[{local_id:'proof-file',name:'contact-evidence.txt',bytes:123,state:'done',error:null,local_path:null,hub_id:null,source:null,download:null}]},...list.slice(1)];
+};
 const checks=[],check=(name,ok)=>{checks.push({name,ok:!!ok});console.log(`${ok?'PASS':'FAIL'} ${name}`)};
 const tick=()=>act(async()=>{await new Promise(r=>setTimeout(r,50))});
 let root;
@@ -76,16 +82,16 @@ try{
       await fresh();await click(button(label));check(mode+'/'+label+' opens screen',label==='Directory'?document.querySelector('.appbar .title')?.firstChild?.textContent===label:title()===label);
       await back(mode);check(mode+'/'+label+' returns to chats',!!button('New chat')&&!!button('Settings'));
     }
-    for(const edge of ['directory-person','directory-org','directory-agent','notification','chat-link','last-chat','rotation','resume','hub-status']){
-      const peer=edge==='directory-org'?'orgtree.alex.7c41d2':edge==='directory-agent'?'hubchat-ui.alex.a3f9c1':'maya.e71f2b';
-      await fresh(edge==='last-chat'?peer:null);
+    for(const edge of ['directory-person','directory-org','directory-agent','notification','chat-link','last-chat','last-chat-org','tap-org','rotation','resume','hub-status']){
+      const peer=edge==='directory-org'||edge==='last-chat-org'||edge==='tap-org'?org:edge==='directory-agent'?'hubchat-ui.alex.a3f9c1':'maya.e71f2b';
+      await fresh(edge.startsWith('last-chat')?peer:null);
       if(edge.startsWith('directory-')){
         await click(button('Directory'));
         await click([...document.querySelectorAll('.dir-row')].find(e=>e.querySelector('.t2')?.textContent===peer));
       }else if(edge==='notification'||edge==='chat-link'){
         await act(async()=>window.__hcIntent(edge==='notification'?{peer}:{link:'hubchat://chat?to='+peer}));await tick();await tick();
-      }else if(edge!=='last-chat'){
-        await click([...document.querySelectorAll('.crow')].find(e=>e.querySelector('.crow-name')?.textContent==='Maya Lin'));
+      }else if(!edge.startsWith('last-chat')){
+        await click([...document.querySelectorAll('.crow')].find(e=>e.querySelector('.crow-name')?.textContent===(edge==='tap-org'?'Orgtree':'Maya Lin')));
       }
       await tick();
       const who=document.querySelector('.appbar .who .ell')?.textContent;
@@ -98,6 +104,7 @@ try{
       });
       await click(document.querySelector('.appbar .who'));
       check(mode+'/'+edge+' opens Contact info at depth3',title()==='Contact info'&&history.state?.hc===3);
+      if(peer===org)check(mode+'/'+edge+' displays org Files section',document.body.textContent.includes('contact-evidence.txt'));
       if(edge==='rotation'){
         // JS viewport/orientation notifications only, not native Activity recreation.
         await act(async()=>{
@@ -130,14 +137,7 @@ try{
   // Explicitly synthetic cold-restored Contact info with no traversable
   // history. A new native WebView with canGoBack()==false calls __hcBack.
   // A normal browser history.back() emits no popstate when nothing is under it.
-  const originalBack=history.back.bind(history),readMessages=api.messages;
-  const org='orgtree.alex.7c41d2';
-  api.messages=async(peer,...args)=>{
-    const list=await readMessages(peer,...args);
-    if(peer!==org||!list.length)return list;
-    const first=list[0];
-    return [{...first,attachments:[{local_id:'proof-file',name:'contact-evidence.txt',bytes:123,state:'done',local_path:null,hub_id:null,source:null,download:null}]},...list.slice(1)];
-  };
+  const originalBack=history.back.bind(history);
   try{
     for(const mode of ['corner','fallback','webview-empty']){
       for(const previous of ['conversation','none']){
@@ -155,8 +155,9 @@ try{
         }finally{history.back=originalBack;}
       }
     }
-  }finally{delete globalThis.__proofInitialStack;api.messages=readMessages;}
+  }finally{delete globalThis.__proofInitialStack;}
 }finally{
+  api.chat=readChat;
   if(root)await act(async()=>root.unmount());
   fs.writeFileSync(path.join(out,'result.json'),JSON.stringify({checks,failed:checks.filter(c=>!c.ok).length},null,2));
   dom.window.close();
