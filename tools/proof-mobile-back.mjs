@@ -180,7 +180,8 @@ try{
   try{
     await act(async()=>{window.__hcBack();button('Back').click();});await tick();
     check('newer corner Back cancels pending system fallback',!!document.querySelector('.composer')&&history.state.hc===2);
-    await click(document.querySelector('.appbar .who'));
+    // Independent case: baseline may still be trapped on Contact info above.
+    await fresh();await click(document.querySelector('.crow'));await click(document.querySelector('.appbar .who'));
     await act(async()=>{window.__hcBack();root.unmount();});root=null;
     const before=JSON.stringify(history.state);await tick();
     check('unmount cancels pending system fallback',JSON.stringify(history.state)===before);
