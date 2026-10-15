@@ -22,15 +22,20 @@
   WebView2 without non-client regions. Agents cannot test a window drag:
   their window station is non-interactive (`GetCursorPos` error 1459, no
   move loop, rig round 446). `tools/e2e-drag-region.mjs` checks the computed
-  style, Windows' hit test and posted clicks (the right-click's menu,
-  double-click maximise); the drag is the user's check. WebView2 covers a
-  drag region with child windows of its own that answer HTCAPTION wherever
-  they are asked, so a hit test may ask only the windows under the point
-  (rig round 447). [verified: app-desktop.css, TitleBar.tsx, wry
-  webview2/mod.rs; docs/title-bar.md; rig rounds 447 and 450:
-  e2e-drag-region tip 11/11, base 5/11 with the 6 expected failures; the
-  version label and right-click round pending; the drag itself not
-  measured]
+  style, Windows' hit test and posted clicks (Alt+Space's menu, the
+  right-click's menu, double-click maximise). The drag and the right-click's
+  menu are the user's checks: a posted right-click opens no menu on the rig,
+  though Alt+Space does. WebView2 covers a drag region with child windows of
+  its own that answer HTCAPTION wherever they are asked, so a hit test may
+  ask only the windows under the point (rig round 447). Their top few pixels
+  answer HTTOP (the window's top resize border): keep test points below
+  them. The CSS minifier merges rules with equal declarations, so count
+  `app-region` declarations in the bundle, not rules. [verified:
+  app-desktop.css, TitleBar.tsx, wry webview2/mod.rs; docs/title-bar.md; rig
+  rounds 447 and 450: e2e-drag-region tip 11/11, base 5/11 with the 6
+  expected failures; title-bar-menu round 2026-10-15 13:48Z: tip 14/18, base
+  12/18, differing by exactly the version label's 2 checks; rerun with the
+  corrected point pending; the drag and a real right-click not measured]
 
 - 2026-10-15: Message bubbles show a kind tag only for Question, on desktop
   and Android. Other and unknown kinds have no tag or spoken kind prefix.
