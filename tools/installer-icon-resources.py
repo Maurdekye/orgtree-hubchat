@@ -66,8 +66,9 @@ for index, exe in enumerate(args.exe):
             extracted = struct.pack('<HHH', reserved, kind, count) + directory + frames
             (args.output / f'{index}-group-{group_index}.ico').write_bytes(extracted)
         large, small = W.HICON(), W.HICON()
-        assert extract(str(exe.resolve()), 0, C.byref(large), C.byref(small), 1) == 1
         try:
+            extracted_count = extract(str(exe.resolve()), 0, C.byref(large), C.byref(small), 1)
+            assert extracted_count > 0 and large and small, 'shell extraction must return both requested icon handles'
             for pixels, icon in [(16, small), (32, large)]:
                 reference = native.check(native.load_image(None, C.cast(C.c_wchar_p(str(ico)), C.c_void_p), 1, pixels, pixels, 0x10))
                 try:
@@ -76,6 +77,7 @@ for index, exe in enumerate(args.exe):
                     expected.save(args.output / f'reference-{pixels}.png')
                     same = actual.tobytes() == expected.tobytes()
                     results.append({'exe': str(exe), 'pixels': pixels, 'matches_app_icon': same,
+                                    'extracted_count': extracted_count,
                                     'actual_sha256': hashlib.sha256(actual.tobytes()).hexdigest(),
                                     'reference_sha256': hashlib.sha256(expected.tobytes()).hexdigest()})
                 finally:
