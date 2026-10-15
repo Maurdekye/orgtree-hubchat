@@ -79,9 +79,16 @@ try{
     Object.defineProperties(timeline,{scrollHeight:{configurable:true,value:2000},clientHeight:{configurable:true,value:400}});
     await act(async()=>{timeline.scrollTop=650;timeline.dispatchEvent(new window.Event('scroll',{bubbles:true}));});
     await act(async()=>{Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set.call(text,'unsaved latest draft');text.dispatchEvent(new window.Event('input',{bubbles:true}));});
-    await click(refresh());
+    // Establish the reading point at the refresh boundary, after typing and
+    // its layout effects. Earlier mount/paging work may move the test's first
+    // scroll assignment; that is not a refresh restoration failure.
+    await act(async()=>{
+      timeline.scrollTop=650;timeline.dispatchEvent(new window.Event('scroll',{bubbles:true}));
+      refresh()?.click();
+    });
     const savedRefresh=JSON.parse(sessionStorage.getItem('hubchat.refresh-state')||'{}');
     console.log('SCROLL_SAVED',JSON.stringify({before:timeline.scrollTop,values:savedRefresh}));
+    check('refresh captures the reading offset at click',Object.entries(savedRefresh).some(([key,value])=>JSON.parse(key)[0]==='timeline'&&value.top===650&&!value.pinned));
     check('refresh snapshots latest draft before debounce',sessionStorage.getItem('hubchat.refresh-state')?.includes('unsaved latest draft'));
     await act(async()=>root.unmount());root=createRoot(document.getElementById('root'));await mount();await tick();
     check('open chat and latest draft survive stale core remount',document.querySelector('.composer textarea')?.value==='unsaved latest draft');
