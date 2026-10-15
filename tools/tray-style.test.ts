@@ -30,8 +30,8 @@ test("right menu root follows cursor instead of the reserved submenu envelope", 
   }
 });
 
-test("edge clamping uses root height even with a much taller submenu", () => {
-  const view = { ...fixture(), cursorX: 1910, cursorY: 1020 };
+test("edge flipping anchors the root even with a much taller submenu", () => {
+  const view = { ...fixture(), cursorX: 1888, cursorY: 1020 };
   view.rows.find(r => r.id === 'notifications')!.children = Array.from({length: 24}, (_,i) =>
     ({id:'child-'+i,label:'Child '+i,enabled:true,checked:null,separator:false,children:[]}));
   const t = setup(view); try {
@@ -40,11 +40,26 @@ test("edge clamping uses root height even with a much taller submenu", () => {
     const rootHeight = view.rows.reduce((h,r)=>h+(r.separator?17:28),16);
     const x = Number(ready.originX)+parseFloat(root.style.left);
     const y = Number(ready.originY)+parseFloat(root.style.top);
-    assert.equal(x + 312, 1910, 'root right follows cursor instead of the work-area edge');
+    assert.equal(x + 312, 1888, 'root right follows cursor outside the shadow margin');
     assert.equal(y+rootHeight, 1020, 'root bottom follows cursor, not the submenu height');
     t.hover('notifications');
     assert.equal(t.doc.querySelectorAll('.tray-pane').length,2);
   } finally { t.close(); }
+});
+
+test("extreme edges clamp the flipped root inside the shadow margins", () => {
+  for (const submenuLeft of [false, true]) {
+    const t = setup({ ...fixture(false, submenuLeft), cursorX: 1910, cursorY: 1038 });
+    try {
+      const ready = t.calls.find(c => c.command.endsWith('ready'))!.args;
+      const root = t.doc.querySelector<HTMLElement>('.tray-pane')!;
+      const rootHeight = fixture().rows.reduce((h,r)=>h+(r.separator?17:28),16);
+      const x = Number(ready.originX)+parseFloat(root.style.left);
+      const y = Number(ready.originY)+parseFloat(root.style.top);
+      assert.equal(x + 312, 1908, 'right edge retains the 12px shadow margin');
+      assert.equal(y + rootHeight, 1032, 'bottom edge retains the 8px shadow margin');
+    } finally { t.close(); }
+  }
 });
 
 test("near-right cursor anchoring composes physical monitor origins at 125 and 150 percent", () => {
