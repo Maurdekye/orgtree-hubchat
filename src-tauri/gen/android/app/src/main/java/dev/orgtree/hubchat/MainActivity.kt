@@ -78,27 +78,23 @@ class MainActivity : TauriActivity() {
     super.onPause()
   }
 
-  // Back: the WebView's own history first, then the page, then Android's
-  // default (Hubchat goes to the background). A screen the page opened before
-  // the first tap (the chat reopened at start, a tapped notification's) has
-  // the entry under it skipped by the WebView's back (Chromium's history
-  // intervention), so canGoBack() says no and Back would leave Hubchat; the
-  // page's own history.back() still reaches it (measured on the emulator,
-  // hubchat-opus 2026-10-09 20:15Z). Tauri queues its own Back handler before
-  // the WebView exists, so this one, added after, runs first.
+  // Ask the page first: its secondary screen has an explicit parent even if
+  // WebView history cannot traverse (or skips pre-interaction entries). The
+  // page gives history one frame before using that parent. Root/unhandled:
+  // retain WebView history, then Android's default (background the app).
+  // Added after Tauri's callback so this handler runs first.
   override fun onWebViewCreate(webView: android.webkit.WebView) {
     super.onWebViewCreate(webView)
     onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
       override fun handleOnBackPressed() {
-        if (webView.canGoBack()) {
-          webView.goBack()
-          return
-        }
         webView.evaluateJavascript("!!(window.__hcBack && window.__hcBack())") { handled ->
           if (handled != "true") {
-            isEnabled = false
-            onBackPressedDispatcher.onBackPressed()
-            isEnabled = true
+            if (webView.canGoBack()) webView.goBack()
+            else {
+              isEnabled = false
+              onBackPressedDispatcher.onBackPressed()
+              isEnabled = true
+            }
           }
         }
       }

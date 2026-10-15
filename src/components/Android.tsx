@@ -38,21 +38,20 @@ type Scr =
   | { s: "chats" } | { s: "conv"; p: string } | { s: "msginfo"; id: string; p: string } | { s: "info"; p: string }
   | { s: "newchat" } | { s: "directory" } | { s: "settings" } | { s: "set"; tab: SetTab } | { s: "link"; tab?: LinkTab; input?: string };
 
-// Back with nothing left in the WebView's own history: MainActivity asks here
-// before Hubchat goes to the background. A screen opened before the first tap
-// (the chat reopened at start, a tapped notification's, a link's) has the
-// entry under it skipped by the system back button (Chromium's history
-// intervention), but this page's own history.back() still reaches it. Every
-// entry the page adds says so: a depth above 1, or a key of its own.
+// MainActivity asks the page first: its visible route can still have a parent
+// when WebView history is missing or skips an entry opened before a user tap.
+// Overlay entries own Back before the route beneath them.
 let closeOpenMenu: (() => boolean) | null = null;
 let cancelPendingNavigation: (() => void) | null = null;
+let backOpenScreen: (() => boolean) | null = null;
 (window as unknown as { __hcBack: () => boolean }).__hcBack = () => {
   cancelPendingNavigation?.();
   if (closeOpenMenu?.()) return true;
   const s = history.state as Record<string, unknown> | null;
-  if (!s || !((typeof s.hc === "number" && s.hc > 1) || Object.keys(s).some((k) => k !== "hc"))) return false;
-  history.back();
-  return true;
+  if (s && Object.keys(s).some((k) => k !== "hc")) { history.back(); return true; }
+  if (backOpenScreen?.()) return true;
+  if (s && typeof s.hc === "number" && s.hc > 1) { history.back(); return true; }
+  return false;
 };
 
 function Chats({ go }: { go: (s: Scr) => void }) {
@@ -156,6 +155,11 @@ export function Android() {
 
   const stackRef = useRef(stack);
   stackRef.current = stack;
+  const commitStack = useCallback((next: Scr[]) => {
+    stackRef.current = next;
+    depth.current = next.length;
+    setStack(next);
+  }, []);
   // the open conversation's menu (its address); a screen change closes it
   const [menu, setMenu] = useState<string | null>(null);
   const menuRef = useRef<string | null>(null);
@@ -172,11 +176,10 @@ export function Android() {
     closeMenu();
     setDir("enter");
     // opening a chat from New chat / Directory replaces those screens
-    if (s.s === "conv" && (t.s === "newchat" || t.s === "directory")) { setStack([...st.slice(0, -1), s]); return; }
+    if (s.s === "conv" && (t.s === "newchat" || t.s === "directory")) { commitStack([...st.slice(0, -1), s]); return; }
     history.pushState({ hc: st.length + 1 }, "");
-    depth.current = st.length + 1;
-    setStack([...st, s]);
-  }, [closeMenu]);
+    commitStack([...st, s]);
+  }, [closeMenu, commitStack]);
   const go = useCallback((s: Scr) => {
     const current = intent.begin();
     if (s.s === "conv") void openDm(s.p).then(() => { if (current()) navigate(s); }, (e) => { if (current()) toast(errText(e)); });
@@ -188,12 +191,51 @@ export function Android() {
       closeMenu();
       // Remove every conversation from the stack so Back cannot restore the closed DM.
       history.replaceState({ hc: 1 }, "");
-      depth.current = 1;
       setDir("back");
-      setStack([{ s: "chats" }]);
+      commitStack([{ s: "chats" }]);
     }, current);
-  }, [closeMenu, intent]);
-  const back = useCallback(() => { intent.invalidate(); if (depth.current > 1) history.back(); }, [intent]);
+  }, [closeMenu, commitStack, intent]);
+  const parent = useCallback((st: Scr[]) => {
+    if (stackRef.current !== st || (st.length === 1 && st[0].s === "chats")) return false;
+    closeMenu();
+    setDir("back");
+    commitStack(st.length > 1 ? st.slice(0, -1) : [{ s: "chats" }]);
+    return true;
+  }, [closeMenu, commitStack]);
+  // Corner arrows navigate immediately. History is only a best-effort mirror;
+  // a failed traversal must not trap a secondary screen.
+  const back = useCallback(() => {
+    intent.invalidate();
+    const st = stackRef.current;
+    const canTraverse = history.state?.hc === st.length && st.length > 1 && history.length > 1;
+    if (!parent(st)) return;
+    const next = stackRef.current;
+    const sync = () => {
+      if (stackRef.current === next && history.state?.hc !== next.length) history.replaceState({ hc: next.length }, "");
+    };
+    if (canTraverse) {
+      try { history.back(); requestAnimationFrame(sync); } catch { sync(); }
+    } else history.replaceState({ hc: next.length }, "");
+  }, [intent, parent]);
+  const systemBack = useCallback(() => {
+    const st = stackRef.current;
+    if (st.length === 1 && st[0].s === "chats") return false;
+    intent.invalidate();
+    const current = intent.capture();
+    const fallback = () => {
+      // A real pop, a newer navigation or unmount invalidates this attempt.
+      if (current() && parent(st)) history.replaceState({ hc: stackRef.current.length }, "");
+    };
+    if (history.state?.hc !== st.length || history.length <= 1) fallback();
+    else {
+      try { history.back(); requestAnimationFrame(fallback); } catch { fallback(); }
+    }
+    return true;
+  }, [intent, parent]);
+  useEffect(() => {
+    backOpenScreen = systemBack;
+    return () => { backOpenScreen = null; };
+  }, [systemBack]);
 
   useEffect(() => {
     history.replaceState({ hc: 1 }, "");
@@ -203,9 +245,8 @@ export function Android() {
       // history entry the system back button took)
       if (menuRef.current) { closeMenu(); history.pushState({ hc: depth.current }, ""); return; }
       const d = (e.state && typeof e.state.hc === "number" ? e.state.hc : 1) as number;
-      depth.current = d;
       setDir("back");
-      setStack((st) => st.slice(0, Math.max(1, d)));
+      commitStack(stackRef.current.slice(0, Math.max(1, d)));
     };
     const key = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || document.querySelector(".dialog")) return;
@@ -215,7 +256,7 @@ export function Android() {
     window.addEventListener("popstate", pop);
     window.addEventListener("keydown", key);
     return () => { window.removeEventListener("popstate", pop); window.removeEventListener("keydown", key); };
-  }, [back, closeMenu, intent]);
+  }, [back, closeMenu, commitStack, intent]);
 
   // a tapped message notification names a chat: open it (at start, and
   // whenever the app comes back to the foreground)
