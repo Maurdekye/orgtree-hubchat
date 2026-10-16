@@ -12,7 +12,7 @@ if ((Get-Content 'D:/orgtree-work/cargo-target/build.lock/owner.txt') -notmatch 
   throw 'Shared build lock is required'
 }
 $run = Join-Path $OutputRoot ('kotlin-' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmss'))
-New-Item -ItemType Directory -Force -Path $run, "$run/tmp", "$run/classes", "$run/policy" | Out-Null
+New-Item -ItemType Directory -Force -Path $run, "$run/tmp", "$run/classes", "$run/policy", "$run/api" | Out-Null
 $env:TEMP = "$run/tmp"
 $env:TMP = "$run/tmp"
 $utf8 = [Text.UTF8Encoding]::new($false)
@@ -26,9 +26,25 @@ $compilerDependencies = @($jars | Where-Object {
 $compilerClasspath = (@($compiler) + @($stdlib) + $compilerDependencies) -join ';'
 $android = Join-Path $Toolchain 'android-sdk/platforms/android-37.0/android.jar'
 if (!(Test-Path $android)) { throw 'Installed Android37 API not found' }
-$classpath = (@($android) + $stdlib + $compilerDependencies) -join ';'
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$apis = @()
+$aars = @(Get-ChildItem -LiteralPath $GradleCache -Recurse -Filter '*.aar' -File | Sort-Object FullName -Descending)
+$aars = @($aars | Where-Object {
+  $_.FullName -notmatch 'androidx.core\\core\\' -or $_.FullName -match 'androidx.core\\core\\1\.13\.1\\'
+})
+foreach ($aar in $aars) {
+  $archive = [IO.Compression.ZipFile]::OpenRead($aar.FullName)
+  try {
+    $entry = $archive.GetEntry('classes.jar')
+    if ($entry) {
+      $dest = Join-Path "$run/api" ($aar.Directory.Name + '-' + $aar.BaseName + '.jar')
+      [IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $dest, $true)
+      $apis += $dest
+    }
+  } finally { $archive.Dispose() }
+}
+$classpath = (@($android) + $apis + $jars) -join ';'
 $source = Join-Path $repo 'src-tauri/gen/android/app/src/main/java/dev/orgtree/hubchat'
-[IO.File]::WriteAllText("$run/tmp/MainActivity.kt", "package dev.orgtree.hubchat`nclass MainActivity : android.app.Activity()", $utf8)
 function Compile([string]$Destination, [string[]]$Sources) {
   $arguments = @('-classpath', $compilerClasspath, 'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler',
     '-no-stdlib', '-no-reflect', '-jvm-target', '1.8', '-classpath', $classpath, '-d', $Destination) + $Sources
@@ -36,8 +52,10 @@ function Compile([string]$Destination, [string[]]$Sources) {
   & "$Toolchain/jdk-21/bin/java.exe" "@$run/tmp/compiler.args"
   if ($LASTEXITCODE -ne 0) { throw 'Kotlin compile failed' }
 }
-Compile "$run/classes" @("$source/LauncherShortcuts.kt", "$source/LauncherShortcutPolicy.kt", "$run/tmp/MainActivity.kt")
-Write-Output 'PASS Android API compile: real shortcut publisher/policy; only Activity superclass stubbed'
+Compile "$run/classes" @("$source/LauncherShortcuts.kt", "$source/LauncherShortcutPolicy.kt", "$source/ConnectionService.kt",
+  "$source/SecretBox.kt", "$source/NotificationReply.kt", "$source/NotificationReplyPolicy.kt", "$source/DownloadOpener.kt",
+  "$repo/tools/kotlin/LauncherShortcutBridgeStubs.kt")
+Write-Output 'PASS Android API compile: real shortcut publisher/policy and ConnectionService bridge; unrelated app dependencies stubbed'
 Compile "$run/policy" @("$source/LauncherShortcutPolicy.kt", "$repo/tools/kotlin/LauncherShortcutPolicyChecks.kt")
 & "$Toolchain/jdk-21/bin/java.exe" '-cp' ("$run/policy;" + ($stdlib -join ';')) 'dev.orgtree.hubchat.LauncherShortcutPolicyChecksKt'
 if ($LASTEXITCODE -ne 0) { throw 'Launcher policy checks failed' }

@@ -43,9 +43,10 @@ cleanup stays separate.
 - `cargo test -p hubchat --lib jumplist -j 2` constructs real COM shell links
   and checks activation/title, without publishing any shell state.
 - `cargo test -p hubchat --lib start_tests -j 2` includes first-version launch.
-- `tools/verify-launcher-shortcuts.ps1` compiles the real Kotlin publisher
-  against the installed Android37 API (only MainActivity's inheritance is
-  stubbed), then executes five JVM policy checks. It requires the shared build
+- `tools/verify-launcher-shortcuts.ps1` compiles the real Kotlin publisher and
+  changed ConnectionService bridge against the installed Android37 API
+  (unrelated app dependencies are stubbed), then executes five JVM policy
+  checks. It requires the shared build
   lock and writes only inside the agent's authorized C: scope.
 
 Native taskbar presentation, launcher UI and a cold/foreground tap on a real
