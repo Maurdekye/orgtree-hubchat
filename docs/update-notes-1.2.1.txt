@@ -1,0 +1,1 @@
+Android: Back from Contact info no longer freezes the app, whether you use the on-screen button, Back key or gesture. Tap a finished download card to open the file; app files open Android's installer.
