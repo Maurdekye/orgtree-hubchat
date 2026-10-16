@@ -2174,3 +2174,6 @@ pub use store_questions::DraftAnswers;
 #[path = "store_tray.rs"]
 mod store_tray;
 pub use store_tray::TrayChat;
+#[path = "store_shortcuts.rs"]
+mod store_shortcuts;
+pub use store_shortcuts::ShortcutContact;
