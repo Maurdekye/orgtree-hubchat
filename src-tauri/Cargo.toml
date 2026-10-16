@@ -71,7 +71,7 @@ keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 [target.'cfg(windows)'.dependencies]
 winreg = "0.56"
 # message toasts whose click opens the chat (the version the notification plugin uses)
-windows = { version = "0.62", features = ["Data_Xml_Dom", "UI_Notifications", "Foundation_Collections", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_Shell_PropertiesSystem"] }
+windows = { version = "0.62", features = ["Data_Xml_Dom", "UI_Notifications", "Foundation_Collections", "Win32_Foundation", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_UI_Shell", "Win32_UI_Shell_Common", "Win32_UI_Shell_PropertiesSystem"] }
 # the identity key's backup copy, sealed with DPAPI (secrets.rs)
 windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse"] }
 

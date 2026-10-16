@@ -26,9 +26,12 @@ usable when a contact leaves the recent four. Dynamic updates can be rate limite
 by Android; failures remain retryable on the next data/lifecycle refresh.
 
 Windows view tasks work without an identity (the setup screen keeps the pending
-activation until a signed-in layout consumes it). Explicit launcher activations
-are admitted on the first start of a new version, while ordinary stale setup and
-chat arguments keep the existing first-version suppression.
+activation until a signed-in layout consumes it). The existing first-start-of-a-
+version suppression remains: the first Jump List click immediately after an
+update may only show the restored app; later clicks open their target normally.
+This prevents replaying the old process's arguments handed over by the updater.
+Coordinator ruling 2026-10-16 20:31Z: no launcher exception; restart-argument
+cleanup stays separate.
 
 ## Author checks
 

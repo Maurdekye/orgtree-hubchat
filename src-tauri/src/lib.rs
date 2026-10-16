@@ -281,12 +281,11 @@ mod desktop {
         args: I,
         first_of_version: bool,
     ) -> Option<String> {
-        let link = link_arg(args)?;
-        // Jump List tasks are explicit new activations even immediately after an
-        // upgrade. Ordinary old setup/chat arguments retain the old suppression.
-        let launcher = url::Url::parse(&link).is_ok_and(|u|
-            u.host_str() == Some("view") || (u.host_str() == Some("chat") && u.query_pairs().any(|(k,_)|k == "owner")));
-        (!first_of_version || launcher).then_some(link)
+        if first_of_version {
+            None
+        } else {
+            link_arg(args)
+        }
     }
 
     /// Windows: hubchat:// links (a profile QR's chat link, a device link)
@@ -674,9 +673,10 @@ mod start_tests {
     }
 
     #[test]
-    fn explicit_launcher_actions_work_on_the_first_start_of_a_version() {
+    fn launcher_actions_keep_first_version_suppression_then_open_normally() {
         for link in ["hubchat://view?name=settings", "hubchat://chat?to=peer.123456&owner=me.123456"] {
-            assert_eq!(start_link_arg(args(&["hubchat.exe", link]), true).as_deref(), Some(link));
+            assert_eq!(start_link_arg(args(&["hubchat.exe", link]), true), None);
+            assert_eq!(start_link_arg(args(&["hubchat.exe", link]), false).as_deref(), Some(link));
         }
     }
 
