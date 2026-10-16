@@ -2,13 +2,18 @@
 
 - 2026-10-16: Windows taskbar Jump List tasks launch this executable with
   encoded Hubchat URLs and reuse single-instance/pending-link navigation.
+  Contacts belong to custom category Recent; Settings/Directory/New chat stay
+  separate as bottom tasks. Profile pictures use content-addressed ICO files
+  under app data's jump-list-icons; missing/removed pictures use the executable
+  icon. Picture metadata and admitted-byte changes invalidate only Windows'
+  contact projection, with missing bytes fetched through the existing engine.
   Android dynamic launcher shortcuts contain only four recently messaged
   contacts, including closed DMs; both platforms exclude groups and bind
   contact activations to their originating identity. Refresh from native
   events, not renderer visibility; skip identical projections to conserve
   Android's shortcut update quota. Contract and proof limits:
   docs/launcher-shortcuts.md. [verified: store_shortcuts.rs, jumplist.rs,
-  core.rs, LauncherShortcuts.kt, chatlink.ts]
+  core.rs, jumplist_icons.rs, LauncherShortcuts.kt, chatlink.ts]
 
 - 2026-10-16: A hook must hand out the SAME empty array/object for data that
   hasn't loaded yet (a module constant), never a fresh `[]` per render.

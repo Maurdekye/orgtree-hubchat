@@ -1,11 +1,29 @@
 # Taskbar and launcher shortcuts
 
-Windows taskbar right-click lists open direct conversations, newest message in
-either direction first, followed by Settings, Directory and New chat. These are
-native Jump List tasks bound to the application's AppUserModelID. Each launches
+Windows taskbar right-click lists open direct conversations in a custom **Recent**
+category, newest message in either direction first. Settings, Directory and New
+chat remain separate fixed tasks at the bottom. Native shell links are bound to
+the application's AppUserModelID. Each launches
 the same executable with one encoded Hubchat URL; the single-instance handler
 hands that activation to the running window. This does not alter the tray menu
 or its single/double-click behavior.
+
+Contact links use the contact's admitted Hubchat profile picture. ICO files live
+under `jump-list-icons` in Hubchat's own app data and are named by the verified
+picture SHA-256. A different picture gets a different filename, ensuring Windows
+does not keep the preceding link icon. Pictures up to 512 pixels are converted
+to an ICO no larger than 256 pixels; RGB/RGBA and transparency are preserved.
+Absent, removed, unavailable or invalid pictures fall back to Hubchat's normal
+executable icon. Content-addressed ICOs stay usable if the bounded SQLite picture
+byte cache later evicts the record.
+
+Windows tracks picture metadata and byte availability separately from the
+contact-name projection. Directory/picture events refresh changed icons; hub
+events allow retrying unavailable bytes. Missing picture requests are deduplicated
+and processed sequentially by the existing engine picture API outside the UI and
+identity guard; its existing session/roster provenance admission rules still apply.
+Custom Recent entries honor destinations removed by the user in Windows.
+Android's shortcuts and quota protection are unchanged by this Windows follow-up.
 
 Android 7.1/API25 and later publishes only the last four recently messaged
 contacts (or every available contact when fewer exist). Closing a DM does not
@@ -41,7 +59,10 @@ cleanup stays separate.
   SQLite: all open DMs, Android's four across both directions/closed contacts,
   deletions/wipe, labels and group filtering.
 - `cargo test -p hubchat --lib jumplist -j 2` constructs real COM shell links
-  and checks activation/title, without publishing any shell state.
+  and checks activation/title, category/task collections, cached icon paths and
+  actual Windows ICO loading, without publishing any shell state. Cache tests
+  cover changed pixels, removal, byte eviction, invalid/stale records and 512px
+  conversion.
 - `cargo test -p hubchat --lib start_tests -j 2` includes first-version launch.
 - `tools/verify-launcher-shortcuts.ps1` compiles the real Kotlin publisher and
   changed ConnectionService bridge against the installed Android37 API
