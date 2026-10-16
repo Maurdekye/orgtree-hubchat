@@ -296,6 +296,10 @@ impl Host for ShellHost {
         if matches!(&ev, Event::Incoming { .. } | Event::Chat { .. } | Event::Directory) {
             self.platform.shortcuts_changed();
         }
+        // A contact picture whose bytes were unavailable can be fetched after
+        // its hub connects, even when names/order/metadata have not changed.
+        #[cfg(windows)]
+        if matches!(&ev, Event::Hub { .. }) { self.platform.shortcuts_changed(); }
         if let Some(app) = self.app.get() {
             let _ = app.emit("hc", &ev);
             #[cfg(windows)]
@@ -441,6 +445,11 @@ impl Core {
         *last = Some((owner, rows));
         Ok(())
     }
+
+    /// Windows adds picture state to the names/order projection; Android's
+    /// unchanged contact-only projection keeps its existing quota protection.
+    #[cfg(windows)]
+    pub fn invalidate_shortcuts(&self) { *self.shortcut_projection.lock().unwrap() = None; }
 
     pub fn notify_settings(&self) -> NotifySettings {
         NotifySettings {

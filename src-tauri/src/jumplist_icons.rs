@@ -1,0 +1,88 @@
+//! Content-addressed profile icons in Hubchat's own app data. A new picture
+//! gets a new path, so Explorer cannot retain the old icon for the same link.
+use std::{io::Cursor, path::{Path, PathBuf}};
+use hubchat_core::pictures::{PictureMeta, PictureRecord};
+
+pub fn path(data: &Path, meta: &PictureMeta) -> Option<PathBuf> {
+    if !meta.valid() { return None; }
+    meta.sha256.as_ref().map(|hash| data.join("jump-list-icons").join(format!("{hash}.ico")))
+}
+
+pub fn cached(data: &Path, meta: &PictureMeta) -> Option<PathBuf> {
+    path(data, meta).filter(|p| p.is_file())
+}
+
+/// Only the store's currently admitted record can supply the requested pixels.
+/// Missing bytes, removals and failed conversion keep the executable fallback.
+pub fn resolve(data: &Path, meta: &PictureMeta, record: Option<&PictureRecord>) -> Option<PathBuf> {
+    if let Some(path) = cached(data, meta) { return Some(path); }
+    let record = record.filter(|record| record.meta == *meta)?;
+    let bytes = record.decoded().ok()??;
+    let image = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).ok()?.thumbnail(256, 256);
+    let mut ico = Cursor::new(Vec::new());
+    image.write_to(&mut ico, image::ImageFormat::Ico).ok()?;
+    let path = path(data, meta)?;
+    std::fs::create_dir_all(path.parent()?).ok()?;
+    let temporary = path.with_extension("ico.part");
+    std::fs::write(&temporary, ico.into_inner()).ok()?;
+    if std::fs::rename(&temporary, &path).is_err() {
+        let _ = std::fs::remove_file(&temporary);
+        return cached(data, meta);
+    }
+    Some(path)
+}
+
+#[cfg(test)]
+pub fn fixture(size: u32, color: [u8; 4]) -> PictureRecord {
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, size, size);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.write_header().unwrap().write_image_data(&color.repeat((size * size) as usize)).unwrap();
+    }
+    hubchat_core::pictures::from_png(hubchat_core::pictures::next_revision(None).unwrap(), bytes, size).unwrap()
+}
+
+#[cfg(test)]
+pub fn test_dir() -> PathBuf {
+    let path = std::env::temp_dir().join(format!("hubchat-jump-icons-{}-{}", std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir_all(&path).unwrap();
+    path
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn profile_revisions_refresh_icon_paths_and_missing_pictures_use_fallback() {
+        let dir = test_dir();
+        let first = fixture(32, [255, 0, 0, 255]);
+        assert!(resolve(&dir, &first.meta, None).is_none());
+        let a = resolve(&dir, &first.meta, Some(&first)).unwrap();
+        assert_eq!(image::open(&a).unwrap().to_rgba8().get_pixel(0, 0).0, [255, 0, 0, 255]);
+        // Cached ICO remains usable after the bounded SQLite byte cache evicts it.
+        assert_eq!(resolve(&dir, &first.meta, None).unwrap(), a);
+        let second = fixture(512, [0, 0, 255, 255]);
+        let b = resolve(&dir, &second.meta, Some(&second)).unwrap();
+        assert_ne!(a, b);
+        let pixels = image::open(&b).unwrap().to_rgba8();
+        assert_eq!(pixels.dimensions(), (256, 256));
+        assert_eq!(pixels.get_pixel(0, 0).0, [0, 0, 255, 255]);
+        let removed = PictureRecord::removed(hubchat_core::pictures::next_revision(Some(&second.meta)).unwrap());
+        assert!(resolve(&dir, &removed.meta, Some(&removed)).is_none());
+    }
+    #[test]
+    fn missing_corrupt_or_stale_records_never_replace_current_profile_icon() {
+        let dir = test_dir();
+        let first = fixture(8, [1, 2, 3, 255]);
+        let second = fixture(8, [4, 5, 6, 255]);
+        assert!(resolve(&dir, &second.meta, Some(&first)).is_none());
+        let mut corrupt = second.clone(); corrupt.data = Some("not PNG".into());
+        assert!(resolve(&dir, &second.meta, Some(&corrupt)).is_none());
+        let mut bad_path = first.meta.clone(); bad_path.sha256 = Some("../../outside".into());
+        assert!(path(&dir, &bad_path).is_none());
+        assert!(std::fs::read_dir(&dir).unwrap().next().is_none());
+    }
+}

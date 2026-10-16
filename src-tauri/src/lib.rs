@@ -25,6 +25,8 @@ mod tray_recent;
 mod windows_icon;
 #[cfg(windows)]
 mod jumplist;
+#[cfg(windows)]
+mod jumplist_icons;
 
 #[cfg(desktop)]
 mod desktop {
