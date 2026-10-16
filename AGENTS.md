@@ -1,12 +1,27 @@
 # Hubchat development invariants
 
+- 2026-10-16: A hook must hand out the SAME empty array/object for data that
+  hasn't loaded yet (a module constant), never a fresh `[]` per render.
+  Memos and effects keyed on it re-run every render, and an effect that then
+  sets state loops. After a tap or a popstate React runs that loop as SyncLane
+  microtasks, so the load that would end it never arrives and the page
+  freezes. This was the Android "can't go back from Contact info" trap of
+  1.2.0: `useMessages` returned `[]` before load, and Conversation's
+  card-answers effect stored a new state each time. On the phone the renderer
+  ran at 100% CPU and every tap and native Back was lost. An effect that
+  stores async results should also keep its state when nothing changed.
+  [verified: store.ts useMessages, Conversation.tsx card answers; measured
+  on the user's phone over the WebView debugger; proof
+  tools/proof-mobile-back-loading.mjs; docs/android-back-defense.md]
+
 - 2026-10-15: Android secondary-screen arrows navigate to their stack parent
   immediately; history is a best-effort mirror. Native Back asks the page
   first, preserving menu/overlay priority; no history or a stalled route after
   one animation frame uses the same parent. Real pop/new intent/unmount
-  cancels the fallback. This is defensive: the user's Contact-info trap was
-  not reproduced in 282 normal mounted cases at 1.2.0. Phone acceptance and
-  native compilation remain separate. See docs/android-back-defense.md.
+  cancels the fallback. This was defensive and did not fix the user's
+  Contact-info trap; its real cause was a render loop (entry above, measured
+  2026-10-16). Whether to keep it is decided at review. See
+  docs/android-back-defense.md.
 
 - 2026-10-15: NSIS setup and uninstaller icons explicitly reuse
   `icons/icon.ico`; bundle app icons do not set these automatically. Keep
