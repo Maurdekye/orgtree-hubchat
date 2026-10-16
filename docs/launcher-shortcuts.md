@@ -51,3 +51,29 @@ cleanup stays separate.
 
 Native taskbar presentation, launcher UI and a cold/foreground tap on a real
 device are separate checks; source/COM/API checks do not claim those results.
+
+## Measured author results (2026-10-16)
+
+Based on Hubchat 1.2.1 `6a4c978`; production source through `f05f891`:
+
+- Initial source-wiring control: three expected failures before the publishers
+  existed. Native SQLite stub control `09edaeb`: zero passed, three expected
+  failures. A subsequent shared-target run reused that control executable and
+  was rejected; the valid implementation run used a separate Cargo target.
+- SQLite contact projection: **4/4**. Real Windows COM shell-link construction
+  and activation encoding: **2/2**, without publishing any shell state.
+  Startup behavior, including preserved first-version suppression: **7/7**.
+  These Rust sources have not changed since the successful `192a47f` checks.
+- Android `aarch64-linux-android` Rust `cargo check --offline`: **exit 0**, using
+  installed NDK 27.3 and two Cargo jobs.
+- Actual changed Kotlin publisher, policy and ConnectionService bridge compile
+  against installed Android37 APIs; unrelated app dependencies are stubbed.
+  JVM policy checks: **5/5**.
+- Actual URL parser and source-wiring Node checks: **5/5**. Full renderer
+  TypeScript check: **exit 0**, with dependencies resolved from the provisioned
+  checkout and no dependency links, copies or installs.
+
+The checks ran under the shared machine build lock and bounded kernel Jobs.
+No full APK, installer, installed-app run, shell-state publication or device
+action was performed. Full packaging and interactive taskbar/launcher smoke
+remain with the integrated Hubchat 1.2.2 alpha, as approved by the coordinator.
