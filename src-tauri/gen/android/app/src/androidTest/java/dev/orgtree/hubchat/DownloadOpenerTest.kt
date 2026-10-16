@@ -65,6 +65,23 @@ class DownloadOpenerTest {
         assertEquals("No app can open this file.", DownloadOpener.open(receiver, "content://media/external/downloads/1", "proof.pdf"))
     }
 
+    @Test fun fileOutsideProviderRootsDoesNotDispatch() {
+        val file = File.createTempFile("outside-download-proof-", ".txt", context.filesDir)
+        val receiver = object : ContextWrapper(context) {
+            override fun startActivity(intent: Intent) { fail("Unshared file must not dispatch") }
+        }
+        try {
+            file.writeText("synthetic unshared file")
+            try {
+                DownloadOpener.viewIntent(context, file.absolutePath, file.name)
+                fail("FileProvider must refuse this path outside its roots")
+            } catch (_: IllegalArgumentException) { /* expected provider refusal */ }
+            assertEquals("Could not open this file. Try again.",
+                DownloadOpener.open(receiver, file.absolutePath, file.name))
+            assertEquals("synthetic unshared file", file.readText())
+        } finally { file.delete() }
+    }
+
     @Test fun missingFileDoesNotDispatch() {
         val receiver = object : ContextWrapper(context) {
             override fun startActivity(intent: Intent) { fail("Missing file must not dispatch") }

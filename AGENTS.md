@@ -13,11 +13,12 @@
   [verified: store.ts useMessages, Conversation.tsx card answers; measured
   on the user's phone over the WebView debugger; proof
   tools/proof-mobile-back-loading.mjs; docs/android-back-defense.md]
-- 2026-10-16: Android completed downloads use a typed ACTION_VIEW with URI
+
+- 2026-10-16 (pending native/device proof): Android completed downloads use a typed ACTION_VIEW with URI
   read permission. Keep MediaStore content URIs unchanged; only filesystem
   downloads use FileProvider with runtime applicationId authority. APK MIME
   selects the system installer; errors flow to the existing card toast. No
-  duplicate export and no desktop routing change. [verified: commands.rs,
+  duplicate export and no desktop routing change. [source-verified: commands.rs,
   android.rs, DownloadOpener.kt; docs/android-download-open.md]
 
 - 2026-10-15: Android secondary-screen arrows navigate to their stack parent

@@ -26,9 +26,13 @@ shareable content URI, so FileProvider is needed only for filesystem paths.
 - Mounted renderer controls: 5 passes, covering card click, native error toast,
   and desktop open/reveal. This path was already functional before the fix, so
   these are preservation controls, not a claimed red reproduction.
-- `DownloadOpenerTest` contains six native instrumentation cases using captured
+- `DownloadOpenerTest` contains seven native instrumentation cases using captured
   intents, synthetic file contents and the runtime applicationId. It does not
-  launch a viewer or installer. It can verify real and TEST identity builds.
+  launch a viewer or installer. One case proves that a private file outside
+  the provider roots is refused and becomes a short error without dispatch.
+  The planned native execution targets TEST (`dev.orgtree.hubchat.test`);
+  runtime-derived assertions also support the real identity, but no real-app
+  execution is claimed. Neither identity has run these tests yet.
 - Native compilation, manifest inspection, and device execution are recorded
   separately in the handoff; no phone verification follows from the source or
   mounted checks alone.
