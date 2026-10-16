@@ -100,6 +100,13 @@ export const PAGE = 50;
 const earlier = (a: Message, b: Message) => a.created_at < b.created_at || (a.created_at === b.created_at && a.id < b.id);
 
 interface Paged { peer: string | null; msgs: Message[]; loaded: boolean; more: boolean; unreachable: string[] }
+// Before a chat's messages load, every render must hand out the SAME empty
+// lists: a new [] each time changes every memo and effect keyed on them, and
+// an effect that then sets state re-renders forever. After a tap or Back that
+// loop runs as microtasks, so the load that would end it never arrives and the
+// page freezes (Android Back from Contact info, hubchat-opus 2026-10-16).
+const NO_MESSAGES: Message[] = [];
+const NO_HUBS: string[] = [];
 
 /** A chat's messages: the newest `page` first, older pages on request
  *  (`loadOlder`), and on every change the core reports a re-read of the
@@ -162,13 +169,13 @@ export function useMessages(peer: string | null, page = PAGE) {
   }, [peer, page]);
   const same = data.peer === peer;
   return {
-    msgs: same ? data.msgs : [],
+    msgs: same ? data.msgs : NO_MESSAGES,
     loaded: same && data.loaded,
     reload: () => setTick((t) => t + 1),
     /** Older messages exist beyond what is shown. */
     more: same && data.more,
     /** Hubs whose older messages aren't loaded because they can't be reached. */
-    unreachable: same ? data.unreachable : [],
+    unreachable: same ? data.unreachable : NO_HUBS,
     /** A hub that couldn't be reached is back: go on loading from it. */
     retryOlder: () => setData((prev) => (prev.peer === peer && prev.unreachable.length ? { ...prev, more: true } : prev)),
     loadingOlder,

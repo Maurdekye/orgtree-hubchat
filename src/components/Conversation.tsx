@@ -120,7 +120,8 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   const [found, setFound] = useState<{ peer: string; msgs: Message[] }>({ peer: "", msgs: NONE });
   useEffect(() => {
     let live = true;
-    (asked.length ? api.cardAnswers(peer, asked) : Promise.resolve(NONE)).then((r) => { if (live) setFound({ peer, msgs: r }); }, (e) => console.warn("hc_card_answers", e));
+    // nothing new (no cards yet: NONE again) keeps the state, so no re-render
+    (asked.length ? api.cardAnswers(peer, asked) : Promise.resolve(NONE)).then((r) => { if (live) setFound((f) => (f.peer === peer && f.msgs === r ? f : { peer, msgs: r })); }, (e) => console.warn("hc_card_answers", e));
     return () => { live = false; };
   }, [peer, asked]);
   const held = found.peer === peer ? found.msgs : NONE;
