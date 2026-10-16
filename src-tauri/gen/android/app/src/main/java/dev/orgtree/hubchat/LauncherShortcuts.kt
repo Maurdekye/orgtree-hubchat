@@ -34,8 +34,11 @@ object LauncherShortcuts {
       // No pinned shortcut is requested. Disable stale pinned copies a user may
       // have dragged out, and also bind every intent to its originating identity.
       val ids = shortcuts.map { it.id }.toSet()
-      val stale = manager.pinnedShortcuts.filter { it.id.startsWith("dm:") && it.id !in ids }.map { it.id }
+      val prefix = "dm:$owner:"
+      val stale = manager.pinnedShortcuts.filter { it.id.startsWith("dm:") && (owner.isEmpty() || !it.id.startsWith(prefix)) }.map { it.id }
       if (stale.isNotEmpty()) manager.disableShortcuts(stale)
+      // Clearing another identity's names must not depend on the update quota.
+      if (owner.isEmpty() || manager.dynamicShortcuts.any { !it.id.startsWith(prefix) }) manager.removeAllDynamicShortcuts()
       if (!manager.setDynamicShortcuts(shortcuts)) return "Launcher update deferred"
       if (ids.isNotEmpty()) manager.enableShortcuts(ids.toList())
       ""

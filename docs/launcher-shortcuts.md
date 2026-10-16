@@ -20,8 +20,9 @@ attachments or drafts. Native engine events refresh it without the main window.
 Receipts do not change message ordering, and identical projections do not call
 the OS again. Directory updates refresh labels; delete-chat and identity wipe
 remove entries. Every contact URL carries its originating identity; the active
-layout rejects a different identity's shortcut. Android also disables stale
-pinned copies the user may have dragged out. Dynamic updates can be rate limited
+layout rejects a different identity's shortcut. Android also disables another
+identity's pinned copies the user may have dragged out; same-identity pins remain
+usable when a contact leaves the recent four. Dynamic updates can be rate limited
 by Android; failures remain retryable on the next data/lifecycle refresh.
 
 Windows view tasks work without an identity (the setup screen keeps the pending
