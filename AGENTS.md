@@ -21,6 +21,16 @@
   duplicate export and no desktop routing change. [source-verified: commands.rs,
   android.rs, DownloadOpener.kt; docs/android-download-open.md]
 
+- 2026-10-16 (pending integration; TEST device verified): Android completed downloads use a typed ACTION_VIEW with URI
+  read permission. Keep MediaStore content URIs unchanged; only filesystem
+  downloads use FileProvider with runtime applicationId authority. APK MIME
+  selects the system installer; errors flow to the existing card toast. No
+  duplicate export and no desktop routing change. TEST instrumentation passed
+  seven cases; completed cards opened a text viewer and Android's installer
+  permission sheet, cancelled without changing security settings. Real identity
+  was checked by merged manifest only. [source-verified: commands.rs,
+  android.rs, DownloadOpener.kt; docs/android-download-open.md]
+
 - 2026-10-15: Android secondary-screen arrows navigate to their stack parent
   immediately; history is a best-effort mirror. Native Back asks the page
   first, preserving menu/overlay priority; no history or a stalled route after

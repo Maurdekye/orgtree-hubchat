@@ -30,9 +30,39 @@ shareable content URI, so FileProvider is needed only for filesystem paths.
   intents, synthetic file contents and the runtime applicationId. It does not
   launch a viewer or installer. One case proves that a private file outside
   the provider roots is refused and becomes a short error without dispatch.
-  The planned native execution targets TEST (`dev.orgtree.hubchat.test`);
-  runtime-derived assertions also support the real identity, but no real-app
-  execution is claimed. Neither identity has run these tests yet.
-- Native compilation, manifest inspection, and device execution are recorded
-  separately in the handoff; no phone verification follows from the source or
-  mounted checks alone.
+  All seven passed on the Android TEST identity (`dev.orgtree.hubchat.test`).
+  The same-cert instrumentation runner was removed afterward; the app and its
+  data were kept. Real-identity runtime execution is not claimed.
+- Both TEST and real merged manifests were generated and inspected: each has
+  its own applicationId-based FileProvider authority, URI grant support and
+  REQUEST_INSTALL_PACKAGES. Real-app verification stops at the manifest.
+
+## Device acceptance, 2026-10-16
+
+The independently reviewed source is `a0ed83f` on `933fba2`. Device source
+`f5a87ba` applies the identical download changes on approved Back fix `bd6e178`.
+Only the local build configuration changes its TEST version to
+`1.2.1-alpha.3`; no source version bump is included.
+
+The signed ARM64 APK was checked for the TEST identity, unchanged test
+certificate, v2 signature and 16 KiB alignment. Its packaged
+`lib/arm64-v8a/libhubchat_lib.so` matches the compiled archive byte for byte.
+An initial local packaging-script mistake retained the archive's filename;
+ZIP inspection caught it before installation. The corrected package was
+installed with `-r`, preserving TEST data. The earlier artifact is retained as
+failed packaging evidence, not a deliverable.
+
+On the authorized phone, the coordinator supplied a text file and APK in the
+existing TEST chat. Both downloaded to completed Saved/Open cards. Clicking
+the text card opened Android's chooser; selecting HTML Viewer just once
+displayed the fixture text. Clicking the APK card opened Android's own
+"Permission required / Hubchat Test" install-source permission sheet.
+The sheet was cancelled. No security setting was changed and no attachment
+was installed. The coordinator accepted this sheet as the installer-handoff
+endpoint; final installation confirmation and installation remain unmeasured.
+The TEST app and fixture messages remain in place.
+
+An explicit force-stop and relaunch also confirmed that Contact info's Back
+arrow returns to a responsive conversation. No messages were sent from the
+TEST identity. Device results, screenshots and build logs are in the docket
+handoff; they are distinct from the source and mounted checks above.
