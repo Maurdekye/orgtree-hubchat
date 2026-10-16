@@ -1886,6 +1886,7 @@ dependencies = [
  "hex",
  "hubchat-core",
  "humantime",
+ "image",
  "jni 0.21.1",
  "keyring",
  "log",

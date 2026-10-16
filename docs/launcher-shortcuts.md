@@ -98,3 +98,24 @@ The checks ran under the shared machine build lock and bounded kernel Jobs.
 No full APK, installer, installed-app run, shell-state publication or device
 action was performed. Full packaging and interactive taskbar/launcher smoke
 remain with the integrated Hubchat 1.2.2 alpha, as approved by the coordinator.
+
+## Recent/profile-icon follow-up results (2026-10-16)
+
+Based on local Hubchat main `4dbaa68`, for 1.2.2-alpha.2:
+
+- The two new category/icon wiring controls failed as expected before the
+  implementation; all **7/7** lightweight parser/wiring checks then passed.
+- Focused Windows native tests passed **6/6** under the shared lock and a 4 GiB
+  kernel Job. Real `IShellLinkW::GetIconLocation` points to the generated ICO,
+  and Windows `LoadImageW` successfully loads it. Separate COM collections
+  contain the contact and exactly three ordered fixed tasks. No destination
+  list is published by these tests.
+- Real ICO pixels, 512-to-256 conversion, changed picture filenames, cached
+  icons after byte eviction, removal/default fallback, invalid/stale records,
+  and metadata/late-byte projection changes are covered.
+
+Only Windows production code and its dependency/lock entry changed. Android
+platform files and behavior are unchanged. Native taskbar category presentation
+and live profile-icon refresh remain interactive checks for the integrated
+alpha.2; the author did not publish to the shell, build an installer or run a
+device action.
