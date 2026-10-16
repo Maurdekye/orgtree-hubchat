@@ -26,7 +26,7 @@ ${clicks}
 #[derive(Default)] struct View { clicks: Clicks }
 #[derive(Default)] struct Recent { view: Mutex<View> }
 #[derive(Default)] struct App {
-    recent: Recent, popup: AtomicBool, main: AtomicBool,
+    recent: Recent, popup: AtomicBool, main: AtomicBool, invalidate_on_sync: AtomicBool,
     opened: Mutex<Option<Instant>>, workers: Mutex<Vec<std::thread::JoinHandle<()>>>,
 }
 #[derive(Clone, Default)] pub struct AppHandle(Arc<App>);
@@ -40,7 +40,9 @@ impl AppHandle {
 }
 #[derive(Clone, Copy)] pub struct PhysicalPosition<T> { x: T, y: T }
 fn point() -> PhysicalPosition<f64> { PhysicalPosition { x: 100., y: 700. } }
-fn sync(_: &AppHandle) {}
+fn sync(app: &AppHandle) {
+    if app.0.invalidate_on_sync.load(Ordering::SeqCst) { cancel_click(app); }
+}
 mod tray_popup {
     use super::*;
     pub fn is_recent(app: &AppHandle) -> bool { app.0.popup.load(Ordering::SeqCst) }
@@ -118,6 +120,17 @@ fn cancelled_popup_cannot_reappear_from_a_pending_click() {
     let app = app(); left_click(&app, point());
     cancel_click(&app); tray_popup::close(&app); app.drain();
     assert!(!tray_popup::is_recent(&app));
+}
+#[test]
+fn identity_change_during_sync_cancels_the_open() {
+    let app = app(); app.0.invalidate_on_sync.store(true, Ordering::SeqCst);
+    left_click(&app, point()); app.drain(); assert!(!tray_popup::is_recent(&app));
+}
+#[test]
+fn a_fresh_single_click_works_after_double_click_suppression_expires() {
+    let app = app(); double_click(&app);
+    app.0.recent.view.lock().unwrap().clicks.suppress = Some(Instant::now()-Duration::from_millis(1));
+    left_click(&app, point()); app.drain(); assert!(tray_popup::is_recent(&app));
 }
 `;
 const rust = path.join(output, 'tray-click.rs'), exe = path.join(output, 'tray-click.exe');

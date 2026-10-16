@@ -36,11 +36,13 @@ native menu and existing left-click show-window behavior; Android is unchanged.
 
 ## Shared window and appearance
 
-Both left and right surfaces use the same lazy `tray-menu` window, screen-work
+Both left and right surfaces use the same startup-prepared `tray-menu` window, screen-work
 area positioning, focus/outside/Escape dismissal, generation guards and narrow
-command scope. A single click waits Windows' own double-click interval before
-showing the list; a double click invalidates that pending open, suppresses its
-second release and shows main without leaving a popup. An immediate tray blur
+command scope. A single click opens on its first release, without waiting for
+Windows' double-click interval. A double click closes that list, suppresses its
+second release and shows main, matching Orgtree's immediate single-click path.
+Fresh-data sync precedes opening; a click or identity change during sync cancels
+that open. An immediate tray blur
 consumes one toggle click, as Orgtree's popup does. Right click cancels a pending
 left open before showing the context menu.
 
@@ -61,16 +63,23 @@ with a fabricated zero.
 
 ## Verification and limits
 
-Author renderer typecheck passes under the 4096 MB/150 s kernel Job. Prepared
-but **not yet run**: 7 actual-DOM recent-list cases, 9 right-menu regressions,
-3 store cases (limit/direction/unread outside six, closed chat, history-only
-unread), and native double-click/blur/typing-expiry/dot cases. The shared
-`tools/proof-tray-style.mjs` runner now includes both DOM suites and 15
-synthetic captures, including light right-menu and dark recent-list comparisons
-beside the supplied references. Rig-opus owns their shared batch execution.
+2026-10-16 click-delay fix: `tools/proof-tray-click.mjs <owned-output>` compiles
+the actual `Clicks` and click handlers from `tray_recent.rs` with Rust's test
+runner. Popup, data refresh and runtime dependencies are test doubles; the
+double-click interval is read from Windows. Run under the shared build lock
+and a kernel Job. There are no Cargo or Node package dependencies.
 
-No runtime/test/visual pass is claimed yet. No app build, installation, push,
-live identity access or actual tray interaction occurred. Headless pixels
-cannot establish Windows focus, shell icon rendering, double-click delivery,
-multi-monitor or mixed-DPI behavior. The native code and pure timing/geometry
-tests cover intent, but the OS behavior remains an explicit acceptance limit.
+Measured predecessor: 4 passed, 1 expected failure; **500.310 ms** from handler
+entry to the popup request with the OS interval at **500 ms**. Fixed handler:
+**0.001 ms**, 7 passed, no failures or skips. Tests cover immediate open,
+toggle-close, double-click main/suppressed release, blur, cancelled intent,
+identity change during refresh and a fresh click after suppression expires.
+Quick checks: JavaScript syntax and `git diff --check`.
+
+These numbers measure the handler's request to `open_recent`, not native
+click-to-visible time. This change was not built as a Tauri app or exercised
+against a shell tray icon; popup layout/paint, actual OS click delivery, focus,
+multi-monitor and mixed-DPI behavior remain checks for the next desktop build.
+No app installation, push or live identity access occurred. Orgtree comparison
+is source-based (`apps/desktop/main/index.ts`): its click handler starts the
+list immediately and its double-click handler closes it and opens main.

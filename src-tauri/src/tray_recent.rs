@@ -188,18 +188,14 @@ pub fn left_click(app: &AppHandle, position: PhysicalPosition<f64>) {
     let Some((click,toggle)) = v.clicks.left(now, crate::tray_popup::is_recent(app)) else { return; };
     drop(v);
     if toggle { crate::tray_popup::close(app); return; }
-    let wait = unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime() } as u64;
-    let handle = app.clone();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(wait)).await;
-        let handle2 = handle.clone();
-        let _ = handle.run_on_main_thread(move || {
-            let current = handle2.state::<Recent>().view.lock().unwrap().clicks.serial;
-            if click != current { return; }
-            sync(&handle2);
-            let _ = crate::tray_popup::open_recent(&handle2, position);
-        });
-    });
+    // Like Orgtree, show on the first release instead of waiting out the OS
+    // double-click interval. A later double click closes the list and shows
+    // main; its second release is still suppressed by Clicks::double.
+    sync(app);
+    // Refreshing native UI can pump messages. A newer click/identity change
+    // must still invalidate this intent before it opens a popup.
+    if r.view.lock().unwrap().clicks.serial != click { return; }
+    let _ = crate::tray_popup::open_recent(app, position);
 }
 
 pub fn double_click(app: &AppHandle) {

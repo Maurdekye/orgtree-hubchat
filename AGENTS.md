@@ -188,7 +188,10 @@
 
 - 2026-10-14: Windows tray single click toggles six recent open chats of all
   kinds, ordered by last message either direction; double click shows main.
-  Delay single-click display by Windows' double-click interval to avoid flash.
+  Open on the first release, as Orgtree does; a double click closes the list
+  and suppresses its second release. Waiting out Windows' double-click interval
+  was removed for the user's delay report (2026-10-16). Fresh-data sync still
+  precedes open, with click/identity invalidation checked after sync.
   Recent metadata, actions and late pictures bind to the current identity and
   popup generation. Native monotonic typing leases expire at one second;
   the icon dot counts unread everywhere, including closed/history-only chats.
