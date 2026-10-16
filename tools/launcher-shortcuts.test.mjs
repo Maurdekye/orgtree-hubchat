@@ -22,3 +22,17 @@ test('shortcut view links are consumed before device linking', () => {
   assert.ok(src.indexOf('shortcutView(input)') >= 0);
   assert.ok(src.indexOf('shortcutView(input)') < src.indexOf('routeLink(input, "approve")'));
 });
+test('Windows contacts are in a Recent category separate from fixed tasks', () => {
+  const src = read('src-tauri/src/jumplist.rs');
+  assert.ok(src.includes('AppendCategory'), 'custom category is submitted');
+  assert.ok(src.includes('Recent'), 'category is titled Recent');
+  assert.ok(src.includes('recent.AddObject'), 'contacts go into their own collection');
+});
+test('Windows links use cached profile ICOs and picture changes invalidate the projection', () => {
+  const src = read('src-tauri/src/jumplist.rs');
+  assert.ok(src.includes('GetIconLocation'), 'real COM icon-location check');
+  assert.ok(src.includes('invalidate_shortcuts'), 'picture changes can refresh a names-only projection');
+  const file = 'src-tauri/src/jumplist_icons.rs';
+  assert.ok(existsSync(new URL(file, root)), 'profile ICO cache exists');
+  assert.ok(read(file).includes('jump-list-icons'), 'cache is in app data');
+});
