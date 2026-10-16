@@ -1,5 +1,15 @@
 # Hubchat development invariants
 
+- 2026-10-16: Windows taskbar Jump List tasks launch this executable with
+  encoded Hubchat URLs and reuse single-instance/pending-link navigation.
+  Android dynamic launcher shortcuts contain only four recently messaged
+  contacts, including closed DMs; both platforms exclude groups and bind
+  contact activations to their originating identity. Refresh from native
+  events, not renderer visibility; skip identical projections to conserve
+  Android's shortcut update quota. Contract and proof limits:
+  docs/launcher-shortcuts.md. [verified: store_shortcuts.rs, jumplist.rs,
+  core.rs, LauncherShortcuts.kt, chatlink.ts]
+
 - 2026-10-16: A hook must hand out the SAME empty array/object for data that
   hasn't loaded yet (a module constant), never a fresh `[]` per render.
   Memos and effects keyed on it re-run every render, and an effect that then
