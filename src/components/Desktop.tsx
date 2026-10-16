@@ -15,7 +15,7 @@ import { refreshKey, refreshView, useRestoredRefreshState, useRefreshState } fro
 import { useNavigationIntent } from "../lib/navigationIntent";
 import { IDLE_STOPS_READING, useActive, useForeground, useLastChat, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { isSetupLink, startSetup, useSetupChat } from "../lib/setup";
-import { chatLinkTarget } from "../lib/chatlink";
+import { chatLinkTarget, shortcutView } from "../lib/chatlink";
 import { startUpdateChecks } from "../lib/updates";
 import { HubBanner, KeyRestoredBanner, RecoveryBanner, UpdateBanner } from "./Banners";
 import { ChatRows, EmptyChats, RailRows, useFilteredChats, type ChatFilter } from "./ChatList";
@@ -124,9 +124,16 @@ export function Desktop() {
   // Scan setup code opens the org's chat when it's done
   useSetupChat((p) => open(p));
   usePendingLink((input) => {
+    const view = shortcutView(input);
+    if (view) {
+      if (view === "settings") settings("profile");
+      else if (view === "directory") setOv({k:"directory"});
+      else setOv({k:"newchat",q:""});
+      return;
+    }
     if (isSetupLink(input)) { intent.invalidate(); startSetup(input); return; }
     // a profile QR's chat link opens that chat; your own opens your profile
-    const to = chatLinkTarget(input);
+    const to = chatLinkTarget(input, me.address);
     if (to !== null) {
       if (!to) toast("That chat link doesn't name an address.");
       else if (to === snap.state?.me?.address) settings("profile");

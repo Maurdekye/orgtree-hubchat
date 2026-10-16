@@ -302,7 +302,7 @@ export function Android() {
   usePendingLink((input) => {
     if (isSetupLink(input)) { intent.invalidate(); startSetup(input); return; }
     // a profile QR's chat link opens that chat; your own opens your profile
-    const to = chatLinkTarget(input);
+    const to = chatLinkTarget(input, me.address);
     if (to !== null) {
       if (!to) toast("That chat link doesn't name an address.");
       else if (to === getSnap().state?.me?.address) go({ s: "set", tab: "profile" });

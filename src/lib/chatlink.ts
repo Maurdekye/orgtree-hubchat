@@ -7,11 +7,26 @@ export const chatLink = (address: string) => "hubchat://chat?to=" + encodeURICom
 
 /** A chat link's address; "" for a chat link without a usable one; null
  *  when it isn't a chat link at all. */
-export function chatLinkTarget(link: string): string | null {
+export function chatLinkTarget(link: string, currentOwner?: string): string | null {
   const t = link.trim();
   if (!/^hubchat:\/\/chat(\/|\?|#|$)/i.test(t)) return null;
   let to = "";
-  try { to = new URL(t).searchParams.get("to") || ""; } catch { return ""; }
+  try {
+    const url = new URL(t);
+    const owner = url.searchParams.get("owner");
+    if (owner !== null && currentOwner !== undefined && owner !== currentOwner) return "";
+    to = url.searchParams.get("to") || "";
+  } catch { return ""; }
   to = to.trim().replace(/^@?net:/i, "");
   return /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(to) && to.includes(".") ? to : "";
+}
+
+/** Native launcher view activations never enter the device-linking flow. */
+export function shortcutView(link: string): "settings" | "directory" | "newchat" | null {
+  try {
+    const u = new URL(link);
+    if (u.protocol !== "hubchat:" || u.hostname !== "view" || (u.pathname !== "" && u.pathname !== "/")) return null;
+    const view = u.searchParams.get("name");
+    return view === "settings" || view === "directory" || view === "newchat" ? view : null;
+  } catch { return null; }
 }

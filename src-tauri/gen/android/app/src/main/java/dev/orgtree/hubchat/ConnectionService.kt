@@ -36,6 +36,9 @@ import java.util.concurrent.TimeUnit
  */
 class ConnectionService : Service() {
   companion object {
+    @JvmStatic
+    fun updateShortcuts(owner: String, json: String): String =
+      appContext?.let { LauncherShortcuts.update(it, owner, json) } ?: "Android is starting"
     // The background notification shows no badge, so the app icon counts
     // messages only (user 2026-10-09 23:08Z). Android keeps a channel's
     // settings once it exists, so the badge-free channel has a new id and

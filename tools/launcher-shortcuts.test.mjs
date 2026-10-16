@@ -14,7 +14,7 @@ test('Android publishes four dynamic contacts, no desktop menu actions', () => {
   const file = 'src-tauri/gen/android/app/src/main/java/dev/orgtree/hubchat/LauncherShortcuts.kt';
   assert.ok(existsSync(new URL(file, root)), 'Android shortcut publisher exists');
   const src = read(file);
-  for (const part of ['ShortcutManager', 'ShortcutInfo.Builder', 'setDynamicShortcuts', 'MainActivity::class.java', '"peer"', 'take(4)']) assert.ok(src.includes(part), part);
+  for (const part of ['ShortcutManager', 'ShortcutInfo.Builder', 'setDynamicShortcuts', 'MainActivity::class.java', '"owner"', 'take(4)']) assert.ok(src.includes(part), part);
   assert.ok(!/"Settings"|"Directory"|"New chat"/.test(src));
 });
 test('shortcut view links are consumed before device linking', () => {

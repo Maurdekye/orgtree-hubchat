@@ -127,6 +127,22 @@ struct AndroidPlatform {
 }
 
 impl crate::core::Platform for AndroidPlatform {
+    fn shortcuts_changed(&self) {
+        if let Ok(c) = crate::core::get() {
+            c.rt.spawn_blocking(|| {
+                if let Ok(c) = crate::core::get() {
+                    let _ = c.with_shortcuts(false, Some(4), |owner, rows| {
+                        let json = serde_json::to_string(&rows).map_err(|_|"Shortcut data unavailable")?;
+                        let j = JNI.get().ok_or("Android is starting")?;
+                        match call(&j.service, "updateShortcuts", &[owner, &json], true) {
+                            Some(error) if error.is_empty() => Ok(()),
+                            _ => Err("Shortcut update failed".to_owned()),
+                        }
+                    });
+                }
+            });
+        }
+    }
     fn app_installed(&self, package: &str) -> Option<bool> {
         let j = JNI.get()?;
         match call(&j.service, "isInstalled", &[package], true)?.as_str() {
@@ -490,7 +506,9 @@ fn start_core(mut env: JNIEnv, data_dir: JString) {
         });
     }
     let dir = PathBuf::from(dir);
-    let _ = crate::core::init(dir.clone(), Arc::new(AndroidPlatform { dir }));
+    if let Ok(c) = crate::core::init(dir.clone(), Arc::new(AndroidPlatform { dir })) {
+        c.platform().shortcuts_changed();
+    }
 }
 
 #[no_mangle]

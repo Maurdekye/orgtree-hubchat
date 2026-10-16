@@ -19,6 +19,8 @@ use crate::secrets::Loaded;
 
 /// What only the platform can do.
 pub trait Platform: Send + Sync + 'static {
+    /// Schedule a fresh native launcher projection, including while the UI is hidden.
+    fn shortcuts_changed(&self) {}
     /// Show a message notification (title = sender, body = preview).
     /// `sound`: play the notification sound (Settings › Notifications).
     fn notify(&self, title: &str, body: &str, peer: &str, sound: bool);
@@ -173,6 +175,7 @@ pub struct Core {
     /// Set while this device had an identity but its key can't be found.
     key_lost: Mutex<Option<KeyLost>>,
     identity_load: hubchat_core::notification_reply::IdentityLoader,
+    shortcut_projection: Mutex<Option<(String, Vec<hubchat_core::store::ShortcutContact>)>>,
 }
 
 /// This device had an identity, but its key is gone (user 2026-10-10: Windows
@@ -290,6 +293,9 @@ impl Host for ShellHost {
                 self.platform.clear_notification(peer);
             }
         }
+        if matches!(&ev, Event::Incoming { .. } | Event::Chat { .. } | Event::Directory) {
+            self.platform.shortcuts_changed();
+        }
         if let Some(app) = self.app.get() {
             let _ = app.emit("hc", &ev);
             #[cfg(windows)]
@@ -367,6 +373,7 @@ pub fn init(dir: PathBuf, platform: Arc<dyn Platform>) -> Result<&'static Core, 
         host,
         key_lost: Mutex::new(None),
         identity_load: Default::default(),
+        shortcut_projection: Mutex::new(None),
     };
     let core = match CORE.set(core) {
         Ok(()) => CORE.get().unwrap(),
@@ -392,6 +399,7 @@ impl Core {
     /// (a WebView created during setup pumps the UI thread, so the page can
     /// load before setup ends): tell it to read everything again.
     pub fn attach_ui(&self, app: AppHandle) {
+        self.host.platform.shortcuts_changed();
         #[cfg(windows)]
         crate::tray_recent::changed(&app);
         if self.host.app.set(app).is_ok() {
@@ -411,6 +419,27 @@ impl Core {
             return Err("Identity changed".into());
         }
         f(&owner)
+    }
+
+    /// Resolve and publish one projection while identity adoption is excluded.
+    /// Publishers do only local OS work and must never call back into the core.
+    #[cfg(any(windows, target_os = "android"))]
+    pub fn with_shortcuts(&self, open_only: bool, limit: Option<u32>, publish: impl FnOnce(&str, Vec<hubchat_core::store::ShortcutContact>) -> Result<(), String>) -> Result<(), String> {
+        let current = self.engine.lock().unwrap();
+        let owner = current.as_ref().map(|e|e.me().address()).unwrap_or_default();
+        let rows = if owner.is_empty() {
+            vec![]
+        } else {
+            if self.store.meta("identity.address").map_err(|e|e.to_string())?.as_deref() != Some(owner.as_str()) {
+                return Err("Identity changed".into());
+            }
+            self.store.shortcut_contacts(open_only, limit).map_err(|e|e.to_string())?
+        };
+        let mut last = self.shortcut_projection.lock().unwrap();
+        if last.as_ref().is_some_and(|(o,r)|o == &owner && r == &rows) { return Ok(()); }
+        publish(&owner, rows.clone())?;
+        *last = Some((owner, rows));
+        Ok(())
     }
 
     pub fn notify_settings(&self) -> NotifySettings {
@@ -641,6 +670,7 @@ impl Core {
         let Some(e) = self.engine.lock().unwrap().take() else {
             return Ok(());
         };
+        self.host.platform.shortcuts_changed();
         #[cfg(windows)]
         if let Some(app) = self.host.app.get() { crate::tray_recent::reset(app); }
         let e2 = e.clone();
@@ -719,6 +749,7 @@ impl Core {
             .platform
             .status(&format!("Connected as {}", engine.me().address()));
         *self.engine.lock().unwrap() = Some(engine);
+        self.host.platform.shortcuts_changed();
         #[cfg(windows)]
         if let Some(app) = self.host.app.get() { crate::tray_recent::changed(app); }
         self.refresh_file_lifetime();
