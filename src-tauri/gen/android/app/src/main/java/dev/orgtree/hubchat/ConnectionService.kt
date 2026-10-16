@@ -249,6 +249,13 @@ class ConnectionService : Service() {
       return p
     }
 
+    /** Completed attachment tap: return a short error for the page's toast. */
+    @JvmStatic
+    fun openDownload(source: String, name: String): String {
+      val ctx = appContext ?: return "Android is still starting. Try again."
+      return DownloadOpener.open(ctx, source, name)
+    }
+
     /**
      * Called from Rust after a download: copy the file into the shared
      * Downloads collection (Android 10+) so other apps and the Files app see

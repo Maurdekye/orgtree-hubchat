@@ -835,7 +835,6 @@ pub fn hc_open_attachment<RT: tauri::Runtime>(
     local_id: String,
     reveal: bool,
 ) -> R<()> {
-    use tauri_plugin_opener::OpenerExt;
     let m = core::get()?
         .store
         .message(&message_id)
@@ -847,13 +846,22 @@ pub fn hc_open_attachment<RT: tauri::Runtime>(
         .find(|a| a.local_id == local_id)
         .ok_or("no such attachment")?;
     let path = a.local_path.ok_or("not downloaded yet")?;
-    if path.starts_with("content://") {
-        return app.opener().open_url(path, None::<&str>).map_err(s);
+    #[cfg(target_os = "android")]
+    {
+        let _ = (app, reveal); // Android opens the file; it has no desktop reveal action.
+        crate::android::open_download(&path, &a.name)
     }
-    if reveal {
-        app.opener().reveal_item_in_dir(&path).map_err(s)
-    } else {
-        app.opener().open_path(path, None::<&str>).map_err(s)
+    #[cfg(not(target_os = "android"))]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        if path.starts_with("content://") {
+            return app.opener().open_url(path, None::<&str>).map_err(s);
+        }
+        if reveal {
+            app.opener().reveal_item_in_dir(&path).map_err(s)
+        } else {
+            app.opener().open_path(path, None::<&str>).map_err(s)
+        }
     }
 }
 

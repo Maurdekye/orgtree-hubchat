@@ -19,6 +19,17 @@ struct Jni {
 
 static JNI: OnceLock<Jni> = OnceLock::new();
 
+/// A completed download needs a typed, read-granted Android file intent,
+/// not the URL opener. Kotlin returns a short safe error for the card's toast.
+pub fn open_download(source: &str, name: &str) -> Result<(), String> {
+    let j = JNI.get().ok_or("Android is still starting. Try again.")?;
+    match call(&j.service, "openDownload", &[source, name], true) {
+        Some(error) if error.is_empty() => Ok(()),
+        Some(error) => Err(error),
+        None => Err("Could not open this file. Try again.".into()),
+    }
+}
+
 /// Call `static String|void <method>(String...)` on one of our classes.
 fn call(class: &GlobalRef, method: &str, args: &[&str], returns_string: bool) -> Option<String> {
     let jni = JNI.get()?;
