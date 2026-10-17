@@ -32,6 +32,11 @@ pub fn avatar(data: &Path, png_url: &str) -> Option<PathBuf> {
     resolve(data, &record.meta, Some(&record))
 }
 
+/// Prior behavior control: task glyphs inherited the app page's colour.
+pub fn task(data: &Path, png_url: &str, _dark: bool) -> Option<PathBuf> {
+    avatar(data, png_url)
+}
+
 /// Only the store's currently admitted record can supply the requested pixels.
 /// Missing bytes, removals and failed conversion keep the executable fallback.
 pub fn resolve(data: &Path, meta: &PictureMeta, record: Option<&PictureRecord>) -> Option<PathBuf> {
@@ -76,6 +81,25 @@ pub fn test_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn task_glyph_icos_contrast_with_light_and_dark_windows_panels() {
+        let dir = test_dir();
+        let source = fixture(128, [232, 232, 232, 192]);
+        let url = format!("data:image/png;base64,{}", source.data.as_ref().unwrap());
+        let mut paths = vec![];
+        for (dark, rgb, panel) in [(false, 48u8, 255u8), (true, 232u8, 32u8)] {
+            let path = task(&dir, &url, dark).unwrap();
+            let pixel = image::open(&path).unwrap().to_rgba8().get_pixel(64, 64).0;
+            assert_eq!(pixel, [rgb, rgb, rgb, 192], "theme colour changes without altering the glyph alpha mask");
+            let luminance = |v: u8| { let s = f64::from(v) / 255.; if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) } };
+            // Check actual alpha-composited RGB, not just the nominal ink.
+            let visible = ((f64::from(rgb) * 192. + f64::from(panel) * 63.) / 255.).round() as u8;
+            let a = luminance(visible); let b = luminance(panel);
+            assert!((a.max(b) + 0.05) / (a.min(b) + 0.05) >= 4.5);
+            paths.push(path);
+        }
+        assert_ne!(paths[0], paths[1], "theme variants have different content-addressed cache paths");
+    }
     #[test]
     fn avatar_cache_preserves_transparency_and_versions_changed_pixels() {
         let dir = test_dir();
