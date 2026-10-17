@@ -45,3 +45,9 @@ test('Windows fallback avatars reuse the client initials and styles, with native
   for (const part of ['initials(', 'kindInfo(', 'getComputedStyle(', 'toDataURL(']) assert.ok(src.includes(part), part);
   assert.ok(read('src-tauri/src/jumplist.rs').includes('admit_avatar'));
 });
+
+test('Windows fixed task icons reuse the desktop icon mapping and native cache', () => {
+  assert.ok(read('src/lib/icons.tsx').includes('TASK_ICONS'), 'shared task icon mapping');
+  assert.ok(read('src/components/Desktop.tsx').includes('TASK_ICONS.newchat'));
+  assert.ok(read('src-tauri/src/jumplist.rs').includes('admit_task_icon'));
+});
