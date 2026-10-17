@@ -297,6 +297,18 @@ mod tests {
                 assert!(!loaded.is_null(), "Windows loads the client task glyph");
                 assert_ne!(DestroyIcon(loaded), 0);
             }
+            let png = std::fs::read(fixture_dir.join("profile-bg.png")).unwrap();
+            let background = crate::jumplist_icons::avatar(&dir, &format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png))).unwrap();
+            let transparent = crate::jumplist_icons::fixture(128, [255, 0, 0, 0]);
+            let composed = crate::jumplist_icons::profile_on(&dir, &transparent.meta, Some(&transparent), &background).unwrap();
+            let pixels = image::open(&composed).unwrap().to_rgba8();
+            assert_eq!(pixels.get_pixel(0,0).0[3], 0);
+            assert_eq!(pixels.get_pixel(64,64), image::open(&background).unwrap().to_rgba8().get_pixel(64,64));
+            let item = link(r"C:\scratch\hubchat.exe", "Transparent profile", &chat_link("me.123456", "p.123456"), Some(&composed)).unwrap();
+            item.GetIconLocation(&mut path, &mut index).unwrap();
+            let loaded = LoadImageW(std::ptr::null_mut(), path.as_ptr(), IMAGE_ICON, 32, 32, LR_LOADFROMFILE);
+            assert!(!loaded.is_null(), "Windows loads the real client-background profile composite");
+            assert_ne!(DestroyIcon(loaded), 0);
         }
     }
     #[test]
