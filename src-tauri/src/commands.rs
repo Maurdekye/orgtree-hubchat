@@ -593,6 +593,14 @@ pub fn hc_chats() -> R<Vec<ChatSummary>> {
 }
 
 #[tauri::command]
+pub fn hc_shortcut_theme(dark: bool) -> R<()> {
+    #[cfg(target_os = "android")]
+    { crate::android::shortcut_theme(dark) }
+    #[cfg(not(target_os = "android"))]
+    { let _ = dark; Ok(()) }
+}
+
+#[tauri::command]
 pub fn hc_shortcut_avatar(app: tauri::AppHandle, owner: String, peer: String, name: String, kind: String, png: String) -> R<()> {
     #[cfg(windows)]
     { crate::jumplist::admit_avatar(&app, &owner, &peer, &name, &kind, &png) }

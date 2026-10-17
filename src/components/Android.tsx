@@ -9,6 +9,7 @@ import { getSnap, useSendRoute, useSnap } from "../lib/store";
 import { closeDm, openDm } from "../lib/dm";
 import { useNavigationIntent } from "../lib/navigationIntent";
 import { chatLinkTarget } from "../lib/chatlink";
+import { useLauncherTheme } from "../lib/shortcutAvatars";
 import { installKeyboardImages } from "../lib/keyboardImages";
 import { startTake, useActive, useForeground, useLastChat, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { FileBackgroundBanner, HubBanner, RecoveryBanner, UpdateBanner } from "./Banners";
@@ -140,6 +141,7 @@ function ConvMenu({ peer, onContact, onClose, onCloseDm }: { peer: string; onCon
 }
 
 export function Android() {
+  useLauncherTheme();
   const intent = useNavigationIntent();
   const [stack, setStack] = useState<Scr[]>([{ s: "chats" }]);
   const [dir, setDir] = useState<"enter" | "back" | "">("");

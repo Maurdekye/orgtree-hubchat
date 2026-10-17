@@ -5,6 +5,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
+& node "$repo/tools/generate-launcher-avatar.mjs" --fixtures "$OutputRoot/LauncherAvatarParityChecks.kt"
+if ($LASTEXITCODE -ne 0) { throw 'Native avatar recipe differs from client source' }
 if ([IO.Path]::GetFullPath($OutputRoot) -ne [IO.Path]::GetFullPath('C:/orgtree-build/hubchat-jumplist-sol')) {
   throw 'Output must remain in the assigned agent scope'
 }
@@ -52,11 +54,11 @@ function Compile([string]$Destination, [string[]]$Sources) {
   & "$Toolchain/jdk-21/bin/java.exe" "@$run/tmp/compiler.args"
   if ($LASTEXITCODE -ne 0) { throw 'Kotlin compile failed' }
 }
-Compile "$run/classes" @("$source/LauncherShortcuts.kt", "$source/LauncherShortcutPolicy.kt", "$source/ConnectionService.kt",
+Compile "$run/classes" @("$source/LauncherShortcuts.kt", "$source/LauncherShortcutPolicy.kt", "$source/LauncherAvatar.kt", "$source/LauncherAvatarRecipe.kt", "$source/ConnectionService.kt",
   "$source/SecretBox.kt", "$source/NotificationReply.kt", "$source/NotificationReplyPolicy.kt", "$source/DownloadOpener.kt",
   "$repo/tools/kotlin/LauncherShortcutBridgeStubs.kt")
 Write-Output 'PASS Android API compile: real shortcut publisher/policy and ConnectionService bridge; unrelated app dependencies stubbed'
-Compile "$run/policy" @("$source/LauncherShortcutPolicy.kt", "$repo/tools/kotlin/LauncherShortcutPolicyChecks.kt")
+Compile "$run/policy" @("$source/LauncherShortcutPolicy.kt", "$source/LauncherAvatarRecipe.kt", "$repo/tools/kotlin/LauncherShortcutPolicyChecks.kt", "$OutputRoot/LauncherAvatarParityChecks.kt")
 & "$Toolchain/jdk-21/bin/java.exe" '-cp' ("$run/policy;" + ($stdlib -join ';')) 'dev.orgtree.hubchat.LauncherShortcutPolicyChecksKt'
 if ($LASTEXITCODE -ne 0) { throw 'Launcher policy checks failed' }
 Write-Output "Evidence build folder: $run"

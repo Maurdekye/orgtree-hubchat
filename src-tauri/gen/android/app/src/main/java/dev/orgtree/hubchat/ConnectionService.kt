@@ -39,6 +39,15 @@ class ConnectionService : Service() {
     @JvmStatic
     fun updateShortcuts(owner: String, json: String): String =
       appContext?.let { LauncherShortcuts.update(it, owner, json) } ?: "Android is starting"
+    @JvmStatic
+    fun updateShortcutTheme(value: String): String {
+      val ctx = appContext ?: return "Android is starting"
+      val prefs = ctx.getSharedPreferences("launcher-avatar", Context.MODE_PRIVATE)
+      val dark = value == "dark"
+      if (prefs.getBoolean("dark", true) == dark) return ""
+      prefs.edit().putBoolean("dark", dark).apply()
+      return "changed"
+    }
     // The background notification shows no badge, so the app icon counts
     // messages only (user 2026-10-09 23:08Z). Android keeps a channel's
     // settings once it exists, so the badge-free channel has a new id and

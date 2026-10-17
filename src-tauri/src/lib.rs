@@ -1,5 +1,7 @@
 #[cfg(target_os = "android")]
 mod android;
+#[cfg(any(target_os = "android", test))]
+mod android_shortcuts;
 mod appupdate;
 #[cfg(windows)]
 mod autostart;
@@ -472,6 +474,7 @@ pub fn run() {
             commands::hc_resolve,
             commands::hc_chats,
             commands::hc_shortcut_avatar,
+            commands::hc_shortcut_theme,
             commands::hc_shortcut_task_icon,
             commands::hc_chat,
             commands::hc_load_older,

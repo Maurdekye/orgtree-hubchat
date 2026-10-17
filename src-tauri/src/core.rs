@@ -175,6 +175,7 @@ pub struct Core {
     /// Set while this device had an identity but its key can't be found.
     key_lost: Mutex<Option<KeyLost>>,
     identity_load: hubchat_core::notification_reply::IdentityLoader,
+    #[cfg(windows)]
     shortcut_projection: Mutex<Option<(String, Vec<hubchat_core::store::ShortcutContact>)>>,
 }
 
@@ -298,8 +299,8 @@ impl Host for ShellHost {
         }
         // A contact picture whose bytes were unavailable can be fetched after
         // its hub connects, even when names/order/metadata have not changed.
-        #[cfg(windows)]
-        if matches!(&ev, Event::Hub { .. }) { self.platform.shortcuts_changed(); }
+          #[cfg(any(windows, target_os = "android"))]
+          if matches!(&ev, Event::Hub { .. }) { self.platform.shortcuts_changed(); }
         if let Some(app) = self.app.get() {
             let _ = app.emit("hc", &ev);
             #[cfg(windows)]
@@ -377,6 +378,7 @@ pub fn init(dir: PathBuf, platform: Arc<dyn Platform>) -> Result<&'static Core, 
         host,
         key_lost: Mutex::new(None),
         identity_load: Default::default(),
+        #[cfg(windows)]
         shortcut_projection: Mutex::new(None),
     };
     let core = match CORE.set(core) {
@@ -428,7 +430,7 @@ impl Core {
     /// Resolve and publish one projection while identity adoption is excluded.
     /// Publishers do only local OS work and must never call back into the core.
     #[cfg(any(windows, target_os = "android"))]
-    pub fn with_shortcuts(&self, open_only: bool, limit: Option<u32>, publish: impl FnOnce(&str, Vec<hubchat_core::store::ShortcutContact>) -> Result<(), String>) -> Result<(), String> {
+    pub fn with_shortcut_data<T>(&self, open_only: bool, limit: Option<u32>, publish: impl FnOnce(&str, Vec<hubchat_core::store::ShortcutContact>) -> Result<T, String>) -> Result<T, String> {
         let current = self.engine.lock().unwrap();
         let owner = current.as_ref().map(|e|e.me().address()).unwrap_or_default();
         let rows = if owner.is_empty() {
@@ -439,15 +441,22 @@ impl Core {
             }
             self.store.shortcut_contacts(open_only, limit).map_err(|e|e.to_string())?
         };
-        let mut last = self.shortcut_projection.lock().unwrap();
-        if last.as_ref().is_some_and(|(o,r)|o == &owner && r == &rows) { return Ok(()); }
-        publish(&owner, rows.clone())?;
-        *last = Some((owner, rows));
-        Ok(())
+        publish(&owner, rows)
     }
 
-    /// Windows adds picture state to the names/order projection; Android's
-    /// unchanged contact-only projection keeps its existing quota protection.
+    #[cfg(windows)]
+    pub fn with_shortcuts(&self, open_only: bool, limit: Option<u32>, publish: impl FnOnce(&str, Vec<hubchat_core::store::ShortcutContact>) -> Result<(), String>) -> Result<(), String> {
+        self.with_shortcut_data(open_only, limit, |owner, rows| {
+            let mut last = self.shortcut_projection.lock().unwrap();
+            if last.as_ref().is_some_and(|(o,r)|o == owner && r == &rows) { return Ok(()); }
+            publish(owner, rows.clone())?;
+            *last = Some((owner.to_owned(), rows));
+            Ok(())
+        })
+    }
+
+    /// Windows adds picture state to the names/order projection; Android
+    /// coalesces its complete avatar payload in android_shortcuts instead.
     #[cfg(windows)]
     pub fn invalidate_shortcuts(&self) { *self.shortcut_projection.lock().unwrap() = None; }
 

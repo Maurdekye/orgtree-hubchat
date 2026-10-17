@@ -19,6 +19,23 @@ struct Jni {
 
 static JNI: OnceLock<Jni> = OnceLock::new();
 
+pub(crate) fn update_shortcuts(owner: &str, json: &str) -> Result<(), String> {
+    let j = JNI.get().ok_or("Android is starting")?;
+    match call(&j.service, "updateShortcuts", &[owner, json], true) {
+        Some(error) if error.is_empty() => Ok(()),
+        _ => Err("Shortcut update failed".into()),
+    }
+}
+
+pub fn shortcut_theme(dark: bool) -> Result<(), String> {
+    let j = JNI.get().ok_or("Android is starting")?;
+    match call(&j.service, "updateShortcutTheme", &[if dark { "dark" } else { "light" }], true).as_deref() {
+        Some("changed") => { crate::android_shortcuts::theme_changed(); Ok(()) }
+        Some("") => Ok(()),
+        _ => Err("Shortcut theme unavailable".into()),
+    }
+}
+
 /// A completed download needs a typed, read-granted Android file intent,
 /// not the URL opener. Kotlin returns a short safe error for the card's toast.
 pub fn open_download(source: &str, name: &str) -> Result<(), String> {
@@ -128,20 +145,7 @@ struct AndroidPlatform {
 
 impl crate::core::Platform for AndroidPlatform {
     fn shortcuts_changed(&self) {
-        if let Ok(c) = crate::core::get() {
-            c.rt.spawn_blocking(|| {
-                if let Ok(c) = crate::core::get() {
-                    let _ = c.with_shortcuts(false, Some(4), |owner, rows| {
-                        let json = serde_json::to_string(&rows).map_err(|_|"Shortcut data unavailable")?;
-                        let j = JNI.get().ok_or("Android is starting")?;
-                        match call(&j.service, "updateShortcuts", &[owner, &json], true) {
-                            Some(error) if error.is_empty() => Ok(()),
-                            _ => Err("Shortcut update failed".to_owned()),
-                        }
-                    });
-                }
-            });
-        }
+        crate::android_shortcuts::changed();
     }
     fn app_installed(&self, package: &str) -> Option<bool> {
         let j = JNI.get()?;

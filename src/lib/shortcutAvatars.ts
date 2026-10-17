@@ -5,6 +5,18 @@ import { avatarPng } from "./avatarFallback";
 import { displayName, kindOf } from "./peers";
 import { useSnap } from "./store";
 
+/** Persist the app's effective palette for Android's headless launcher renderer. */
+export function useLauncherTheme() {
+  useEffect(() => {
+    if (!isTauri || !navigator.userAgent.includes("Android")) return;
+    const sync = () => { void invoke("hc_shortcut_theme", { dark: document.documentElement.dataset.theme !== "light" }).catch(() => {}); };
+    sync();
+    const observer = new MutationObserver(sync);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    return () => observer.disconnect();
+  }, []);
+}
+
 /** Windows only. Native admission checks the owner and current open-DM name;
  * old renderer completions cannot populate another identity's menu. */
 export function useShortcutAvatars() {

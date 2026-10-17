@@ -14,6 +14,13 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// Fail rather than ship stale client initials/colours in headless shortcuts.
+val verifyLauncherAvatar by tasks.registering(Exec::class) {
+    workingDir(file("../../../.."))
+    commandLine("node", "tools/generate-launcher-avatar.mjs")
+}
+tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(verifyLauncherAvatar) }
+
 // Release signing: a keystore.properties OUTSIDE the repo, named by the
 // HUBCHAT_ANDROID_KEYSTORE environment variable (storeFile, storePassword,
 // keyAlias, keyPassword). Without it a release build is unsigned.

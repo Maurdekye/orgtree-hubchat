@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
-import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Build
 import org.json.JSONArray
@@ -17,7 +16,8 @@ object LauncherShortcuts {
       val data = JSONArray(json)
       val rows = launcherContacts((0 until data.length()).map { i ->
         val row = data.getJSONObject(i)
-        LauncherContact(row.getString("peer"), row.getString("name"))
+        LauncherContact(row.getString("peer"), row.getString("name"), row.optString("kind", "person"),
+          if (row.isNull("png")) null else row.optString("png").takeIf { it.isNotBlank() })
       }).take(4)
       val shortcuts = if (owner.isEmpty()) emptyList() else rows.mapIndexed { rank, row ->
         val uri = Uri.Builder().scheme("hubchat").authority("chat")
@@ -26,7 +26,7 @@ object LauncherShortcuts {
           .setShortLabel(row.name)
           .setLongLabel(row.name)
           .setRank(rank)
-          .setIcon(Icon.createWithResource(context, context.applicationInfo.icon))
+          .setIcon(LauncherAvatar.icon(context, row))
           .setIntent(Intent(context, MainActivity::class.java).setAction(Intent.ACTION_VIEW)
             .setData(uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
           .build()
