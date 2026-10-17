@@ -4,8 +4,12 @@
   encoded Hubchat URLs and reuse single-instance/pending-link navigation.
   Contacts belong to custom category Recent; Settings/Directory/New chat stay
   separate as bottom tasks. Profile pictures use content-addressed ICO files
-  under app data's jump-list-icons; missing/removed pictures use the executable
-  icon. Picture metadata and admitted-byte changes invalidate only Windows'
+  under app data's jump-list-icons. Missing/removed pictures use the client's
+  initials avatar: shared avatarFallback/initials/kindInfo plus computed .av
+  styles, rasterized by the desktop WebView (including when hidden). Native
+  admission checks owner, open-DM name and kind; content-addressed ICOs keep
+  name/theme changes fresh. Before the WebView supplies it, the executable is
+  the temporary fallback. Picture metadata and admitted-byte changes invalidate only Windows'
   contact projection, with missing bytes fetched through the existing engine.
   Android dynamic launcher shortcuts contain only four recently messaged
   contacts, including closed DMs; both platforms exclude groups and bind

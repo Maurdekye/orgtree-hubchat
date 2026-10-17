@@ -119,3 +119,21 @@ platform files and behavior are unchanged. Native taskbar category presentation
 and live profile-icon refresh remain interactive checks for the integrated
 alpha.2; the author did not publish to the shell, build an installer or run a
 device action.
+
+## Client fallback-avatar follow-up (2026-10-17)
+
+For 1.2.2-alpha.3, a Windows Recent contact without a profile picture uses the
+same fallback as the client list. `Avatar` and the Windows rasterizer call
+`avatarFallback`, which reuses the existing `initials` and `kindInfo` functions.
+The rasterizer reads computed `.av.s44` styles, including theme colors, font
+and corner radius; it supplies a transparent 128px PNG to the native cache.
+No Rust copy of the client initials or color-selection logic exists.
+
+Native admission checks the active identity, current open-DM name/kind, and
+absence of a current profile picture. It bounds PNG dimensions and bytes,
+normalizes the pixels and converts through the existing content-addressed ICO
+cache. Profile pictures retain priority. Names/kinds and theme changes trigger
+new rasterization; changed pixels produce new paths for Windows icon caching.
+The native publisher remains event-driven; fallback generation requires the
+desktop WebView's first data/style load (also while hidden). Until then the
+executable icon remains a temporary fallback. Android shortcuts are unchanged.

@@ -7,8 +7,13 @@ contacts. Each contact entry opens that conversation.
 For alpha.2, Windows contacts are grouped under **Recent**, with Settings,
 Directory and New chat separately at the bottom. Contact icons use their Hubchat
 profile pictures, cached as ICO files in app data and refreshed on picture
-changes; contacts without pictures use the default Hubchat icon. Android is
+changes. For alpha.3, contacts without pictures use their client-list initials
+avatar, including the same kind color, shape and initials. Android is
 unchanged.
+
+Fallback avatars render from the desktop client's existing functions and CSS;
+name, kind and theme changes refresh their ICO. During startup the executable
+icon is temporary until the WebView supplies its first avatar, even when hidden.
 
 Known startup limit: the first Jump List click immediately after an update may
 only show the restored app. Later clicks work normally. Existing first-version
