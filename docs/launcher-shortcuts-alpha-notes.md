@@ -14,6 +14,8 @@ unchanged.
 Fallback avatars render from the desktop client's existing functions and CSS;
 name, kind and theme changes refresh their ICO. During startup the executable
 icon is temporary until the WebView supplies its first avatar, even when hidden.
+Settings, Directory and New chat also use their in-app glyphs, rendered from
+the shared SVG icon source to the same ICO cache.
 
 Known startup limit: the first Jump List click immediately after an update may
 only show the restored app. Later clicks work normally. Existing first-version

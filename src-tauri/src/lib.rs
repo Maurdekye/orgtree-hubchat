@@ -472,6 +472,7 @@ pub fn run() {
             commands::hc_resolve,
             commands::hc_chats,
             commands::hc_shortcut_avatar,
+            commands::hc_shortcut_task_icon,
             commands::hc_chat,
             commands::hc_load_older,
             commands::hc_message,

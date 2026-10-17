@@ -601,6 +601,14 @@ pub fn hc_shortcut_avatar(app: tauri::AppHandle, owner: String, peer: String, na
 }
 
 #[tauri::command]
+pub fn hc_shortcut_task_icon(app: tauri::AppHandle, view: String, png: String) -> R<()> {
+    #[cfg(windows)]
+    { crate::jumplist::admit_task_icon(&app, &view, &png) }
+    #[cfg(not(windows))]
+    { let _ = (app, view, png); Ok(()) }
+}
+
+#[tauri::command]
 pub fn hc_close_dm(peer: String) -> R<()> {
     engine()?.close_dm(&peer).map_err(s)
 }

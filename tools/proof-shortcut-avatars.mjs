@@ -46,6 +46,25 @@ app.whenReady().then(async()=>{
    }
    document.documentElement.className='theme-dark';mountAvatar('person','Example Person');await frames();
    const png=avatarPng('person','Example Person');
+   const taskPngs={};
+   for(const theme of ['dark','light'])for(const view of ['settings','directory','newchat']){
+    document.documentElement.className='theme-'+theme;mountTaskIcon(view);await frames();
+    const svg=document.querySelector('svg'),style=getComputedStyle(document.querySelector('button'));
+    check(theme+'/'+view+' uses exact client path',!!svg.querySelector('path').getAttribute('d'));
+    const png=taskIconPng(view);taskPngs[view]=png;
+    const image=new Image();image.src=png;await image.decode();
+    const c=document.createElement('canvas');c.width=c.height=128;const ctx=c.getContext('2d');ctx.drawImage(image,0,0);
+    const pixels=ctx.getImageData(0,0,128,128).data;
+    let visible=0;for(let i=3;i<pixels.length;i+=4)if(pixels[i]>0)visible++;
+    check(theme+'/'+view+' visible transparent icon',visible>100&&visible<128*128);
+    // Independent SVG rasterization of the mounted client icon must match PNG.
+    const copy=svg.cloneNode(true);copy.setAttribute('xmlns','http://www.w3.org/2000/svg');copy.setAttribute('width','128');copy.setAttribute('height','128');copy.setAttribute('fill',style.color);
+    const expected=new Image();expected.src='data:image/svg+xml;base64,'+btoa(new XMLSerializer().serializeToString(copy));await expected.decode();
+    ctx.clearRect(0,0,128,128);ctx.drawImage(expected,0,0);
+    const reference=ctx.getImageData(0,0,128,128).data;
+    check(theme+'/'+view+' matches client SVG pixels',pixels.every((v,i)=>Math.abs(v-reference[i])<=2));
+   }
+   check('fixed tasks have three distinct glyphs',new Set(Object.values(taskPngs)).size===3);
    for(const platform of ['desktop','android']){
     await mountDirectory(platform);await frames();
     const rows=Array.from(document.querySelectorAll('.dir-row'));
@@ -65,9 +84,10 @@ app.whenReady().then(async()=>{
     row.dispatchEvent(new PointerEvent('pointerup',{pointerType:'touch',bubbles:true}));row.click();
     check(platform+' touch click opens same chat once',opened.length===beforeTap+1&&opened[opened.length-1]===address);
    }
-   return {checks,png};
+   return {checks,png,taskPngs};
   })()`);
   fs.writeFileSync(path.join(__dirname,'avatar.png'),Buffer.from(result.png.split(',')[1],'base64'));
+  for(const [view,png]of Object.entries(result.taskPngs))fs.writeFileSync(path.join(__dirname,view+'.png'),Buffer.from(png.split(',')[1],'base64'));
   fs.writeFileSync(path.join(__dirname,'result.json'),JSON.stringify(result.checks,null,2));
   console.log('Avatar renderer checks '+result.checks.length+'/'+result.checks.length);
   win.destroy();app.exit(0);

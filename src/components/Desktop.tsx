@@ -3,7 +3,7 @@
 // frame is native.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message } from "../api";
-import { Icon, Logo } from "../lib/icons";
+import { Icon, Logo, TASK_ICONS } from "../lib/icons";
 import { copyText, errText } from "../lib/native";
 import { routeLink, startJoin, useJoin } from "../lib/join";
 import { toast } from "../lib/toast";
@@ -231,9 +231,9 @@ export function Desktop() {
             <button className="icon-btn" onClick={() => setRail(false)} title="Show the chat list" aria-label="Show the chat list"><Icon name="chevron_right" /></button>
             <span className="rail-me" onClick={() => settings("profile")} title="Profile"><Avatar kind="me" name={me.name || me.id} size={32} /></span>
             <TransfersChip onOpen={open} />
-            <button className="icon-btn" onClick={() => setOv({ k: "newchat", q: "" })} title="New chat (F3, Ctrl+N)" aria-label="New chat"><Icon name="new_chat" /></button>
-            <button className="icon-btn" onClick={() => setOv({ k: "directory" })} title="Directory (F2): everyone on your hubs" aria-label="Directory"><Icon name="contacts" /></button>
-            <button className="icon-btn" onClick={() => settings("profile")} title="Settings (F1, Ctrl+,)" aria-label="Settings"><Icon name="settings" /></button>
+            <button className="icon-btn" onClick={() => setOv({ k: "newchat", q: "" })} title="New chat (F3, Ctrl+N)" aria-label="New chat"><Icon name={TASK_ICONS.newchat} /></button>
+            <button className="icon-btn" onClick={() => setOv({ k: "directory" })} title="Directory (F2): everyone on your hubs" aria-label="Directory"><Icon name={TASK_ICONS.directory} /></button>
+            <button className="icon-btn" onClick={() => settings("profile")} title="Settings (F1, Ctrl+,)" aria-label="Settings"><Icon name={TASK_ICONS.settings} /></button>
             <button className={"hubpill rail-hub " + hs.state} onClick={() => settings("hubs")} title={hs.text + " · Hub connections (F4)"} aria-label="Hub connections"><span className="dot" /></button>
             <div className="clist scroll rail-list">
               <RailRows rows={rows} selected={chat} onOpen={open} onInfo={contactInfo} onCloseDm={close} />
@@ -245,9 +245,9 @@ export function Desktop() {
             <span onClick={() => settings("profile")} title="Profile" style={{ cursor: "pointer", marginRight: 8 }}><Avatar kind="me" name={me.name || me.id} size={32} /></span>
             <div className="side-title">Chats</div>
             <TransfersChip onOpen={open} />
-            <button className="icon-btn" onClick={() => setOv({ k: "newchat", q: "" })} title="New chat (F3, Ctrl+N)" aria-label="New chat"><Icon name="new_chat" /></button>
-            <button className="icon-btn" onClick={() => setOv({ k: "directory" })} title="Directory (F2): everyone on your hubs" aria-label="Directory"><Icon name="contacts" /></button>
-            <button className="icon-btn" onClick={() => settings("profile")} title="Settings (F1, Ctrl+,)" aria-label="Settings"><Icon name="settings" /></button>
+            <button className="icon-btn" onClick={() => setOv({ k: "newchat", q: "" })} title="New chat (F3, Ctrl+N)" aria-label="New chat"><Icon name={TASK_ICONS.newchat} /></button>
+            <button className="icon-btn" onClick={() => setOv({ k: "directory" })} title="Directory (F2): everyone on your hubs" aria-label="Directory"><Icon name={TASK_ICONS.directory} /></button>
+            <button className="icon-btn" onClick={() => settings("profile")} title="Settings (F1, Ctrl+,)" aria-label="Settings"><Icon name={TASK_ICONS.settings} /></button>
           </div>
           <div className="side-sub">
             <button className={"hubpill " + hs.state} onClick={() => settings("hubs")} title="Hub connections (F4)">
@@ -276,7 +276,7 @@ export function Desktop() {
               <Logo size={64} />
               <h2>{total ? "Pick a chat" : "Welcome to Hubchat"}</h2>
               <p>{total ? "Or start a new one with an address." : "Start a chat by typing an address: an Orgtree org, an agent session (such as Claude Code or Codex), or a person."}</p>
-              <button className="btn primary lg" onClick={() => setOv({ k: "newchat", q: "" })}><Icon name="new_chat" />New chat</button>
+              <button className="btn primary lg" onClick={() => setOv({ k: "newchat", q: "" })}><Icon name={TASK_ICONS.newchat} />New chat</button>
               <div className="help" style={{ marginTop: 18 }}>Your address: <span className="code-pill"><Addr a={me.address} net /></span> <button className="link" onClick={() => copyText("@net:" + me.address, "Address copied")}>Copy</button></div>
             </div>
           </section>

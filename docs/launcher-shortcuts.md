@@ -137,3 +137,10 @@ new rasterization; changed pixels produce new paths for Windows icon caching.
 The native publisher remains event-driven; fallback generation requires the
 desktop WebView's first data/style load (also while hidden). Until then the
 executable icon remains a temporary fallback. Android shortcuts are unchanged.
+
+Settings, Directory and New chat use `TASK_ICONS`, shared with the desktop
+buttons, and the existing `iconHTML` SVG paths. Canvas rasterizes those paths
+directly in the current client icon color. Native code accepts only these three
+fixed view names and uses the same bounded PNG-to-ICO cache; their activation
+URLs and order stay unchanged. These can render before sign-in, once desktop
+styles load. No hand-drawn copy of the icons is introduced.

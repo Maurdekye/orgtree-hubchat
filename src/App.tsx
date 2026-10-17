@@ -12,6 +12,7 @@ import { onContextMenu } from "./lib/ctxmenu";
 import { Logo } from "./lib/icons";
 import { useSetup } from "./lib/setup";
 import { startStore, useSnap } from "./lib/store";
+import { useShortcutTaskIcons } from "./lib/shortcutIcons";
 
 export default function App() {
   const snap = useSnap();
@@ -23,6 +24,7 @@ export default function App() {
   // desktop: Hubchat's own right-click menus, never the WebView's (user
   // 2026-10-09 05:54Z); Android keeps its own long-press behaviour
   const desktop = snap.state?.platform === "desktop";
+  useShortcutTaskIcons(desktop);
   useEffect(() => {
     if (!desktop) return;
     document.addEventListener("contextmenu", onContextMenu);

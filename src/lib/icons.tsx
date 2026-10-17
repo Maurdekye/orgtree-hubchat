@@ -85,6 +85,8 @@ const P = {
 
 export type IconName = keyof typeof P;
 
+export const TASK_ICONS = { settings: "settings", directory: "contacts", newchat: "new_chat" } as const;
+
 export function Icon({ name, className, style, title }: { name: IconName; className?: string; style?: CSSProperties; title?: string }) {
   return (
     <svg className={"ic" + (className ? " " + className : "")} viewBox="0 0 24 24" aria-hidden={title ? undefined : true} style={style}>

@@ -9,7 +9,8 @@
   styles, rasterized by the desktop WebView (including when hidden). Native
   admission checks owner, open-DM name and kind; content-addressed ICOs keep
   name/theme changes fresh. Before the WebView supplies it, the executable is
-  the temporary fallback. Picture metadata and admitted-byte changes invalidate only Windows'
+  the temporary fallback. Fixed task icons use the shared TASK_ICONS/iconHTML
+  source, rasterized to the same ICO cache. Picture metadata and admitted-byte changes invalidate only Windows'
   contact projection, with missing bytes fetched through the existing engine.
   Android dynamic launcher shortcuts contain only four recently messaged
   contacts, including closed DMs; both platforms exclude groups and bind

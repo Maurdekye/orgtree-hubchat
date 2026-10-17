@@ -21,6 +21,20 @@ struct PictureStamp { peer: String, meta: Option<PictureMeta>, available: bool, 
 #[derive(Default)]
 struct Avatars(Mutex<HashMap<(String, String), (String, String, PathBuf)>>);
 
+#[derive(Default)]
+struct TaskIcons(Mutex<HashMap<String, PathBuf>>);
+
+pub fn admit_task_icon(app: &AppHandle, view: &str, png: &str) -> std::result::Result<(), String> {
+    if !matches!(view, "settings" | "directory" | "newchat") { return Err("Invalid shortcut task".into()); }
+    let c = crate::core::get()?;
+    let path = crate::jumplist_icons::avatar(&c.dir, png).ok_or("Invalid shortcut icon")?;
+    if app.try_state::<TaskIcons>().is_none() { app.manage(TaskIcons::default()); }
+    let state = app.state::<TaskIcons>();
+    let different = state.0.lock().unwrap().insert(view.to_owned(), path.clone()).as_ref() != Some(&path);
+    if different { c.invalidate_shortcuts(); changed(app); }
+    Ok(())
+}
+
 fn contact_kind(directory: &[hubchat_core::store::Contact], peer: &str) -> String {
     directory.iter().find(|c|c.address == peer).map(|c|c.kind.clone()).filter(|k|k == "org" || k == "chat").unwrap_or_else(||"person".into())
 }
@@ -89,14 +103,14 @@ impl Drop for Apartment { fn drop(&mut self) { unsafe { CoUninitialize(); } } }
 struct ContactLink { name: String, target: String, icon: Option<std::path::PathBuf> }
 
 /// Both collections are testable without creating or publishing a destination list.
-unsafe fn collections(exe: &str, contacts: &[ContactLink]) -> Result<(IObjectArray, IObjectArray)> {
+unsafe fn collections(exe: &str, contacts: &[ContactLink], icons: &HashMap<String, PathBuf>) -> Result<(IObjectArray, IObjectArray)> {
     let recent: IObjectCollection = unsafe { CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)? };
     let tasks: IObjectCollection = unsafe { CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)? };
     for contact in contacts {
         unsafe { recent.AddObject(&link(exe, &contact.name, &contact.target, contact.icon.as_deref())?)?; }
     }
     for (name, view) in [("Settings", "settings"), ("Directory", "directory"), ("New chat", "newchat")] {
-        unsafe { tasks.AddObject(&link(exe, name, &format!("hubchat://view?name={view}"), None)?)?; }
+        unsafe { tasks.AddObject(&link(exe, name, &format!("hubchat://view?name={view}"), icons.get(view).map(|p|p.as_path()))?)?; }
     }
     Ok((recent.cast()?, tasks.cast()?))
 }
@@ -137,7 +151,8 @@ fn publish(app: &AppHandle, owner: &str, rows: &[ShortcutContact], pictures: &[P
                 }).or_else(||stamp.and_then(|p|p.avatar.clone()));
                 contacts.push(ContactLink { name: row.name.clone(), target, icon });
             }
-            let (recent, tasks) = collections(&exe, &contacts)?;
+            let icons = app.try_state::<TaskIcons>().map(|state|state.0.lock().unwrap().clone()).unwrap_or_default();
+            let (recent, tasks) = collections(&exe, &contacts, &icons)?;
             if recent.GetCount()? > 0 { list.AppendCategory(&HSTRING::from("Recent"), &recent)?; }
             list.AddUserTasks(&tasks)?;
             list.CommitList()
@@ -256,6 +271,24 @@ mod tests {
             let loaded = LoadImageW(std::ptr::null_mut(), path.as_ptr(), IMAGE_ICON, 32, 32, LR_LOADFROMFILE);
             assert!(!loaded.is_null(), "Windows loads the client-rendered initials ICO");
             assert_ne!(DestroyIcon(loaded), 0);
+            let fixture_dir = PathBuf::from(std::env::var("HUBCHAT_AVATAR_PNG").unwrap()).parent().unwrap().to_path_buf();
+            let mut icons = HashMap::new();
+            for view in ["settings", "directory", "newchat"] {
+                let png = std::fs::read(fixture_dir.join(format!("{view}.png"))).unwrap();
+                let url = format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png));
+                icons.insert(view.to_owned(), crate::jumplist_icons::avatar(&dir, &url).unwrap());
+            }
+            let (_, tasks) = collections(r"C:\scratch\hubchat.exe", &[], &icons).unwrap();
+            for (i, view) in ["settings", "directory", "newchat"].iter().enumerate() {
+                let item = tasks.GetAt::<IShellLinkW>(i as u32).unwrap();
+                item.GetIconLocation(&mut path, &mut index).unwrap();
+                let actual = PathBuf::from(String::from_utf16_lossy(&path[..path.iter().position(|&c|c==0).unwrap()]));
+                assert_eq!(actual, icons[*view]);
+                assert_eq!(arguments(&item).unwrap(), format!("\"hubchat://view?name={view}\""));
+                let loaded = LoadImageW(std::ptr::null_mut(), path.as_ptr(), IMAGE_ICON, 32, 32, LR_LOADFROMFILE);
+                assert!(!loaded.is_null(), "Windows loads the client task glyph");
+                assert_ne!(DestroyIcon(loaded), 0);
+            }
         }
     }
     #[test]
@@ -293,7 +326,7 @@ mod tests {
             let icon = crate::jumplist_icons::resolve(&dir, &record.meta, Some(&record)).unwrap();
             let exe = r"C:\scratch\hubchat.exe";
             let contacts = [ContactLink { name: "A contact".into(), target: chat_link("me.123456", "peer.123456"), icon: Some(icon.clone()) }];
-            let (recent, tasks) = collections(exe, &contacts).unwrap();
+            let (recent, tasks) = collections(exe, &contacts, &HashMap::new()).unwrap();
             assert_eq!(recent.GetCount().unwrap(), 1);
             assert_eq!(tasks.GetCount().unwrap(), 3);
             let item = recent.GetAt::<IShellLinkW>(0).unwrap();
