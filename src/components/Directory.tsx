@@ -52,7 +52,6 @@ export function Directory({ onOpen, onClose, onBack, onInfo }: { onOpen: (addres
   const row = (c: Contact) => {
     const p = presence(c, hubs);
     const via = c.hubs.map((u) => { const h = hubN(u); return h ? <span key={u} className={"chip hubchip" + (h.state === "connected" ? "" : " stale")} title={"Reachable through " + h.name + (h.state === "connected" ? "" : " (not connected)")}>{h.name}</span> : null; });
-    const started = snap.chats.some((x) => x.peer === c.address);
     return (
       <div className="nc-row dir-row" key={c.address} onClick={() => onOpen(c.address)} role="button" tabIndex={0} onKeyDown={pressKeys(() => onOpen(c.address))}
         onContextMenu={platform === "desktop" ? (e) => chatMenu(e, c.address, onOpen, onInfo, "Message") : undefined}>
@@ -66,7 +65,6 @@ export function Directory({ onOpen, onClose, onBack, onInfo }: { onOpen: (addres
         {platform === "desktop" ? <div className="via">{via}</div> : null}
         <div className="r">
           <span>{p.state === "online" ? "online" : p.short}</span>
-          {platform === "desktop" ? <span className="btn">{started ? "Open chat" : "Message"}</span> : null}
         </div>
       </div>
     );

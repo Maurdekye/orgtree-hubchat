@@ -45,7 +45,27 @@ app.whenReady().then(async()=>{
     check('visible initials',letters);
    }
    document.documentElement.className='theme-dark';mountAvatar('person','Example Person');await frames();
-   return {checks,png:avatarPng('person','Example Person')};
+   const png=avatarPng('person','Example Person');
+   for(const platform of ['desktop','android']){
+    await mountDirectory(platform);await frames();
+    const rows=Array.from(document.querySelectorAll('.dir-row'));
+    check(platform+' populated directory fixture',rows.length>0);
+    check(platform+' no redundant row control',rows.every(r=>!r.querySelector('.btn,button')));
+    const row=rows[0];row.focus();
+    check(platform+' row keeps keyboard focus',document.activeElement===row&&row.tabIndex===0&&row.getAttribute('role')==='button');
+    const before=opened.length;row.click();
+    check(platform+' click opens one chat',opened.length===before+1);
+    const address=opened[opened.length-1];
+    for(const key of ['Enter',' ']){
+     const before=opened.length;const event=new KeyboardEvent('keydown',{key,bubbles:true,cancelable:true});row.dispatchEvent(event);
+     check(platform+' '+key+' opens same chat once',opened.length===before+1&&opened[opened.length-1]===address&&event.defaultPrevented);
+    }
+    const beforeTap=opened.length;
+    row.dispatchEvent(new PointerEvent('pointerdown',{pointerType:'touch',bubbles:true}));
+    row.dispatchEvent(new PointerEvent('pointerup',{pointerType:'touch',bubbles:true}));row.click();
+    check(platform+' touch click opens same chat once',opened.length===beforeTap+1&&opened[opened.length-1]===address);
+   }
+   return {checks,png};
   })()`);
   fs.writeFileSync(path.join(__dirname,'avatar.png'),Buffer.from(result.png.split(',')[1],'base64'));
   fs.writeFileSync(path.join(__dirname,'result.json'),JSON.stringify(result.checks,null,2));
