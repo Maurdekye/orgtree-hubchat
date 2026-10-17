@@ -25,7 +25,7 @@ leading/trailing spaces, is preserved. The in-chat composer draft is untouched.
 On core attachment, saved handoffs recover the crash gap before work enqueue.
 
 The worker attaches the existing core without requiring an activity. It admits
-the reply into the ordinary durable outbox before its bounded45-second message
+the reply into the ordinary durable outbox before its bounded45-second per-reply
 check, including offline, UnifiedPush and periodic-check modes. Android31+ work
 is expedited with ordinary-work fallback; earlier Android uses ordinary work.
 Android scheduling and background restrictions can delay execution.
@@ -202,3 +202,47 @@ in `kotlin-20261017T011301`. No Rust behavior changed. No APK/installer build,
 device install, live notification operation or device test was performed.
 Actual Android shade dismissal, WorkManager timing and the summary UI remain
 integrated-device smoke checks; pure policy/API checks do not prove those.
+
+## Per-reply completion correction (2026-10-17)
+
+The user reported that alpha.4 still left a notification after its reply
+arrived. The earlier fix was insufficient: it reused the general background
+check, whose success requires **every hub and the whole outbox** to settle.
+That predicate can be false after this reply is sent; it can also be true for
+a permanently failed reply because failed messages are absent from the queue.
+The previous policy tests supplied a mocked global success and missed both.
+
+The worker now calls `checkNotificationReply(owner, id, peer, 45)`. Rust polls
+only that admitted reply's stored metadata. Identity, consumed UUID, outgoing
+direction and peer are checked under the short store lock; no body is loaded.
+Sent/fetched/delivered/read completes; queued/sending stays retryable; failed
+retains the notice with a check-chat error. A consumed UUID whose message was
+intentionally deleted completes without recreating it. Database/startup errors
+retry. Identity changes reject; stopped engines retry. No read state changes.
+The existing token-checked cancellation and final group-summary cleanup remain.
+
+Measured source checks at production `1b2874a` (base `7e41cb0`):
+
+- Global-predicate control `4aa877d`: **1 passed / 2 expected failures**, raw
+  cargo exit **101**. A sent reply with unrelated queued work incorrectly
+  returned retry; a failed reply with an empty global queue returned sent.
+- Corrected core notification-reply tests **22/22**, including those schedules,
+  all sent states, owner/peer/engine changes, read-state preservation, deletion,
+  admission/replay and cold-start checks.
+- Kotlin API compilation succeeds against installed Android37/AndroidX APIs;
+  pure JVM policy checks **15/15**. Wiring controls **2/2**. Android
+  `aarch64-linux-android` Rust source check passes with installed NDK27/API24.
+- Shared build lock, two Cargo jobs, 2/4 GiB kernel Jobs; no APK build/install.
+  Evidence is `reply-state-red.log`, `reply-state-red-result.json`,
+  `reply-state-{core,kotlin,android}.log`, and `reply-state-results.json` under
+  `C:/orgtree-build/hubchat-jumplist-sol`.
+
+Read-only phone control on installed alpha.4: the user's 09:07:21 UTC inline
+reply returned WorkManager SUCCESS about 0.3 seconds later; the user reported
+dismissal and the subsequent sanitized notification dump had no Hubchat records.
+This proves the prior cancellation path can work; it does not establish the
+cause of the earlier failure or verify the new code on a phone. Package/version,
+Hubchat-only worker diagnostics and notification metadata were read with the
+coordinator's explicit device window. Message bodies/titles, other apps and
+raw notification dumps were not retained; no phone writes or server stop.
+Foreground-case reproduction and new-build device smoke remain outstanding.

@@ -1,11 +1,14 @@
 # Hubchat development invariants
 
-- 2026-10-17: A completed Android inline-reply check dismisses only its original
+- 2026-10-17: Android inline replies check their own admitted UUID/owner/peer
+  send state, never all hubs or the whole outbox (the alpha.4 global predicate
+  could retain a sent reply or dismiss a failed one). Success/deletion dismisses only its original
   peer/token notification under the shared post/status/clear monitor, reusing
   per-chat and final-summary cleanup. Retry/rejection keep visible status;
   a newer same-chat notification survives. Queue feedback precedes worker
   enqueue so a fast worker's result cannot be overwritten. No read-state change.
-  [verified: NotificationReply.kt, NotificationReplyPolicy.kt;
+  [verified: engine_notification_reply.rs, store_notification_reply.rs,
+  android.rs, NotificationReply.kt, NotificationReplyPolicy.kt;
   details: docs/notification-inline-replies.md]
 
 - 2026-10-17: Directory rows open their contact by click/tap and focused
