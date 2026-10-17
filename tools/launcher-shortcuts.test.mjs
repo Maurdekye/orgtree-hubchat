@@ -51,3 +51,10 @@ test('Windows fixed task icons reuse the desktop icon mapping and native cache',
   assert.ok(read('src/components/Desktop.tsx').includes('TASK_ICONS.newchat'));
   assert.ok(read('src-tauri/src/jumplist.rs').includes('admit_task_icon'));
 });
+
+test('Android contacts use their own circular avatar, never the app resource icon', () => {
+  const src = read('src-tauri/gen/android/app/src/main/java/dev/orgtree/hubchat/LauncherShortcuts.kt');
+  assert.ok(src.includes('LauncherAvatar.icon('));
+  assert.ok(!src.includes('Icon.createWithResource'));
+  assert.ok(existsSync(new URL('src-tauri/src/android_shortcuts.rs', root)));
+});
