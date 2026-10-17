@@ -12,7 +12,8 @@ Contact links use the contact's admitted Hubchat profile picture. ICO files live
 under `jump-list-icons` in Hubchat's own app data and are named by the verified
 picture SHA-256. A different picture gets a different filename, ensuring Windows
 does not keep the preceding link icon. Pictures up to 512 pixels are converted
-to an ICO no larger than 256 pixels; RGB/RGBA and transparency are preserved.
+to an ICO no larger than256 pixels. Transparent profile pixels are composited
+over the current client avatar background as described below.
 Absent, removed, unavailable or invalid pictures fall back to Hubchat's normal
 executable icon. Content-addressed ICOs stay usable if the bounded SQLite picture
 byte cache later evicts the record.
@@ -231,3 +232,35 @@ Evidence under `C:/orgtree-build/hubchat-jumplist-sol`: `avatars/result.json`,
 No app installer/APK build, install, shell publication, push or device action
 was performed. Live Explorer presentation remains an integrated alpha smoke
 check; the existing first-click-after-update limit remains unchanged.
+
+### Dark task tiles and transparent profile backgrounds (2026-10-17)
+
+The revised user direction keeps each task's primary glyph on the Hubchat app
+icon's dark tile. `taskIconPng` reads the background rect's fill and radius from
+`design/hubchat-icon.svg`, and uses the existing SVG task path with padding.
+The dark-tile primary ink comes from the app's dark icon-button palette.
+The tile does not follow Windows light/dark mode. The earlier darker-glyph /
+Windows-theme proposal was superseded before implementation.
+
+Profile pictures with alpha now have the same avatar background the app shows.
+On Windows, the shared avatar renderer can emit a background-only PNG: the
+actual `.av` kind tint over the contact-list `--side` surface, with the same
+rounded silhouette. Native admission still checks owner, open-DM name, kind
+and current picture metadata. `profile_on` composites the verified profile on
+that background; picture and background hashes form the ICO cache key. A
+changed picture, kind or client theme cannot reuse the old composite. Cached
+composites remain usable after profile-byte eviction. Until the WebView supplies
+the current background at startup, the executable icon is temporary.
+
+Android's generated recipe similarly composites the actual kind background
+token over the app `--bg` surface for the saved effective theme. Canvas paints
+that opaque circle before the profile bitmap. Fully transparent pixels show
+that background; partial alpha blends with it. Outer silhouette transparency
+remains for the rounded outline. Initials-only avatars retain their styling.
+No message/read/navigation behavior changes.
+
+Revised controls are measured: the old Windows compositor returned transparent
+pixels instead of the background (native0pass/1expectedfail, raw101), and the
+old task renderer failed the actual app-icon-tile pixel check (raw1). Corrected
+native, actual-renderer, Kotlin and target compilation checks are pending.
+There are no installed-shell or device writes in author verification.

@@ -22,6 +22,11 @@ icon is temporary until the WebView supplies its first avatar, even when hidden.
 Settings, Directory and New chat also use their in-app glyphs, rendered from
 the shared SVG icon source to the same ICO cache.
 
+The next alpha puts Settings, Directory and New chat glyphs on the app icon's
+dark rounded tile. Transparent contact profile pictures now show the avatar
+background from the app on Windows and Android, rather than the shell panel
+showing through the picture. The outer avatar silhouette stays rounded.
+
 Known startup limit: the first Jump List click immediately after an update may
 only show the restored app. Later clicks work normally. Existing first-version
 argument suppression is preserved to avoid replaying an old setup/chat URL;

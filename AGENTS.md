@@ -31,7 +31,12 @@
   admission checks owner, open-DM name and kind; content-addressed ICOs keep
   name/theme changes fresh. Before the WebView supplies it, the executable is
   the temporary fallback. Fixed task icons use the shared TASK_ICONS/iconHTML
-  source, rasterized to the same ICO cache. Picture metadata and admitted-byte
+  source on the dark rounded background taken from design/hubchat-icon.svg;
+  keep their primary dark-palette ink, independent of Windows theme. Profile
+  alpha is composited over the app's actual avatar tint/surface: renderer CSS
+  supplies Windows backgrounds; generated client tokens supply Android's.
+  Windows composite cache keys include picture and background hashes; preserve
+  the client's outer rounded mask. Picture metadata and admitted-byte
   changes refresh both platforms through the existing engine picture API.
   Android dynamic launcher shortcuts contain only four recently messaged
   contacts, including closed DMs, with circular profile/initials bitmaps.
