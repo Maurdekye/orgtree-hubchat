@@ -261,6 +261,27 @@ No message/read/navigation behavior changes.
 
 Revised controls are measured: the old Windows compositor returned transparent
 pixels instead of the background (native0pass/1expectedfail, raw101), and the
-old task renderer failed the actual app-icon-tile pixel check (raw1). Corrected
-native, actual-renderer, Kotlin and target compilation checks are pending.
-There are no installed-shell or device writes in author verification.
+old task renderer failed the actual app-icon-tile pixel check (raw1).
+
+Corrected author verification at `be9eba6` (base `d6447c6`):
+
+- Actual hidden Electron renderer:179/179, including exact task SVG pixels on
+  the app-icon tile in both client themes, profile background tint/surface and
+  rounded silhouette, prior initials and Directory activation regressions.
+- Native Jump List/ICO tests:9/9. Transparent/partial/opaque profile pixels,
+  byte eviction and background cache versioning pass. The separately invoked
+  real-rendered PNG/COM integration test passes1/1: Windows loads the tiled
+  task icons and a transparent profile composited on the actual client PNG.
+- Actual Kotlin/Android API compilation passes; launcher policy10/10 and
+  client/native Unicode initials parity19/19 pass. Androidaarch64 Rust check
+  passes with NDK27/API24, and full renderer TypeScript check passes.
+- Shared lock, two Cargo jobs and2/4GiB kernel Jobs. Every green child raw
+  exit0; logs/results under `C:/orgtree-build/hubchat-jumplist-sol`:
+  `shell-red-{native,renderer}.log`, `shell-red-results.json`,
+  `shell-green-results.json`, `shell-green-{renderer,native,com,kotlin,android,tsc}.log`,
+  rendered PNGs and179-check result under `shell-green/`, Kotlin class root
+  `kotlin-20261017T112345`. The Settings tile PNG was also visually inspected.
+
+No installed-shell, APK/device or live profile writes were performed. Android
+Canvas execution, launcher masking and actual installed Jump List presentation
+remain the integrated Windows/Android alpha smoke checks.
