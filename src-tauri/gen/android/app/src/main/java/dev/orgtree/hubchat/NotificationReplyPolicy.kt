@@ -20,6 +20,11 @@ internal fun replyActionToken(owner: String, previousOwner: String?, previousAct
 internal fun captureReplyVersion(owner: String, currentOwner: String?, action: String, currentAction: String?, version: String?): String =
   if ((currentOwner == owner || (currentOwner == null && action == currentAction)) && !version.isNullOrBlank()) version else action
 
+/** Control for cancellation without the RemoteInput completion acknowledgement. */
+internal fun completeReplyVersion(version: String, current: String?, sameEpisode: Boolean, acknowledge: () -> Unit, clear: () -> Unit) {
+  if (current == version && sameEpisode) clear()
+}
+
 /** A complete send check dismisses the episode; failures retain visible status. */
 internal fun finishReplyNotification(outcome: ReplyWorkOutcome, dismiss: () -> Unit, failed: () -> Unit) {
   if (outcome == ReplyWorkOutcome.COMPLETE) dismiss() else failed()

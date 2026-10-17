@@ -132,6 +132,32 @@ fun main() {
     val captured = captureReplyVersion("owner", "owner", "action", "action", "at-send")
     check(!matchesReplyNotification("peer", captured, "peer", "after-send"))
   }
+  case("RemoteInput is acknowledged before exact-version cancellation") {
+    val calls = mutableListOf<String>()
+    completeReplyVersion("v3", "v3", true, { calls.add("ack") }, { calls.add("clear") })
+    check(calls == listOf("ack", "clear"))
+  }
+  case("post-send newer message gets acknowledgement without being dismissed") {
+    val calls = mutableListOf<String>()
+    completeReplyVersion("v3", "after-send", true, { calls.add("ack") }, { calls.add("clear") })
+    check(calls == listOf("ack"))
+    calls.clear()
+    completeReplyVersion("v3", "new-account", false, { calls.add("ack") }, { calls.add("clear") })
+    check(calls.isEmpty())
+  }
+  case("two quick replies on three shown messages never leave a sending completion pending") {
+    var current: String? = "v3"
+    var spinning = true
+    val events = mutableListOf<String>()
+    repeat(2) { reply ->
+      spinning = true
+      completeReplyVersion("v3", current, true,
+        { spinning = false; events.add("ack$reply") },
+        { current = null; spinning = false; events.add("clear$reply") })
+      check(!spinning && current == null)
+    }
+    check(events == listOf("ack0", "clear0", "clear1"))
+  }
   println("$passed checks passed; $failed failed")
   kotlin.system.exitProcess(if (failed == 0) 0 else 1)
 }
