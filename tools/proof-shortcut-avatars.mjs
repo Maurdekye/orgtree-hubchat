@@ -10,7 +10,7 @@ const deps=process.env.HUBCHAT_DEPENDENCY_ROOT;
 const require=createRequire(path.join(process.env.HUBCHAT_DOM_DEPENDENCY_ROOT,'package.json'));
 fs.mkdirSync(out,{recursive:true});
 await require('esbuild').build({entryPoints:[repo+'/tools/shortcut-avatars-entry.tsx'],outfile:out+'/entry.js',bundle:true,
-  platform:'browser',format:'iife',jsx:'automatic',nodePaths:[deps],define:{'process.env.NODE_ENV':'"test"'}});
+  platform:'browser',format:'iife',jsx:'automatic',nodePaths:[deps],loader:{'.md':'text'},define:{'process.env.NODE_ENV':'"test"'}});
 fs.writeFileSync(out+'/index.html','<!doctype html><html class="theme-dark"><head><link rel="stylesheet" href="entry.css"></head><body><div id="root"></div><script src="entry.js"></script></body></html>');
 fs.writeFileSync(out+'/electron.cjs',`
 const fs=require('node:fs'),path=require('node:path');
