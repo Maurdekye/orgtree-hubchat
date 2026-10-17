@@ -144,3 +144,38 @@ directly in the current client icon color. Native code accepts only these three
 fixed view names and uses the same bounded PNG-to-ICO cache; their activation
 URLs and order stay unchanged. These can render before sign-in, once desktop
 styles load. No hand-drawn copy of the icons is introduced.
+
+### Measured author verification
+
+Based on local main `ff78728`, production source through `00b3112`:
+
+- Avatar, fixed-task mapping, and Directory absence controls each failed
+  before implementation. Final lightweight parser/wiring/absence checks:
+  **10/10**.
+- Synthetic real Electron renderer: **133/133**. Two themes, person/org kinds,
+  Unicode/empty/multiword/numeric names match the client initials, kind class
+  and computed background; PNGs have transparent corners and visible letters.
+  All three task glyphs match independently rasterized client SVG pixels and
+  are distinct. Desktop and Android Directory instances have no row button;
+  focused Enter/Space, click and a synthetic touch-click open the same contact
+  exactly once. No physical device tap is claimed.
+- Focused native tests: **8/8**. The separately invoked PNG-dependent native
+  integration test: **1/1**. Actual renderer avatar and Settings/Directory/New
+  chat PNGs convert to ICOs; real COM links reference those files, preserve
+  activation URLs and Windows `LoadImageW` loads all four icons.
+- Full renderer TypeScript check: **exit 0**. The final converter fix changes
+  Rust only; renderer source has not changed since that check.
+
+The first renderer setup attempts failed on a missing raw Markdown loader and
+nested fixture-template generation, then were corrected. The real-PNG native
+test caught `thumbnail` enlarging a 128px image to 256px; the cache now preserves
+small source dimensions and only downsizes images over 256px. The native
+8+1 checks passed after that fix. No failed/skipped attempt counts as a pass.
+
+Evidence under `C:/orgtree-build/hubchat-jumplist-sol`: `avatars/result.json`,
+`avatars/avatar.png`, the three task PNGs, `avatar-renderer.log`,
+`avatar-native.log`, `avatar-native-rendered.log`, `avatar-results.json`, and
+`typecheck.log`. All heavy phases used the machine lock and 2/4 GiB kernel Jobs.
+No app installer/APK build, install, shell publication, push or device action
+was performed. Live Explorer presentation remains an integrated alpha smoke
+check; the existing first-click-after-update limit remains unchanged.

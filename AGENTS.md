@@ -1,5 +1,11 @@
 # Hubchat development invariants
 
+- 2026-10-17: Directory rows open their contact by click/tap and focused
+  Enter/Space. Keep those handlers and focusability; there is no redundant
+  per-row Message/Open chat button or button-only CSS. Synthetic desktop and
+  Android mounted proof is in tools/proof-shortcut-avatars.mjs.
+  [decided: user 2026-10-17; verified: Directory.tsx, desktop.css]
+
 - 2026-10-16: Windows taskbar Jump List tasks launch this executable with
   encoded Hubchat URLs and reuse single-instance/pending-link navigation.
   Contacts belong to custom category Recent; Settings/Directory/New chat stay
