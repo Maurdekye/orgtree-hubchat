@@ -11,6 +11,8 @@ pub struct DownloadJob {
     pub destination: String,
     #[serde(skip)]
     pub exported: bool,
+    #[serde(skip)]
+    pub copy_key: String,
     pub state: String,
     pub attempt: i64,
     pub checkpoint: DownloadCheckpoint,
@@ -33,10 +35,11 @@ fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<DownloadJob> {
         digest: r.get(8)?,
         error: r.get(9)?,
         exported: r.get(10)?,
+        copy_key: r.get(11)?,
     })
 }
 const COLUMNS: &str =
-    "local_id,partial,destination,state,attempt,confirmed,validator,updated_ms,digest,error,exported";
+    "local_id,partial,destination,state,attempt,confirmed,validator,updated_ms,digest,error,exported,copy_key";
 impl Store {
     pub(crate) fn transfer_peer(&self, id: &str) -> Result<Option<String>> {
         self.with(|c| c.query_row("SELECT m.peer FROM attachments a JOIN messages m ON m.id=a.message_id WHERE a.local_id=?", [id], |r| r.get(0)).optional())
@@ -76,6 +79,20 @@ impl Store {
             tx.commit()
         })
     }
+    /// Only a completed publication can become a new copy. Repeated admissions
+    /// of queued/running work reuse it. Preserve the previous visible file.
+    pub(crate) fn fresh_download_copy(&self, id: &str, partial: &str, dest: &str, key: &str) -> Result<()> {
+        self.with(|c| {
+            let tx = c.transaction()?;
+            let n = tx.execute("UPDATE download_jobs SET state='queued',partial=?2,destination=?3,copy_key=?4,attempt=attempt+1,confirmed=0,validator=NULL,updated_ms=0,digest=NULL,error=NULL,exported=0,retry_at=0,cleanup_at=0,restarted=0 WHERE local_id=?1 AND state='done'",params![id,partial,dest,key])?;
+            if n > 0 {
+                tx.execute("UPDATE attachments SET state='downloading',error=NULL WHERE local_id=?",[id])?;
+                let mid:String=tx.query_row("SELECT message_id FROM attachments WHERE local_id=?",[id],|r|r.get(0))?;
+                transfer_failures::retry(&tx,&mid)?;
+            }
+            tx.commit()
+        })
+    }
     pub(crate) fn download_checkpoint(
         &self,
         id: &str,
@@ -108,7 +125,7 @@ impl Store {
     pub(crate) fn download_exported(&self, id: &str, from: &str, to: &str) -> Result<()> {
         let n = self.with(|c| {
             let tx = c.transaction()?;
-            tx.execute("INSERT OR IGNORE INTO export_cleanup(key,source,local_id) SELECT local_id||'-'||digest,CASE WHEN ?1!=?2 THEN ?2 ELSE '' END,local_id FROM download_jobs WHERE local_id=?3 AND destination=?2 AND digest IS NOT NULL AND state IN ('exporting','done')",params![to,from,id])?;
+            tx.execute("INSERT OR IGNORE INTO export_cleanup(key,source,local_id) SELECT local_id||'-'||digest||copy_key,CASE WHEN ?1!=?2 THEN ?2 ELSE '' END,local_id FROM download_jobs WHERE local_id=?3 AND destination=?2 AND digest IS NOT NULL AND state IN ('exporting','done')",params![to,from,id])?;
             let n = tx.execute("UPDATE download_jobs SET destination=?,exported=1,state='done',error=NULL WHERE local_id=? AND destination=? AND state IN ('exporting','done')", params![to,id,from])?;
             if n > 0 {
                 tx.execute("UPDATE attachments SET local_path=?,state='done',error=NULL WHERE local_id=?", params![to,id])?;

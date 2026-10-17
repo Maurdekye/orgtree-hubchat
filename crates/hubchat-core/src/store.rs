@@ -277,6 +277,27 @@ END;"#,
     // its old sync position, and contacts unchanged since never came back to
     // the directory (forget_hub_sync; Engine::refresh_directory_once)
     r#"INSERT OR REPLACE INTO meta(key, value) SELECT 'sync.directory_refresh_due.' || url, 'yes' FROM hubs;"#,
+    // 18: a fresh saved copy has its own durable platform export receipt.
+    // Existing publications retain their original key across an upgrade.
+    r#"
+ALTER TABLE download_jobs ADD COLUMN copy_key TEXT NOT NULL DEFAULT '';
+CREATE INDEX download_history ON download_jobs(local_id)
+ WHERE state IN ('done','failed','expired','cancelled') OR (state IN ('publishing','exporting') AND error IS NOT NULL);
+CREATE INDEX upload_history ON attachments(local_id)
+ WHERE source IS NOT NULL AND state IN ('uploaded','failed','cancelled');
+DROP TRIGGER abandon_export_delete;
+DROP TRIGGER abandon_export_digest;
+CREATE TRIGGER abandon_export_delete BEFORE DELETE ON download_jobs
+WHEN OLD.digest IS NOT NULL AND OLD.state IN ('publishing','exporting') BEGIN
+ INSERT OR IGNORE INTO export_abandoned(key,source,local_id)
+ VALUES(OLD.local_id||'-'||OLD.digest||OLD.copy_key,OLD.destination,OLD.local_id);
+END;
+CREATE TRIGGER abandon_export_digest AFTER UPDATE OF digest ON download_jobs
+WHEN OLD.digest IS NOT NULL AND OLD.digest IS NOT NEW.digest AND OLD.state IN ('publishing','exporting') BEGIN
+ INSERT OR IGNORE INTO export_abandoned(key,source,local_id)
+ VALUES(OLD.local_id||'-'||OLD.digest||OLD.copy_key,OLD.destination,OLD.local_id);
+END;
+"#,
 ];
 
 pub struct Store {
@@ -2140,7 +2161,7 @@ mod scheduler_store;
 
 #[path = "transfer_view.rs"]
 mod transfer_view;
-pub use transfer_view::{TransferView, TransferPage};
+pub use transfer_view::{TransferView, TransferPage, TransferHistoryView, TransferHistoryPage};
 
 #[path = "outgoing_controls.rs"]
 mod outgoing_controls;

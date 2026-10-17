@@ -137,12 +137,33 @@ async fn publish_file(partial: &std::path::Path, dest: &std::path::Path) -> std:
     }
 }
 impl Engine {
+    pub fn transfer_history(&self, after: &str) -> Result<crate::store::TransferHistoryPage> {
+        let mut page = self.store.transfer_history_page(after)?;
+        // Platform file/provider I/O runs after the bounded DB read releases
+        // its connection. The shell calls this on its blocking pool.
+        for row in &mut page.rows {
+            row.available = row.source.as_deref().is_some_and(|p| self.host.open_source(p).is_ok());
+        }
+        Ok(page)
+    }
+    /// Resolve and revalidate only a bound attachment; the UI supplies no path.
+    pub fn attachment_source(&self, message_id: &str, local_id: &str) -> Result<(String,String)> {
+        let m=self.store.message(message_id)?.ok_or_else(|| Error::Invalid("no such message".into()))?;
+        let a=m.attachments.iter().find(|a| a.local_id==local_id).ok_or_else(|| Error::Invalid("no such attachment".into()))?;
+        let source=if m.outgoing {a.source.as_ref().or(a.local_path.as_ref())} else {a.local_path.as_ref()};
+        let source=source.ok_or_else(|| Error::Invalid("Local file is missing or no longer available.".into()))?;
+        self.host.open_source(source).map_err(|_| Error::Invalid("Local file is missing or no longer available.".into()))?;
+        Ok((source.clone(),a.name.clone()))
+    }
     /// Platform export (e.g. Android MediaStore) must move both durable pointers.
     pub fn record_download_export(&self, local_id: &str, from: &str, to: &str) -> Result<()> {
         self.store.download_exported(local_id, from, to)
     }
     /// Queue an explicit user request durably; no network or file copy here.
     pub fn queue_download(&self, message_id: &str, local_id: &str) -> Result<DownloadJob> {
+        self.queue_download_copy(message_id, local_id, false)
+    }
+    pub fn queue_download_copy(&self, message_id: &str, local_id: &str, fresh_copy: bool) -> Result<DownloadJob> {
         let m = self
             .store
             .message(message_id)?
@@ -155,23 +176,36 @@ impl Engine {
         if a.hub_id.is_none() || a.hub.as_ref().or(m.hub.as_ref()).is_none() {
             return Err(Error::Invalid("not on a hub".into()));
         }
+        if fresh_copy && m.outgoing {
+            return Err(Error::Invalid("Only received files can be redownloaded here".into()));
+        }
+        if fresh_copy && (a.state == "expired" || self.store.download_job(local_id)?.is_some_and(|j| j.state == "expired")) {
+            return Err(Error::Invalid("File no longer available on the hub.".into()));
+        }
+        let dir = self.host.download_dir();
+        let part = dir.join(".hubchat-downloads").join(format!("{}.part", uuid::Uuid::new_v4().simple()));
+        let dest = unique_path(&dir, &a.name);
+        // Serialize against the worker's publication claim. A late writer must
+        // not finish the old attempt after admission resets its destination.
+        let writers = self.transfers.lock().unwrap();
+        if fresh_copy && writers.contains_key(local_id) {
+            return Err(Error::Invalid("This file already has a transfer in progress.".into()));
+        }
         // This synchronous admission runs on the shell's blocking pool. Check
         // platform URIs as well as files before reusing a completed request.
         if let Some(previous) = self.store.download_job(local_id)? {
-            if previous.state == "done" && self.host.open_source(&previous.destination).is_err() {
+            if previous.state == "done" && !writers.contains_key(local_id) && fresh_copy {
+                self.store.fresh_download_copy(local_id, &part.to_string_lossy(), &dest.to_string_lossy(), &format!("-{}",uuid::Uuid::new_v4().simple()))?;
+            } else if previous.state == "done" && !writers.contains_key(local_id) && self.host.open_source(&previous.destination).is_err() {
                 self.store.restart_missing_download(local_id)?;
             }
         }
-        let dir = self.host.download_dir();
-        let part = dir
-            .join(".hubchat-downloads")
-            .join(format!("{}.part", uuid::Uuid::new_v4().simple()));
-        let dest = unique_path(&dir, &a.name);
         self.store.queue_download_job(
             local_id,
             &part.to_string_lossy(),
             &dest.to_string_lossy(),
         )?;
+        drop(writers);
         self.host.file_work_changed();
         self.queue_changed.notify_one();
         self.host.event(Event::Chat { peer: m.peer });
@@ -342,7 +376,7 @@ impl Engine {
             crate::diag::failure("download failed", e);
             let state = if matches!(e,Error::FilePaused) || cancel.is_cancelled() || super::engine_scheduler::transient(e) {
                 "paused"
-            } else if e.status() == Some(410) {
+            } else if matches!(e.status(), Some(404 | 410)) {
                 "expired"
             } else {
                 "failed"
@@ -359,7 +393,7 @@ impl Engine {
         let source = PathBuf::from(&job.destination);
         let path = source.clone();
         let name = name.to_owned();
-        let key = format!("{}-{}", job.local_id, job.digest.as_deref().unwrap_or(""));
+        let key = format!("{}-{}{}", job.local_id, job.digest.as_deref().unwrap_or(""), job.copy_key);
         // The scheduler owns this future through shutdown: a UI command does
         // not own the copy, and a blocking platform call never owns a DB lease.
         let export_key = key.clone();
@@ -472,6 +506,7 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::params;
     use crate::store::NewAttachment;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -544,6 +579,100 @@ mod tests {
             .set_upload(&lid, "uploaded", "remote-file", url)
             .unwrap();
         lid
+    }
+    fn incoming_for_history(store: &Store, url: &str) -> String {
+        let id=attach(store,url,3);
+        store.with(|c| c.execute("UPDATE messages SET outgoing=0,state='received' WHERE id='message'",[]).map(|_|())).unwrap();
+        id
+    }
+    #[tokio::test]
+    async fn transfer_history_fresh_copy_preserves_old_bytes_and_restarts_without_range() {
+        let dir=tempfile::tempdir().unwrap();
+        let db=dir.path().join("db");
+        let store=Arc::new(Store::open(&db).unwrap());
+        let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url=format!("http://{}",listener.local_addr().unwrap());
+        let lid=incoming_for_history(&store,&url);
+        let server=tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut socket,_)=listener.accept().await.unwrap();
+                assert!(!headers(&mut socket).await.to_lowercase().contains("range:"));
+                socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc").await.unwrap();
+            }
+        });
+        let e=fixture(store.clone(),dir.path(),&url);
+        let old=e.download("message",&lid).await.unwrap();
+        let old_job=store.download_job(&lid).unwrap().unwrap();
+        let fresh=e.queue_download_copy("message",&lid,true).unwrap();
+        assert_eq!(fresh.state,"queued");assert_eq!(fresh.checkpoint.confirmed,0);
+        assert!(fresh.checkpoint.validator.is_none());assert!(fresh.digest.is_none());assert!(!fresh.exported);
+        assert_ne!(fresh.destination,old_job.destination);assert_ne!(fresh.partial,old_job.partial);assert_ne!(fresh.copy_key,old_job.copy_key);
+        assert_eq!(std::fs::read(&old).unwrap(),b"abc");
+        assert_eq!(e.queue_download_copy("message",&lid,true).unwrap().partial,fresh.partial,"duplicate admission reuses queued work");
+        assert_eq!(e.attachment_source("message",&lid).unwrap().0,old.to_string_lossy());
+        assert!(e.queue_download_copy("wrong-message",&lid,true).is_err());
+        drop(e);drop(store);
+        let store=Arc::new(Store::open(&db).unwrap());
+        let e=fixture(store.clone(),dir.path(),&url);
+        assert_eq!(store.download_job(&lid).unwrap().unwrap().copy_key,fresh.copy_key);
+        let new=e.download("message",&lid).await.unwrap();
+        assert_ne!(new,old);assert_eq!(std::fs::read(&new).unwrap(),b"abc");assert_eq!(std::fs::read(&old).unwrap(),b"abc");
+        assert!(e.transfer_history("").unwrap().rows[0].available);
+        server.await.unwrap();
+    }
+    #[tokio::test]
+    async fn transfer_history_android_uri_fresh_copy_has_a_new_recoverable_receipt() {
+        struct UriCopies {dir:PathBuf,keys:Mutex<Vec<String>>}
+        impl Host for UriCopies {
+            fn event(&self,_:Event){}
+            fn download_dir(&self)->PathBuf{self.dir.clone()}
+            fn open_source(&self,p:&str)->std::io::Result<std::fs::File>{
+                if let Some(n)=p.strip_prefix("content://copies/"){std::fs::File::open(self.dir.join(format!("public{n}")))}else{std::fs::File::open(p)}
+            }
+            fn publish_download(&self,key:&str,path:&std::path::Path,_:&str)->std::io::Result<Option<String>>{
+                let mut keys=self.keys.lock().unwrap();
+                let i=match keys.iter().position(|k|k==key){Some(i)=>i,None=>{let i=keys.len();std::fs::copy(path,self.dir.join(format!("public{i}")))?;keys.push(key.into());i}};
+                Ok(Some(format!("content://copies/{i}")))
+            }
+        }
+        let dir=tempfile::tempdir().unwrap();let store=Arc::new(Store::open_in_memory().unwrap());
+        let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();let url=format!("http://{}",listener.local_addr().unwrap());
+        let lid=incoming_for_history(&store,&url);
+        let server=tokio::spawn(async move {for _ in 0..2 {let(mut s,_)=listener.accept().await.unwrap();headers(&mut s).await;s.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc").await.unwrap();}});
+        let host=Arc::new(UriCopies{dir:dir.path().into(),keys:Mutex::new(vec![])});let e=fixture_host(store.clone(),&url,host.clone());
+        assert_eq!(e.download("message",&lid).await.unwrap(),PathBuf::from("content://copies/0"));
+        assert!(e.transfer_history("").unwrap().rows[0].available);
+        e.queue_download_copy("message",&lid,true).unwrap();
+        assert_eq!(e.download("message",&lid).await.unwrap(),PathBuf::from("content://copies/1"));
+        assert_eq!(host.keys.lock().unwrap().len(),2);
+        assert_eq!(std::fs::read(dir.path().join("public0")).unwrap(),b"abc");
+        assert!(store.export_cleanup_due(u64::MAX/2,None).unwrap().is_empty(),"both copy receipts cleaned up with matching keys");
+        std::fs::remove_file(dir.path().join("public1")).unwrap();
+        let page=e.transfer_history("").unwrap();assert!(!page.rows[0].available);assert!(page.rows[0].can_redownload);
+        assert!(e.attachment_source("message",&lid).is_err());server.await.unwrap();
+    }
+    #[tokio::test]
+    async fn transfer_history_remote_unavailable_stops_and_reports_404_and_410() {
+        for status in [404,410] {
+            let dir=tempfile::tempdir().unwrap();let store=Arc::new(Store::open_in_memory().unwrap());
+            let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();let url=format!("http://{}",listener.local_addr().unwrap());
+            let lid=incoming_for_history(&store,&url);
+            let server=tokio::spawn(async move {let(mut s,_)=listener.accept().await.unwrap();headers(&mut s).await;s.write_all(format!("HTTP/1.1 {status} Gone\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();});
+            let e=fixture(store.clone(),dir.path(),&url);assert!(e.download("message",&lid).await.is_err());
+            let page=e.transfer_history("").unwrap();assert_eq!(page.rows.len(),1);assert_eq!(page.rows[0].state,"expired");assert!(!page.rows[0].can_redownload);assert!(!page.rows[0].available);
+            assert!(e.queue_download_copy("message",&lid,true).unwrap_err().to_string().contains("no longer available"));
+            assert!(store.queued_downloads("",u64::MAX/2).unwrap().is_empty());server.await.unwrap();
+        }
+    }
+    #[test]
+    fn transfer_history_outgoing_view_is_bound_to_the_retained_source() {
+        let dir=tempfile::tempdir().unwrap();let store=Arc::new(Store::open_in_memory().unwrap());let url="http://127.0.0.1:9";
+        let lid=attach(&store,url,3);let source=dir.path().join("source");std::fs::write(&source,b"abc").unwrap();
+        store.with(|c|c.execute("UPDATE attachments SET source=? WHERE local_id=?",params![source.to_string_lossy(),lid]).map(|_|())).unwrap();
+        let e=fixture(store.clone(),dir.path(),url);let page=e.transfer_history("").unwrap();assert!(page.rows[0].upload);assert!(page.rows[0].available);assert!(!page.rows[0].can_redownload);
+        assert_eq!(e.attachment_source("message",&lid).unwrap().0,source.to_string_lossy());assert!(e.attachment_source("other",&lid).is_err());assert!(e.queue_download_copy("message",&lid,true).is_err());
+        std::fs::remove_file(&source).unwrap();assert!(!e.transfer_history("").unwrap().rows[0].available);assert!(e.attachment_source("message",&lid).is_err());
+        let json=serde_json::to_string(&e.transfer_history("").unwrap()).unwrap();assert!(!json.contains("source"));
     }
     #[test]
     fn queued_download_projection_survives_reopen_and_keeps_private_paths_hidden() {

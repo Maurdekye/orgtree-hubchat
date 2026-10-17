@@ -14,7 +14,7 @@ impl Store {
         })
     }
     pub(crate) fn export_still_needed(&self, key: &str) -> Result<bool> {
-        self.with(|c|c.query_row("SELECT EXISTS(SELECT 1 FROM download_jobs WHERE local_id||'-'||digest=? AND state!='done')",[key],|r|r.get(0)))
+        self.with(|c|c.query_row("SELECT EXISTS(SELECT 1 FROM download_jobs WHERE local_id||'-'||digest||copy_key=? AND state!='done')",[key],|r|r.get(0)))
     }
     pub(crate) fn download_destination_used(&self, path: &str) -> Result<bool> {
         self.with(|c| {
