@@ -32,9 +32,9 @@ pub fn avatar(data: &Path, png_url: &str) -> Option<PathBuf> {
     resolve(data, &record.meta, Some(&record))
 }
 
-/// Prior behavior control: task glyphs inherited the app page's colour.
-pub fn task(data: &Path, png_url: &str, _dark: bool) -> Option<PathBuf> {
-    avatar(data, png_url)
+/// Prior behavior control: profile alpha was left for Explorer to fill.
+pub fn profile_on(data: &Path, meta: &PictureMeta, record: Option<&PictureRecord>, _background: &Path) -> Option<PathBuf> {
+    resolve(data, meta, record)
 }
 
 /// Only the store's currently admitted record can supply the requested pixels.
@@ -82,23 +82,23 @@ pub fn test_dir() -> PathBuf {
 mod tests {
     use super::*;
     #[test]
-    fn task_glyph_icos_contrast_with_light_and_dark_windows_panels() {
+    fn profile_transparency_is_composited_on_the_current_avatar_background() {
         let dir = test_dir();
-        let source = fixture(128, [232, 232, 232, 192]);
-        let url = format!("data:image/png;base64,{}", source.data.as_ref().unwrap());
-        let mut paths = vec![];
-        for (dark, rgb, panel) in [(false, 48u8, 255u8), (true, 232u8, 32u8)] {
-            let path = task(&dir, &url, dark).unwrap();
-            let pixel = image::open(&path).unwrap().to_rgba8().get_pixel(64, 64).0;
-            assert_eq!(pixel, [rgb, rgb, rgb, 192], "theme colour changes without altering the glyph alpha mask");
-            let luminance = |v: u8| { let s = f64::from(v) / 255.; if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) } };
-            // Check actual alpha-composited RGB, not just the nominal ink.
-            let visible = ((f64::from(rgb) * 192. + f64::from(panel) * 63.) / 255.).round() as u8;
-            let a = luminance(visible); let b = luminance(panel);
-            assert!((a.max(b) + 0.05) / (a.min(b) + 0.05) >= 4.5);
-            paths.push(path);
+        let bg = fixture(128, [40, 50, 60, 255]);
+        let bg_url = format!("data:image/png;base64,{}", bg.data.as_ref().unwrap());
+        let bg_path = avatar(&dir, &bg_url).unwrap();
+        for (alpha, expected) in [(0, [40,50,60,255]), (128, [120,25,30,255]), (255, [200,0,0,255])] {
+            let photo = fixture(128, [200, 0, 0, alpha]);
+            let composed = profile_on(&dir, &photo.meta, Some(&photo), &bg_path).unwrap();
+            assert_eq!(image::open(&composed).unwrap().to_rgba8().get_pixel(64,64).0, expected);
+            assert_eq!(profile_on(&dir, &photo.meta, None, &bg_path).unwrap(), composed, "cached composite survives byte eviction");
         }
-        assert_ne!(paths[0], paths[1], "theme variants have different content-addressed cache paths");
+        let photo = fixture(128, [0,0,0,0]);
+        let dark = profile_on(&dir, &photo.meta, Some(&photo), &bg_path).unwrap();
+        let light_bg = fixture(128, [220,230,240,255]);
+        let light_url = format!("data:image/png;base64,{}", light_bg.data.as_ref().unwrap());
+        let light = profile_on(&dir, &photo.meta, Some(&photo), &avatar(&dir, &light_url).unwrap()).unwrap();
+        assert_ne!(dark, light, "theme/background changes cannot reuse a stale composite");
     }
     #[test]
     fn avatar_cache_preserves_transparency_and_versions_changed_pixels() {

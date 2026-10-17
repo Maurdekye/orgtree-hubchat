@@ -8,11 +8,12 @@ import { startStore } from "../src/lib/store";
 import { avatarFallback, avatarPng } from "../src/lib/avatarFallback";
 import { taskIconPng } from "../src/lib/shortcutIcons";
 import { Icon, TASK_ICONS } from "../src/lib/icons";
+import appIcon from "../design/hubchat-icon.svg?raw";
 import "../src/styles/tokens.css";
 import "../src/styles/base.css";
 
 const root = createRoot(document.getElementById("root")!);
-Object.assign(window, { taskIconPng, TASK_ICONS, mountTaskIcon: (view: keyof typeof TASK_ICONS) => {
+Object.assign(window, { appIcon, taskIconPng, TASK_ICONS, mountTaskIcon: (view: keyof typeof TASK_ICONS) => {
   root.render(<button className="icon-btn"><Icon name={TASK_ICONS[view]} /></button>);
 } });
 const opened: string[] = [];

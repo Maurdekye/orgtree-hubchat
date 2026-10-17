@@ -41,10 +41,15 @@ app.whenReady().then(async()=>{
     const image=new Image();image.src=png;await image.decode();
     const c=document.createElement('canvas');c.width=c.height=128;const ctx=c.getContext('2d');ctx.drawImage(image,0,0);
     const pixels=ctx.getImageData(0,0,128,128).data;
+    const tile=new DOMParser().parseFromString(appIcon,'image/svg+xml').querySelector('rect');
+    const sample=Array.from(ctx.getImageData(3,64,1,1).data);
+    check(theme+'/'+view+' app icon background tile',sample[0]===31&&sample[1]===31&&sample[2]===31&&sample[3]===255);
     let visible=0;for(let i=3;i<pixels.length;i+=4)if(pixels[i]>0)visible++;
     check(theme+'/'+view+' visible transparent icon',visible>100&&visible<128*128);
     // Independent SVG rasterization of the mounted client icon must match PNG.
     const copy=svg.cloneNode(true);copy.setAttribute('xmlns','http://www.w3.org/2000/svg');copy.setAttribute('width','128');copy.setAttribute('height','128');copy.setAttribute('fill',style.color);
+    const background=tile.cloneNode(true);background.setAttribute('width','24');background.setAttribute('height','24');background.setAttribute('rx',String(Number(tile.getAttribute('rx'))*24/256));
+    copy.querySelector('path').setAttribute('transform','translate(4 4) scale(0.6666666666666666)');copy.prepend(background);
     const expected=new Image();expected.src='data:image/svg+xml;base64,'+btoa(new XMLSerializer().serializeToString(copy));await expected.decode();
     ctx.clearRect(0,0,128,128);ctx.drawImage(expected,0,0);
     const reference=ctx.getImageData(0,0,128,128).data;
