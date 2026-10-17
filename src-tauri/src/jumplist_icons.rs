@@ -38,7 +38,8 @@ pub fn resolve(data: &Path, meta: &PictureMeta, record: Option<&PictureRecord>) 
     if let Some(path) = cached(data, meta) { return Some(path); }
     let record = record.filter(|record| record.meta == *meta)?;
     let bytes = record.decoded().ok()??;
-    let image = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).ok()?.thumbnail(256, 256);
+    let image = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).ok()?;
+    let image = if image.width() > 256 || image.height() > 256 { image.thumbnail(256, 256) } else { image };
     let mut ico = Cursor::new(Vec::new());
     image.write_to(&mut ico, image::ImageFormat::Ico).ok()?;
     let path = path(data, meta)?;
@@ -81,6 +82,7 @@ mod tests {
         let url = |r: &PictureRecord|format!("data:image/png;base64,{}", r.data.as_ref().unwrap());
         let first = fixture(128, [90, 100, 110, 128]);
         let a = avatar(&dir, &url(&first)).unwrap();
+        assert_eq!(image::open(&a).unwrap().to_rgba8().dimensions(), (128, 128));
         assert_eq!(avatar(&dir, &url(&first)).unwrap(), a);
         assert_eq!(image::open(&a).unwrap().to_rgba8().get_pixel(64, 64).0, [90, 100, 110, 128]);
         assert_ne!(avatar(&dir, &url(&fixture(128, [20, 30, 40, 255]))).unwrap(), a);
