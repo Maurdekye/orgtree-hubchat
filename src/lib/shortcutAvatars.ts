@@ -36,12 +36,13 @@ export function useShortcutAvatars() {
         for (const row of snap.chats) {
           if (!live) break;
           const contact = snap.byAddr.get(row.peer);
-          if (contact?.picture?.sha256 || kindOf(contact) === "chat") continue;
+          if (kindOf(contact) === "chat") continue;
           const name = displayName(contact, row.peer);
-          const png = avatarPng(kindOf(contact), name);
+          const background = !!contact?.picture?.sha256;
+          const png = avatarPng(kindOf(contact), name, background);
           if (sent.get(row.peer) === png) continue;
           try {
-            await invoke("hc_shortcut_avatar", { owner, peer: row.peer, name, kind: kindOf(contact), png });
+            await invoke("hc_shortcut_avatar", { owner, peer: row.peer, name, kind: kindOf(contact), png, background });
             sent.set(row.peer, png);
           } catch { /* A closed DM or changed identity is no longer eligible. */ }
         }

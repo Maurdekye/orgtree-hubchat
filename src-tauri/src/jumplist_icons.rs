@@ -32,9 +32,30 @@ pub fn avatar(data: &Path, png_url: &str) -> Option<PathBuf> {
     resolve(data, &record.meta, Some(&record))
 }
 
-/// Prior behavior control: profile alpha was left for Explorer to fill.
-pub fn profile_on(data: &Path, meta: &PictureMeta, record: Option<&PictureRecord>, _background: &Path) -> Option<PathBuf> {
-    resolve(data, meta, record)
+/// Composite inside the client's avatar silhouette. Both picture and background
+/// hashes name the file so picture, kind and app-theme changes cannot go stale.
+pub fn profile_on(data: &Path, meta: &PictureMeta, record: Option<&PictureRecord>, background: &Path) -> Option<PathBuf> {
+    if !meta.valid() { return None; }
+    let bg_hash = background.file_stem()?.to_str()?;
+    if bg_hash.len() != 64 || !bg_hash.bytes().all(|c| c.is_ascii_hexdigit()) { return None; }
+    let path = data.join("jump-list-icons").join(format!("{}-{bg_hash}.ico", meta.sha256.as_ref()?));
+    if path.is_file() { return Some(path); }
+    let photo_path = resolve(data, meta, record)?;
+    let photo = image::open(photo_path).ok()?.resize_exact(128, 128, image::imageops::FilterType::Lanczos3).to_rgba8();
+    let mut pixels = image::open(background).ok()?.to_rgba8();
+    if pixels.dimensions() != (128, 128) { return None; }
+    for (background, photo) in pixels.pixels_mut().zip(photo.pixels()) {
+        let alpha = u32::from(photo[3]);
+        for channel in 0..3 { background[channel] = ((u32::from(photo[channel]) * alpha + u32::from(background[channel]) * (255-alpha) + 127) / 255) as u8; }
+        // Keep the shared avatar's rounded mask; transparency inside it has
+        // already been filled by the client tint over its contact-list surface.
+    }
+    let mut ico = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(pixels).write_to(&mut ico, image::ImageFormat::Ico).ok()?;
+    let temporary = path.with_extension("ico.part");
+    std::fs::write(&temporary, ico.into_inner()).ok()?;
+    if std::fs::rename(&temporary, &path).is_err() { let _ = std::fs::remove_file(&temporary); }
+    path.is_file().then_some(path)
 }
 
 /// Only the store's currently admitted record can supply the requested pixels.

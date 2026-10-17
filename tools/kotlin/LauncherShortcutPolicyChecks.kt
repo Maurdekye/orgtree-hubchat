@@ -15,6 +15,13 @@ fun main() {
     check(LauncherAvatarRecipe.colors("unknown", night) == LauncherAvatarRecipe.colors("person", night))
   }
   check(LauncherAvatarRecipe.colors("person", true) != LauncherAvatarRecipe.colors("person", false))
+  val surface = 0xff28323c.toInt()
+  check(LauncherAvatarRecipe.over(0x00c80000, surface) == surface)
+  check(LauncherAvatarRecipe.over(0x80c80000.toInt(), surface) == 0xff78191e.toInt())
+  check(LauncherAvatarRecipe.over(0xffc80000.toInt(), surface) == 0xffc80000.toInt())
+  for (night in listOf(true, false)) for (kind in listOf("person", "org")) {
+    check(LauncherAvatarRecipe.profileBackground(kind, night) ushr 24 == 255)
+  }
   checkLauncherAvatarParity()
-  println("PASS launcher policy8/8: last4, empty, dedupe, labels, order, avatar payload, kind palette, theme palette")
+  println("PASS launcher policy10/10: last4, empty, dedupe, labels, order, avatar payload, kind/theme palette, profile alpha composition and opaque background")
 }

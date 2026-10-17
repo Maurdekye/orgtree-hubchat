@@ -7,7 +7,7 @@ export function avatarFallback(kind: Kind | "me", name: string) {
   return { cls: kind === "me" ? "k-me" : kindInfo(kind).cls, text: initials(name) };
 }
 
-export function avatarPng(kind: Kind, name: string): string {
+export function avatarPng(kind: Kind, name: string, backgroundOnly = false): string {
   const fallback = avatarFallback(kind, name);
   const probe = document.createElement("span");
   probe.className = "av s44 " + fallback.cls;
@@ -25,11 +25,16 @@ export function avatarPng(kind: Kind, name: string): string {
     const radius = style.borderTopLeftRadius.endsWith("%")
       ? parseFloat(style.borderTopLeftRadius) * 44 / 100 : parseFloat(style.borderTopLeftRadius);
     ctx.beginPath(); ctx.roundRect(0, 0, 44, 44, radius);
+    // Profile transparency sees the actual avatar tint over the contact-list
+    // surface, never the unrelated shell/launcher panel behind the icon.
+    if (backgroundOnly) {
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--side"); ctx.fill();
+    }
     ctx.fillStyle = style.backgroundColor; ctx.fill();
     ctx.fillStyle = style.color;
     ctx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillText(fallback.text, 22, 22, 40);
+    if (!backgroundOnly) ctx.fillText(fallback.text, 22, 22, 40);
     return canvas.toDataURL("image/png");
   } finally { probe.remove(); }
 }

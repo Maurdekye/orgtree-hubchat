@@ -16,10 +16,10 @@ const TITLE: PROPERTYKEY = PROPERTYKEY {
 };
 
 #[derive(Clone, PartialEq)]
-struct PictureStamp { peer: String, meta: Option<PictureMeta>, available: bool, avatar: Option<PathBuf> }
+struct PictureStamp { peer: String, meta: Option<PictureMeta>, available: bool, avatar: Option<PathBuf>, background: Option<PathBuf> }
 
 #[derive(Default)]
-struct Avatars(Mutex<HashMap<(String, String), (String, String, PathBuf)>>);
+struct Avatars(Mutex<HashMap<(String, String), (String, String, PathBuf, bool)>>);
 
 #[derive(Default)]
 struct TaskIcons(Mutex<HashMap<String, PathBuf>>);
@@ -43,7 +43,7 @@ fn avatar_eligible(rows: &[ShortcutContact], peer: &str, name: &str, meta: Optio
     rows.iter().any(|r|r.peer == peer && r.name == name) && !meta.is_some_and(|m|m.sha256.is_some())
 }
 
-pub fn admit_avatar(app: &AppHandle, owner: &str, peer: &str, name: &str, kind: &str, png: &str) -> std::result::Result<(), String> {
+pub fn admit_avatar(app: &AppHandle, owner: &str, peer: &str, name: &str, kind: &str, png: &str, background: bool) -> std::result::Result<(), String> {
     let c = crate::core::get()?;
     let path = crate::jumplist_icons::avatar(&c.dir, png).ok_or("Invalid shortcut avatar")?;
     if app.try_state::<Avatars>().is_none() { app.manage(Avatars::default()); }
@@ -51,13 +51,15 @@ pub fn admit_avatar(app: &AppHandle, owner: &str, peer: &str, name: &str, kind: 
         let rows = c.store.shortcut_contacts(true, None).map_err(|e|e.to_string())?;
         let meta = c.store.picture_meta(peer).map_err(|e|e.to_string())?;
         let directory = c.store.directory().map_err(|e|e.to_string())?;
-        if !avatar_eligible(&rows, peer, name, meta.as_ref()) || contact_kind(&directory, peer) != kind {
+        let eligible = if background { rows.iter().any(|r| r.peer == peer && r.name == name) && meta.as_ref().is_some_and(|m|m.sha256.is_some()) }
+            else { avatar_eligible(&rows, peer, name, meta.as_ref()) };
+        if !eligible || contact_kind(&directory, peer) != kind {
             return Err("Contact changed".into());
         }
         let state = app.state::<Avatars>();
         let mut icons = state.0.lock().unwrap();
         icons.retain(|(o,p), _| o == owner && rows.iter().any(|r| &r.peer == p));
-        icons.insert((owner.to_owned(), peer.to_owned()), (name.to_owned(), kind.to_owned(), path));
+        icons.insert((owner.to_owned(), peer.to_owned()), (name.to_owned(), kind.to_owned(), path, background));
         Ok(())
     })?;
     changed(app);
@@ -147,7 +149,8 @@ fn publish(app: &AppHandle, owner: &str, rows: &[ShortcutContact], pictures: &[P
                 let stamp = pictures.iter().find(|p|p.peer == row.peer);
                 let icon = stamp.and_then(|p|p.meta.as_ref()).and_then(|meta| {
                     let record = c.store.picture(&row.peer).ok().flatten();
-                    crate::jumplist_icons::resolve(&c.dir, meta, record.as_ref())
+                    stamp.and_then(|p|p.background.as_deref()).and_then(|background|
+                        crate::jumplist_icons::profile_on(&c.dir, meta, record.as_ref(), background))
                 }).or_else(||stamp.and_then(|p|p.avatar.clone()));
                 contacts.push(ContactLink { name: row.name.clone(), target, icon });
             }
@@ -176,14 +179,15 @@ pub fn changed(app: &AppHandle) {
             let read = || -> std::result::Result<Vec<PictureStamp>, String> {
                 let directory = c.store.directory().map_err(|e|e.to_string())?;
                 c.store.shortcut_contacts(true, None).map_err(|e|e.to_string())?.into_iter().map(|row| {
-                    let avatar = handle.try_state::<Avatars>().and_then(|state| {
+                    let rendered = handle.try_state::<Avatars>().and_then(|state| {
                         let avatar = state.0.lock().unwrap().get(&(owner.clone(), row.peer.clone()))
-                            .filter(|(name,kind,path)|name == &row.name && kind == &contact_kind(&directory, &row.peer) && path.is_file())
-                            .map(|(_,_,path)|path.clone());
+                            .filter(|(name,kind,path,_)|name == &row.name && kind == &contact_kind(&directory, &row.peer) && path.is_file())
+                            .map(|(_,_,path,background)|(path.clone(), *background));
                         avatar
                     });
                     Ok(PictureStamp {
-                        avatar,
+                        avatar: rendered.as_ref().filter(|(_,bg)| !bg).map(|(p,_)|p.clone()),
+                        background: rendered.filter(|(_,bg)| *bg).map(|(p,_)|p),
                         meta: c.store.picture_meta(&row.peer).map_err(|e|e.to_string())?,
                         available: c.store.picture(&row.peer).map_err(|e|e.to_string())?.is_some_and(|r|r.data.is_some()),
                         peer: row.peer,
@@ -359,7 +363,7 @@ mod tests {
     #[test]
     fn picture_metadata_and_byte_arrival_change_the_windows_projection_key() {
         let first = crate::jumplist_icons::fixture(8, [1, 2, 3, 255]);
-        let mut stamp = PictureStamp { peer: "peer.123456".into(), meta: Some(first.meta.clone()), available: false, avatar: None };
+        let mut stamp = PictureStamp { peer: "peer.123456".into(), meta: Some(first.meta.clone()), available: false, avatar: None, background: None };
         let before = stamp.clone();
         stamp.available = true;
         assert!(stamp != before, "late admitted bytes refresh the fallback icon");

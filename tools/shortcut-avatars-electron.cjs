@@ -29,9 +29,19 @@ app.whenReady().then(async()=>{
     const data=ctx.getImageData(35,40,58,48).data;
     let letters=false;for(let i=0;i<data.length;i+=4)if(data[i+3]>actual[3]+10||Math.abs(data[i]-actual[0])>10||Math.abs(data[i+1]-actual[1])>10||Math.abs(data[i+2]-actual[2])>10){letters=true;break;}
     check('visible initials',letters);
+    const background=avatarPng(kind,name,true),bgImage=new Image();bgImage.src=background;await bgImage.decode();
+    ctx.clearRect(0,0,128,128);ctx.drawImage(bgImage,0,0);
+    const bgPixel=Array.from(ctx.getImageData(64,15,1,1).data);
+    const reference=document.createElement('canvas').getContext('2d');
+    reference.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--side');reference.fillRect(0,0,1,1);
+    reference.fillStyle=style.backgroundColor;reference.fillRect(0,0,1,1);
+    const referencePixel=Array.from(reference.getImageData(0,0,1,1).data);
+    check('profile background matches app tint over contact surface',bgPixel.every((v,i)=>Math.abs(v-referencePixel[i])<=2)&&bgPixel[3]===255);
+    check('profile silhouette remains rounded',ctx.getImageData(0,0,1,1).data[3]===0);
    }
    document.documentElement.className='theme-dark';mountAvatar('person','Example Person');await frames();
    const png=avatarPng('person','Example Person');
+   const backgroundPng=avatarPng('person','Example Person',true);
    const taskPngs={};
    for(const theme of ['dark','light'])for(const view of ['settings','directory','newchat']){
     document.documentElement.className='theme-'+theme;mountTaskIcon(view);await frames();
@@ -75,9 +85,10 @@ app.whenReady().then(async()=>{
     row.dispatchEvent(new PointerEvent('pointerup',{pointerType:'touch',bubbles:true}));row.click();
     check(platform+' touch click opens same chat once',opened.length===beforeTap+1&&opened[opened.length-1]===address);
    }
-   return {checks,png,taskPngs};
+   return {checks,png,taskPngs,backgroundPng};
   })()`);
   fs.writeFileSync(path.join(out,'avatar.png'),Buffer.from(result.png.split(',')[1],'base64'));
+  fs.writeFileSync(path.join(out,'profile-bg.png'),Buffer.from(result.backgroundPng.split(',')[1],'base64'));
   for(const [view,png]of Object.entries(result.taskPngs))fs.writeFileSync(path.join(out,view+'.png'),Buffer.from(png.split(',')[1],'base64'));
   fs.writeFileSync(path.join(out,'result.json'),JSON.stringify(result.checks,null,2));
   console.log('Avatar renderer checks '+result.checks.length+'/'+result.checks.length);

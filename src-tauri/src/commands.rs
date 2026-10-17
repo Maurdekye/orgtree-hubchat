@@ -601,11 +601,11 @@ pub fn hc_shortcut_theme(dark: bool) -> R<()> {
 }
 
 #[tauri::command]
-pub fn hc_shortcut_avatar(app: tauri::AppHandle, owner: String, peer: String, name: String, kind: String, png: String) -> R<()> {
+pub fn hc_shortcut_avatar(app: tauri::AppHandle, owner: String, peer: String, name: String, kind: String, png: String, background: Option<bool>) -> R<()> {
     #[cfg(windows)]
-    { crate::jumplist::admit_avatar(&app, &owner, &peer, &name, &kind, &png) }
+    { crate::jumplist::admit_avatar(&app, &owner, &peer, &name, &kind, &png, background.unwrap_or(false)) }
     #[cfg(not(windows))]
-    { let _ = (app, owner, peer, name, kind, png); Ok(()) }
+    { let _ = (app, owner, peer, name, kind, png, background); Ok(()) }
 }
 
 #[tauri::command]

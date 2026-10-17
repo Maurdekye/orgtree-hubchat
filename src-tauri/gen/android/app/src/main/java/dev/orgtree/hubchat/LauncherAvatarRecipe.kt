@@ -6,8 +6,20 @@ import java.util.Locale
 internal data class LauncherColors(val background: Int, val foreground: Int)
 internal object LauncherAvatarRecipe {
   private val dark = arrayOf(LauncherColors(0xff3a3a3d.toInt(), 0xffd4d4d4.toInt()), LauncherColors(0x33d97757.toInt(), 0xffe3896b.toInt()))
+  private val darkSurface = 0xff1f1f1f.toInt()
   private val light = arrayOf(LauncherColors(0xffdde2e8.toInt(), 0xff3b4450.toInt()), LauncherColors(0x2ed97757.toInt(), 0xffb04f2c.toInt()))
+  private val lightSurface = 0xfff6f7f9.toInt()
   fun colors(kind: String, night: Boolean): LauncherColors = (if (night) dark else light)[if (kind == "org") 1 else 0]
+  fun over(foreground: Int, background: Int): Int {
+    val alpha = foreground ushr 24
+    var result = 0xff000000.toInt()
+    for (shift in intArrayOf(16, 8, 0)) {
+      val channel = (((foreground ushr shift and 255) * alpha + (background ushr shift and 255) * (255-alpha) + 127) / 255)
+      result = result or (channel shl shift)
+    }
+    return result
+  }
+  fun profileBackground(kind: String, night: Boolean): Int = over(colors(kind, night).background, if (night) darkSurface else lightSurface)
   fun initials(name: String): String {
     val words = name.ifEmpty { "?" }.replace(Regex("[^\\p{L}\\p{N} ]"), " ").trim().split(Regex("\\s+"))
     return ((words[0].firstOrNull()?.toString() ?: "?") + (if (words.size > 1) words.last().first().toString() else "")).uppercase(Locale.ROOT)

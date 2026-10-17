@@ -14,7 +14,7 @@ import "../src/styles/base.css";
 
 const root = createRoot(document.getElementById("root")!);
 Object.assign(window, { appIcon, taskIconPng, TASK_ICONS, mountTaskIcon: (view: keyof typeof TASK_ICONS) => {
-  root.render(<button className="icon-btn"><Icon name={TASK_ICONS[view]} /></button>);
+  root.render(<button className="icon-btn theme-dark"><Icon name={TASK_ICONS[view]} /></button>);
 } });
 const opened: string[] = [];
 Object.assign(window, { opened, mountDirectory: async (platform: "desktop" | "android") => {

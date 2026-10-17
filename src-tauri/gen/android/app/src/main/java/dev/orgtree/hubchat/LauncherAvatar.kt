@@ -21,6 +21,10 @@ internal object LauncherAvatar {
     val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     val profile = decode(contact.png)
     if (profile != null) {
+      // The transparent photo sits over the same avatar tint and app surface
+      // as the contact list, rather than the launcher's chosen panel colour.
+      paint.color = LauncherAvatarRecipe.profileBackground(contact.kind, night)
+      canvas.drawCircle(64f, 64f, 64f, paint)
       val shader = BitmapShader(profile, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
       val matrix = Matrix()
       matrix.setScale(128f / profile.width, 128f / profile.height)
