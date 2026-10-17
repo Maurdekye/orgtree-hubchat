@@ -1,0 +1,1 @@
+Windows: recent chats open on the first tray click, and taskbar shortcuts put contacts with their avatars alongside Settings, Directory and New chat. Android: long-press the app icon for recent contacts, and reply from notifications without incoming messages closing your reply or completed sends leaving a stuck spinner.
