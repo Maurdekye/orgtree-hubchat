@@ -7,6 +7,9 @@
   per-chat and final-summary cleanup. Retry/rejection keep visible status;
   a newer same-chat notification survives. Queue feedback precedes worker
   enqueue so a fast worker's result cannot be overwritten. No read-state change.
+  Incoming updates preserve the same owner/episode Reply PendingIntent, so
+  Android can retain active typing. Capture the latest message-version token
+  at Send; a later incoming version remains protected from dismissal.
   [verified: engine_notification_reply.rs, store_notification_reply.rs,
   android.rs, NotificationReply.kt, NotificationReplyPolicy.kt;
   details: docs/notification-inline-replies.md]

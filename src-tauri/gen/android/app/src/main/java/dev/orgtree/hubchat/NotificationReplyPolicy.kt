@@ -50,7 +50,7 @@ internal fun runReplyWork(
   } catch (_: Exception) { ReplyWorkOutcome.RETRY }
 }
 
-/** Only durable completion or an established rejection may remove saved text. */
+/** Retry retains the sealed handoff; terminal send failures keep text in chat history. */
 internal fun finishReplyHandoff(outcome: ReplyWorkOutcome, remove: () -> Unit) {
   if (outcome != ReplyWorkOutcome.RETRY) remove()
 }

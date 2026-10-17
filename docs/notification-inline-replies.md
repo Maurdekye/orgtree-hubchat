@@ -12,7 +12,10 @@ the reply Intent and sealed handoff; a delayed old-account event cannot acquire
 a new account owner from mutable current metadata.
 
 The reply action names the account and chat in its explicit base Intent URI,
-with a unique notification token. Only its broadcast PendingIntent is mutable,
+with a stable per-episode action token. Incoming updates reuse that action
+identity; each posted message still has a separate version token. The receiver
+captures the current version at Send so later arrivals survive completion.
+Only its broadcast PendingIntent is mutable,
 so Android can attach RemoteInput; the tap PendingIntent remains immutable.
 The receiver is unexported. Distinct URIs prevent PendingIntent hash collisions
 from mixing chats. Replies do not open an activity or change connection settings.
@@ -245,4 +248,35 @@ cause of the earlier failure or verify the new code on a phone. Package/version,
 Hubchat-only worker diagnostics and notification metadata were read with the
 coordinator's explicit device window. Message bodies/titles, other apps and
 raw notification dumps were not retained; no phone writes or server stop.
-Foreground-case reproduction and new-build device smoke remain outstanding.
+The subsequent controlled drawer run at 09:11:57 UTC also returned SUCCESS
+within about 0.3 seconds and removed both the captured child and group summary;
+the user confirmed dismissal. The earlier apparent failure was confounded by
+new org messages posted immediately after replies. Their original tokens were
+not captured, so no retrospective token comparison is claimed. Default Android
+notification dumps redact custom string values; a hash of that redaction/type
+descriptor is not a token hash. The corrected probe records unknown instead.
+There is no measured reason to add Samsung-specific cancellation workarounds.
+New-build device smoke remains outstanding.
+
+### Incoming-message typing continuity
+
+The user also reported that an incoming message closes the active inline reply
+field. The old publisher generated a new Reply PendingIntent URI for every
+incoming message. In the alpha.4 phone comparison, the notification's tag/id
+and open-chat PendingIntent stayed the same while the Reply PendingIntentRecord
+changed after one controlled incoming message. This action-identity change is
+consistent with Android discarding a view bound to the old action.
+
+The publisher now retains an owner-bound action token while that conversation
+notification is active. It still mints a new notification-version token for each
+message. At Send, the receiver snapshots the current version under the same
+posting/clearing monitor. Thus messages arriving during typing are part of the
+visible conversation when replying, while messages arriving after Send cannot
+be cleared by that completion. A replaced owner/episode cannot inherit the
+action; a reply racing with a removed notice is still preserved and admitted.
+No UI callbacks, app foregrounding, notification suppression, new read semantics
+or notification text logging are introduced.
+
+Policy controls and API verification for this change are pending. Phone data
+remain from alpha.4; retaining the actual input/draft with the new code must be
+checked in the next coordinator-built alpha.
