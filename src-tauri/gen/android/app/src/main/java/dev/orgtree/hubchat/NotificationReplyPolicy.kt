@@ -8,6 +8,15 @@ internal fun validReplyId(id: String): Boolean = try {
 
 internal enum class ReplyWorkOutcome { COMPLETE, RETRY, REJECTED }
 
+/** The notification episode, not merely the peer, owns status/dismissal. */
+internal fun matchesReplyNotification(peer: String, token: String, tag: String?, currentToken: String?): Boolean =
+  tag == peer && currentToken == token
+
+/** Predecessor behavior: a completed worker leaves its queued notification. */
+internal fun finishReplyNotification(outcome: ReplyWorkOutcome, dismiss: () -> Unit, failed: () -> Unit) {
+  if (outcome == ReplyWorkOutcome.REJECTED) failed()
+}
+
 /** Admission always precedes the network check, even offline or on a cold process. */
 internal fun runReplyWork(
   attach: () -> Unit,
