@@ -3,6 +3,28 @@ use super::*;
 use crate::engine::now;
 
 impl Store {
+    /// Read only this admitted reply's delivery state while identity is stable.
+    pub(crate) fn notification_reply_state(&self, owner: &str, id: &str, peer: &str) -> Result<&'static str> {
+        if owner.is_empty() || peer.is_empty() || uuid::Uuid::parse_str(id).is_err() {
+            return Err(Error::Invalid("Invalid notification reply".into()));
+        }
+        let c = self.con.lock().unwrap_or_else(|p|p.into_inner());
+            let current: Option<String> = c.query_row("SELECT value FROM meta WHERE key='identity.address'", [], |r|r.get(0)).optional().map_err(db)?;
+            if current.as_deref() != Some(owner) { return Err(Error::Invalid("Notification identity changed".into())); }
+            let admitted: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM notification_replies WHERE id=?)", [id], |r|r.get(0)).map_err(db)?;
+            if !admitted { return Ok("retry"); }
+            let row: Option<(String, bool, String)> = c.query_row("SELECT peer,outgoing,state FROM messages WHERE id=?", [id], |r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(db)?;
+            match row {
+                // A consumed UUID survives an intentional message/chat deletion.
+                None => Ok("gone"),
+                Some((p, outgoing, state)) if p == peer && outgoing => Ok(match state.as_str() {
+                    "sent" | "fetched" | "delivered" | "read" => "sent",
+                    "failed" => "failed",
+                    _ => "retry",
+                }),
+                _ => Err(Error::Invalid("Notification reply target changed".into())),
+            }
+    }
     pub(crate) fn queue_notification_reply(&self, owner: &str, id: &str, peer: &str, body: &str) -> Result<bool> {
         if owner.is_empty() || peer.is_empty() || owner == peer || body.trim().is_empty()
             || uuid::Uuid::parse_str(id).is_err() {

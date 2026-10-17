@@ -373,6 +373,35 @@ pub extern "system" fn Java_dev_orgtree_hubchat_ConnectionService_00024Companion
     env: JNIEnv, _this: JObject, owner: JString, id: JString, peer: JString, body: JString,
 ) -> jni::sys::jstring { notification_reply(env, owner, id, peer, body) }
 
+/// A reply may be sent while unrelated hubs/outbox work remains pending.
+fn check_notification_reply(mut env: JNIEnv, owner: JString, id: JString, peer: JString, timeout_secs: i32) -> jni::sys::jstring {
+    let result = (|| -> Result<&'static str, ()> {
+        let owner = env.get_string(&owner).map(String::from).map_err(|_| ())?;
+        let id = env.get_string(&id).map(String::from).map_err(|_| ())?;
+        let peer = env.get_string(&peer).map(String::from).map_err(|_| ())?;
+        let c = crate::core::get().map_err(|_| ())?;
+        let engine = c.engine().map_err(|_| ())?;
+        let _check = c.background_check();
+        let timeout = std::time::Duration::from_secs(timeout_secs.clamp(5, 600) as u64);
+        Ok(match c.rt.block_on(engine.check_notification_reply(&owner, &id, &peer, timeout)) {
+            Ok(state) => state,
+            Err(hubchat_core::Error::Invalid(_)) => "rejected",
+            Err(_) => "retry",
+        })
+    })().unwrap_or("retry");
+    env.new_string(result).map(|s|s.into_raw()).unwrap_or(std::ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_dev_orgtree_hubchat_ConnectionService_checkNotificationReply(
+    env: JNIEnv, _class: JClass, owner: JString, id: JString, peer: JString, timeout_secs: i32,
+) -> jni::sys::jstring { check_notification_reply(env, owner, id, peer, timeout_secs) }
+
+#[no_mangle]
+pub extern "system" fn Java_dev_orgtree_hubchat_ConnectionService_00024Companion_checkNotificationReply(
+    env: JNIEnv, _this: JObject, owner: JString, id: JString, peer: JString, timeout_secs: i32,
+) -> jni::sys::jstring { check_notification_reply(env, owner, id, peer, timeout_secs) }
+
 #[derive(serde::Deserialize)]
 struct PushCapability {
     endpoint: String,

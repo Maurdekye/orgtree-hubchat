@@ -68,6 +68,7 @@ class ConnectionService : Service() {
     /** Rust entry: one check (design D6); blocks, so never on the main thread. */
     @JvmStatic external fun checkNow(timeoutSecs: Int): Boolean
     @JvmStatic external fun queueNotificationReply(owner: String, id: String, peer: String, body: String): String
+    @JvmStatic external fun checkNotificationReply(owner: String, id: String, peer: String, timeoutSecs: Int): String
     @JvmStatic external fun pushWork(action: String, capability: String): String
     @JvmStatic external fun fileServiceChanged()
     fun isRunning(): Boolean = running

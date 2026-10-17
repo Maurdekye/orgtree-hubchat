@@ -7,6 +7,8 @@ test('worker completes the tested notification policy before removing its durabl
  const source=read(base+'NotificationReply.kt');
  assert.ok(source.indexOf('finishReplyNotification(outcome,')<source.indexOf('finishReplyHandoff(outcome)'));
  assert.ok(source.includes('dismiss = { NotificationReplies.dismiss(applicationContext, target) }'));
+ assert.ok(source.includes('ConnectionService.checkNotificationReply(target.owner, id, target.peer, 45)'));
+ assert.ok(!source.includes('ConnectionService.checkNow('),'reply completion is independent of global hub/outbox readiness');
  const save=source.indexOf('NotificationReplies.save(context, id, payload)');
  const queued=source.indexOf('NotificationReplies.status(context, target, "Reply queued")',save);
  const enqueue=source.indexOf('NotificationReplies.enqueue(context, id)',save);

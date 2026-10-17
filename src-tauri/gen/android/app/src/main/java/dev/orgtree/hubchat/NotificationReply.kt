@@ -66,19 +66,20 @@ class NotificationReplyWorker(context: Context, params: WorkerParameters) : Work
       val outcome = runReplyWork(
         attach = { ConnectionService.attach(applicationContext) },
         queue = { ConnectionService.queueNotificationReply(target.owner, id, target.peer, reply.getString("body")) },
-        check = { ConnectionService.checkNow(45) },
+        check = { ConnectionService.checkNotificationReply(target.owner, id, target.peer, 45) },
         queued = { NotificationReplies.status(applicationContext, target, "Reply queued") },
       )
       finishReplyNotification(outcome,
         dismiss = { NotificationReplies.dismiss(applicationContext, target) },
         failed = { NotificationReplies.status(applicationContext, target,
-          if (outcome == ReplyWorkOutcome.REJECTED) "Open chat to check your reply."
+          if (outcome == ReplyWorkOutcome.FAILED) "Could not send reply. Open chat to retry."
+          else if (outcome == ReplyWorkOutcome.REJECTED) "Open chat to check your reply."
           else "Could not confirm sending. Retrying.") },
       )
       finishReplyHandoff(outcome) { file.delete() }
       when (outcome) {
         ReplyWorkOutcome.COMPLETE -> Result.success()
-        ReplyWorkOutcome.REJECTED -> Result.failure()
+        ReplyWorkOutcome.REJECTED, ReplyWorkOutcome.FAILED -> Result.failure()
         else -> Result.retry()
       }
     } catch (_: Exception) {

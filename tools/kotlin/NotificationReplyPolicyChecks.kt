@@ -14,14 +14,14 @@ fun main() {
   case("cold start admits before networking") {
     val events = mutableListOf<String>()
     check(runReplyWork({ events.add("attach") }, { events.add("queue"); "queued" },
-      { events.add("check"); true }, { events.add("status") }) == ReplyWorkOutcome.COMPLETE)
+      { events.add("check"); "sent" }, { events.add("status") }) == ReplyWorkOutcome.COMPLETE)
     check(events == listOf("attach", "queue", "status", "check"))
   }
   case("offline keeps durable work retryable") {
     var admitted = 0
     var notified = 0
     repeat(2) {
-      check(runReplyWork({}, { admitted++; "queued" }, { false }, { notified++ }) == ReplyWorkOutcome.RETRY)
+      check(runReplyWork({}, { admitted++; "queued" }, { "retry" }, { notified++ }) == ReplyWorkOutcome.RETRY)
     }
     check(admitted == 2 && notified == 2) // the Rust receipt de-duplicates admission
   }
@@ -39,7 +39,7 @@ fun main() {
     var attempts = 0
     var checks = 0
     repeat(3) {
-      val result = runReplyWork({}, { attempts++; if (attempts < 3) "retry" else "queued" }, { checks++; true }, {})
+      val result = runReplyWork({}, { attempts++; if (attempts < 3) "retry" else "queued" }, { checks++; "sent" }, {})
       finishReplyHandoff(result) { saved = false }
       check(saved == (attempts < 3))
     }
@@ -54,7 +54,7 @@ fun main() {
   case("successful reply dismisses only after the send check and before deleting handoff") {
     val events = mutableListOf<String>()
     val outcome = runReplyWork({ events.add("attach") }, { events.add("queue"); "queued" },
-      { events.add("check"); true }, { events.add("queued") })
+      { events.add("check"); "sent" }, { events.add("queued") })
     finishReplyNotification(outcome, { events.add("dismiss") }, { error("no failure") })
     finishReplyHandoff(outcome) { events.add("delete") }
     check(events == listOf("attach", "queue", "queued", "check", "dismiss", "delete"))
@@ -62,7 +62,7 @@ fun main() {
   case("retry and exceptions keep notification and saved text with failure status") {
     for (throwCheck in listOf(false, true)) {
       var dismissed = false; var status = false; var saved = true
-      val outcome = runReplyWork({}, { "queued" }, { if (throwCheck) error("offline") else false }, {})
+      val outcome = runReplyWork({}, { "queued" }, { if (throwCheck) error("offline") else "retry" }, {})
       finishReplyNotification(outcome, { dismissed = true }, { status = true })
       finishReplyHandoff(outcome) { saved = false }
       check(outcome == ReplyWorkOutcome.RETRY && !dismissed && status && saved)
@@ -86,6 +86,28 @@ fun main() {
     check(!matchesReplyNotification("peer", "new", "other", "new"))
     check(!matchesReplyNotification("peer", "new", "peer", null))
     check(!matchesReplyNotification("peer", "new", null, "new"))
+  }
+  case("per-reply success completes without any all-hubs result") {
+    for (state in listOf("sent", "gone")) {
+      var dismissed = false
+      val outcome = runReplyWork({}, { "queued" }, { state }, {})
+      finishReplyNotification(outcome, { dismissed = true }, { error("no failure") })
+      check(outcome == ReplyWorkOutcome.COMPLETE && dismissed)
+    }
+  }
+  case("failed reply keeps its notice but text remains in the durable outbox history") {
+    var dismissed = false; var errorShown = false; var sealedHandoff = true
+    val outcome = runReplyWork({}, { "queued" }, { "failed" }, {})
+    finishReplyNotification(outcome, { dismissed = true }, { errorShown = true })
+    finishReplyHandoff(outcome) { sealedHandoff = false }
+    check(outcome == ReplyWorkOutcome.FAILED && !dismissed && errorShown && !sealedHandoff)
+  }
+  case("changed identity and unknown bridge statuses never dismiss") {
+    for (state in listOf("rejected", "", "unexpected")) {
+      val outcome = runReplyWork({}, { "queued" }, { state }, {})
+      check(outcome != ReplyWorkOutcome.COMPLETE)
+      finishReplyNotification(outcome, { error("must not dismiss") }, {})
+    }
   }
   println("$passed checks passed; $failed failed")
   kotlin.system.exitProcess(if (failed == 0) 0 else 1)

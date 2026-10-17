@@ -6,7 +6,7 @@ internal fun validReplyId(id: String): Boolean = try {
   UUID.fromString(id).toString() == id
 } catch (_: IllegalArgumentException) { false }
 
-internal enum class ReplyWorkOutcome { COMPLETE, RETRY, REJECTED }
+internal enum class ReplyWorkOutcome { COMPLETE, RETRY, REJECTED, FAILED }
 
 /** The notification episode, not merely the peer, owns status/dismissal. */
 internal fun matchesReplyNotification(peer: String, token: String, tag: String?, currentToken: String?): Boolean =
@@ -21,13 +21,21 @@ internal fun finishReplyNotification(outcome: ReplyWorkOutcome, dismiss: () -> U
 internal fun runReplyWork(
   attach: () -> Unit,
   queue: () -> String,
-  check: () -> Boolean,
+  check: () -> String,
   queued: () -> Unit,
 ): ReplyWorkOutcome {
   return try {
     attach()
     when (queue()) {
-      "queued" -> { queued(); if (check()) ReplyWorkOutcome.COMPLETE else ReplyWorkOutcome.RETRY }
+      "queued" -> {
+        queued()
+        when (check()) {
+          "sent", "gone" -> ReplyWorkOutcome.COMPLETE
+          "failed" -> ReplyWorkOutcome.FAILED
+          "rejected" -> ReplyWorkOutcome.REJECTED
+          else -> ReplyWorkOutcome.RETRY
+        }
+      }
       "rejected" -> ReplyWorkOutcome.REJECTED
       else -> ReplyWorkOutcome.RETRY
     }
