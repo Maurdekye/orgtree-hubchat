@@ -93,12 +93,6 @@ function Run-Compiler([string]$Destination, [string[]]$Sources) {
   & "$Toolchain\jdk-21\bin\java.exe" "@$run\tmp\compiler.args"
   if ($LASTEXITCODE -ne 0) { throw 'Kotlin compile failed' }
 }
-Run-Compiler "$run\classes" @("$source\ConnectionService.kt", "$source\SecretBox.kt", "$source\NotificationReply.kt", "$source\NotificationReplyPolicy.kt", "$source\DownloadOpener.kt", "$run\tmp\Dependencies.kt")
-Write-Output 'PASS Android API compile: ConnectionService, SecretBox, reply receiver/worker/policy (unrelated app dependencies stubbed)'
-Run-Compiler "$run\policy" @("$source\NotificationReplyPolicy.kt", "$repo\tools\kotlin\NotificationReplyPolicyChecks.kt")
-& "$Toolchain\jdk-21\bin\java.exe" '-cp' ("$run\policy;" + ($stdlib -join ';')) 'dev.orgtree.hubchat.NotificationReplyPolicyChecksKt'
-if ($LASTEXITCODE -ne 0) { throw 'Policy checks failed' }
-Write-Output "Evidence build folder: $run"
 if ($ControlPolicy) {
   $control = [IO.Path]::GetFullPath($ControlPolicy)
   if (!$control.StartsWith($allowed + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
@@ -115,3 +109,10 @@ if ($ControlPolicy) {
   }
   Write-Output 'PASS predecessor control: 10 passed / 2 expected failures'
 }
+
+Run-Compiler "$run\classes" @("$source\ConnectionService.kt", "$source\SecretBox.kt", "$source\NotificationReply.kt", "$source\NotificationReplyPolicy.kt", "$source\DownloadOpener.kt", "$run\tmp\Dependencies.kt")
+Write-Output 'PASS Android API compile: ConnectionService, SecretBox, reply receiver/worker/policy (unrelated app dependencies stubbed)'
+Run-Compiler "$run\policy" @("$source\NotificationReplyPolicy.kt", "$repo\tools\kotlin\NotificationReplyPolicyChecks.kt")
+& "$Toolchain\jdk-21\bin\java.exe" '-cp' ("$run\policy;" + ($stdlib -join ';')) 'dev.orgtree.hubchat.NotificationReplyPolicyChecksKt'
+if ($LASTEXITCODE -ne 0) { throw 'Policy checks failed' }
+Write-Output "Evidence build folder: $run"
