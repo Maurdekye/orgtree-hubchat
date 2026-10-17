@@ -285,3 +285,21 @@ Corrected author verification at `be9eba6` (base `d6447c6`):
 No installed-shell, APK/device or live profile writes were performed. Android
 Canvas execution, launcher masking and actual installed Jump List presentation
 remain the integrated Windows/Android alpha smoke checks.
+
+### Initials/profile matte consistency (1.2.2-alpha.8)
+
+The alpha.7 screenshot showed a peach initials tile next to dark profile tiles.
+The initials renderer had drawn only the translucent kind tint, so the bright
+shell panel showed through it. Profile icons already had an opaque app-surface
+underlay. Initials now use exactly that same underlay before the tint/letters.
+Windows uses the shared CSS avatar tint over `--side`; Android's generated
+`initialsColors` reuses `profileBackground` over `--bg` for the saved app theme.
+This retains the existing app colours and initials, with an opaque interior
+and the same rounded outer silhouette. It does not change contact-list avatars
+inside the app or the fixed-task tile appearance.
+
+Author controls compare actual initials background pixels directly to the
+picture background in both app themes and both contact kinds; native integration
+loads the real org initials PNG as an ICO and checks its opaque matte against
+the picture background. Kotlin policy checks the same shared recipe. Verification
+is queued; no device/install/live shell actions are authorized or performed.

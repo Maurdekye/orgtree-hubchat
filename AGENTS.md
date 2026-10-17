@@ -36,7 +36,9 @@
   alpha is composited over the app's actual avatar tint/surface: renderer CSS
   supplies Windows backgrounds; generated client tokens supply Android's.
   Windows composite cache keys include picture and background hashes; preserve
-  the client's outer rounded mask. Picture metadata and admitted-byte
+  the client's outer rounded mask. Initials shortcut tints also flatten over
+  that same opaque surface: otherwise translucent org tint appears peach on
+  a bright shell panel even with the dark app palette. Picture metadata and admitted-byte
   changes refresh both platforms through the existing engine picture API.
   Android dynamic launcher shortcuts contain only four recently messaged
   contacts, including closed DMs, with circular profile/initials bitmaps.

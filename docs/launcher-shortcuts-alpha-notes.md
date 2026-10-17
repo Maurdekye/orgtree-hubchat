@@ -27,6 +27,10 @@ dark rounded tile. Transparent contact profile pictures now show the avatar
 background from the app on Windows and Android, rather than the shell panel
 showing through the picture. The outer avatar silhouette stays rounded.
 
+For alpha.8, initials-only shortcuts get the same opaque avatar background as
+picture shortcuts. The bright launcher/Jump List panel no longer shows through
+an organisation's translucent tint and makes its initials tile look peach.
+
 Known startup limit: the first Jump List click immediately after an update may
 only show the restored app. Later clicks work normally. Existing first-version
 argument suppression is preserved to avoid replaying an old setup/chat URL;
