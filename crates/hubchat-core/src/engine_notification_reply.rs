@@ -37,7 +37,7 @@ mod tests {
         fn open_source(&self, _: &str) -> std::io::Result<std::fs::File> { unreachable!() }
         fn download_dir(&self) -> std::path::PathBuf { std::path::PathBuf::new() }
     }
-    fn delivery_fixture() -> (Arc<Store>, Engine, String) {
+    fn delivery_fixture() -> (Arc<Store>, Arc<Engine>, String) {
         let store = Arc::new(Store::open_in_memory().unwrap());
         let me = Identity::generate("reply-delivery-proof").unwrap();
         let owner = me.address();
