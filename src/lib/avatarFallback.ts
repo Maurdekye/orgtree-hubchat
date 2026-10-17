@@ -25,8 +25,8 @@ export function avatarPng(kind: Kind, name: string, backgroundOnly = false): str
     const radius = style.borderTopLeftRadius.endsWith("%")
       ? parseFloat(style.borderTopLeftRadius) * 44 / 100 : parseFloat(style.borderTopLeftRadius);
     ctx.beginPath(); ctx.roundRect(0, 0, 44, 44, radius);
-    // Profile transparency sees the actual avatar tint over the contact-list
-    // surface, never the unrelated shell/launcher panel behind the icon.
+    // Profiles and initials share the avatar tint over the contact-list surface;
+    // a translucent initials tint must not blend with the shell's bright panel.
     ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--side"); ctx.fill();
     ctx.fillStyle = style.backgroundColor; ctx.fill();
     ctx.fillStyle = style.color;

@@ -279,6 +279,7 @@ mod tests {
             let loaded = LoadImageW(std::ptr::null_mut(), path.as_ptr(), IMAGE_ICON, 32, 32, LR_LOADFROMFILE);
             assert!(!loaded.is_null(), "Windows loads the client-rendered initials ICO");
             assert_ne!(DestroyIcon(loaded), 0);
+            let fixture_dir = PathBuf::from(std::env::var("HUBCHAT_AVATAR_PNG").unwrap()).parent().unwrap().to_path_buf();
             let org_png = std::fs::read(fixture_dir.join("org-initials.png")).unwrap();
             let org_icon = crate::jumplist_icons::avatar(&dir, &format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(org_png))).unwrap();
             let org_background = image::open(fixture_dir.join("profile-bg-org.png")).unwrap().to_rgba8();
@@ -291,7 +292,6 @@ mod tests {
             let loaded = LoadImageW(std::ptr::null_mut(), path.as_ptr(), IMAGE_ICON, 32, 32, LR_LOADFROMFILE);
             assert!(!loaded.is_null(), "Windows loads the opaque-matte initials icon");
             assert_ne!(DestroyIcon(loaded), 0);
-            let fixture_dir = PathBuf::from(std::env::var("HUBCHAT_AVATAR_PNG").unwrap()).parent().unwrap().to_path_buf();
             let mut icons = HashMap::new();
             for view in ["settings", "directory", "newchat"] {
                 let png = std::fs::read(fixture_dir.join(format!("{view}.png"))).unwrap();
