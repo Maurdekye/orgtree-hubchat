@@ -12,6 +12,26 @@ pub fn cached(data: &Path, meta: &PictureMeta) -> Option<PathBuf> {
     path(data, meta).filter(|p| p.is_file())
 }
 
+/// Renderer rasterizes the shared client avatar. Admit only a small square PNG,
+/// strip its metadata, then use the existing content-addressed ICO cache.
+pub fn avatar(data: &Path, png_url: &str) -> Option<PathBuf> {
+    use base64::Engine as _;
+    if png_url.len() > 48 * 1024 { return None; }
+    let bytes = base64::engine::general_purpose::STANDARD.decode(png_url.strip_prefix("data:image/png;base64,")?).ok()?;
+    let dimensions = image::ImageReader::with_format(Cursor::new(&bytes), image::ImageFormat::Png).into_dimensions().ok()?;
+    if dimensions != (128, 128) { return None; }
+    let pixels = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).ok()?.to_rgba8();
+    let mut normalized = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut normalized, 128, 128);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.write_header().ok()?.write_image_data(pixels.as_raw()).ok()?;
+    }
+    let record = hubchat_core::pictures::from_png(hubchat_core::pictures::next_revision(None).ok()?, normalized, 128).ok()?;
+    resolve(data, &record.meta, Some(&record))
+}
+
 /// Only the store's currently admitted record can supply the requested pixels.
 /// Missing bytes, removals and failed conversion keep the executable fallback.
 pub fn resolve(data: &Path, meta: &PictureMeta, record: Option<&PictureRecord>) -> Option<PathBuf> {
@@ -55,6 +75,19 @@ pub fn test_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn avatar_cache_preserves_transparency_and_versions_changed_pixels() {
+        let dir = test_dir();
+        let url = |r: &PictureRecord|format!("data:image/png;base64,{}", r.data.as_ref().unwrap());
+        let first = fixture(128, [90, 100, 110, 128]);
+        let a = avatar(&dir, &url(&first)).unwrap();
+        assert_eq!(avatar(&dir, &url(&first)).unwrap(), a);
+        assert_eq!(image::open(&a).unwrap().to_rgba8().get_pixel(64, 64).0, [90, 100, 110, 128]);
+        assert_ne!(avatar(&dir, &url(&fixture(128, [20, 30, 40, 255]))).unwrap(), a);
+        assert!(avatar(&dir, &url(&fixture(512, [0, 0, 0, 255]))).is_none());
+        assert!(avatar(&dir, "data:image/png;base64,not-a-picture").is_none());
+        assert!(avatar(&dir, &"x".repeat(48 * 1024 + 1)).is_none());
+    }
     #[test]
     fn profile_revisions_refresh_icon_paths_and_missing_pictures_use_fallback() {
         let dir = test_dir();

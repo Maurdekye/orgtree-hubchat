@@ -593,6 +593,14 @@ pub fn hc_chats() -> R<Vec<ChatSummary>> {
 }
 
 #[tauri::command]
+pub fn hc_shortcut_avatar(app: tauri::AppHandle, owner: String, peer: String, name: String, kind: String, png: String) -> R<()> {
+    #[cfg(windows)]
+    { crate::jumplist::admit_avatar(&app, &owner, &peer, &name, &kind, &png) }
+    #[cfg(not(windows))]
+    { let _ = (app, owner, peer, name, kind, png); Ok(()) }
+}
+
+#[tauri::command]
 pub fn hc_close_dm(peer: String) -> R<()> {
     engine()?.close_dm(&peer).map_err(s)
 }

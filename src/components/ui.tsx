@@ -5,7 +5,7 @@ import type { Contact, HubStatus, Message, PictureMeta } from "../api";
 import { usePicture } from "../lib/pictures";
 import { useSnap } from "../lib/store";
 import { Icon, type IconName } from "../lib/icons";
-import { initials } from "../lib/format";
+import { avatarFallback } from "../lib/avatarFallback";
 import { displayName, kindInfo, kindOf, presence, splitAddr, tickInfo, type Kind, type PresState } from "../lib/peers";
 import { useToasts } from "../lib/toast";
 import { appVersion } from "../lib/native";
@@ -15,13 +15,13 @@ export const PlatformCtx = createContext<Platform>("desktop");
 export const usePlatform = () => useContext(PlatformCtx);
 
 export function Avatar({ kind, name, size, pres, presTitle, address, picture }: { kind: Kind | "me"; name: string; size: number; pres?: PresState; presTitle?: string; address?: string; picture?: PictureMeta | null }) {
-  const cls = kind === "me" ? "k-me" : kindInfo(kind).cls;
+  const fallback = avatarFallback(kind, name);
   const me = useSnap().state?.me;
   const src = usePicture(kind === "chat" ? undefined : kind === "me" ? me?.address : address, kind === "me" ? me?.picture : picture);
   const [failed, setFailed] = useState<string | null>(null);
   return (
-    <span className={"av s" + size + " " + cls}>
-      {src && src !== failed ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "inherit" }} onError={() => setFailed(src)} /> : kind === "chat" ? <Icon name="terminal" /> : initials(name)}
+    <span className={"av s" + size + " " + fallback.cls}>
+      {src && src !== failed ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "inherit" }} onError={() => setFailed(src)} /> : kind === "chat" ? <Icon name="terminal" /> : fallback.text}
       {pres ? <i className={"pres p-" + pres} title={presTitle} /> : null}
     </span>
   );

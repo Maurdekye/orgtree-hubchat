@@ -2,7 +2,7 @@
 //! routing reaches the running app without touching protocol registration.
 use hubchat_core::store::ShortcutContact;
 use hubchat_core::pictures::PictureMeta;
-use std::{collections::{HashSet, VecDeque}, sync::{Mutex, atomic::{AtomicBool, Ordering}}};
+use std::{collections::{HashMap, HashSet, VecDeque}, path::PathBuf, sync::{Mutex, atomic::{AtomicBool, Ordering}}};
 use tauri::{AppHandle, Manager};
 use windows::{core::{BSTR, HSTRING, Interface, Result}, Win32::{
     Foundation::PROPERTYKEY,
@@ -16,7 +16,39 @@ const TITLE: PROPERTYKEY = PROPERTYKEY {
 };
 
 #[derive(Clone, PartialEq)]
-struct PictureStamp { peer: String, meta: Option<PictureMeta>, available: bool }
+struct PictureStamp { peer: String, meta: Option<PictureMeta>, available: bool, avatar: Option<PathBuf> }
+
+#[derive(Default)]
+struct Avatars(Mutex<HashMap<(String, String), (String, String, PathBuf)>>);
+
+fn contact_kind(directory: &[hubchat_core::store::Contact], peer: &str) -> String {
+    directory.iter().find(|c|c.address == peer).map(|c|c.kind.clone()).filter(|k|k == "org" || k == "chat").unwrap_or_else(||"person".into())
+}
+
+fn avatar_eligible(rows: &[ShortcutContact], peer: &str, name: &str, meta: Option<&PictureMeta>) -> bool {
+    rows.iter().any(|r|r.peer == peer && r.name == name) && !meta.is_some_and(|m|m.sha256.is_some())
+}
+
+pub fn admit_avatar(app: &AppHandle, owner: &str, peer: &str, name: &str, kind: &str, png: &str) -> std::result::Result<(), String> {
+    let c = crate::core::get()?;
+    let path = crate::jumplist_icons::avatar(&c.dir, png).ok_or("Invalid shortcut avatar")?;
+    if app.try_state::<Avatars>().is_none() { app.manage(Avatars::default()); }
+    c.tray_with_identity(Some(owner), |_| {
+        let rows = c.store.shortcut_contacts(true, None).map_err(|e|e.to_string())?;
+        let meta = c.store.picture_meta(peer).map_err(|e|e.to_string())?;
+        let directory = c.store.directory().map_err(|e|e.to_string())?;
+        if !avatar_eligible(&rows, peer, name, meta.as_ref()) || contact_kind(&directory, peer) != kind {
+            return Err("Contact changed".into());
+        }
+        let state = app.state::<Avatars>();
+        let mut icons = state.0.lock().unwrap();
+        icons.retain(|(o,p), _| o == owner && rows.iter().any(|r| &r.peer == p));
+        icons.insert((owner.to_owned(), peer.to_owned()), (name.to_owned(), kind.to_owned(), path));
+        Ok(())
+    })?;
+    changed(app);
+    Ok(())
+}
 
 #[derive(Default)]
 struct FetchQueue { pending: VecDeque<(String, String)>, known: HashSet<(String, String)> }
@@ -98,10 +130,11 @@ fn publish(app: &AppHandle, owner: &str, rows: &[ShortcutContact], pictures: &[P
             for row in rows {
                 let target = chat_link(owner, &row.peer);
                 if removed_args.contains(&format!("\"{target}\"")) { continue; }
-                let icon = pictures.iter().find(|p|p.peer == row.peer).and_then(|p|p.meta.as_ref()).and_then(|meta| {
+                let stamp = pictures.iter().find(|p|p.peer == row.peer);
+                let icon = stamp.and_then(|p|p.meta.as_ref()).and_then(|meta| {
                     let record = c.store.picture(&row.peer).ok().flatten();
                     crate::jumplist_icons::resolve(&c.dir, meta, record.as_ref())
-                });
+                }).or_else(||stamp.and_then(|p|p.avatar.clone()));
                 contacts.push(ContactLink { name: row.name.clone(), target, icon });
             }
             let (recent, tasks) = collections(&exe, &contacts)?;
@@ -123,8 +156,15 @@ pub fn changed(app: &AppHandle) {
             let engine = c.engine().ok();
             let owner = engine.as_ref().map(|e|e.me().address()).unwrap_or_default();
             let read = || -> std::result::Result<Vec<PictureStamp>, String> {
+                let directory = c.store.directory().map_err(|e|e.to_string())?;
                 c.store.shortcut_contacts(true, None).map_err(|e|e.to_string())?.into_iter().map(|row| {
+                    let avatar = handle.try_state::<Avatars>().and_then(|state| {
+                        state.0.lock().unwrap().get(&(owner.clone(), row.peer.clone()))
+                            .filter(|(name,kind,path)|name == &row.name && kind == &contact_kind(&directory, &row.peer) && path.is_file())
+                            .map(|(_,_,path)|path.clone())
+                    });
                     Ok(PictureStamp {
+                        avatar,
                         meta: c.store.picture_meta(&row.peer).map_err(|e|e.to_string())?,
                         available: c.store.picture(&row.peer).map_err(|e|e.to_string())?.is_some_and(|r|r.data.is_some()),
                         peer: row.peer,
@@ -180,6 +220,44 @@ fn fetch_missing(app: &AppHandle, c: &'static crate::core::Core, jobs: Vec<(Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn avatar_admission_rejects_renames_closed_contacts_and_current_profile_pictures() {
+        let rows = [ShortcutContact { peer: "p.123456".into(), name: "New Name".into() }];
+        assert!(avatar_eligible(&rows, "p.123456", "New Name", None));
+        assert!(!avatar_eligible(&rows, "p.123456", "Old Name", None));
+        assert!(!avatar_eligible(&[], "p.123456", "New Name", None));
+        let record = crate::jumplist_icons::fixture(128, [0, 1, 2, 255]);
+        assert!(!avatar_eligible(&rows, "p.123456", "New Name", Some(&record.meta)));
+        let removed = hubchat_core::pictures::PictureRecord::removed(hubchat_core::pictures::next_revision(None).unwrap());
+        assert!(avatar_eligible(&rows, "p.123456", "New Name", Some(&removed.meta)));
+    }
+
+    #[test]
+    #[ignore = "requires synthetic WebView PNG from tools/proof-shortcut-avatars.mjs"]
+    fn client_rendered_avatar_is_a_real_loadable_shell_icon() {
+        use base64::Engine as _;
+        let png = std::fs::read(std::env::var("HUBCHAT_AVATAR_PNG").expect("renderer fixture path")).unwrap();
+        let data = format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png));
+        let dir = crate::jumplist_icons::test_dir();
+        let icon = crate::jumplist_icons::avatar(&dir, &data).unwrap();
+        let pixels = image::open(&icon).unwrap().to_rgba8();
+        assert_eq!(pixels.dimensions(), (128, 128));
+        assert_eq!(pixels.get_pixel(0, 0).0[3], 0, "circle has transparent corners");
+        assert!(pixels.pixels().any(|p|p.0[3] != 0), "avatar has visible pixels");
+        unsafe {
+            CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok().unwrap();
+            let _apartment = Apartment;
+            let item = link(r"C:\scratch\hubchat.exe", "Example Person", &chat_link("me.123456", "p.123456"), Some(&icon)).unwrap();
+            let mut path = [0u16;4096]; let mut index = -1;
+            item.GetIconLocation(&mut path, &mut index).unwrap();
+            assert_eq!(PathBuf::from(String::from_utf16_lossy(&path[..path.iter().position(|&c|c==0).unwrap()])), icon);
+            assert_eq!(index, 0);
+            use windows_sys::Win32::UI::WindowsAndMessaging::{LoadImageW, DestroyIcon, IMAGE_ICON, LR_LOADFROMFILE};
+            let loaded = LoadImageW(std::ptr::null_mut(), path.as_ptr(), IMAGE_ICON, 32, 32, LR_LOADFROMFILE);
+            assert!(!loaded.is_null(), "Windows loads the client-rendered initials ICO");
+            assert_ne!(DestroyIcon(loaded), 0);
+        }
+    }
     #[test]
     fn chat_activation_encodes_identity_and_contact_as_one_argument() {
         let link = chat_link("me.123456", "peer.123456&other=\"x");
@@ -244,7 +322,7 @@ mod tests {
     #[test]
     fn picture_metadata_and_byte_arrival_change_the_windows_projection_key() {
         let first = crate::jumplist_icons::fixture(8, [1, 2, 3, 255]);
-        let mut stamp = PictureStamp { peer: "peer.123456".into(), meta: Some(first.meta.clone()), available: false };
+        let mut stamp = PictureStamp { peer: "peer.123456".into(), meta: Some(first.meta.clone()), available: false, avatar: None };
         let before = stamp.clone();
         stamp.available = true;
         assert!(stamp != before, "late admitted bytes refresh the fallback icon");

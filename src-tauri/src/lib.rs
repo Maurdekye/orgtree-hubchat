@@ -471,6 +471,7 @@ pub fn run() {
             commands::hc_directory,
             commands::hc_resolve,
             commands::hc_chats,
+            commands::hc_shortcut_avatar,
             commands::hc_chat,
             commands::hc_load_older,
             commands::hc_message,

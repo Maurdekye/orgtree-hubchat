@@ -11,6 +11,7 @@ import { hubSummary } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { closeDm, openDm } from "../lib/dm";
 import { desktopShortcut } from "../lib/desktopShortcuts";
+import { useShortcutAvatars } from "../lib/shortcutAvatars";
 import { refreshKey, refreshView, useRestoredRefreshState, useRefreshState } from "../lib/refresh";
 import { useNavigationIntent } from "../lib/navigationIntent";
 import { IDLE_STOPS_READING, useActive, useForeground, useLastChat, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
@@ -73,6 +74,7 @@ function InfoPanel({ id, peer, onClose }: { id: string; peer: string; onClose: (
 const RAIL_KEY = "hubchat.chatlist.rail";
 
 export function Desktop() {
+  useShortcutAvatars();
   const intent = useNavigationIntent();
   const snap = useSnap();
   const me = snap.state!.me!;
