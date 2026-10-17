@@ -2,10 +2,11 @@
 
 - 2026-10-17: Android inline replies check their own admitted UUID/owner/peer
   send state, never all hubs or the whole outbox (the alpha.4 global predicate
-  could retain a sent reply or dismiss a failed one). Success/deletion dismisses only its original
-  peer/token notification under the shared post/status/clear monitor, reusing
-  per-chat and final-summary cleanup. Retry/rejection keep visible status;
-  a newer same-chat notification survives. Queue feedback precedes worker
+  could retain a sent reply or dismiss a failed one). Success/deletion acknowledges
+  RemoteInput with the sent history before dismissing the version captured at Send
+  under the shared post/status/clear monitor, reusing per-chat and final-summary
+  cleanup. Retry/rejection keep visible error status and also end sending feedback;
+  a post-Send version survives with its content intact. Queue feedback precedes worker
   enqueue so a fast worker's result cannot be overwritten. No read-state change.
   Incoming updates preserve the same owner/episode Reply PendingIntent, so
   Android can retain active typing. Capture the latest message-version token

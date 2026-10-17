@@ -53,8 +53,9 @@ departing key during an intentional identity switch. Unreadable keys keep startu
 retryable. Only established invalid input or identity is a permanent rejection.
 
 Admission rejection directs the user to open the chat and check their
-reply. Updates match the original notification token and share the posting/clear
-lock, so a newer incoming notification or read receipt is not overwritten.
+reply. Completion uses the notification version captured at Send and shares
+the posting/clear lock. A newer incoming version survives; completion still
+acknowledges RemoteInput so that its sending spinner does not remain.
 
 ## Verification
 
@@ -255,7 +256,8 @@ new org messages posted immediately after replies. Their original tokens were
 not captured, so no retrospective token comparison is claimed. Default Android
 notification dumps redact custom string values; a hash of that redaction/type
 descriptor is not a token hash. The corrected probe records unknown instead.
-There is no measured reason to add Samsung-specific cancellation workarounds.
+This control does not establish a generic drawer cancellation failure. A later
+typing/version repro and consecutive-reply spinner repro are described below.
 New-build device smoke remains outstanding.
 
 ### Incoming-message typing continuity
@@ -277,6 +279,54 @@ action; a reply racing with a removed notice is still preserved and admitted.
 No UI callbacks, app foregrounding, notification suppression, new read semantics
 or notification text logging are introduced.
 
-Policy controls and API verification for this change are pending. Phone data
-remain from alpha.4; retaining the actual input/draft with the new code must be
-checked in the next coordinator-built alpha.
+The user confirmed that the field closed after the incoming update, and that
+the subsequent reply did not dismiss the notice. Their separate two-message
+test, with both messages already present before opening Reply, dismissed after
+one reply. Multiple messages alone are not the cause; the changed action and
+version during typing explain the failing schedule.
+
+Measured stable-action control `e159142`, with a signature-only adapter for
+the added owner argument: **18 passed / 3 expected failures**, raw JVM exit1.
+The corrected send-time policy/API compilation passed **21/21**. Controls
+include one, two and three visible message versions, older action bindings,
+owner changes and protection for arrivals after Send. Evidence:
+`reply-action.log` and `reply-action-result.json` in the reserved author C root.
+
+### RemoteInput sending completion
+
+In the user's three-message/two-consecutive-reply test, both reply workers
+returned SUCCESS within about0.3 seconds, yet the second reply left the Send
+button showing a permanent loading icon. Authorized read-only capture while
+the user left that spinner visible found no active Hubchat NotificationManager
+record, while SystemUI still referenced the Hubchat child key in RemoteInput
+state. The app-filtered crash buffer had no entries. This supports retained
+SystemUI sending state after app-side cancellation, rather than a worker crash;
+the metadata cannot prove a specific vendor-internal lifetime rule.
+
+Completion now copies the active notification, sets RemoteInput history to
+the exact reply text, silently re-notifies, and then cancels if it still matches
+the version captured at Send. This standard Android acknowledgement precedes
+cancellation. A later incoming version from the same owner/action episode gets
+the acknowledgement but retains its incoming content/version and stays visible.
+Another owner/episode is untouched. If a concurrent reply already removed the
+notice, repeat cancellation and final-summary cleanup instead of skipping
+completion. Retry/error updates also acknowledge the input while keeping the
+error and notification. Reply text remains inside the notification and sealed
+handoff; no text logging is added. Older sealed handoffs without the new action
+field remain readable.
+
+Measured acknowledgement control `dc90711`: **21 passed / 3 expected failures**,
+raw JVM exit1. Corrected production `fe14a47`: **24/24**, raw JVM exit0,
+and compilation of actual ConnectionService, SecretBox, receiver/worker/policy
+against installed Android37/AndroidX APIs succeeds with unrelated dependencies
+stubbed. Four source wiring checks pass. The policy checks exercise command
+ordering, protection of newer post-Send versions and repeated completions;
+they do not execute SystemUI. Shared lock and2GiB kernel Job; evidence is
+`reply-ack.log`, `reply-ack-result.json`, class root `kotlin-20261017T092454`
+under `C:/orgtree-build/hubchat-jumplist-sol`.
+
+The Rust completion source is unchanged from the earlier22-test and Android
+aarch64 check. All phone data are from alpha.4; no APK was built or installed
+by the author. Verify continuous typing, one successful reply after an incoming
+update, consecutive replies without a stuck spinner, and preservation of
+post-Send incoming messages in the next coordinator-built alpha.

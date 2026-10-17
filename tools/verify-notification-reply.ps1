@@ -107,7 +107,7 @@ if ($ControlPolicy) {
   $red | ForEach-Object { Write-Output $_ }
   Write-Output "RED_RAW_EXIT=$raw"
   if ($raw -ne 1 -or ($red -join "`n") -notmatch "$ControlPassed checks passed; $ControlFailed failed") {
-    throw 'Predecessor control did not produce the expected two policy failures'
+    throw "Predecessor control did not produce $ControlPassed passes and $ControlFailed expected policy failures"
   }
   Write-Output "PASS predecessor control: $ControlPassed passed / $ControlFailed expected failures"
 }
