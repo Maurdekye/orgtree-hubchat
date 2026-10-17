@@ -23,7 +23,9 @@ app.whenReady().then(async()=>{
     check('transparent outside avatar',ctx.getImageData(0,0,1,1).data[3]===0);
     // Compare the actual canvas background with a swatch in the client's color.
     const actual=Array.from(ctx.getImageData(64,15,1,1).data);
-    const swatch=document.createElement('canvas').getContext('2d');swatch.fillStyle=style.backgroundColor;swatch.fillRect(0,0,1,1);
+    const swatch=document.createElement('canvas').getContext('2d');
+    swatch.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--side');swatch.fillRect(0,0,1,1);
+    swatch.fillStyle=style.backgroundColor;swatch.fillRect(0,0,1,1);
     const expectedPixel=Array.from(swatch.getImageData(0,0,1,1).data);
     check('same client background '+theme+'/'+kind,actual.every((v,i)=>Math.abs(v-expectedPixel[i])<=2));
     const data=ctx.getImageData(35,40,58,48).data;
@@ -43,6 +45,7 @@ app.whenReady().then(async()=>{
    document.documentElement.className='theme-dark';mountAvatar('person','Example Person');await frames();
    const png=avatarPng('person','Example Person');
    const backgroundPng=avatarPng('person','Example Person',true);
+   const orgInitials=avatarPng('org','Sample Organization'),orgBackground=avatarPng('org','Sample Organization',true);
    const taskPngs={};
    for(const theme of ['dark','light'])for(const view of ['settings','directory','newchat']){
     document.documentElement.className='theme-'+theme;mountTaskIcon(view);await frames();
@@ -86,10 +89,12 @@ app.whenReady().then(async()=>{
     row.dispatchEvent(new PointerEvent('pointerup',{pointerType:'touch',bubbles:true}));row.click();
     check(platform+' touch click opens same chat once',opened.length===beforeTap+1&&opened[opened.length-1]===address);
    }
-   return {checks,png,taskPngs,backgroundPng};
+   return {checks,png,taskPngs,backgroundPng,orgInitials,orgBackground};
   })()`);
   fs.writeFileSync(path.join(out,'avatar.png'),Buffer.from(result.png.split(',')[1],'base64'));
   fs.writeFileSync(path.join(out,'profile-bg.png'),Buffer.from(result.backgroundPng.split(',')[1],'base64'));
+  fs.writeFileSync(path.join(out,'org-initials.png'),Buffer.from(result.orgInitials.split(',')[1],'base64'));
+  fs.writeFileSync(path.join(out,'profile-bg-org.png'),Buffer.from(result.orgBackground.split(',')[1],'base64'));
   for(const [view,png]of Object.entries(result.taskPngs))fs.writeFileSync(path.join(out,view+'.png'),Buffer.from(png.split(',')[1],'base64'));
   fs.writeFileSync(path.join(out,'result.json'),JSON.stringify(result.checks,null,2));
   console.log('Avatar renderer checks '+result.checks.length+'/'+result.checks.length);

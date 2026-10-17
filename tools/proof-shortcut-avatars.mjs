@@ -9,7 +9,10 @@ if(!process.env.HUBCHAT_JOB_CONTAINED || !/^C:[\\/]orgtree-build[\\/]hubchat-jum
 const deps=process.env.HUBCHAT_DEPENDENCY_ROOT;
 const require=createRequire(path.join(process.env.HUBCHAT_DOM_DEPENDENCY_ROOT,'package.json'));
 fs.mkdirSync(out,{recursive:true});
+const control=process.env.HUBCHAT_AVATAR_SOURCE;
+if(control&&!/^C:[\\/]orgtree-build[\\/]hubchat-jumplist-sol[\\/]/i.test(control))throw Error('Control must remain in own C scope');
 await require('esbuild').build({entryPoints:[repo+'/tools/shortcut-avatars-entry.tsx'],outfile:out+'/entry.js',bundle:true,
+  plugins:control?[{name:'committed-avatar-control',setup(build){build.onLoad({filter:/[\\/]src[\\/]lib[\\/]avatarFallback\.ts$/},args=>({contents:fs.readFileSync(control,'utf8'),loader:'ts',resolveDir:path.dirname(args.path)}));}}]:[],
   platform:'browser',format:'iife',jsx:'automatic',nodePaths:[deps],loader:{'.md':'text','.svg':'text'},define:{'process.env.NODE_ENV':'"test"'}});
 fs.writeFileSync(out+'/index.html','<!doctype html><html class="theme-dark"><head><link rel="stylesheet" href="entry.css"></head><body><div id="root"></div><script src="entry.js"></script></body></html>');
 

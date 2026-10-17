@@ -34,7 +34,7 @@ internal object LauncherAvatar {
       paint.shader = null
       profile.recycle()
     } else {
-      val colors = LauncherAvatarRecipe.colors(contact.kind, night)
+      val colors = LauncherAvatarRecipe.initialsColors(contact.kind, night)
       paint.color = colors.background
       canvas.drawCircle(64f, 64f, 64f, paint)
       paint.color = colors.foreground

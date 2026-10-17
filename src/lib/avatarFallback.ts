@@ -27,9 +27,7 @@ export function avatarPng(kind: Kind, name: string, backgroundOnly = false): str
     ctx.beginPath(); ctx.roundRect(0, 0, 44, 44, radius);
     // Profile transparency sees the actual avatar tint over the contact-list
     // surface, never the unrelated shell/launcher panel behind the icon.
-    if (backgroundOnly) {
-      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--side"); ctx.fill();
-    }
+    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--side"); ctx.fill();
     ctx.fillStyle = style.backgroundColor; ctx.fill();
     ctx.fillStyle = style.color;
     ctx.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;

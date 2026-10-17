@@ -21,7 +21,11 @@ fun main() {
   check(LauncherAvatarRecipe.over(0xffc80000.toInt(), surface) == 0xffc80000.toInt())
   for (night in listOf(true, false)) for (kind in listOf("person", "org")) {
     check(LauncherAvatarRecipe.profileBackground(kind, night) ushr 24 == 255)
+    val initials = LauncherAvatarRecipe.initialsColors(kind, night)
+    check(initials.background == LauncherAvatarRecipe.profileBackground(kind, night))
+    check(initials.background ushr 24 == 255)
+    check(initials.foreground == LauncherAvatarRecipe.colors(kind, night).foreground)
   }
   checkLauncherAvatarParity()
-  println("PASS launcher policy10/10: last4, empty, dedupe, labels, order, avatar payload, kind/theme palette, profile alpha composition and opaque background")
+  println("PASS launcher policy11/11: last4, empty, dedupe, labels, order, avatar payload, kind/theme palette, profile alpha composition, opaque background, initials/profile matte match")
 }

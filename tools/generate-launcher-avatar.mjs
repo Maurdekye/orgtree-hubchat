@@ -41,6 +41,7 @@ ${palettes.join('\n')}
     return result
   }
   fun profileBackground(kind: String, night: Boolean): Int = over(colors(kind, night).background, if (night) darkSurface else lightSurface)
+  fun initialsColors(kind: String, night: Boolean): LauncherColors = LauncherColors(profileBackground(kind, night), colors(kind, night).foreground)
   fun initials(name: String): String {
     val words = name.ifEmpty { "?" }.replace(Regex("[^\\\\p{L}\\\\p{N} ]"), " ").trim().split(Regex("\\\\s+"))
     return ((words[0].firstOrNull()?.toString() ?: "?") + (if (words.size > 1) words.last().first().toString() else "")).uppercase(Locale.ROOT)
