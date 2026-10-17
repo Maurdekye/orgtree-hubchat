@@ -256,7 +256,8 @@ Android's generated recipe similarly composites the actual kind background
 token over the app `--bg` surface for the saved effective theme. Canvas paints
 that opaque circle before the profile bitmap. Fully transparent pixels show
 that background; partial alpha blends with it. Outer silhouette transparency
-remains for the rounded outline. Initials-only avatars retain their styling.
+remains for the rounded outline. Initials retain their letters and foreground;
+their tint now sits over the same opaque surface as picture avatars.
 No message/read/navigation behavior changes.
 
 Revised controls are measured: the old Windows compositor returned transparent
@@ -301,5 +302,24 @@ inside the app or the fixed-task tile appearance.
 Author controls compare actual initials background pixels directly to the
 picture background in both app themes and both contact kinds; native integration
 loads the real org initials PNG as an ICO and checks its opaque matte against
-the picture background. Kotlin policy checks the same shared recipe. Verification
-is queued; no device/install/live shell actions are authorized or performed.
+the picture background. Kotlin policy checks the same shared recipe.
+
+Measured author results on source `08236ef` (base `b6fb18b`):
+
+- Committed old renderer `7ac1384` injected into the current fixture fails the
+  exact dark/org background assertion, raw exit1; this verifies the instrument
+  against the old translucent initials implementation.
+- Corrected actual-renderer checks199/199, including identical opaque initials /
+  profile mattes for both kinds/themes; native9/9 plus separately invoked real
+  PNG/ICO/COM/Windows-load integration1/1. The org initials PNG was inspected.
+- Actual Kotlin Android API compilation passes; policy11/11 and client/native
+  initials parity19/19 pass. Androidaarch64 Rust check and renderer TypeScript
+  check pass. Lightweight shortcut/routing checks10/10.
+- Every green child raw exit0, expected red raw1, under the shared lock and
+  2/4GiB kernel Jobs with two Cargo jobs. Evidence under the reserved author C
+  root: `initials-matte-results.json`, named `initials-matte-*.log`, renderer
+  `initials-matte/result.json` and `org-initials.png`, Kotlin class root
+  `kotlin-20261017T123924`. Red/green use separate renderer output directories.
+
+No APK, installed-shell or device actions were performed. Installed Jump List
+and Android Canvas/launcher appearance remain the alpha.8 runtime smoke check.
