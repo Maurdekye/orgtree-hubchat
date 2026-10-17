@@ -74,9 +74,26 @@ refreshes; the initial default is dark, matching the app. Theme changes also
 refresh the bitmap projection. Platform text rasterization uses Android's
 system font; font pixels need not match Windows.
 
-Author verification for this follow-up is pending; no APK, installed launcher
-or device actions have been performed. API compilation and pure policy checks
-cannot prove launcher display/masking or dynamic-shortcut refresh on a phone.
+Measured author verification on production `e3aba47` (base `ac1939a`):
+
+- Source contract red `bcc0c64`:7 passed/1 expected failure (app-resource icon).
+  Corrected lightweight shortcut/routing controls:10/10.
+- Native projection tests:2/2, covering profile bytes, changed pixels, removal,
+  unavailable bytes, bounded four-contact ordering and renamed fallbacks.
+- Actual Kotlin publisher/bitmap renderer/generated recipe/service bridge compile
+  against installed Android37/AndroidX APIs with unrelated app dependencies
+  stubbed. Eight launcher policy checks and19 actual-client/native Unicode
+  initials parity cases pass.
+- Android `aarch64-linux-android` Rust source check passes with installed
+  NDK27.3/API24. Full renderer TypeScript check passes. Each child raw exit0
+  under the shared build lock and2/4GiB kernel Jobs (Cargo two jobs).
+
+Evidence under `C:/orgtree-build/hubchat-jumplist-sol`:
+`android-icons-results.json`, `android-icons-{native,kotlin,cross,tsc}.log`,
+`android-icons-typecheck.log`, and Kotlin class root `kotlin-20261017T101104`.
+No APK, installed launcher or device actions have been performed. These are
+component/API checks: Android Canvas pixels, launcher display/masking and icon
+refresh on an actual phone remain the integrated alpha.6 smoke check.
 
 Windows view tasks work without an identity (the setup screen keeps the pending
 activation until a signed-in layout consumes it). The existing first-start-of-a-
