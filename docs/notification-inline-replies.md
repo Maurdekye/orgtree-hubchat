@@ -181,3 +181,24 @@ so it cannot overwrite a fast worker's later failure status.
 can run the prior completion policy against the new tests before the corrected
 SDK/API build and policy checks. Controls use distinct JVM class directories;
 the script checks raw exit status and expected failing-case count.
+
+Measured author results (base local main `da65918`, production `de5b4b1`):
+
+- Predecessor policy control `9c58d54`: **10 passed / 2 expected failures**,
+  raw JVM exit **1**, before the green run. It fails completed-reply dismissal
+  and retry/error feedback, while preserving the previous eight checks.
+- Actual ConnectionService, SecretBox, reply receiver/worker and policy compile
+  against the installed Android37/AndroidX APIs; unrelated app dependencies are
+  stubbed. Corrected pure JVM policy checks: **12/12**, raw exit **0**.
+- Source wiring checks: **2/2**. Worker uses the tested completion helper before
+  handoff removal; receiver status ordering and shared post/status/clear monitor
+  wiring are covered. Kotlin tests cover completion ordering, retry/exception
+  preservation, rejection, matching episode and newer/other-chat preservation.
+
+The phase used the shared build lock and a 2 GiB kernel Job. Evidence is
+`C:/orgtree-build/hubchat-jumplist-sol/reply-dismissal.log` and
+`reply-dismissal-result.json`, with separate control/green JVM class directories
+in `kotlin-20261017T011301`. No Rust behavior changed. No APK/installer build,
+device install, live notification operation or device test was performed.
+Actual Android shade dismissal, WorkManager timing and the summary UI remain
+integrated-device smoke checks; pure policy/API checks do not prove those.
