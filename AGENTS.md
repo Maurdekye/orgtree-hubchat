@@ -1,5 +1,16 @@
 # Hubchat development invariants
 
+- 2026-10-18: Transfers stays accessible when idle and reads bounded finished
+  metadata pages on demand. View resolves a bound retained source/download and
+  checks platform readability (including Android content URIs). Explicit
+  incoming Redownload resets a done job into a fresh copy, preserving old saved
+  files; repeated queued admissions reuse the job. Migration18 copy_key keeps
+  fresh Android exports distinct while preserving legacy receipt keys; export,
+  cleanup and abandonment must share it. HTTP404/410 are terminal unavailable
+  downloads. See docs/transfer-history.md and the focused transfer-history
+  renderer/core tests. [verified: transfer_view.rs, engine_download.rs,
+  download_store.rs, download_gc_store.rs, commands.rs, Transfers.tsx]
+
 - 2026-10-17: Android inline replies check their own admitted UUID/owner/peer
   send state, never all hubs or the whole outbox (the alpha.4 global predicate
   could retain a sent reply or dismiss a failed one). Success/deletion acknowledges
