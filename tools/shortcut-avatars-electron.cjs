@@ -37,6 +37,7 @@ app.whenReady().then(async()=>{
     reference.fillStyle=style.backgroundColor;reference.fillRect(0,0,1,1);
     const referencePixel=Array.from(reference.getImageData(0,0,1,1).data);
     check('profile background matches app tint over contact surface',bgPixel.every((v,i)=>Math.abs(v-referencePixel[i])<=2)&&bgPixel[3]===255);
+    check('initials share the opaque profile avatar background '+theme+'/'+kind,actual.every((v,i)=>Math.abs(v-bgPixel[i])<=2)&&actual[3]===255);
     check('profile silhouette remains rounded',ctx.getImageData(0,0,1,1).data[3]===0);
    }
    document.documentElement.className='theme-dark';mountAvatar('person','Example Person');await frames();
