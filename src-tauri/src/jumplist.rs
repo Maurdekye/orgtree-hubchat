@@ -151,7 +151,10 @@ fn publish(app: &AppHandle, owner: &str, rows: &[ShortcutContact], pictures: &[P
                 }).or_else(||stamp.and_then(|p|p.avatar.clone()));
                 contacts.push(ContactLink { name: row.name.clone(), target, icon });
             }
-            let icons = app.try_state::<TaskIcons>().map(|state|state.0.lock().unwrap().clone()).unwrap_or_default();
+            let icons = app.try_state::<TaskIcons>().map(|state| {
+                let icons = state.0.lock().unwrap().clone();
+                icons
+            }).unwrap_or_default();
             let (recent, tasks) = collections(&exe, &contacts, &icons)?;
             if recent.GetCount()? > 0 { list.AppendCategory(&HSTRING::from("Recent"), &recent)?; }
             list.AddUserTasks(&tasks)?;
@@ -174,9 +177,10 @@ pub fn changed(app: &AppHandle) {
                 let directory = c.store.directory().map_err(|e|e.to_string())?;
                 c.store.shortcut_contacts(true, None).map_err(|e|e.to_string())?.into_iter().map(|row| {
                     let avatar = handle.try_state::<Avatars>().and_then(|state| {
-                        state.0.lock().unwrap().get(&(owner.clone(), row.peer.clone()))
+                        let avatar = state.0.lock().unwrap().get(&(owner.clone(), row.peer.clone()))
                             .filter(|(name,kind,path)|name == &row.name && kind == &contact_kind(&directory, &row.peer) && path.is_file())
-                            .map(|(_,_,path)|path.clone())
+                            .map(|(_,_,path)|path.clone());
+                        avatar
                     });
                     Ok(PictureStamp {
                         avatar,
