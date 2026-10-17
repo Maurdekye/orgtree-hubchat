@@ -31,10 +31,15 @@
   admission checks owner, open-DM name and kind; content-addressed ICOs keep
   name/theme changes fresh. Before the WebView supplies it, the executable is
   the temporary fallback. Fixed task icons use the shared TASK_ICONS/iconHTML
-  source, rasterized to the same ICO cache. Picture metadata and admitted-byte changes invalidate only Windows'
-  contact projection, with missing bytes fetched through the existing engine.
+  source, rasterized to the same ICO cache. Picture metadata and admitted-byte
+  changes refresh both platforms through the existing engine picture API.
   Android dynamic launcher shortcuts contain only four recently messaged
-  contacts, including closed DMs; both platforms exclude groups and bind
+  contacts, including closed DMs, with circular profile/initials bitmaps.
+  Its headless publisher coalesces the full avatar payload, not only names/order.
+  LauncherAvatarRecipe is generated from client CSS and a guarded translation
+  of format.initials; preBuild and focused checks reject drift. Keep the
+  client/native initials parity fixture. Effective app theme is persisted for
+  headless rendering; no activity is needed to refresh icons. Both platforms exclude groups and bind
   contact activations to their originating identity. Refresh from native
   events, not renderer visibility; skip identical projections to conserve
   Android's shortcut update quota. Contract and proof limits:

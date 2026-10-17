@@ -33,7 +33,7 @@ starts and an already foreground singleTask activity. No Settings, Directory or
 New chat shortcut is published on Android. Android7.0/API24 has no dynamic
 launcher shortcut API. The launcher controls how many shortcuts it displays.
 
-The projection contains contact addresses and labels, never message bodies,
+The projection contains contact addresses, labels and avatar pixels, never message bodies,
 attachments or drafts. Native engine events refresh it without the main window.
 Receipts do not change message ordering, and identical projections do not call
 the OS again. Directory updates refresh labels; delete-chat and identity wipe
@@ -42,6 +42,41 @@ layout rejects a different identity's shortcut. Android also disables another
 identity's pinned copies the user may have dragged out; same-identity pins remain
 usable when a contact leaves the recent four. Dynamic updates can be rate limited
 by Android; failures remain retryable on the next data/lifecycle refresh.
+
+### Android contact avatars (1.2.2-alpha.6)
+
+Each of the four recent-contact shortcuts uses a transparent circular128px
+bitmap. Admitted profile-picture bytes take priority; otherwise the icon is
+the contact-list kind colour and initials. API25 supports these circular
+bitmaps; an adaptive icon is not required. Android's launcher controls any
+extra masking/background treatment. There are no generic application-resource
+icons in the contact shortcuts.
+
+Native metadata includes the contact kind and validated normalized picture
+PNG (at most512px/256KiB). Kotlin checks image bounds before decoding and
+scales it into the circular bitmap. Missing/invalid bytes show real initials
+while the existing engine picture request fetches the current picture.
+Requests are sequential/deduplicated outside the identity guard. Admitted
+bytes, picture changes/removals, names and kind changes all refresh the full
+payload; identical payloads do not consume another launcher update. No activity
+or WebView is needed for this background path. Identity switching still clears
+the old dynamic entries and disables old-account pins before applying new ones.
+
+`tools/generate-launcher-avatar.mjs` derives native light/dark colours from
+`src/styles/tokens.css`. The small Kotlin initials translation is guarded
+against the exact existing `format.initials` source; a formatter edit fails
+generation until the translation is updated. Runtime parity fixtures use
+expected strings evaluated by the actual client function, including Unicode,
+empty and punctuated names. Gradle preBuild and focused verification check the
+generated source. This avoids an unchecked second palette/formatter.
+The foreground client saves its effective theme for subsequent headless
+refreshes; the initial default is dark, matching the app. Theme changes also
+refresh the bitmap projection. Platform text rasterization uses Android's
+system font; font pixels need not match Windows.
+
+Author verification for this follow-up is pending; no APK, installed launcher
+or device actions have been performed. API compilation and pure policy checks
+cannot prove launcher display/masking or dynamic-shortcut refresh on a phone.
 
 Windows view tasks work without an identity (the setup screen keeps the pending
 activation until a signed-in layout consumes it). The existing first-start-of-a-

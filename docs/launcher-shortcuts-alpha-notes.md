@@ -11,6 +11,11 @@ changes. For alpha.3, contacts without pictures use their client-list initials
 avatar, including the same kind color, shape and initials. Android is
 unchanged.
 
+For alpha.6, Android's four recent contacts get circular profile pictures or
+the app's coloured initials avatar. The background publisher refreshes icons
+when pictures/names change, without opening the app. Light/dark fallback
+colours follow the app theme after the client has saved its effective theme.
+
 Fallback avatars render from the desktop client's existing functions and CSS;
 name, kind and theme changes refresh their ICO. During startup the executable
 icon is temporary until the WebView supplies its first avatar, even when hidden.
