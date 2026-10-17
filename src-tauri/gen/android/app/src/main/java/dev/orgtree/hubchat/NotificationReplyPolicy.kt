@@ -12,11 +12,13 @@ internal enum class ReplyWorkOutcome { COMPLETE, RETRY, REJECTED, FAILED }
 internal fun matchesReplyNotification(peer: String, token: String, tag: String?, currentToken: String?): Boolean =
   tag == peer && currentToken == token
 
-/** Control: the original publisher replaces the action identity on every post. */
-internal fun replyActionToken(owner: String, previousOwner: String?, previousAction: String?, fresh: String): String = fresh
+/** Incoming updates retain the active PendingIntent so Android can retain typing. */
+internal fun replyActionToken(owner: String, previousOwner: String?, previousAction: String?, fresh: String): String =
+  if (owner == previousOwner && !previousAction.isNullOrBlank()) previousAction else fresh
 
-/** Control: the original receiver keeps the action token instead of a send-time version. */
-internal fun captureReplyVersion(action: String, currentAction: String?, version: String?): String = action
+/** Capture the visible version at Send; later arrivals must survive completion. */
+internal fun captureReplyVersion(action: String, currentAction: String?, version: String?): String =
+  if (action == currentAction && !version.isNullOrBlank()) version else action
 
 /** A complete send check dismisses the episode; failures retain visible status. */
 internal fun finishReplyNotification(outcome: ReplyWorkOutcome, dismiss: () -> Unit, failed: () -> Unit) {

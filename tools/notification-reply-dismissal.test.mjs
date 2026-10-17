@@ -25,3 +25,12 @@ test('dismissal and message posting/clearing share the token-protecting monitor'
  }
  assert.ok(!dismiss.includes('cancelAll('),'other chats stay untouched');
 });
+
+test('incoming updates keep the action identity while the receiver captures a new per-message version',()=>{
+ const reply=read(base+'NotificationReply.kt'),service=read(base+'ConnectionService.kt');
+ assert.ok(service.includes('NotificationReplies.action(ctx, owner, peer, actionToken)'));
+ assert.ok(service.includes('putString(NotificationReplies.TOKEN, token)'));
+ assert.ok(service.includes('putString(NotificationReplies.ACTION_TOKEN, actionToken)'));
+ assert.ok(reply.includes('val target = NotificationReplies.capture(context, actionTarget)'));
+ assert.ok(reply.includes('action.copy(token = captureReplyVersion('));
+});

@@ -26,8 +26,9 @@ import java.util.concurrent.TimeUnit
 class NotificationReplyReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
     if (intent.action != NotificationReplies.ACTION) return
-    val target = NotificationReplies.target(intent.data) ?: return
+    val actionTarget = NotificationReplies.target(intent.data) ?: return
     val body = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(NotificationReplies.TEXT)?.toString() ?: return
+    val target = NotificationReplies.capture(context, actionTarget)
     if (body.isBlank()) {
       NotificationReplies.status(context, target, "Enter a reply before sending.")
       return
@@ -97,6 +98,8 @@ internal object NotificationReplies {
   const val ACTION = "dev.orgtree.hubchat.REPLY"
   const val TEXT = "hubchat_reply_text"
   const val TOKEN = "hubchat_reply_token"
+  const val ACTION_TOKEN = "hubchat_reply_action_token"
+  const val OWNER = "hubchat_reply_owner"
   private const val DIRECTORY = "notification-replies"
 
   fun target(uri: Uri?): ReplyTarget? {
@@ -119,6 +122,16 @@ internal object NotificationReplies {
       .addRemoteInput(RemoteInput.Builder(TEXT).setLabel("Reply").build())
       .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
       .setShowsUserInterface(false).build()
+  }
+
+  @Synchronized fun capture(context: Context, action: ReplyTarget): ReplyTarget {
+    val manager = context.getSystemService(NotificationManager::class.java)
+    val current = manager.activeNotifications.firstOrNull { it.id == 2 && it.tag == action.peer }?.notification
+      ?: return action // preserve a reply even if its notice was just dismissed
+    val owner = current.extras.getString(OWNER)
+    if (owner != null && owner != action.owner) return action
+    val episode = current.extras.getString(ACTION_TOKEN) ?: current.extras.getString(TOKEN)
+    return action.copy(token = captureReplyVersion(action.token, episode, current.extras.getString(TOKEN)))
   }
 
   @Synchronized fun status(context: Context, target: ReplyTarget, text: String) {

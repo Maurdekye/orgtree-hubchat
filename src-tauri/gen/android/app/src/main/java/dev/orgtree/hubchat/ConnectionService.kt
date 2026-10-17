@@ -141,6 +141,10 @@ class ConnectionService : Service() {
       val open = PendingIntent.getActivity(
         ctx, peer.hashCode(), intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
       val token = java.util.UUID.randomUUID().toString()
+      val nm = ctx.getSystemService(NotificationManager::class.java)
+      val previous = nm.activeNotifications.firstOrNull { it.id == MESSAGE_ID && it.tag == peer }?.notification
+      val actionToken = replyActionToken(owner, previous?.extras?.getString(NotificationReplies.OWNER),
+        previous?.extras?.getString(NotificationReplies.ACTION_TOKEN), token)
       val builder = NotificationCompat.Builder(ctx, CHANNEL_MESSAGES)
         .setSmallIcon(R.drawable.ic_stat_hubchat)
         .setContentTitle(title)
@@ -153,11 +157,14 @@ class ConnectionService : Service() {
         .setAutoCancel(true)
         .setContentIntent(open)
       if (owner.isNotEmpty()) {
-        builder.addExtras(android.os.Bundle().apply { putString(NotificationReplies.TOKEN, token) })
-        builder.addAction(NotificationReplies.action(ctx, owner, peer, token))
+        builder.addExtras(android.os.Bundle().apply {
+          putString(NotificationReplies.TOKEN, token)
+          putString(NotificationReplies.ACTION_TOKEN, actionToken)
+          putString(NotificationReplies.OWNER, owner)
+        })
+        builder.addAction(NotificationReplies.action(ctx, owner, peer, actionToken))
       }
       val n = builder.build()
-      val nm = ctx.getSystemService(NotificationManager::class.java)
       nm.notify(peer, MESSAGE_ID, n)
       summary(ctx, nm)
     }
