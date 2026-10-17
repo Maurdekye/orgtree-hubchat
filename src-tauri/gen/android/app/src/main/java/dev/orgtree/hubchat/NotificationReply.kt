@@ -40,8 +40,8 @@ class NotificationReplyReceiver : BroadcastReceiver() {
         val payload = JSONObject().put("owner", target.owner).put("peer", target.peer)
           .put("token", target.token).put("body", body)
         NotificationReplies.save(context, id, payload)
-        NotificationReplies.enqueue(context, id).result.get(8, TimeUnit.SECONDS)
         NotificationReplies.status(context, target, "Reply queued")
+        NotificationReplies.enqueue(context, id).result.get(8, TimeUnit.SECONDS)
       } catch (_: Exception) {
         // Keep a saved spool for recovery if enqueue itself was interrupted.
         NotificationReplies.status(context, target, "Open chat to check your reply.")
@@ -56,27 +56,37 @@ class NotificationReplyWorker(context: Context, params: WorkerParameters) : Work
     val id = inputData.getString("reply_id") ?: return Result.failure()
     val file = NotificationReplies.file(applicationContext, id) ?: return Result.failure()
     if (!file.baseFile.exists() && !File(file.baseFile.path + ".bak").exists()) return Result.success()
+    var knownTarget: ReplyTarget? = null
     return try {
       val raw = SecretBox.open(String(file.readFully(), Charsets.UTF_8))
       if (raw.isEmpty()) return Result.retry() // transient Keystore failure: retain text
       val reply = JSONObject(raw)
       val target = ReplyTarget(reply.getString("owner"), reply.getString("peer"), reply.getString("token"))
+      knownTarget = target
       val outcome = runReplyWork(
         attach = { ConnectionService.attach(applicationContext) },
         queue = { ConnectionService.queueNotificationReply(target.owner, id, target.peer, reply.getString("body")) },
         check = { ConnectionService.checkNow(45) },
         queued = { NotificationReplies.status(applicationContext, target, "Reply queued") },
       )
+      finishReplyNotification(outcome,
+        dismiss = { NotificationReplies.dismiss(applicationContext, target) },
+        failed = { NotificationReplies.status(applicationContext, target,
+          if (outcome == ReplyWorkOutcome.REJECTED) "Open chat to check your reply."
+          else "Could not confirm sending. Retrying.") },
+      )
       finishReplyHandoff(outcome) { file.delete() }
       when (outcome) {
         ReplyWorkOutcome.COMPLETE -> Result.success()
-        ReplyWorkOutcome.REJECTED -> {
-          NotificationReplies.status(applicationContext, target, "Open chat to check your reply.")
-          Result.failure()
-        }
+        ReplyWorkOutcome.REJECTED -> Result.failure()
         else -> Result.retry()
       }
-    } catch (_: Exception) { Result.retry() }
+    } catch (_: Exception) {
+      knownTarget?.let { target -> runCatching {
+        NotificationReplies.status(applicationContext, target, "Could not confirm sending. Retrying.")
+      } }
+      Result.retry()
+    }
   }
 }
 
@@ -113,11 +123,21 @@ internal object NotificationReplies {
   @Synchronized fun status(context: Context, target: ReplyTarget, text: String) {
     val manager = context.getSystemService(NotificationManager::class.java)
     val current = manager.activeNotifications.firstOrNull {
-      it.id == 2 && it.tag == target.peer && it.notification.extras.getString(TOKEN) == target.token
+      it.id == 2 && matchesReplyNotification(target.peer, target.token, it.tag, it.notification.extras.getString(TOKEN))
     } ?: return // a newer message or read receipt superseded this notification
     val updated = NotificationCompat.Builder(context, current.notification)
       .setSubText(text).setOnlyAlertOnce(true).setSilent(true).build()
     manager.notify(target.peer, 2, updated)
+  }
+
+  @Synchronized fun dismiss(context: Context, target: ReplyTarget) {
+    val manager = context.getSystemService(NotificationManager::class.java)
+    if (manager.activeNotifications.none {
+      it.id == 2 && matchesReplyNotification(target.peer, target.token, it.tag, it.notification.extras.getString(TOKEN))
+    }) return // never clear a newer message or another conversation
+    // Reentrant shared monitor: posting, token validation and clearing are atomic.
+    // Reuse the existing per-chat cancellation and last-chat summary cleanup.
+    ConnectionService.clearMessage(target.peer)
   }
 
   fun file(context: Context, id: String): AtomicFile? {

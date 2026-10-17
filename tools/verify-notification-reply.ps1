@@ -1,15 +1,16 @@
 param(
-  [string]$OutputRoot = 'C:\orgtree-build\hubchat-reply-sol',
+  [string]$OutputRoot = 'C:/orgtree-build/hubchat-jumplist-sol',
   [string]$GradleCache = 'D:\orgtree-work\hubchat-toolchain\gradle-home\caches\modules-2\files-2.1',
-  [string]$Toolchain = 'E:\hubchat-toolchain'
+  [string]$Toolchain = 'E:\hubchat-toolchain',
+  [string]$ControlPolicy = ''
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
-$allowed = [IO.Path]::GetFullPath('C:\orgtree-build\hubchat-reply-sol')
+$allowed = [IO.Path]::GetFullPath('C:/orgtree-build/hubchat-jumplist-sol')
 $resolved = [IO.Path]::GetFullPath($OutputRoot)
 if ($resolved -ne $allowed) { throw 'OutputRoot must be the reserved agent build folder' }
 $owner = Get-Content -LiteralPath 'D:\orgtree-work\cargo-target\build.lock\owner.txt'
-if ($owner -notmatch '^hubchat-reply-sol ') { throw 'Shared build lock is required' }
+if ($owner -notmatch '^hubchat-jumplist-sol ') { throw 'Shared build lock is required' }
 $run = Join-Path $resolved ('kotlin-' + [DateTime]::UtcNow.ToString('yyyyMMddTHHmmss'))
 New-Item -ItemType Directory -Force -Path $run, "$run\api", "$run\tmp", "$run\classes", "$run\policy" | Out-Null
 $env:TEMP = "$run\tmp"
@@ -56,6 +57,7 @@ import androidx.work.Worker
 import androidx.work.WorkerParameters
 class MainActivity : Activity() { companion object { const val inFront = false } }
 object R { object drawable { const val ic_stat_hubchat = 1 } }
+object LauncherShortcuts { fun update(context: Context, owner: String, json: String) = "" }
 object TransferService {
   const val running = false
   fun work(context: Context, on: Boolean) {}
@@ -91,9 +93,25 @@ function Run-Compiler([string]$Destination, [string[]]$Sources) {
   & "$Toolchain\jdk-21\bin\java.exe" "@$run\tmp\compiler.args"
   if ($LASTEXITCODE -ne 0) { throw 'Kotlin compile failed' }
 }
-Run-Compiler "$run\classes" @("$source\ConnectionService.kt", "$source\SecretBox.kt", "$source\NotificationReply.kt", "$source\NotificationReplyPolicy.kt", "$run\tmp\Dependencies.kt")
+Run-Compiler "$run\classes" @("$source\ConnectionService.kt", "$source\SecretBox.kt", "$source\NotificationReply.kt", "$source\NotificationReplyPolicy.kt", "$source\DownloadOpener.kt", "$run\tmp\Dependencies.kt")
 Write-Output 'PASS Android API compile: ConnectionService, SecretBox, reply receiver/worker/policy (unrelated app dependencies stubbed)'
 Run-Compiler "$run\policy" @("$source\NotificationReplyPolicy.kt", "$repo\tools\kotlin\NotificationReplyPolicyChecks.kt")
 & "$Toolchain\jdk-21\bin\java.exe" '-cp' ("$run\policy;" + ($stdlib -join ';')) 'dev.orgtree.hubchat.NotificationReplyPolicyChecksKt'
 if ($LASTEXITCODE -ne 0) { throw 'Policy checks failed' }
 Write-Output "Evidence build folder: $run"
+if ($ControlPolicy) {
+  $control = [IO.Path]::GetFullPath($ControlPolicy)
+  if (!$control.StartsWith($allowed + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Control source must be inside the assigned build scope'
+  }
+  New-Item -ItemType Directory -Force -Path "$run\control" | Out-Null
+  Run-Compiler "$run\control" @($control, "$repo\tools\kotlin\NotificationReplyPolicyChecks.kt")
+  $red = @(& "$Toolchain\jdk-21\bin\java.exe" '-cp' ("$run\control;" + ($stdlib -join ';')) 'dev.orgtree.hubchat.NotificationReplyPolicyChecksKt')
+  $raw = $LASTEXITCODE
+  $red | ForEach-Object { Write-Output $_ }
+  Write-Output "RED_RAW_EXIT=$raw"
+  if ($raw -ne 1 -or ($red -join "`n") -notmatch '10 checks passed; 2 failed') {
+    throw 'Predecessor control did not produce the expected two policy failures'
+  }
+  Write-Output 'PASS predecessor control: 10 passed / 2 expected failures'
+}

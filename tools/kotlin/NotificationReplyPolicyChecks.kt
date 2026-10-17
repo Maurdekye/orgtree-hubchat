@@ -88,5 +88,5 @@ fun main() {
     check(!matchesReplyNotification("peer", "new", null, "new"))
   }
   println("$passed checks passed; $failed failed")
-  check(failed == 0) { "$failed policy checks failed" }
+  kotlin.system.exitProcess(if (failed == 0) 0 else 1)
 }
