@@ -829,11 +829,20 @@ export const mockApi: Api = {
     })).filter(r => !after || r.local_id > after).sort((a,b) => a.local_id < b.local_id ? -1 : 1);
     return {rows:rows.slice(0,100),next:rows.length>100?rows[99].local_id:null};
   },
-  download: async (messageId, localId) => {
+  transferHistory: async (after = null) => {
+    const rows=msgs.flatMap(m=>m.attachments.flatMap(a=>{
+      const state=a.download?.state??a.state;
+      if (!(a.download ? ["done","failed","expired","cancelled"].includes(state) : m.outgoing&&["uploaded","failed","cancelled"].includes(state))) return [];
+      return [{local_id:a.local_id,message_id:m.id,created_at:m.created_at,peer:m.peer,name:a.name,upload:m.outgoing,state,total:a.bytes,error:a.download?.error??a.error,available:!!(m.outgoing?a.source??a.local_path:a.local_path),can_redownload:!m.outgoing&&!!a.hub_id&&state!=="expired"}];
+    })).filter(r=>!after||r.local_id<after).sort((a,b)=>a.local_id>b.local_id?-1:1);
+    return {rows:rows.slice(0,100),next:rows.length>100?rows[99].local_id:null};
+  },
+  download: async (messageId, localId, freshCopy = false) => {
     const m = find(messageId); const a = m?.attachments.find((x) => x.local_id === localId);
     if (!m || !a) throw "no such attachment";
-    if (a.download?.state === "done" || a.download?.state === "running" || a.download?.state === "queued") return;
-    a.download = { state: "queued", confirmed: a.download?.confirmed ?? 0, retry_at: 0, error: null };
+    if (freshCopy && (m.outgoing || a.download?.state === "expired")) throw "File no longer available on the hub.";
+    if ((!freshCopy && a.download?.state === "done") || a.download?.state === "running" || a.download?.state === "queued") return;
+    a.download = { state: "queued", confirmed: freshCopy ? 0 : a.download?.confirmed ?? 0, retry_at: 0, error: null };
     const job = a.download;
     a.state = "downloading"; a.error = null; chatEv(m.peer);
     void (async () => {

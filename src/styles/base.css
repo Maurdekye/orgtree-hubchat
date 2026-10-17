@@ -1,4 +1,12 @@
 /* Hubchat — shared components (desktop + mobile). Platform sheets set sizes. */
+.xhistory-label { padding: 8px 10px; font-size: 12px; }
+.xhistory-more { margin: 8px 12px; }
+.xhistory .xrow { cursor: default; align-items: flex-start; }
+.xhistory .xactions { display: flex; flex-direction: column; gap: 8px; flex: none; }
+.xhistory .xactions button { min-height: 32px; }
+.xhistory .xrow .t .xreason { white-space: normal; overflow-wrap: anywhere; color: var(--dim); }
+.pop.xpop { max-height: min(600px, calc(100vh - 110px)); overflow-y: auto; }
+.xlist { max-height: 60vh; overflow-y: auto; }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 body { background: var(--bg); color: var(--ink); font: 14px/1.45 var(--font); -webkit-font-smoothing: antialiased; overflow: hidden; }

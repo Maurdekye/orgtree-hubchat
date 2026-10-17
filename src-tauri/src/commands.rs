@@ -715,14 +715,20 @@ pub fn hc_transfers(after: Option<String>) -> R<hubchat_core::store::TransferPag
 }
 
 #[tauri::command]
-pub async fn hc_download(message_id: String, local_id: String) -> R<()> {
+pub async fn hc_transfer_history(after: Option<String>) -> R<hubchat_core::store::TransferHistoryPage> {
+    let e=engine()?;
+    tokio::task::spawn_blocking(move || e.transfer_history(after.as_deref().unwrap_or("")).map_err(s)).await.map_err(s)?
+}
+
+#[tauri::command]
+pub async fn hc_download(message_id: String, local_id: String, fresh_copy: Option<bool>) -> R<()> {
     let e = engine()?;
     // Admission only. A scheduler-owned worker finishes even if this command
     // or its originating view disappears; no network await in the command.
     let admission=core::get()?.file_admission(true);
     tokio::task::spawn_blocking(move || {
         let _admission=admission;
-        e.queue_download(&message_id, &local_id).map(|_| ()).map_err(s)
+        e.queue_download_copy(&message_id, &local_id, fresh_copy.unwrap_or(false)).map(|_| ()).map_err(s)
     })
         .await.map_err(s)?
 }
@@ -853,31 +859,23 @@ pub fn hc_file_info(source: String) -> R<FileInfo> {
 /// Open a downloaded attachment with the system's default app (or, with
 /// `reveal`, show it in its folder on desktop).
 #[tauri::command]
-pub fn hc_open_attachment<RT: tauri::Runtime>(
+pub async fn hc_open_attachment<RT: tauri::Runtime>(
     app: tauri::AppHandle<RT>,
     message_id: String,
     local_id: String,
     reveal: bool,
 ) -> R<()> {
-    let m = core::get()?
-        .store
-        .message(&message_id)
-        .map_err(s)?
-        .ok_or("no such message")?;
-    let a = m
-        .attachments
-        .into_iter()
-        .find(|a| a.local_id == local_id)
-        .ok_or("no such attachment")?;
-    let path = a.local_path.ok_or("not downloaded yet")?;
+    let e=engine()?;
+    let (path,name) = tokio::task::spawn_blocking(move || e.attachment_source(&message_id,&local_id).map_err(s)).await.map_err(s)??;
     #[cfg(target_os = "android")]
     {
         let _ = (app, reveal); // Android opens the file; it has no desktop reveal action.
-        crate::android::open_download(&path, &a.name)
+        crate::android::open_download(&path, &name)
     }
     #[cfg(not(target_os = "android"))]
     {
         use tauri_plugin_opener::OpenerExt;
+        let _ = name;
         if path.starts_with("content://") {
             return app.opener().open_url(path, None::<&str>).map_err(s);
         }

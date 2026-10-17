@@ -25,7 +25,7 @@ try {
  check('100 percent exporting stays listed without Cancel',await b.eval(`document.querySelector('.xrow').textContent.includes('Finishing')&&!document.querySelector('.xrow button')`));
  await b.shot(join(out,'finishing-list.png'));
  await b.eval(`window.rows=[];window.s.refreshTransfers()`);await sleep(80);
- check('completed snapshot removes global entry',await b.eval(`!document.querySelector('.tb-xfer')`));
+ check('completed snapshot keeps the transfer history entry',await b.eval(`!!document.querySelector('.tb-xfer')&&!document.querySelector('.tb-xfer .n')`));
  await b.size(360,800);await b.nav(server.resolvedUrls.local[0]+'?platform=android');
  await b.eval(`(async()=>{
   const {api}=await import('/src/api.ts');const chats=await api.chats();let m,a;

@@ -144,6 +144,11 @@ export interface TransferView {
   upload: boolean; state: string; done: number; total: number; error: string | null;
 }
 export interface TransferPage { rows: TransferView[]; next: string | null }
+export interface TransferHistoryView extends Omit<TransferView, "done"> {
+  available: boolean;
+  can_redownload: boolean;
+}
+export interface TransferHistoryPage { rows: TransferHistoryView[]; next: string | null }
 export interface DownloadStatus {
   restarted?: boolean;
   state: string;
@@ -467,7 +472,8 @@ export const tauriApi = {
   removeAttachment: (messageId: string, localId: string) => invoke<void>("hc_remove_attachment", { messageId, localId }),
   cancelTransfer: (localId: string) => invoke<void>("hc_cancel_transfer", { localId }),
   transfers: (after: string | null = null) => invoke<TransferPage>("hc_transfers", { after }),
-  download: (messageId: string, localId: string) => invoke<void>("hc_download", { messageId, localId }),
+  transferHistory: (after: string | null = null) => invoke<TransferHistoryPage>("hc_transfer_history", { after }),
+  download: (messageId: string, localId: string, freshCopy = false) => invoke<void>("hc_download", { messageId, localId, freshCopy }),
   markRead: (peer: string) => invoke<void>("hc_mark_read", { peer }),
   sendRoute: (peer: string) => invoke<SendRoute>("hc_send_route", { peer }),
   /** Pin a chat to a hub; null = Automatic. */
