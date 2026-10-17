@@ -1,5 +1,13 @@
 # Hubchat development invariants
 
+- 2026-10-17: A completed Android inline-reply check dismisses only its original
+  peer/token notification under the shared post/status/clear monitor, reusing
+  per-chat and final-summary cleanup. Retry/rejection keep visible status;
+  a newer same-chat notification survives. Queue feedback precedes worker
+  enqueue so a fast worker's result cannot be overwritten. No read-state change.
+  [verified: NotificationReply.kt, NotificationReplyPolicy.kt;
+  details: docs/notification-inline-replies.md]
+
 - 2026-10-17: Directory rows open their contact by click/tap and focused
   Enter/Space. Keep those handlers and focusability; there is no redundant
   per-row Message/Open chat button or button-only CSS. Synthetic desktop and

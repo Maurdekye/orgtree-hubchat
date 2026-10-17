@@ -39,8 +39,10 @@ and are cleared on identity wipe. Hub selection, network retries, message ids
 and delivery receipts continue through the existing sender. A text reply is an
 ordinary chat message, without an attachment or an inferred quote target.
 
-Notification status says **Reply queued**, never claims delivery without a hub
-receipt. Unavailable core/engine, stopped-engine and bridge failures return retry and
+Notification status says **Reply queued** during the send check, never claims
+delivery without a hub receipt. A completed worker dismisses the original
+notification; a retry or rejection retains it with retry/error status.
+Unavailable core/engine, stopped-engine and bridge failures return retry and
 retain the sealed text. Core publication can precede key loading: concurrent
 cold attaches serialize that load, and a failed attempt can be retried. A
 successful cold initialization is latched so later attaches do not reload a
@@ -69,8 +71,9 @@ stores without a hub or live data. The standalone Kotlin script
 `tools/verify-notification-reply.ps1` compiles the changed Android code against
 installed Android/AndroidX APIs while stubbing unrelated app dependencies, then
 runs pure policy checks for cold-start order, offline retry, invalid ids and
-rejection. It requires the machine build lock and writes only to the reserved
-`C:\orgtree-build\hubchat-reply-sol` folder.
+rejection. Its current invocation requires the machine build lock and writes
+only to the assigned `C:/orgtree-build/hubchat-jumplist-sol` folder; the original
+2026-10-11 run used its then-author's reserved `hubchat-reply-sol` folder.
 
 Source/API checks do not prove Android's notification UI, actual RemoteInput
 delivery, Keystore/spool lifecycle, WorkManager scheduling or JNI linkage in an
@@ -156,3 +159,25 @@ Evidence: `inline-review-round3.json` and named logs in the author's D rig
 evidence folder. Owned build bytes10,751,615,402, below100GB; all machine locks
 released and no build process remains. Native-library linking, APK and device
 runtime verification remain unperformed.
+
+## Notification dismissal correction (2026-10-17)
+
+On 1.2.2-alpha.3 a successful reply left **Reply queued** in the notification
+shade. The worker now runs notification completion before removing the durable
+handoff: `COMPLETE` dismisses; `RETRY` keeps the notice and says it could not
+confirm sending and is retrying; `REJECTED` keeps the existing check-your-reply
+error. Admission and the bounded send check retain their existing semantics.
+No read flag, read receipt, outbox logic or delivery guarantee changes.
+
+Dismissal checks message-notification id, peer tag and the original unique token
+under the same `NotificationReplies` monitor as posting, status updates and
+clearing. A newer incoming message for that peer or any other peer survives.
+The existing `clearMessage` method also removes the group summary only when no
+other conversation notification remains. A late receiver update cannot recreate
+a dismissed notice; receiver queue feedback now precedes WorkManager enqueue,
+so it cannot overwrite a fast worker's later failure status.
+
+`tools/verify-notification-reply.ps1 -ControlPolicy <C-scope predecessor .kt>`
+can run the prior completion policy against the new tests before the corrected
+SDK/API build and policy checks. Controls use distinct JVM class directories;
+the script checks raw exit status and expected failing-case count.
