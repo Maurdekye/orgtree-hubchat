@@ -36,3 +36,12 @@ test('Windows links use cached profile ICOs and picture changes invalidate the p
   assert.ok(existsSync(new URL(file, root)), 'profile ICO cache exists');
   assert.ok(read(file).includes('jump-list-icons'), 'cache is in app data');
 });
+
+test('Windows fallback avatars reuse the client initials and styles, with native identity admission', () => {
+  const file = 'src/lib/avatarFallback.ts';
+  assert.ok(existsSync(new URL(file, root)), 'shared avatar rendering exists');
+  assert.ok(read('src/components/ui.tsx').includes('avatarFallback('));
+  const src = read(file);
+  for (const part of ['initials(', 'kindInfo(', 'getComputedStyle(', 'toDataURL(']) assert.ok(src.includes(part), part);
+  assert.ok(read('src-tauri/src/jumplist.rs').includes('admit_avatar'));
+});
