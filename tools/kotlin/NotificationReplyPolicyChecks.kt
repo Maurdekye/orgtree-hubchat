@@ -109,6 +109,22 @@ fun main() {
       finishReplyNotification(outcome, { error("must not dismiss") }, {})
     }
   }
+  case("incoming messages preserve the active Reply action identity") {
+    check(replyActionToken("owner", "owner", "stable-action", "new-message") == "stable-action")
+  }
+  case("send captures the latest notification version while keeping its action stable") {
+    check(captureReplyVersion("stable-action", "stable-action", "new-message") == "new-message")
+  }
+  case("other accounts or replaced episodes cannot inherit an action or version") {
+    check(replyActionToken("ownerB", "ownerA", "old-action", "fresh") == "fresh")
+    check(replyActionToken("owner", "owner", null, "fresh") == "fresh")
+    check(captureReplyVersion("old-action", "new-action", "new-message") == "old-action")
+    check(captureReplyVersion("action", "action", null) == "action")
+  }
+  case("a newer message after send remains protected from the completed reply") {
+    val captured = captureReplyVersion("action", "action", "at-send")
+    check(!matchesReplyNotification("peer", captured, "peer", "after-send"))
+  }
   println("$passed checks passed; $failed failed")
   kotlin.system.exitProcess(if (failed == 0) 0 else 1)
 }
