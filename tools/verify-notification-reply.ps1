@@ -3,7 +3,8 @@ param(
   [string]$GradleCache = 'D:\orgtree-work\hubchat-toolchain\gradle-home\caches\modules-2\files-2.1',
   [string]$Toolchain = 'E:\hubchat-toolchain',
   [string]$ControlPolicy = '',
-  [int]$ControlPassed = 10
+  [int]$ControlPassed = 10,
+  [int]$ControlFailed = 2
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
@@ -105,10 +106,10 @@ if ($ControlPolicy) {
   $raw = $LASTEXITCODE
   $red | ForEach-Object { Write-Output $_ }
   Write-Output "RED_RAW_EXIT=$raw"
-  if ($raw -ne 1 -or ($red -join "`n") -notmatch "$ControlPassed checks passed; 2 failed") {
+  if ($raw -ne 1 -or ($red -join "`n") -notmatch "$ControlPassed checks passed; $ControlFailed failed") {
     throw 'Predecessor control did not produce the expected two policy failures'
   }
-  Write-Output "PASS predecessor control: $ControlPassed passed / 2 expected failures"
+  Write-Output "PASS predecessor control: $ControlPassed passed / $ControlFailed expected failures"
 }
 
 Run-Compiler "$run\classes" @("$source\ConnectionService.kt", "$source\SecretBox.kt", "$source\NotificationReply.kt", "$source\NotificationReplyPolicy.kt", "$source\DownloadOpener.kt", "$run\tmp\Dependencies.kt")

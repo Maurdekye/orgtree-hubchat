@@ -17,8 +17,8 @@ internal fun replyActionToken(owner: String, previousOwner: String?, previousAct
   if (owner == previousOwner && !previousAction.isNullOrBlank()) previousAction else fresh
 
 /** Capture the visible version at Send; later arrivals must survive completion. */
-internal fun captureReplyVersion(action: String, currentAction: String?, version: String?): String =
-  if (action == currentAction && !version.isNullOrBlank()) version else action
+internal fun captureReplyVersion(owner: String, currentOwner: String?, action: String, currentAction: String?, version: String?): String =
+  if ((currentOwner == owner || (currentOwner == null && action == currentAction)) && !version.isNullOrBlank()) version else action
 
 /** A complete send check dismisses the episode; failures retain visible status. */
 internal fun finishReplyNotification(outcome: ReplyWorkOutcome, dismiss: () -> Unit, failed: () -> Unit) {

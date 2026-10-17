@@ -129,9 +129,8 @@ internal object NotificationReplies {
     val current = manager.activeNotifications.firstOrNull { it.id == 2 && it.tag == action.peer }?.notification
       ?: return action // preserve a reply even if its notice was just dismissed
     val owner = current.extras.getString(OWNER)
-    if (owner != null && owner != action.owner) return action
     val episode = current.extras.getString(ACTION_TOKEN) ?: current.extras.getString(TOKEN)
-    return action.copy(token = captureReplyVersion(action.token, episode, current.extras.getString(TOKEN)))
+    return action.copy(token = captureReplyVersion(action.owner, owner, action.token, episode, current.extras.getString(TOKEN)))
   }
 
   @Synchronized fun status(context: Context, target: ReplyTarget, text: String) {

@@ -112,17 +112,24 @@ fun main() {
   case("incoming messages preserve the active Reply action identity") {
     check(replyActionToken("owner", "owner", "stable-action", "new-message") == "stable-action")
   }
-  case("send captures the latest notification version while keeping its action stable") {
-    check(captureReplyVersion("stable-action", "stable-action", "new-message") == "new-message")
+  for (count in 1..3) case("one send clears all $count messages already shown, even with an older action binding") {
+    val latest = "v$count"
+    val captured = captureReplyVersion("owner", "owner", "v1", latest, latest)
+    check(captured == latest)
+    var notification: String? = latest
+    if (matchesReplyNotification("peer", captured, "peer", notification)) notification = null
+    check(notification == null)
+    check(!matchesReplyNotification("peer", captured, "peer", "arrived-after-send"))
   }
   case("other accounts or replaced episodes cannot inherit an action or version") {
     check(replyActionToken("ownerB", "ownerA", "old-action", "fresh") == "fresh")
     check(replyActionToken("owner", "owner", null, "fresh") == "fresh")
-    check(captureReplyVersion("old-action", "new-action", "new-message") == "old-action")
-    check(captureReplyVersion("action", "action", null) == "action")
+    check(captureReplyVersion("ownerB", "ownerA", "old-action", "new-action", "new-message") == "old-action")
+    check(captureReplyVersion("owner", null, "old-action", "new-action", "new-message") == "old-action")
+    check(captureReplyVersion("owner", "owner", "action", "action", null) == "action")
   }
   case("a newer message after send remains protected from the completed reply") {
-    val captured = captureReplyVersion("action", "action", "at-send")
+    val captured = captureReplyVersion("owner", "owner", "action", "action", "at-send")
     check(!matchesReplyNotification("peer", captured, "peer", "after-send"))
   }
   println("$passed checks passed; $failed failed")
