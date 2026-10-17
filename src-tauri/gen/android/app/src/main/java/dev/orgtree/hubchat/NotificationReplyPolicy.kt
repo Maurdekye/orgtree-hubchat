@@ -20,9 +20,12 @@ internal fun replyActionToken(owner: String, previousOwner: String?, previousAct
 internal fun captureReplyVersion(owner: String, currentOwner: String?, action: String, currentAction: String?, version: String?): String =
   if ((currentOwner == owner || (currentOwner == null && action == currentAction)) && !version.isNullOrBlank()) version else action
 
-/** Control for cancellation without the RemoteInput completion acknowledgement. */
+/** End Android's sending lifetime before cancelling, or retain a later arrival. */
 internal fun completeReplyVersion(version: String, current: String?, sameEpisode: Boolean, acknowledge: () -> Unit, clear: () -> Unit) {
-  if (current == version && sameEpisode) clear()
+  if (current == null) { clear(); return } // a concurrent reply already removed it
+  if (!sameEpisode) return
+  acknowledge()
+  if (current == version) clear()
 }
 
 /** A complete send check dismisses the episode; failures retain visible status. */
