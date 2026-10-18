@@ -14,7 +14,7 @@ const common = ['tokens.css', 'base.css', 'app.css'];
 for (const platform of ['desktop', 'android']) {
   const names = [...common, ...(platform === 'desktop' ? ['desktop.css', 'app-desktop.css'] : ['mobile.css', 'app-mobile.css'])];
   fs.writeFileSync(out + '/' + platform + '.css', names.map(n => fs.readFileSync(repo + '/src/styles/' + n, 'utf8')).join('\n'));
-  fs.writeFileSync(out + '/' + platform + '.html', `<!doctype html><html class="theme-dark" data-platform="${platform}"><head><link rel="stylesheet" href="${platform}.css"></head><body style="padding:20px;overflow:auto"><div id="root"></div><script src="entry.js"></script></body></html>`);
+  fs.writeFileSync(out + '/' + platform + '.html', `<!doctype html><html class="theme-dark" data-platform="${platform}"><head><link rel="stylesheet" href="${platform}.css"></head><body style="padding:20px;overflow:auto"><div id="root"></div><script>window.addEventListener('error', e => window.messageInfoError = e.message);</script><script src="entry.js"></script></body></html>`);
 }
 fs.writeFileSync(out + '/capture.html', '<!doctype html><html><body style="margin:0;background:#181818;color:#e8e8e8;font:14px sans-serif;display:flex"><section><h3 style="margin:18px">Desktop</h3><iframe style="width:460px;height:510px;border:0" src="desktop.html?platform=desktop"></iframe></section><section><h3 style="margin:18px">Android layout</h3><iframe style="width:450px;height:510px;border:0" src="android.html?platform=android"></iframe></section></body></html>');
 const env = { ...process.env }; delete env.ELECTRON_RUN_AS_NODE;

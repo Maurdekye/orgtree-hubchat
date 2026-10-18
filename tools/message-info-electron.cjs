@@ -6,12 +6,13 @@ app.disableHardwareAcceleration();
 app.setPath('userData', path.join(out, 'user-data'));
 app.whenReady().then(async () => {
   const win = new BrowserWindow({ show: false, width: 940, height: 600, webPreferences: { backgroundThrottling: false } });
+  win.webContents.on('console-message', (_event, _level, message) => console.log('page:', message));
   win.webContents.session.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*'] }, (_, cb) => cb({ cancel: true }));
   try {
     await win.loadFile(path.join(out, 'capture.html'));
     const result = await win.webContents.executeJavaScript(`(async () => {
       const frames = [...document.querySelectorAll('iframe')];
-      await Promise.all(frames.map(f => f.contentWindow.messageInfoResult ? Promise.resolve() : new Promise(r => f.addEventListener('load', r, {once:true}))));
+      for (const f of frames) if (!f.contentWindow.messageInfoResult) throw Error(f.src + ': ' + f.contentWindow.messageInfoError + '; ready=' + f.contentDocument.readyState);
       await Promise.all(frames.map(f => f.contentDocument.fonts.ready));
       await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
       await new Promise(r => setTimeout(r, 120));
