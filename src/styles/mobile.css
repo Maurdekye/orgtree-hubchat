@@ -191,9 +191,9 @@
 .ladder li::before { content: ""; position: absolute; left: 10px; top: 22px; bottom: -2px; width: 2px; background: var(--line); }
 .ladder li:last-child::before { display: none; }
 .ladder li.done::before { background: var(--ok); opacity: .5; }
-.ladder .lk { position: absolute; left: 0; top: 0; width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); background: var(--bg); display: flex; align-items: center; justify-content: center; }
-.ladder li.done .lk { border-color: var(--ok); background: var(--ok); color: var(--bg); }
-.ladder li.done .lk .ic { width: 15px; height: 15px; }
+.ladder .ladder-marker { position: absolute; left: 0; top: 0; width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); background: var(--bg); display: flex; align-items: center; justify-content: center; }
+.ladder li.done .ladder-marker { border-color: var(--ok); background: var(--ok); color: var(--bg); }
+.ladder li.done .ladder-marker .ic { width: 15px; height: 15px; }
 .ladder .ll { font-size: 15px; color: var(--ink-strong); font-weight: 600; display: flex; align-items: center; gap: 6px; }
 .ladder li:not(.done) .ll { color: var(--dim); font-weight: 400; }
 .ladder .lt { font: 12.5px var(--mono); color: var(--ink); margin-top: 1px; }

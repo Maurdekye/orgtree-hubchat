@@ -1,5 +1,13 @@
 # Hubchat development invariants
 
+- 2026-10-18: Message Info retains Fetched and marks it complete when either
+  Delivered or Read has a recorded time. Keep fetched_at's own time when known;
+  otherwise show "time not recorded", never substitute a later receipt time.
+  This is display-only on desktop/Android. Ladder markers use .ladder-marker,
+  not the hub-link screen's .lk class (its icon margins displaced checkmarks).
+  [decided: user 2026-10-18; verified: MessageInfo.tsx, desktop.css, mobile.css;
+  focused fixture: tools/proof-message-info.mjs]
+
 - 2026-10-18: Typing `@` in the composer (`Composer.tsx`, desktop and Android)
   opens a completion hint list of known Hubchat contacts (`mentionContacts` in
   `src/lib/mentions.ts`: directory + active chats, excluding self and

@@ -32,7 +32,8 @@ export function MessageInfoBody({ m }: { m: Message }) {
   const steps = [
     { label: "Written on this device", at: m.created_at, note: "Your clock" },
     { label: "Sent: hub " + (hub || "") + " has it", at: m.received_at || (m.state === "sent" ? m.sent_at : null), note: "Hub clock: orders the conversation" },
-    { label: "Fetched by " + who, at: m.fetched_at, note: agent ? "Its Orgtree pulled it from the hub" : "One of their devices pulled it" },
+    // Later receipts prove a fetch, but do not supply its timestamp (user 2026-10-18).
+    { label: "Fetched by " + who, at: m.fetched_at, implied: !!(ms(m.delivered_at) || ms(m.read_at)), note: agent ? "Its Orgtree pulled it from the hub" : "One of their devices pulled it" },
     { label: "Delivered", at: m.delivered_at, note: agent ? "In its org inbox" : "On their device" },
     { label: "Read", at: m.read_at, note: agent ? "An agent or a person opened it" : "They opened the chat" },
   ];
@@ -43,13 +44,14 @@ export function MessageInfoBody({ m }: { m: Message }) {
       <ul className="ladder">
         {steps.map((s, i) => {
           const w = when(s.at);
+          const done = !!w || !!s.implied;
           // the last step, once the hub has it: say it plainly (user 23:51Z)
           const wait = !w && i === steps.length - 1 && !!steps[1].at ? "Not read yet" : "—";
           return (
-            <li key={s.label} className={w ? "done" : ""}>
-              <span className="lk">{w ? <Icon name="check" /> : null}</span>
+            <li key={s.label} className={done ? "done" : ""}>
+              <span className="ladder-marker">{done ? <Icon name="check" /> : null}</span>
               <div className="ll">{s.label}</div>
-              {w ? <div className="lt">{w}</div> : <div className="lt dim">{wait}</div>}
+              {done ? <div className="lt">{w || "time not recorded"}</div> : <div className="lt dim">{wait}</div>}
               <div className="ln">{s.note}</div>
             </li>
           );

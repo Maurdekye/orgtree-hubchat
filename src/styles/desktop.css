@@ -152,9 +152,9 @@
 .ladder li::before { content: ""; position: absolute; left: 8px; top: 18px; bottom: -2px; width: 2px; background: var(--line); }
 .ladder li:last-child::before { display: none; }
 .ladder li.done::before { background: var(--ok); opacity: .5; }
-.ladder .lk { position: absolute; left: 0; top: 0; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line); background: var(--side); display: flex; align-items: center; justify-content: center; }
-.ladder li.done .lk { border-color: var(--ok); background: var(--ok); color: var(--side); }
-.ladder li.done .lk .ic { width: 13px; height: 13px; }
+.ladder .ladder-marker { position: absolute; left: 0; top: 0; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line); background: var(--side); display: flex; align-items: center; justify-content: center; }
+.ladder li.done .ladder-marker { border-color: var(--ok); background: var(--ok); color: var(--side); }
+.ladder li.done .ladder-marker .ic { width: 13px; height: 13px; }
 .ladder .ll { font-size: 13px; color: var(--ink-strong); font-weight: 600; display: flex; align-items: center; gap: 6px; }
 .ladder li:not(.done) .ll { color: var(--dim); font-weight: 400; }
 .ladder .lt { font: 12px var(--mono); color: var(--ink); margin-top: 1px; }
