@@ -1,5 +1,4 @@
 // Synthetic renderer fixture: actual MessageInfoBody and platform styles, no core.
-import React from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import type { Message } from "../src/api";
