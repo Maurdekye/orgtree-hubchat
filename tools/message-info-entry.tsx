@@ -25,14 +25,15 @@ const mount = (patch: Partial<Message>) => {
 };
 const stamp = (at: string) => timeSec(ms(at)) + " · " + dayLabel(ms(at));
 
-for (const [name, patch, done, at] of [
+const cases: [string, Partial<Message>, boolean, string][] = [
   ["pending", {}, false, "—"],
   ["fetched only", { fetched_at: fetched }, true, stamp(fetched)],
   ["delivered implies fetched", { delivered_at: t }, true, "time not recorded"],
   ["read alone implies fetched", { read_at: t }, true, "time not recorded"],
   ["delivered preserves fetched time", { fetched_at: fetched, delivered_at: t }, true, stamp(fetched)],
   ["read preserves fetched time", { fetched_at: fetched, read_at: t }, true, stamp(fetched)],
-] as const) {
+];
+for (const [name, patch, done, at] of cases) {
   const steps = mount(patch), row = steps[2];
   check(name + ": all five steps retained", steps.length === 5);
   check(name + ": fetched completion", row.classList.contains("done") === done);
@@ -43,7 +44,7 @@ for (const [name, patch, done, at] of [
 }
 mount({ outgoing: false, delivered_at: t });
 check("incoming keeps Received layout", !document.querySelector(".ladder") && document.body.textContent!.includes("Received"));
-mount({ delivered_at: t });
+mount({ fetched_at: fetched, delivered_at: t });
 for (const [i, row] of [...document.querySelectorAll(".ladder li.done")].entries()) {
   const icon = row.querySelector<SVGElement>("svg")!;
   const marker = icon.parentElement!;
@@ -53,4 +54,5 @@ for (const [i, row] of [...document.querySelectorAll(".ladder li.done")].entries
   check("marker " + i + ": no link-screen margin", [style.marginTop, style.marginRight, style.marginBottom, style.marginLeft].every(v => v === "0px"));
   check("marker " + i + ": icon inherits marker contrast", style.color === getComputedStyle(marker).color);
 }
+mount({ delivered_at: t });
 Object.assign(window, { messageInfoResult: { platform, checks, failed: checks.filter(c => !c.ok).length } });
