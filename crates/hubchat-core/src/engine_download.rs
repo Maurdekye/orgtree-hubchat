@@ -506,7 +506,6 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite::params;
     use crate::store::NewAttachment;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -581,9 +580,14 @@ mod tests {
         lid
     }
     fn incoming_for_history(store: &Store, url: &str) -> String {
-        let id=attach(store,url,3);
-        store.with(|c| c.execute("UPDATE messages SET outgoing=0,state='received' WHERE id='message'",[]).map(|_|())).unwrap();
-        id
+        store.add_hub(url,&now()).unwrap();
+        let env=serde_json::from_value(serde_json::json!({
+            "id":"message","from":"remote.111","to":"local.222","body":"",
+            "received_at":"2026-10-18T00:00:00Z",
+            "attachments":[{"id":"remote-file","name":"proof.bin","bytes":3}]
+        })).unwrap();
+        store.insert_incoming(url,&env,&now()).unwrap();
+        store.message("message").unwrap().unwrap().attachments[0].local_id.clone()
     }
     #[tokio::test]
     async fn transfer_history_fresh_copy_preserves_old_bytes_and_restarts_without_range() {
@@ -667,8 +671,10 @@ mod tests {
     #[test]
     fn transfer_history_outgoing_view_is_bound_to_the_retained_source() {
         let dir=tempfile::tempdir().unwrap();let store=Arc::new(Store::open_in_memory().unwrap());let url="http://127.0.0.1:9";
-        let lid=attach(&store,url,3);let source=dir.path().join("source");std::fs::write(&source,b"abc").unwrap();
-        store.with(|c|c.execute("UPDATE attachments SET source=? WHERE local_id=?",params![source.to_string_lossy(),lid]).map(|_|())).unwrap();
+        let source=dir.path().join("source");std::fs::write(&source,b"abc").unwrap();
+        store.queue_outgoing(&NewOutgoing {id:"message".into(),peer:"peer".into(),body:"".into(),kind:None,reply_to:None,attachments:vec![NewAttachment {name:"proof.bin".into(),bytes:3,source:source.to_string_lossy().into_owned()}]},&now()).unwrap();
+        let lid=store.message("message").unwrap().unwrap().attachments[0].local_id.clone();
+        store.set_upload(&lid,"uploaded","remote-file",url).unwrap();
         let e=fixture(store.clone(),dir.path(),url);let page=e.transfer_history("").unwrap();assert!(page.rows[0].upload);assert!(page.rows[0].available);assert!(!page.rows[0].can_redownload);
         assert_eq!(e.attachment_source("message",&lid).unwrap().0,source.to_string_lossy());assert!(e.attachment_source("other",&lid).is_err());assert!(e.queue_download_copy("message",&lid,true).is_err());
         std::fs::remove_file(&source).unwrap();assert!(!e.transfer_history("").unwrap().rows[0].available);assert!(e.attachment_source("message",&lid).is_err());
