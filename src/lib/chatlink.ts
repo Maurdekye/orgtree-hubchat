@@ -17,7 +17,7 @@ export function chatLinkTarget(link: string, currentOwner?: string): string | nu
     if (owner !== null && currentOwner !== undefined && owner !== currentOwner) return "";
     to = url.searchParams.get("to") || "";
   } catch { return ""; }
-  to = to.trim().replace(/^@?net:/i, "");
+  to = to.trim().replace(/^@?(?:net|org):/i, "");
   return /^[a-z0-9][a-z0-9._-]{0,127}$/i.test(to) && to.includes(".") ? to : "";
 }
 

@@ -1,5 +1,18 @@
 # Hubchat development invariants
 
+- 2026-10-18: Typing `@` in the composer (`Composer.tsx`, desktop and Android)
+  opens a completion hint list of known Hubchat contacts (`mentionContacts` in
+  `src/lib/mentions.ts`: directory + active chats, excluding self and
+  link-waiting placeholders). `Tab`/`Enter` or click (desktop) and tap
+  (Android) complete the active `@` token as `@net:<address> ` so older clients
+  and Orgtree read it as plain text; `Escape` dismisses the hint list before
+  cancelling an active reply. In message Markdown (`src/lib/md.ts`),
+  `@net:<address>`, `@org:<slug>`, and `@<known-contact>` mentions render as
+  clickable `a.addr.mention` links (`data-slug`) that open the chat via
+  `onOpenAddr`. [decided: user 2026-10-17; verified: `src/lib/mentions.ts`,
+  `src/lib/md.ts`, `src/components/Composer.tsx`,
+  `tools/proof-mentions-renderer.mjs`]
+
 - 2026-10-18: Transfers stays accessible when idle and reads bounded finished
   metadata pages on demand. View resolves a bound retained source/download and
   checks platform readability (including Android content URIs). Explicit

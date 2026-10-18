@@ -12,6 +12,7 @@
 // only, and the WebView itself never navigates.
 import { Marked, type MarkedToken, type Token, type Tokens } from "marked";
 import DOMPurify from "dompurify";
+import { resolveMentionTarget } from "./mentions";
 
 const ESC: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 export const esc = (s: unknown) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ESC[c]);
@@ -43,6 +44,9 @@ const link = (href: string, inner: string) => {
   return u ? '<a class="md-a" data-href="' + esc(u) + '" title="' + esc(u) + '" tabindex="0" role="link">' + inner + "</a>" : inner;
 };
 
+const MENTION_SCAN_RE = /(?:^|[^0-9A-Za-z._%+-])(@(?:(?:net|org):)?[A-Za-z0-9](?:(?:\.|[_-]+)?[A-Za-z0-9])*)/gi;
+const MENTION_HEAD_RE = /^@(?:(?:net|org):)?[A-Za-z0-9](?:(?:\.|[_-]+)?[A-Za-z0-9])*/i;
+
 const marked = new Marked({
   gfm: true,
   // a chat line break is a line break, as it always was here
@@ -60,12 +64,30 @@ const marked = new Marked({
   extensions: [{
     name: "addr",
     level: "inline",
-    start: (s: string) => { const i = s.indexOf("@net:"); return i < 0 ? undefined : i; },
-    tokenizer(src: string) {
-      const m = /^@net:([a-z0-9][a-z0-9._-]*[a-z0-9])/.exec(src);
-      return m ? { type: "addr", raw: m[0], slug: m[1] } : undefined;
+    start: (s: string) => {
+      MENTION_SCAN_RE.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = MENTION_SCAN_RE.exec(s)) !== null) {
+        const raw = m[1]!;
+        const at = m.index + (m[0].length - raw.length);
+        const next = s[at + raw.length];
+        if (next && /[0-9A-Za-z@]/.test(next)) continue;
+        if (resolveMentionTarget(raw)) return at;
+      }
+      return undefined;
     },
-    renderer: (t: Tokens.Generic) => '<a class="addr" data-slug="' + esc(t.slug) + '" tabindex="0" role="link">@net:' + esc(t.slug) + "</a>",
+    tokenizer(src: string) {
+      const m = MENTION_HEAD_RE.exec(src);
+      if (!m) return undefined;
+      const raw = m[0];
+      const next = src[raw.length];
+      if (next && /[0-9A-Za-z@]/.test(next)) return undefined;
+      const resolved = resolveMentionTarget(raw);
+      if (!resolved) return undefined;
+      return { type: "addr", raw, slug: resolved.slug, label: resolved.label, title: resolved.title };
+    },
+    renderer: (t: Tokens.Generic) =>
+      '<a class="addr mention" data-slug="' + esc(t.slug) + '" title="' + esc(t.title || t.label || ("@net:" + t.slug)) + '" tabindex="0" role="link">' + esc(t.label || ("@net:" + t.slug)) + "</a>",
   }],
   renderer: {
     html: ({ text, block }) => {
