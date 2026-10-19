@@ -1,16 +1,21 @@
 # Recent chats from the Windows tray
 
-Single left click opens a six-row recent-chat popup. Double click shows the
+Single left click opens a scrollable recent-chat popup with at most ten rows
+visible at once (user 2026-10-19). Double click shows the
 main window. The popup has no Open Hubchat row. The user specified **all
 chat kinds**, not just DMs, on 2026-10-14 11:29Z. macOS/Linux retain their
 native menu and existing left-click show-window behavior; Android is unchanged.
 
 ## Data and interactions
 
-- `Store::tray_overview` selects up to six open chats by maximum message
+- `Store::tray_overview` selects every open chat by maximum message
   `created_at` in either direction, matching the existing chat list's ordering.
   Ties use the peer address for deterministic order. Receipt/delivery updates
   cannot move a chat. Closed DMs stay closed and absent from the popup.
+- The viewport is ten 28px rows plus padding, reduced to fit the current work
+  area. Older chats stay reachable by mouse wheel, scrollbar and Arrow/Home/End
+  keys. A new popup generation starts at the top; live data/typing refreshes
+  keep the current scroll position and selected peer.
 - Names follow the chat list's `org_name || username || address` rule. Pictures
   use the existing validated native picture cache/fetcher; session avatars keep
   the terminal fallback. Late bytes check popup generation, current identity,
@@ -25,9 +30,9 @@ native menu and existing left-click show-window behavior; Android is unchanged.
   Leases expire by `Instant` at one second, including while the main WebView is
   hidden; an incoming message removes its peer's lease immediately. No typing
   notification is generated. SQL refreshes are coalesced for data events;
-  typing updates use cached six-row metadata and do not re-query the store.
+  typing updates use cached chat metadata and do not re-query the store.
 - A separate SQL existence check covers **any unread anywhere**, including
-  chats outside the six and hidden/history-only chats. The native icon receives
+  hidden/history-only chats. The native icon receives
   Orgtree's top-right red dot and light rim; clearing all unread restores the
   original icon. It does not depend on notification settings or the main UI.
 - Chat selection revalidates membership/current identity, then uses the same
