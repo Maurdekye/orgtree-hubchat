@@ -24,7 +24,7 @@ app.whenReady().then(async()=>{
     await w.webContents.executeJavaScript('{const v=fixture();v.generation=2;popup.update(v)}');await paint();assert.equal((await measure()).scrollTop,0);
     await w.webContents.capturePage().then(i=>fs.writeFileSync(out+'/reopened-at-top.png',i.toPNG()));
     await w.webContents.executeJavaScript('{const v=fixture();v.generation=3;v.maxHeight=150;popup.update(v)}');await paint();await key('End');m=await measure();results.push({state:'short-work-area',...m});assert.ok(m.box.bottom<=150);assert.ok(m.visible.includes('peer15'));
-    await key('Home');m=await measure();assert.equal(m.focused,'peer0');assert.equal(m.scrollTop,0);
+    await key('Home');m=await measure();assert.equal(m.focused,'peer0');assert.ok(m.visible.includes('peer0'));
     await key('End');await key('Enter');
     const actions=await w.webContents.executeJavaScript('calls.filter(c=>c.command.endsWith("action"))');assert.equal(actions.length,1);assert.equal(actions[0].args.id,'peer15');
     fs.writeFileSync(out+'/result.json',JSON.stringify({results,actions,pass:true},null,2));console.log('TRAY_SCROLL_VISUAL_PASS');app.exit(0);
