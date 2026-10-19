@@ -774,11 +774,15 @@ impl Store {
     ) -> Result<Vec<Message>> {
         let (bt, bid) = before.unzip();
         let (ft, fid) = from.unzip();
+        // Sync may have moved this loaded UUID earlier. Resolve it in this
+        // query's snapshot, restricted to this peer; a deleted anchor keeps
+        // the supplied boundary. Never raise a range already shown.
         let mut v = self.messages_where(
-            "m.peer=? AND (? IS NULL OR m.created_at < ? OR (m.created_at = ? AND m.id < ?))
-               AND (? IS NULL OR m.created_at > ? OR (m.created_at = ? AND m.id >= ?))
-             ORDER BY m.created_at DESC, m.id DESC LIMIT ?",
-            params![peer, bt, bt, bt, bid, ft, ft, ft, fid, limit],
+            "m.peer=?1 AND (?2 IS NULL OR m.created_at < ?2 OR (m.created_at = ?2 AND m.id < ?3))
+               AND (?4 IS NULL OR (m.created_at, m.id) >=
+                 (MIN(?4, COALESCE((SELECT a.created_at FROM messages a WHERE a.id=?5 AND a.peer=?1), ?4)), ?5))
+             ORDER BY m.created_at DESC, m.id DESC LIMIT ?6",
+            params![peer, bt, bid, ft, fid, limit],
         )?;
         v.reverse();
         Ok(v)
@@ -923,8 +927,10 @@ impl Store {
             if deleting {
                 return Ok(false);
             }
-            let existing: Option<String> =
-                tx.query_row("SELECT state FROM messages WHERE id=?", [&env.id], |r| r.get(0)).optional()?;
+            let existing: Option<(String, String, String)> = tx.query_row(
+                "SELECT state, created_at, peer FROM messages WHERE id=?", [&env.id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            ).optional()?;
             let fresh = existing.is_none();
             if live && fresh && !outgoing {
                 close_dm::reopen(&tx, peer)?;
@@ -960,7 +966,8 @@ impl Store {
                         insert_remote_attachment(&tx, hub, &env.id, i, a)?;
                     }
                 }
-                Some(state) => {
+                Some((state, created_at, existing_peer)) => {
+                    preserve_visible_retime(&tx, &existing_peer, &created_at, &at)?;
                     let state = if rank(hub_state) > rank(&state) { hub_state.to_owned() } else { state };
                     // the label stays the hub it first came through;
                     // message_hubs keeps every hub that holds it
@@ -1395,10 +1402,27 @@ impl Store {
 /// Commit its boundary with admission, so a later lazy-sync start or a clock
 /// rollback cannot hide it. Hub-synced historical outgoing rows do not call this.
 fn show_local_outgoing(tx: &rusqlite::Transaction<'_>, peer: &str, at: &str) -> rusqlite::Result<()> {
-    let Some(ms) = humantime::parse_rfc3339_weak(at).ok()
-        .and_then(|t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).ok())
-        .and_then(|d| i64::try_from(d.as_millis()).ok()) else { return Ok(()); };
+    let Some(ms) = history_ms(at) else { return Ok(()); };
     merge_history_floor(tx, peer, Some(ms))?;
+    Ok(())
+}
+
+fn history_ms(at: &str) -> Option<i64> {
+    humantime::parse_rfc3339_weak(at).ok()
+        .and_then(|t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).ok())
+        .and_then(|d| i64::try_from(d.as_millis()).ok())
+}
+
+/// Retiming an already visible row must preserve its admission atomically.
+/// Hidden historical rows never lower the floor, and `all` needs no change.
+fn preserve_visible_retime(tx: &rusqlite::Transaction<'_>, peer: &str, before: &str, after: &str) -> rusqlite::Result<()> {
+    if after >= before { return Ok(()); }
+    let key = format!("history.floor.{peer}");
+    let value: Option<String> = tx.query_row("SELECT value FROM meta WHERE key=?", [&key], |r| r.get(0)).optional()?;
+    let Some(floor) = value.as_deref().and_then(|v| v.parse::<i64>().ok()) else { return Ok(()); };
+    if history_ms(before).is_some_and(|ms| ms >= floor) {
+        show_local_outgoing(tx, peer, after)?;
+    }
     Ok(())
 }
 
