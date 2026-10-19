@@ -31,7 +31,7 @@ async function run(){
  const entry=()=>platform==='desktop'?[...document.querySelectorAll('.set-nav button')].find(e=>e.textContent?.trim()==='Transfers')??null:textButton('Transfers');
  const panel=()=>document.querySelector('.transfers-panel');
  check('chat header has no transfers bar',!document.querySelector('.xstrip,.tb-xfer'));
- check('chat filters remain available',[...document.querySelectorAll('.fchip')].some(e=>e.textContent?.trim()==='All'));
+ check('chat filters remain available',[...document.querySelectorAll('.fchip')].some(e=>e.firstChild?.textContent==='All'));
  check('history stays lazy on chat list',historyReads===0);
  if(platform==='desktop'){
   await click(document.querySelector('[aria-label="Shrink the chat list"]'));
