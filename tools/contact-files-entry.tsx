@@ -46,7 +46,7 @@ async function run() {
   const row=(id:string)=>document.querySelector(`[data-contact-file="${id}"]`)??[...document.querySelectorAll(platform==="desktop"?'.filerow':'.li')].find(e=>e.textContent?.includes(messages.flatMap(m=>m.attachments).find(a=>a.local_id===id)!.name))??null;
   const menu=async(id:string)=>{const r=row(id);const b=r?.querySelector('[aria-label^="Actions for"]');if(b)await click(b);else {r?.dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,cancelable:true,clientX:210,clientY:320}));await settle();}};
   const item=(label:string)=>[...document.querySelectorAll('[role="menuitem"]')].find(e=>e.textContent?.trim()===label)??null;
-  const closeMenu=async()=>{window.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true,cancelable:true}));await settle();};
+  const closeMenu=async()=>{if(document.querySelector('[role="menu"]'))window.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true,cancelable:true}));await settle();};
   check("file list retains all attachment names",["photo","saved","remote","busy","failed","expired","source"].every(id=>!!row(id)));
   check("rows expose keyboard activation",row("saved")?.querySelector('button')||row("saved")?.getAttribute("tabindex")==="0");
   check("in-progress and failed rows show transfer state",row("busy")?.textContent?.includes("Downloading")&&row("failed")?.textContent?.includes("failed"));
