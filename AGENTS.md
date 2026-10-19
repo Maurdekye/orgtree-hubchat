@@ -7,6 +7,16 @@
   scroll position. Preserve the existing single/double-click timing.
   [decided: user 2026-10-19; verified: store_tray.rs, trayrecent-view.ts;
   docs/tray-recent.md]
+- 2026-10-19: Contact info Files uses the chat's shared attachment menu and
+  native message/attachment-bound opener. Both layouts support image viewing,
+  download/open, transfer state and Show in chat (older pages plus highlight).
+  Menu Download saves only; a remote file click opens after completion only
+  while that panel and identity remain current. Android uses a bottom sheet
+  dismissed before route Back; desktop offers Show in folder for retained
+  downloads/sources. No new native command or eager file preview fetch.
+  [decided: user via coordinator 2026-10-19; verified: ContactFile.tsx,
+  attachmentActions.ts, ContactInfo.tsx, Conversation.tsx;
+  docs/contact-info-files.md]
 
 - 2026-10-19: Release versions include Cargo/package/lock/config/browser-mock
   values plus Android's explicit bundle.android.versionCode and Gradle's
