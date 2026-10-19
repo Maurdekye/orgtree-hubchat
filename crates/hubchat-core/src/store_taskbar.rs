@@ -133,11 +133,20 @@ mod tests {
         at(&s,"incoming",false,PEER,3,false);
         at(&s,"wrong-chat",true,"kim.abcdef",4,false);
         assert!(s.taskbar_attention().unwrap());
+        let before=s.taskbar_attention().unwrap();
         at(&s,"ordinary",true,PEER,5,false);
         assert!(!s.taskbar_attention().unwrap(),"a later ordinary message deals with both questions");
+        let after=s.taskbar_attention().unwrap();
         assert_eq!(s.card_answers(PEER,&["q1".into()]).unwrap().len(),1,"attention does not invent a structured answer");
         at(&s,"future",false,PEER,6,true);
         assert!(s.taskbar_attention().unwrap(),"earlier outgoing messages do not settle newer questions");
+        if let Ok(path)=std::env::var("HUBCHAT_TASKBAR_CASES") {
+            std::fs::write(path,serde_json::to_vec(&serde_json::json!([
+                ["Read questions awaiting reply",before],
+                ["Later message sent: cleared",after],
+                ["Newer question: attention",s.taskbar_attention().unwrap()]
+            ])).unwrap()).unwrap();
+        }
     }
     #[test]
     fn taskbar_queued_later_message_clears_and_deletion_reopens_only_without_another_answer() {
