@@ -24,6 +24,7 @@ struct View {
     typing: HashMap<String, Instant>,
     clicks: Clicks,
     dot: Option<bool>,
+    taskbar_dot: Option<bool>,
     available: bool,
 }
 
@@ -81,14 +82,15 @@ pub fn sync(app: &AppHandle) {
             // command, never in each typing/state snapshot.
             RecentRow { peer: chat.peer, name, kind, unread: chat.unread, typing: false, picture: None, picture_key }
         }).collect::<Vec<_>>();
-        Ok((owner.to_owned(), rows, dot))
+        let taskbar = c.store.taskbar_attention().map_err(|e|e.to_string())?;
+        Ok((owner.to_owned(), rows, dot, taskbar))
     }));
     let available = loaded.is_ok();
-    let (owner, rows, dot) = match loaded {
-        Ok((o,r,d)) => (o,r,Some(d)),
+    let (owner, rows, dot, taskbar) = match loaded {
+        Ok((o,r,d,t)) => (o,r,Some(d),Some(t)),
         Err(_) => match core().and_then(|c|c.engine()) {
-            Ok(e) => (e.me().address(), vec![], None),
-            Err(_) => (String::new(), vec![], Some(false))
+            Ok(e) => (e.me().address(), vec![], None, None),
+            Err(_) => (String::new(), vec![], Some(false), Some(false))
         }
     };
     let publish = || {
@@ -98,9 +100,14 @@ pub fn sync(app: &AppHandle) {
         v.owner = owner.clone(); v.rows = rows; v.available = available;
         let final_dot = if changed_owner && dot.is_none() { Some(false) } else { dot };
         let change_dot = final_dot.is_some() && v.dot != final_dot;
+        let final_taskbar = if changed_owner && taskbar.is_none() { Some(false) } else { taskbar };
+        let change_taskbar = final_taskbar.is_some() && (changed_owner || v.taskbar_dot != final_taskbar);
         if final_dot.is_some() { v.dot = final_dot; }
         drop(v);
         if change_dot { set_dot(app, final_dot.unwrap_or(false)); }
+        if change_taskbar && crate::taskbar::set_dot(app, final_taskbar.unwrap_or(false)) {
+            r.view.lock().unwrap().taskbar_dot = final_taskbar;
+        }
         Ok(changed_owner)
     };
     let changed_owner = if owner.is_empty() { publish() } else { core().and_then(|c| c.tray_with_identity(Some(&owner), |_| publish())) };
@@ -119,13 +126,25 @@ pub fn changed(app: &AppHandle) {
     }).is_err() { r.pending.store(false, Ordering::Release); }
 }
 
+/// A tray-hidden window gets a fresh taskbar button when shown again.
+pub fn window_shown(app: &AppHandle) {
+    if let Some(r) = app.try_state::<Recent>() { r.view.lock().unwrap().taskbar_dot = None; }
+    changed(app);
+}
+
 pub fn reset(app: &AppHandle) {
     if let Some(r) = app.try_state::<Recent>() {
         let mut v = r.view.lock().unwrap();
-        v.owner.clear(); v.rows.clear(); v.typing.clear(); v.clicks.cancel(); v.dot = None; v.available = false;
+        v.owner.clear(); v.rows.clear(); v.typing.clear(); v.clicks.cancel(); v.dot = None; v.taskbar_dot = None; v.available = false;
     }
     let handle = app.clone();
-    let _ = app.run_on_main_thread(move || { crate::tray_popup::close_recent(&handle); set_dot(&handle, false); });
+    let _ = app.run_on_main_thread(move || {
+        crate::tray_popup::close_recent(&handle); set_dot(&handle, false);
+        // A late sign-out reset must not clear a newly adopted owner's dot.
+        if handle.try_state::<Recent>().is_some_and(|r|r.view.lock().unwrap().owner.is_empty()) {
+            crate::taskbar::set_dot(&handle, false);
+        }
+    });
 }
 
 pub fn event(app: &AppHandle, event: &Event) {

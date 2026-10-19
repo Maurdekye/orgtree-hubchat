@@ -24,6 +24,10 @@ mod tray_popup;
 #[cfg(windows)]
 mod tray_recent;
 #[cfg(windows)]
+mod taskbar;
+#[cfg(any(windows, test))]
+mod taskbar_dot;
+#[cfg(windows)]
 mod windows_icon;
 #[cfg(windows)]
 mod jumplist;
@@ -373,6 +377,8 @@ mod desktop {
             let _ = w.as_ref().show();
             let _ = w.show();
             let _ = w.set_focus();
+            #[cfg(windows)]
+            crate::tray_recent::window_shown(app);
         }
     }
 
