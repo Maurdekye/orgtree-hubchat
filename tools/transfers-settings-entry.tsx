@@ -21,7 +21,7 @@ async function run(){
   transferHistory:async()=>{historyReads++;return {rows:[{...t,local_id:'saved',message_id:'saved-message',state:'done',name:'report.pdf',available:true,can_redownload:true}],next:null};},
   onEvent:async()=>()=>{},openDm:async()=>{},markRead:async()=>{},draft:async()=>'',setDraft:async()=>{},draftAnswers:async()=>({replies:[],picks:{}}),
   setupStatus:async()=>null,sendRoute:async()=>({pinned:null,automatic:null,next:null,hubs:[]}),
-  cancelDownload:async(id:string)=>{calls.push('cancel:'+id);},
+  cancelTransfer:async(id:string)=>{calls.push('cancel:'+id);},
   openAttachment:async(m:string,a:string)=>{calls.push('open:'+m+':'+a);},
  });
  createRoot(document.getElementById('root')!).render(<App/>);await pause();await pause();
