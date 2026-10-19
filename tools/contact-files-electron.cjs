@@ -9,17 +9,18 @@ app.whenReady().then(async()=>{
   // Top-level pages paint reliably after scrolling; hidden iframes can retain
   // an earlier route even after their DOM assertions have settled.
   for(const platform of ['desktop','android']){
-   win=new BrowserWindow({show:false,width:platform==='desktop'?1000:390,height:690,webPreferences:{backgroundThrottling:false}});
+   win=new BrowserWindow({show:false,width:platform==='desktop'?1000:390,height:690,webPreferences:{backgroundThrottling:false,offscreen:true}});
    win.webContents.session.webRequest.onBeforeRequest({urls:['http://*/*','https://*/*']},(_,cb)=>cb({cancel:true}));
    await win.loadFile(path.join(out,platform+'.html'),{query:{platform}});
    const r=await win.webContents.executeJavaScript(`(async()=>{
     const deadline=performance.now()+20000;
     while(!window.contactFilesResult){if(window.contactFilesError)throw Error(window.contactFilesError);if(performance.now()>deadline)throw Error('No fixture verdict');await new Promise(r=>setTimeout(r,20));}
     await document.fonts.ready;await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));await new Promise(r=>setTimeout(r,120));
-    return {...window.contactFilesResult,capture:{panel:!!document.querySelector('.info,.hero'),menu:!!document.querySelector('[role="menu"]'),width:innerWidth,height:innerHeight}};
+    const rect=s=>{const e=document.querySelector(s),r=e?.getBoundingClientRect();return r?{x:r.x,y:r.y,width:r.width,height:r.height,display:getComputedStyle(e).display}:null;};
+    return {...window.contactFilesResult,capture:{panel:!!document.querySelector('.info,.hero'),menu:!!document.querySelector('[role="menu"]'),width:innerWidth,height:innerHeight,panelRect:rect('.info,.hero'),menuRect:rect('[role="menu"]')}};
    })()`);
    results.push(r);
-   if(!red){const png=(await win.webContents.capturePage()).toPNG();fs.writeFileSync(path.join(out,platform+'.png'),png);pictures.push('data:image/png;base64,'+png.toString('base64'));}
+   if(!red){win.webContents.invalidate();await new Promise(r=>setTimeout(r,250));const png=(await win.webContents.capturePage()).toPNG();fs.writeFileSync(path.join(out,platform+'.png'),png);pictures.push('data:image/png;base64,'+png.toString('base64'));}
    win.destroy();win=null;
   }
   const passed=results.length===2&&results.every(r=>r.checks.length===17&&(red?JSON.stringify(r.checks.filter(c=>!c.ok).map(c=>c.name).sort())===JSON.stringify([...targets,...(r.platform==='desktop'?['folder reveal is desktop only']:[])].sort()):r.checks.every(c=>c.ok)&&r.capture.panel&&r.capture.menu));
