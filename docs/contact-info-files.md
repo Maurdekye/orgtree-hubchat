@@ -49,6 +49,23 @@ they do not prove the OS launched a file, a real hub transfer completed, or
 Android hardware/installed WebView behavior. No app/installer build, install,
 live identity, chat send or publishing belongs to this author check.
 
+Measured author run (2026-10-19): tests-only `4cc9400` gives exactly 29 expected
+failures and five controls across 34 checks (desktop15/2, Android14/3).
+Source `f20c3c1` passes34/34 and TypeScript with exit0. The final offscreen
+capture harness `5ad846f` passes the same34 checks in11.98s, records the visible
+menu/panel geometry and produces the inspected desktop/Android composition.
+There is no product-source delta between the typechecked and captured tips.
+All final child exits are0 with null signals/errors under a3072MiB kernel Job.
+
+Initial setup/control failures and preliminary32-check receipts are retained
+in the author's C: evidence folder. Hidden iframe and ordinary hidden-window
+captures showed previous routes despite current DOM checks; the final harness
+uses top-level offscreen windows, explicit invalidation and a fresh verdict
+file. One intermediate Electron run exited0 before the second layout loaded;
+that has no complete verdict and is not a pass. The harness now stays alive
+between windows and rejects a missing/stale verdict. Failed/stale captures
+remain evidence, not accepted screenshots.
+
 ## Agent parity
 
 Open, download, reveal, retry, cancel and remove are additional entry points
