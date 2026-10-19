@@ -3,6 +3,7 @@
    #d3e3fd dividers. Dark uses Chromium-like neutrals; no dark reference exists. */
 :root { color-scheme: light; --menu-bg:#fff; --menu-fg:#1f1f1f; --menu-disabled:#8c8c8c; --menu-hover:#f2f2f2; --menu-separator:#d3e3fd; --menu-tick:#666; }
 :root[data-menu-theme="dark"] { color-scheme:dark; --menu-bg:#292929; --menu-fg:#e8eaed; --menu-disabled:#93969a; --menu-hover:#414141; --menu-separator:#4b4d50; --menu-tick:#bdc1c6; }
+:root[data-menu-theme="recent"] { color-scheme:dark; }
 * { box-sizing:border-box; }
 html, body { margin:0; padding:0; background:transparent; overflow:hidden; user-select:none; font:12px "Segoe UI",sans-serif; }
 .tray-pane { position:absolute; padding:8px 0; color:var(--menu-fg); background:var(--menu-bg); border-radius:12px; box-shadow:0 4px 16px #0004,0 1px 3px #0002; overflow:auto; scrollbar-width:thin; }

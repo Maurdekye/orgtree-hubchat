@@ -15,6 +15,7 @@ app.whenReady().then(async()=>{
     await w.loadFile(path.join(out,'index.html'));await paint();
     let m=await measure();results.push({state:'open',...m});
     assert.equal(m.rows,16);assert.equal(m.viewport,280);assert.equal(m.visible.length,10);assert.equal(m.visible[0],'peer0');assert.equal(m.scrollTop,0);assert.equal(m.overflow,'auto');
+    assert.equal(await w.webContents.executeJavaScript('getComputedStyle(document.documentElement).colorScheme'),'dark');
     await w.webContents.capturePage().then(i=>fs.writeFileSync(out+'/ten-visible.png',i.toPNG()));
     // Real wheel input, followed by an input barrier rather than a fabricated scroll.
     w.webContents.sendInputEvent({type:'mouseWheel',x:110,y:160,deltaY:-160,deltaX:0,canScroll:true});
