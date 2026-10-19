@@ -1,5 +1,6 @@
 const fs=require('node:fs'),path=require('node:path');const{app,BrowserWindow}=require('electron');const out=process.env.HUBCHAT_RENDERER_OUT;
 app.disableHardwareAcceleration();app.setPath('userData',path.join(out,'user-data'));
+app.on('window-all-closed',()=>{}); // The next layout still needs its window.
 app.whenReady().then(async()=>{
  const red=process.env.HUBCHAT_PROOF_PHASE==='red',results=[],pictures=[];
  const targets=['rows expose keyboard activation','in-progress and failed rows show transfer state','image click opens existing viewer','saved file click uses bound native attachment opener','saved menu exposes platform save action','remote file offers Download','download action queues existing transfer without opening','failed file offers retry','menu dismissal keeps contact panel open','expired file has no download or open action','outgoing content URI uses native bound opener','remote click opens only after download completes','show in chat returns to conversation','show in chat loads older pages and highlights exact message'];
