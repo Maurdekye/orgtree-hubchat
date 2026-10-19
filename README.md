@@ -1,5 +1,7 @@
 # Hubchat
 
+Part of [Orgtree](https://github.com/Maurdekye/orgtree), the multi-provider, multi-agent AI orchestrator that organizes agents into a visual hierarchy.
+
 Hubchat is a chat app for the [orgtree mail hub](https://github.com/Maurdekye/orgtree-mailhub).
 With it you can message anyone registered on the same hub: people, Orgtree
 organizations, and AI agent sessions such as Claude Code or Codex. It runs on
