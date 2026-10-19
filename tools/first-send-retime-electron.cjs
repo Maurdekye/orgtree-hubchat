@@ -4,6 +4,7 @@ const out=process.env.HUBCHAT_NEWCHAT_OUT;
 app.disableHardwareAcceleration();app.setPath('userData',path.join(out,'user-data'));
 app.whenReady().then(async()=>{
  const win=new BrowserWindow({show:false,width:930,height:650,webPreferences:{backgroundThrottling:false}});
+ win.webContents.on('console-message',(_e,_level,message)=>console.log('page:',message));
  win.webContents.session.webRequest.onBeforeRequest({urls:['http://*/*','https://*/*']},(_,cb)=>cb({cancel:true}));
  try {
   await win.loadFile(path.join(out,'capture.html'));
@@ -13,7 +14,7 @@ app.whenReady().then(async()=>{
     while(frames.some(f=>!f.contentWindow.firstSendResult)){
       const failed=frames.find(f=>f.contentWindow.firstSendError);
       if(failed)throw Error(failed.src+': '+failed.contentWindow.firstSendError);
-      if(performance.now()>deadline)throw Error('Focused fixture did not execute in both frames');
+      if(performance.now()>deadline)throw Error('Focused fixture did not execute: '+JSON.stringify(frames.map(f=>({src:f.src,ready:f.contentDocument.readyState,progress:f.contentWindow.firstSendProgress,error:f.contentWindow.firstSendError,body:f.contentDocument.body.innerText.slice(0,400)}))));
       await new Promise(r=>setTimeout(r,20));
     }
     await Promise.all(frames.map(f=>f.contentDocument.fonts.ready));
