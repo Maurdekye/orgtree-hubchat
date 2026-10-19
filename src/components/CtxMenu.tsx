@@ -8,8 +8,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { closeMenu, useOpenMenu, type MenuItem } from "../lib/ctxmenu";
 import { Icon } from "../lib/icons";
+import { usePlatform } from "./ui";
 
 export function CtxMenu() {
+  const android = usePlatform() === "android";
   const m = useOpenMenu();
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
@@ -19,13 +21,13 @@ export function CtxMenu() {
 
   useLayoutEffect(() => {
     setActive(-1);
-    if (!m || !ref.current) { setPos(null); return; }
+    if (!m || !ref.current || android) { setPos(null); return; }
     const r = ref.current.getBoundingClientRect();
     const x = m.x + r.width > innerWidth - 8 ? Math.max(8, innerWidth - r.width - 8) : m.x;
     // flipped above the pointer near the bottom, but never under the title bar
     const y = m.y + r.height > innerHeight - 8 ? Math.max(40, m.y - r.height) : m.y;
     setPos({ x, y });
-  }, [m]);
+  }, [m, android]);
 
   useEffect(() => {
     if (!m) return;
@@ -65,8 +67,10 @@ export function CtxMenu() {
 
   if (!m) return null;
   return createPortal(
-    <div className="pop ctx" role="menu" ref={ref} onContextMenu={(e) => e.preventDefault()}
-      style={{ left: pos?.x ?? m.x, top: pos?.y ?? m.y, visibility: pos ? "visible" : "hidden" }}>
+    <>
+    {android && <div className="sheet-scrim" onClick={() => closeMenu()} />}
+    <div className={android ? "sheet contact-file-menu" : "pop ctx"} role="menu" ref={ref} onContextMenu={(e) => e.preventDefault()}
+      style={android ? undefined : { left: pos?.x ?? m.x, top: pos?.y ?? m.y, visibility: pos ? "visible" : "hidden" }}>
       {m.items.map((e, i) => (e === "sep"
         ? <div className="sep" role="separator" key={i} />
         : <button key={i} type="button" role="menuitem" tabIndex={-1} className={"mi" + (e.bad ? " bad" : "") + (i === active ? " on" : "")}
@@ -75,7 +79,8 @@ export function CtxMenu() {
             onClick={() => { if (!e.disabled) { closeMenu(); e.run(); } }}>
             <Icon name={e.icon} />{e.label}
           </button>))}
-    </div>,
+    </div>
+    </>,
     document.body,
   );
 }
