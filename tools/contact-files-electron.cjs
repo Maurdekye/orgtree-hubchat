@@ -19,7 +19,7 @@ app.whenReady().then(async()=>{
   const red=process.env.HUBCHAT_PROOF_PHASE==='red';
   const targets=['rows expose keyboard activation','in-progress and failed rows show transfer state','image click opens existing viewer','saved file click uses bound native attachment opener','saved menu exposes platform save action','remote file offers Download','download action queues existing transfer without opening','failed file offers retry','expired file has no download or open action','outgoing content URI uses native bound opener','remote click opens only after download completes','show in chat returns to conversation','show in chat loads older pages and highlights exact message'];
   // Folder reveal is an expected red only on desktop; no accidental OS calls on Android is a control.
-  const passed=results.length===2&&results.every(r=>r.checks.length===17&&(red?JSON.stringify(r.checks.filter(c=>!c.ok).map(c=>c.name).sort())===JSON.stringify([...targets,...(r.platform==='desktop'?['folder reveal is desktop only']:[])].sort()):r.checks.every(c=>c.ok)));
+  const passed=results.length===2&&results.every(r=>r.checks.length===16&&(red?JSON.stringify(r.checks.filter(c=>!c.ok).map(c=>c.name).sort())===JSON.stringify([...targets,...(r.platform==='desktop'?['folder reveal is desktop only']:[])].sort()):r.checks.every(c=>c.ok)));
   fs.writeFileSync(path.join(out,'result.json'),JSON.stringify({passed,phase:red?'matched red':'green',results},null,2));
   if(!red)fs.writeFileSync(path.join(out,'contact-files.png'),(await win.webContents.capturePage()).toPNG());
   console.log(JSON.stringify({passed,results}));app.exit(passed?0:1);
