@@ -38,8 +38,9 @@ automatically.
    - `src-tauri/tauri.conf.json`;
    - the browser mock's version in `src/lib/native.ts`.
    - Android's `bundle.android.versionCode` in `src-tauri/tauri.conf.json`
-     (`major * 1000000 + minor * 1000 + patch`) and the matching versionCode /
-     versionName fallbacks in `src-tauri/gen/android/app/build.gradle.kts`.
+     (`major * 1000000 + minor * 1000 + patch`; 1.2.4 uses `1002004`) and the
+     matching versionCode / versionName fallbacks in
+     `src-tauri/gen/android/app/build.gradle.kts`.
      Tauri regenerates the ignored `app/tauri.properties` during an Android
      build; do not edit or commit that generated file as release source.
 2. In the same commit, add the two notes files:

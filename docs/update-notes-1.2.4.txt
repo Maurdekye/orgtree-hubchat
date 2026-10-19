@@ -1,0 +1,1 @@
+Transfers has moved from the chat-list header into Settings, and files in Contact info can now be opened, downloaded or found in their chat. On Windows, the taskbar dot clears earlier questions after a later message in the same chat, while the tray menu scrolls beyond ten visible chats and displays large unread badges correctly.
