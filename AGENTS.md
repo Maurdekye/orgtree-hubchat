@@ -1,5 +1,13 @@
 # Hubchat development invariants
 
+- 2026-10-19: Windows tray recent chats includes all open chats, newest message
+  first (receipt changes do not reorder). Its viewport shows at most ten 28px
+  rows, shrinks to the work area, and scrolls to older chats with mouse or
+  keyboard. Each popup generation opens at the top; live updates retain its
+  scroll position. Preserve the existing single/double-click timing.
+  [decided: user 2026-10-19; verified: store_tray.rs, trayrecent-view.ts;
+  docs/tray-recent.md]
+
 - 2026-10-19: Release versions include Cargo/package/lock/config/browser-mock
   values plus Android's explicit bundle.android.versionCode and Gradle's
   versionName/versionCode fallbacks. Android code follows Tauri's semver math

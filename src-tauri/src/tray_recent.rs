@@ -63,7 +63,7 @@ pub fn read(app: &AppHandle) -> Result<(String, Vec<RecentRow>), String> {
     core()?.tray_with_identity(Some(&owner), |_| Ok((owner.clone(), rows)))
 }
 
-/// Only data changes query SQLite. Typing refreshes reuse the six cached rows.
+/// Only data changes query SQLite. Typing refreshes reuse the cached chat rows.
 pub fn sync(app: &AppHandle) {
     let Some(r) = app.try_state::<Recent>() else { return; };
     let loaded = core().and_then(|c| c.tray_with_identity(None, |owner| {
@@ -157,7 +157,7 @@ pub fn event(app: &AppHandle, event: &Event) {
             {
                 let mut v = r.view.lock().unwrap();
                 if v.owner != owner { return; }
-                // Only the six visible chats need native typing leases.
+                // Only chats in the open-chat list need native typing leases.
                 if !v.rows.iter().any(|row|row.peer == *peer) { return; }
                 v.typing.insert(peer.clone(), at);
             }

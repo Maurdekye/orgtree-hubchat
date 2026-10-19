@@ -1,4 +1,4 @@
-//! Bounded tray metadata: no message body or attachment leaves this query.
+//! Tray chat metadata: no message body or attachment leaves this query.
 use super::*;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -17,7 +17,7 @@ impl Store {
             let mut q = c.prepare("SELECT peer, SUM(CASE WHEN outgoing=0 AND seen=0 THEN 1 ELSE 0 END)
                 + (SELECT COALESCE(SUM(old_unread),0) FROM history_marks h WHERE h.peer=m.peer)
                 FROM messages m WHERE NOT EXISTS(SELECT 1 FROM closed_dms d WHERE d.peer=m.peer)
-                GROUP BY peer ORDER BY MAX(created_at) DESC, peer ASC LIMIT 6")?;
+                GROUP BY peer ORDER BY MAX(created_at) DESC, peer ASC")?;
             let rows = q.query_map([], |r| Ok(TrayChat { peer: r.get(0)?, unread: r.get::<_, i64>(1)?.max(0) as u64 }))?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             Ok((rows, any))

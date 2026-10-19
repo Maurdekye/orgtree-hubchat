@@ -29,11 +29,12 @@ export function installRecent(host: HTMLElement, invoke: MenuInvoke) {
     if (view && (next.generation < view.generation || (next.generation === view.generation && next.revision <= view.revision))) return;
     const same = view?.generation === next.generation;
     const focus = host.contains(doc.activeElement), peer = view?.recent[selected]?.peer;
+    const scrollTop = same ? host.querySelector(".recent-pane")?.scrollTop ?? 0 : 0;
     if (!same) images.clear();
     view = next; busy = false; selected = -1;
     doc.documentElement.dataset.menuTheme = "recent";
     host.replaceChildren();
-    const width = Math.min(next.maxWidth, 224), height = Math.min(next.maxHeight, Math.max(1, next.recent.length) * 28 + 36);
+    const width = Math.min(next.maxWidth, 224), height = Math.min(next.maxHeight, Math.max(1, Math.min(10, next.recent.length)) * 28 + 36);
     host.style.width = `${width}px`; host.style.height = `${height}px`;
     const pane = doc.createElement("div"); pane.className = "recent-pane";
     pane.setAttribute("role", "menu"); pane.setAttribute("aria-label", "Recent chats");
@@ -77,6 +78,7 @@ export function installRecent(host: HTMLElement, invoke: MenuInvoke) {
       button.addEventListener("click", () => open(row));
     });
     if (same && focus && peer) { const at = next.recent.findIndex(r => r.peer === peer); if (at >= 0) select(at); }
+    pane.scrollTop = scrollTop;
     void run("hc_tray_popup_ready", { revision: next.revision, width, height, rootX: width / 2 }).catch(() => {});
   }
   function key(event: KeyboardEvent) {
