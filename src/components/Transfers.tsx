@@ -120,7 +120,7 @@ function TransferHistory({ active }: {active: Active[]}) {
 export function TransfersPanel({ onOpen }: { onOpen?: (peer: string) => void }) {
   const list = useActiveTransfers();
   const platform = usePlatform();
-  return <div className="transfers-panel xlist">
+  return <div className="transfers-panel">
     <div className="help xhistory-label">In progress{list.length ? ` · ${overall(list)}%` : ""}</div>
     {list.length ? list.map(t => <XRow key={t.local_id} t={t} onOpen={onOpen ?? (() => {})} android={platform === "android"} />)
       : <div className="help xhistory-label">No transfers in progress.</div>}

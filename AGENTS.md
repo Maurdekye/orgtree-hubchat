@@ -1,5 +1,13 @@
 # Hubchat development invariants
 
+- 2026-10-19: Transfers is a Settings section on desktop and Android, available
+  even when idle. Neither desktop chat-list/rail header nor the Android chat
+  header mounts a Transfers chip/strip. The section reuses active controls and
+  paged history; opening an active row routes through the owning layout's chat
+  navigation. In-chat progress and native transfers are unchanged.
+  [decided: user via coordinator 2026-10-19 23:13Z; verified: Desktop.tsx,
+  Android.tsx, Settings.tsx, Transfers.tsx; docs/transfers-settings.md]
+
 - 2026-10-19: Windows tray recent chats includes all open chats, newest message
   first (receipt changes do not reorder). Its viewport shows at most ten 28px
   rows, shrinks to the work area, and scrolls to older chats with mouse or
@@ -331,11 +339,10 @@
   dark is inferred and follows Windows app theme. [verified: tray.rs,
   tray_popup.rs, traymenu-view.ts; contract/verification limits: docs/tray-style.md]
 
-- 2026-10-14: TransfersChip (both desktop placements) and TransfersStrip
-  (Android chat list) already start collapsed with local open=false. Keep
-  expansion during the mounted view; a newly mounted view starts collapsed.
-  No persisted preference or transfer-state changes. Audit fixture:
-  tools/transfers-default-fixture.tsx; docs/transfers-default.md.
+- 2026-10-19: Settings > Transfers supersedes the 2026-10-14 header-chip/strip
+  placement and collapse rule. Legacy standalone collapse proofs still cover
+  those unmounted controls; they do not establish current app navigation.
+  [decided: user via coordinator 2026-10-19 23:13Z; docs/transfers-settings.md]
 
 - 2026-10-14: Keep pick+Send confirmation, multi-select and bundles across
   cards. Preparation/generation/slot guards still apply after awaits, including
