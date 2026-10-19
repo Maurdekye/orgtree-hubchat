@@ -1,9 +1,13 @@
 //! Taskbar attention uses persisted chat state, independent of loaded UI pages.
 use super::*;
 
+const ATTENTION_SQL: &str = "SELECT EXISTS(SELECT 1 FROM messages WHERE outgoing=0 AND seen=0)
+    OR EXISTS(SELECT 1 FROM history_marks WHERE old_unread>0)
+    OR EXISTS(SELECT 1 FROM taskbar_questions WHERE pending=1)";
+
 impl Store {
     pub fn taskbar_attention(&self) -> Result<bool> {
-        self.tray_overview().map(|(_, unread)| unread)
+        self.with(|c| c.query_row(ATTENTION_SQL, [], |r| r.get(0)))
     }
 }
 
@@ -51,7 +55,10 @@ mod tests {
         assert!(s.taskbar_attention().unwrap(), "only the other side in this chat settles a question");
         add(&s, "skip", true, PEER, serde_json::json!({"reply_to":"q","body":""}));
         assert!(!s.taskbar_attention().unwrap(), "empty skip settles just as card_answers does");
+        add(&s, "second-answer", true, PEER, serde_json::json!({"reply_to":"q"}));
         s.delete_message("skip").unwrap();
+        assert!(!s.taskbar_attention().unwrap(), "another retained answer still settles the card");
+        s.delete_message("second-answer").unwrap();
         assert!(s.taskbar_attention().unwrap(), "deleted answer reopens the card");
         s.delete_message("q").unwrap();
         assert!(!s.taskbar_attention().unwrap());
@@ -78,5 +85,40 @@ mod tests {
         s.queue_outgoing(&NewOutgoing {id:"local".into(),peer:PEER.into(),body:"answer".into(),kind:None,reply_to:Some("q".into()),attachments:vec![]}, "2026-10-19T00:03:00.000Z").unwrap();
         assert_eq!(s.card_answers(PEER, &["q".into()]).unwrap().len(), 2);
         assert!(!s.taskbar_attention().unwrap());
+    }
+    #[test]
+    fn taskbar_upgrade_backfills_existing_read_questions_and_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fixture.sqlite3");
+        let s = Store::open(&path).unwrap();
+        s.add_hub(HUB, "2026-10-19T00:00:00.000Z").unwrap();
+        add(&s, "answered", false, PEER, serde_json::json!({"kind":"question"}));
+        add(&s, "answer", true, PEER, serde_json::json!({"reply_to":"answered"}));
+        add(&s, "pending", false, PEER, serde_json::json!({"kind":"question"}));
+        // Recreate the exact pre-19 shape, retaining real prior message data.
+        s.with(|c| c.execute_batch("DROP TRIGGER taskbar_question_insert; DROP TRIGGER taskbar_answer_insert;
+            DROP TRIGGER taskbar_message_delete; DROP TRIGGER taskbar_reply_insert; DROP TRIGGER taskbar_reply_delete;
+            DROP TABLE taskbar_questions; DROP INDEX taskbar_unread; DROP INDEX taskbar_old_unread; PRAGMA user_version=18;")).unwrap();
+        drop(s);
+        let s = Store::open(&path).unwrap();
+        assert!(s.taskbar_attention().unwrap());
+        s.delete_message("pending").unwrap();
+        assert!(!s.taskbar_attention().unwrap(), "already answered history was backfilled as settled");
+        // Answers can precede the question in a historical import too.
+        add(&s, "ahead-answer", true, PEER, serde_json::json!({"reply_to":"later-card"}));
+        add(&s, "later-card", false, PEER, serde_json::json!({"kind":"question"}));
+        assert!(!s.taskbar_attention().unwrap());
+    }
+    #[test]
+    fn taskbar_reads_only_active_reason_indexes_without_loading_history() {
+        let s = store();
+        let plan: Vec<String> = s.with(|c| {
+            let mut q = c.prepare(&format!("EXPLAIN QUERY PLAN {ATTENTION_SQL}"))?;
+            let rows = q.query_map([], |r| r.get(3))?.collect();
+            rows
+        }).unwrap();
+        for index in ["taskbar_unread", "taskbar_old_unread", "taskbar_questions_pending"] {
+            assert!(plan.iter().any(|line|line.contains(index)), "{index}: {plan:?}");
+        }
     }
 }

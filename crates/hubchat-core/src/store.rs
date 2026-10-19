@@ -298,6 +298,7 @@ WHEN OLD.digest IS NOT NULL AND OLD.digest IS NOT NEW.digest AND OLD.state IN ('
  VALUES(OLD.local_id||'-'||OLD.digest||OLD.copy_key,OLD.destination,OLD.local_id);
 END;
 "#,
+    include_str!("taskbar_attention.sql"),
 ];
 
 pub struct Store {
