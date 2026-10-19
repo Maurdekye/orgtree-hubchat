@@ -2214,6 +2214,8 @@ mod store_pictures;
 
 #[path = "store_questions.rs"]
 mod store_questions;
+#[path = "store_taskbar.rs"]
+mod store_taskbar;
 pub use store_questions::DraftAnswers;
 
 #[path = "store_tray.rs"]
