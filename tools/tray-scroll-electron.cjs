@@ -17,6 +17,10 @@ app.whenReady().then(async()=>{
     assert.equal(m.rows,16);assert.equal(m.viewport,280);assert.equal(m.visible.length,10);assert.equal(m.visible[0],'peer0');assert.equal(m.scrollTop,0);assert.equal(m.overflow,'auto');
     assert.equal(await w.webContents.executeJavaScript('getComputedStyle(document.documentElement).colorScheme'),'dark');
     await w.webContents.capturePage().then(i=>fs.writeFileSync(out+'/ten-visible.png',i.toPNG()));
+    const badges=await w.webContents.executeJavaScript(`Array.from(document.querySelectorAll('.recent-badge')).map(b=>{const r=b.getBoundingClientRect(),s=b.parentElement.getBoundingClientRect(),row=b.closest('button').getBoundingClientRect();return {text:b.textContent,left:r.left,right:r.right,slotLeft:s.left,slotRight:s.right,rowLeft:row.left,rowRight:row.right}})`);
+    results.push({state:'badge-containment',badges});
+    assert.ok(badges.some(b=>b.text==='99+'));
+    for(const b of badges)assert.ok(b.left>=b.slotLeft-.1&&b.right<=b.slotRight+.1&&b.left>=b.rowLeft&&b.right<=b.rowRight,'unread badge must fit its reserved column and row');
     // Real wheel input, followed by an input barrier rather than a fabricated scroll.
     w.webContents.sendInputEvent({type:'mouseWheel',x:110,y:160,deltaY:-160,deltaX:0,canScroll:true});
     await paint();m=await measure();results.push({state:'wheel',...m});assert.ok(m.scrollTop>0);
