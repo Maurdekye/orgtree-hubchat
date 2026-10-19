@@ -97,3 +97,47 @@ of the user's runtime cause.
 The contained renderer receipts now serialize all checks as explicit booleans;
 red mode requires the exact three expected failing names. Original round1
 receipts remain retained separately from the round2 evidence.
+
+## Sync retiming correction (2026-10-19)
+
+The earlier correction `9b9e802` is still on the base for this fix. It covered
+admission and competing floor writers, but not later hub sync choosing an
+earlier `created_at` for the same accepted UUID. A two-second clock correction
+reproduces a persisted, sent first row falling below its admission floor. A
+range reload anchored to its old timestamp independently excludes that UUID.
+This controlled ordering matches the intermittent symptom; the user's live
+clock, data and runtime were not inspected.
+
+The sync transaction now preserves visibility only when the existing row was
+already above the persisted numeric floor. Its new earlier time lowers that
+floor in the same transaction. Hidden historical rows cannot establish this
+visibility, and `all` remains unchanged. The chat range query resolves the
+same peer/UUID anchor's current timestamp in its own SQLite snapshot and uses
+the earlier of that and the caller's supplied time. Missing or other-peer
+anchors retain the supplied range. No migration, renderer send path or DM
+reopening rule changes.
+
+At test-only `b14707a`, the focused native red is exactly one retiming failure
+and ten passing controls. At test-only `8e87502`, the mounted renderer red is
+exactly five expected failures and four controls per layout (desktop/Android).
+The real Conversation/Composer consumes the native query fixture: a single
+accepted send, no inbound message and no native event are needed for the
+initial reload. A subsequent event exercises an already loaded anchor.
+
+Product correction `63a0025` passes the same eleven native tests and all
+eighteen renderer checks. Both layouts retain details when genuinely empty,
+clear the composer after admission, show the sent bubble and hide the intro
+without a reply; retimed range reloads retain that state. A single combined
+Chromium capture shows both layouts. Native tests and the core compile check
+use cargo `-j1` under a 6144 MiB kernel Job; renderer runs use a 3072 MiB Job.
+All phases require a current `build-slot` lease and assigned C: evidence paths.
+The repeatable focused fixture is `tools/proof-first-send-retime.mjs`, with
+native export `HUBCHAT_RETIMED_SEND_FIXTURE` and contained phase wrappers in
+the author's evidence root.
+
+Two initial renderer attempts timed out without a verdict: hidden iframe
+animation frames stopped after conversation auto-scroll. The fixture now
+settles React/event timers separately; the capture host still waits for fonts
+and two animation frames before capture. The failed setup receipts remain
+retained. No full suite, independent review, app build, Tauri/device run, live
+send, install or release was performed for this phase-1 correction.

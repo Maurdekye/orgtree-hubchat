@@ -426,6 +426,13 @@
   admission and history readers share a short atomic monotone merge; readers
   compute candidates outside the connection lock and filter using the returned
   winning value, preserving `all` despite concurrent admissions.
+  Sync retiming also lowers the floor atomically for an existing row that was
+  already visible; hidden historical rows cannot establish visibility. Loaded
+  range reads resolve their same-peer anchor UUID's current timestamp within
+  the query, retaining the earlier supplied range if the anchor moved forward.
+  This keeps the first sent row visible and removes the empty-chat intro before
+  any reply, on desktop and Android. [verified 2026-10-19: store.rs;
+  focused proof: tools/proof-first-send-retime.mjs]
   [verified: engine.rs, store.rs, store_notification_reply.rs,
   engine_first_send_tests.rs; proof and limits: docs/first-send-visibility.md]
 
