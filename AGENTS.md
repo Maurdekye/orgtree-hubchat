@@ -10,10 +10,12 @@
 - 2026-10-19: Windows taskbar attention is a native overlay on main, separate
   from executable/window and tray icons. Reuse the tray's coalesced native
   events and identity guard, including cold/hidden startup, sign-out and show.
-  Unread (including closed/history-only chats) or an unanswered incoming
-  question lights it; reading a question alone does not settle it. Migration19
-  maintains indexed pending-card metadata in the same message/reply-link
-  transactions, using card_answers' settlement rules. No polling or Android
+  Unread (including closed/history-only chats) or an incoming question without
+  an explicit answer/skip or later outgoing message in that chat lights it.
+  Reading alone does not settle attention. Migration20 backfills the later-message
+  rule for existing data (replacing1.2.3's explicit-reply-only attention rule).
+  Message/reply-link inserts, deletes and chronological retiming maintain the
+  indexed projection in their transactions; structured card answers stay unchanged. No polling or Android
   launcher change. [decided: user 2026-10-19, ships1.2.3; verified: store_taskbar.rs,
   taskbar_attention.sql, taskbar.rs, tray_recent.rs; docs/taskbar-attention.md]
 

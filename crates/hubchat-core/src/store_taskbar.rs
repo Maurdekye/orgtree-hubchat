@@ -90,15 +90,12 @@ mod tests {
     fn taskbar_upgrade_backfills_existing_read_questions_and_answers() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("fixture.sqlite3");
-        let s = Store::open(&path).unwrap();
+        let s = Store {con:std::sync::Mutex::new(legacy_schema_fixture(&path,18))};
         s.add_hub(HUB, "2026-10-19T00:00:00.000Z").unwrap();
         add(&s, "answered", false, PEER, serde_json::json!({"kind":"question"}));
         add(&s, "answer", true, PEER, serde_json::json!({"reply_to":"answered"}));
         add(&s, "pending", false, PEER, serde_json::json!({"kind":"question"}));
-        // Recreate the exact pre-19 shape, retaining real prior message data.
-        s.with(|c| c.execute_batch("DROP TRIGGER taskbar_question_insert; DROP TRIGGER taskbar_answer_insert;
-            DROP TRIGGER taskbar_message_delete; DROP TRIGGER taskbar_reply_insert; DROP TRIGGER taskbar_reply_delete;
-            DROP TABLE taskbar_questions; DROP INDEX taskbar_unread; DROP INDEX taskbar_old_unread; PRAGMA user_version=18;")).unwrap();
+        // Reopen the genuine version18 schema with its retained message data.
         drop(s);
         let s = Store::open(&path).unwrap();
         assert!(s.taskbar_attention().unwrap());

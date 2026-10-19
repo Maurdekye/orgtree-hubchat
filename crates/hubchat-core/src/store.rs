@@ -299,6 +299,7 @@ WHEN OLD.digest IS NOT NULL AND OLD.digest IS NOT NEW.digest AND OLD.state IN ('
 END;
 "#,
     include_str!("taskbar_attention.sql"),
+    include_str!("taskbar_later_reply.sql"),
 ];
 
 pub struct Store {

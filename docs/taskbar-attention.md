@@ -3,17 +3,26 @@
 The taskbar icon carries a red dot with a light rim while this identity has
 unread messages or unanswered incoming questions. This includes unread chats
 hidden with Close DM and history-only unread reported by a hub. Reading clears
-the unread reason; a read question still needs an answer or explicit skip.
+the unread reason; a read question needs an explicit answer/skip or any later
+outgoing message in the same chat. USER 2026-10-19 chose "Later reply settles it":
+an ordinary send deals with every earlier question for attention, including
+existing history. Structured card answers and picked options stay unchanged.
 Outgoing questions await the other person and do not light this device's dot.
 The tray icon retains its existing unread-only meaning.
 
 `Store::taskbar_attention` reads only three active-reason indexes, without
 loading bodies, attachments, chat pages or already answered question history.
-Migration19 creates the metadata cache and backfills it once. SQLite triggers
+Migration19 creates the metadata cache. Migration20 backfills the later-message
+rule on upgrade, so existing settled conversations clear without a live-data
+rewrite outside the normal migration. SQLite triggers
 maintain question settlement in the existing message/reply-link transactions:
-an opposite-direction reply in the same chat settles it, including queued
-answers, empty skips and secondary multi-replies. Deleting an answer reopens
-the question only if no retained answer settles it. Deleting a question or
+an explicit opposite-direction reply in the same chat settles it, including queued
+answers, empty skips and secondary multi-replies. Any later outgoing message also
+settles earlier incoming questions, including queued/attachment-only messages and
+other-device sync. "Later" uses the chat's stored created_at order; equal times
+alone do not establish later. Sync retiming refreshes this projection. Deleting
+a settling message reopens attention only if no retained explicit or later
+outgoing message settles it. Deleting a question or
 wiping the identity removes its attention. Received kind/direction/reply target
 are immutable after admission; later multi-reply expansion uses reply_links,
 whose insert/delete triggers keep the cache consistent.
