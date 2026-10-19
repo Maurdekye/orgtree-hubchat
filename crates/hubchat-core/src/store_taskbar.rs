@@ -94,7 +94,9 @@ mod tests {
         s.add_hub(HUB, "2026-10-19T00:00:00.000Z").unwrap();
         add(&s, "answered", false, PEER, serde_json::json!({"kind":"question"}));
         add(&s, "answer", true, PEER, serde_json::json!({"reply_to":"answered"}));
-        add(&s, "pending", false, PEER, serde_json::json!({"kind":"question"}));
+        // Keep this question after the first card's answer. Reply ordering
+        // normalizes that answer to 1ms after its parent, even on old schemas.
+        add(&s, "pending", false, PEER, serde_json::json!({"kind":"question","received_at":"2026-10-19T00:00:01.000Z"}));
         // Reopen the genuine version18 schema with its retained message data.
         drop(s);
         let s = Store::open(&path).unwrap();
