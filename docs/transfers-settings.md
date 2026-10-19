@@ -19,3 +19,11 @@ entry, progress/history, Cancel/View, chat navigation and idle history access,
 and captures both the chat list and Transfers section. It does not connect to a
 hub, open files, write live state, build/install an app or exercise a real device.
 The release version/notes and publishing work belong to the coordinator.
+
+Author verification: the final synthetic desktop/Android fixture passes 26/26
+checks at `beccd11`, with TypeScript also passing. The tests-only control
+`5589f27` matches 19 expected failures and seven passing controls (desktop
+10 fail/3 pass, Android 9 fail/4 pass). The combined chat-list and Settings
+capture was inspected. One filter-label fixture mismatch and one cross-layout
+saved-chat leak were corrected; their evidence is retained separately. Actual
+native transfer/device behavior and release builds remain release verification.

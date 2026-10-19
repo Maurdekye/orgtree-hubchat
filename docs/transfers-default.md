@@ -1,5 +1,10 @@
 # Transfers disclosure default audit
 
+Historical audit, superseded by the 2026-10-19 move to
+[Settings > Transfers](transfers-settings.md). The chat-list header no longer
+mounts these disclosure controls; current transfer history is documented in
+[transfer history](transfer-history.md).
+
 User/coordinator 2026-10-14: every Transfers panel starts collapsed. Hubchat
 already does this: TransfersChip initializes local open=false at both desktop
 placements; TransfersStrip initializes local open=false on Android's chat list.

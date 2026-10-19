@@ -1,7 +1,8 @@
 # Transfer history and attachment actions
 
-Transfers remains available in the desktop sidebar and above Android's chat
-list when idle. Its current jobs keep their progress and Cancel behavior.
+Transfers is available under Settings > Transfers on desktop and Android,
+including when idle; the chat-list header bar was removed for 1.2.4 (see
+[placement](transfers-settings.md)). Current jobs keep their progress and Cancel behavior.
 Opening it also reads one metadata page of finished transfers; Load more
 advances the stable attachment-ID cursor in pages of at most 100. Undownloaded
 incoming attachments are not transfer history. Closing the list releases its
