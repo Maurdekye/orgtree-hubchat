@@ -1,0 +1,1 @@
+Your first message in a new conversation now appears after sending, and the new-chat intro closes without waiting for a reply. On Windows, a taskbar dot shows unread messages and unanswered incoming questions, then clears when nothing needs attention.

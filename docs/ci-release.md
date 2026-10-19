@@ -31,12 +31,17 @@ automatically.
 
 ## Cutting a release
 
-1. Bump the version in all five places, in one commit:
+1. Bump the release version inputs in one commit:
    - `Cargo.toml` (`[workspace.package] version`) and the `hubchat` and
      `hubchat-core` entries in `Cargo.lock`;
    - `package.json` and both version fields of `package-lock.json`;
    - `src-tauri/tauri.conf.json`;
    - the browser mock's version in `src/lib/native.ts`.
+   - Android's `bundle.android.versionCode` in `src-tauri/tauri.conf.json`
+     (`major * 1000000 + minor * 1000 + patch`) and the matching versionCode /
+     versionName fallbacks in `src-tauri/gen/android/app/build.gradle.kts`.
+     Tauri regenerates the ignored `app/tauri.properties` during an Android
+     build; do not edit or commit that generated file as release source.
 2. In the same commit, add the two notes files:
    - `docs/release-notes-<v>.md`: the GitHub release's text;
    - `docs/update-notes-<v>.txt`: one or two sentences the app shows when it offers
