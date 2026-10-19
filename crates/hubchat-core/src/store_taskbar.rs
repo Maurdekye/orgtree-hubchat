@@ -121,4 +121,79 @@ mod tests {
             assert!(plan.iter().any(|line|line.contains(index)), "{index}: {plan:?}");
         }
     }
+
+    fn at(s: &Store, id: &str, outgoing: bool, peer: &str, second: u8, question: bool) {
+        add(s, id, outgoing, peer, serde_json::json!({
+            "received_at":format!("2026-10-19T00:00:{second:02}.000Z"),
+            "kind":if question {Some("question")} else {None},
+        }));
+    }
+    #[test]
+    fn taskbar_later_ordinary_message_settles_every_earlier_question_in_its_chat() {
+        let s = store();
+        at(&s,"q1",false,PEER,1,true);
+        at(&s,"q2",false,PEER,2,true);
+        at(&s,"incoming",false,PEER,3,false);
+        at(&s,"wrong-chat",true,"kim.abcdef",4,false);
+        assert!(s.taskbar_attention().unwrap());
+        at(&s,"ordinary",true,PEER,5,false);
+        assert!(!s.taskbar_attention().unwrap(),"a later ordinary message deals with both questions");
+        assert_eq!(s.card_answers(PEER,&["q1".into()]).unwrap().len(),1,"attention does not invent a structured answer");
+        at(&s,"future",false,PEER,6,true);
+        assert!(s.taskbar_attention().unwrap(),"earlier outgoing messages do not settle newer questions");
+    }
+    #[test]
+    fn taskbar_queued_later_message_clears_and_deletion_reopens_only_without_another_answer() {
+        let s = store();
+        at(&s,"q",false,PEER,1,true);
+        s.queue_outgoing(&NewOutgoing{id:"queued".into(),peer:PEER.into(),body:"".into(),kind:None,reply_to:None,attachments:vec![]},"2026-10-19T00:00:02.000Z").unwrap();
+        assert!(!s.taskbar_attention().unwrap(),"even an attachment-only/empty later send settles attention");
+        s.delete_message("queued").unwrap();
+        assert!(s.taskbar_attention().unwrap());
+        at(&s,"ordinary",true,PEER,3,false);
+        add(&s,"explicit",true,PEER,serde_json::json!({"reply_to":"q"}));
+        s.delete_message("ordinary").unwrap();
+        assert!(!s.taskbar_attention().unwrap(),"an explicit answer still settles regardless of timestamp");
+        s.delete_message("explicit").unwrap();
+        assert!(s.taskbar_attention().unwrap());
+    }
+    #[test]
+    fn taskbar_history_import_and_retiming_keep_later_message_settlement_correct() {
+        let s = store();
+        at(&s,"later",true,PEER,5,false);
+        at(&s,"old-question",false,PEER,2,true);
+        assert!(!s.taskbar_attention().unwrap(),"a question imported after its later outgoing message stays settled");
+        at(&s,"later",true,PEER,1,false);
+        assert!(s.taskbar_attention().unwrap(),"sync retimes the outgoing message before the question");
+        at(&s,"old-question",false,PEER,0,true);
+        assert!(!s.taskbar_attention().unwrap(),"retiming a question refreshes its attention too");
+    }
+    #[test]
+    fn taskbar_later_send_does_not_clear_unread_and_reply_link_removal_retains_later_settlement() {
+        let s = store();
+        at(&s,"q",false,PEER,1,true);
+        add(&s,"unread",false,PEER,serde_json::json!({"read_at":null}));
+        at(&s,"ordinary",true,PEER,5,false);
+        s.with(|c| {c.execute("INSERT INTO reply_links(target,message_id) VALUES('q','ordinary')",[])?;
+            c.execute("DELETE FROM reply_links WHERE target='q'",[])?;Ok(())}).unwrap();
+        assert!(s.taskbar_attention().unwrap(),"unread stays an independent reason");
+        s.mark_seen(PEER,"2026-10-19T00:01:00.000Z").unwrap();
+        assert!(!s.taskbar_attention().unwrap(),"removing a reply link cannot undo later-message settlement");
+    }
+    #[test]
+    fn taskbar_version19_upgrade_clears_existing_later_replies() {
+        let dir=tempfile::tempdir().unwrap();let path=dir.path().join("legacy.sqlite3");
+        let c=legacy_schema_fixture(&path,19);
+        for i in 0..18 {
+            c.execute("INSERT INTO messages(id,peer,outgoing,body,kind,state,created_at,seen)
+                VALUES(?1,?2,0,'','question','received','2026-10-19T00:00:01.000Z',1)",params![format!("q{i}"),format!("peer{i}")]).unwrap();
+            c.execute("INSERT INTO messages(id,peer,outgoing,body,state,created_at,seen)
+                VALUES(?1,?2,1,'','sent','2026-10-19T00:00:02.000Z',1)",params![format!("a{i}"),format!("peer{i}")]).unwrap();
+        }
+        let pending:u64=c.query_row("SELECT count(*) FROM taskbar_questions WHERE pending=1",[],|r|r.get(0)).unwrap();
+        assert_eq!(pending,18,"real version19 triggers reproduce the stuck attention");drop(c);
+        let s=Store::open(&path).unwrap();
+        assert!(!s.taskbar_attention().unwrap(),"upgrade backfills all eighteen without changing read state");
+        at(&s,"new-question",false,PEER,3,true);assert!(s.taskbar_attention().unwrap());
+    }
 }
