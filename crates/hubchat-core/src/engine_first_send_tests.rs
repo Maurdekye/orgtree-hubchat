@@ -162,6 +162,57 @@ fn connect(engine: &Engine, start: u64) {
 }
 
 #[tokio::test]
+async fn first_send_sync_retime_keeps_the_admitted_row_and_loaded_anchor_visible() {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let me = Identity::generate("first-send-retime").unwrap();
+    let owner = me.address();
+    let engine = Engine::new(store.clone(), me, Profile::default(), Arc::new(FirstSendHost(Mutex::new(vec![]))));
+    let peer = "pat.abcdef";
+    connect(&engine, unix_ms() + 60_000);
+    engine.send(NewOutgoing {id:"sync-first".into(),peer:peer.into(),body:"first outgoing".into(),kind:None,reply_to:None,attachments:vec![]}).await.unwrap();
+    let admitted = engine.chat(peer, None, None, 50).unwrap();
+    assert_eq!(admitted.len(), 1, "ordinary local admission is already visible");
+    let synced: crate::hub_v2::SyncedMessage = serde_json::from_value(serde_json::json!({
+        "id":"sync-first","from":owner,"to":peer,"body":"first outgoing",
+        "sent_at":admitted[0].sent_at,"received_at":admitted[0].created_at,"attachments":[]
+    })).unwrap();
+    // Sync applies the hub clock offset and may choose an earlier ordering
+    // time for this very same locally accepted UUID. No inbound reply arrives.
+    store.upsert_synced_at("http://127.0.0.1:7999", &owner, &synced, 2_000).unwrap();
+    let persisted = store.chat(peer, None, None, 50).unwrap();
+    assert!(persisted[0].created_at < admitted[0].created_at, "the real sync path must retime the row");
+    assert_eq!(persisted[0].state, "sent");
+    let visible = engine.chat(peer, None, None, 50).unwrap();
+    let reread = engine.chat(peer, None, Some((&admitted[0].created_at, &admitted[0].id)), 50).unwrap();
+    if let Ok(path) = std::env::var("HUBCHAT_RETIMED_SEND_FIXTURE") {
+        std::fs::write(path, serde_json::to_vec_pretty(&serde_json::json!({"peer":peer,"admitted":admitted,"persisted":persisted,"visible":visible,"reread":reread})).unwrap()).unwrap();
+    }
+    assert_eq!(visible.iter().map(|m|m.id.as_str()).collect::<Vec<_>>(), ["sync-first"], "sync retiming must not hide the accepted first message behind its floor");
+    assert_eq!(reread, visible, "a loaded-page re-read must resolve the anchor UUID's current ordering time");
+}
+
+#[test]
+fn retimed_historical_outgoing_does_not_unpage_hidden_history() {
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let me = Identity::generate("historical-retime").unwrap();
+    let owner = me.address();
+    let engine = Engine::new(store.clone(), me, Profile::default(), Arc::new(FirstSendHost(Mutex::new(vec![]))));
+    let peer = "pat.abcdef";
+    connect(&engine, unix_ms() + 60_000);
+    assert!(engine.chat(peer, None, None, 50).unwrap().is_empty());
+    let key = format!("history.floor.{peer}");
+    let floor = store.meta(&key).unwrap();
+    let historical: crate::hub_v2::SyncedMessage = serde_json::from_value(serde_json::json!({
+        "id":"historic","from":owner,"to":peer,"body":"older history",
+        "sent_at":"2020-01-01T00:00:00.000Z","received_at":"2020-01-01T00:00:00.000Z","attachments":[]
+    })).unwrap();
+    store.upsert_synced("http://127.0.0.1:7999", &owner, &historical).unwrap();
+    store.upsert_synced_at("http://127.0.0.1:7999", &owner, &historical, 2_000).unwrap();
+    assert_eq!(store.meta(&key).unwrap(), floor, "neither historical admission nor its retiming establishes visibility");
+    assert!(engine.chat(peer, None, None, 50).unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn accepted_first_send_is_visible_below_lazy_history_floor_without_inbound() {
     let store = Arc::new(Store::open_in_memory().unwrap());
     let host = Arc::new(FirstSendHost(Mutex::new(vec![])));
