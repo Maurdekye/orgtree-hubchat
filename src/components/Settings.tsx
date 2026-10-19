@@ -19,12 +19,13 @@ import { HubAdder } from "./HubAdder";
 import { HubHelpLink } from "./HubHelp";
 import { PictureEditor } from "./PictureEditor";
 import { GuideBody } from "./Guide";
+import { TransfersPanel } from "./Transfers";
 import { scanSetup } from "../lib/setup";
 import { Addr, Avatar, Confirm, NoteCard, QR, Switch, pressKeys, useDialogFocus, useNow, usePlatform } from "./ui";
 
-export type SetTab = "profile" | "hubs" | "devices" | "notifications" | "recovery" | "privacy" | "appearance" | "general" | "developer" | "help" | "about";
+export type SetTab = "profile" | "hubs" | "devices" | "transfers" | "notifications" | "recovery" | "privacy" | "appearance" | "general" | "developer" | "help" | "about";
 /** Every section (Android titles its screens from this too; General and Developer are desktop only). */
-export const TABS: [SetTab, string, IconName][] = [["profile", "Profile", "person"], ["hubs", "Hubs", "dns"], ["devices", "Devices", "computer"], ["notifications", "Notifications", "bell"], ["recovery", "Recovery words", "key"], ["privacy", "Privacy", "privacy"], ["appearance", "Appearance", "palette"], ["general", "General", "tune"], ["developer", "Developer", "terminal"], ["help", "Help", "help"], ["about", "About", "info"]];
+export const TABS: [SetTab, string, IconName][] = [["profile", "Profile", "person"], ["hubs", "Hubs", "dns"], ["devices", "Devices", "computer"], ["transfers", "Transfers", "transfers"], ["notifications", "Notifications", "bell"], ["recovery", "Recovery words", "key"], ["privacy", "Privacy", "privacy"], ["appearance", "Appearance", "palette"], ["general", "General", "tune"], ["developer", "Developer", "terminal"], ["help", "Help", "help"], ["about", "About", "info"]];
 
 // ---------------------------------------------------------------- shapes
 function Row({ icon, t1, t2, right, onClick }: { icon?: IconName; t1: ReactNode; t2?: ReactNode; right?: ReactNode; onClick?: () => void }) {
@@ -603,11 +604,12 @@ function About() {
   );
 }
 
-export function SettingsSection({ tab, onLink, goTab }: { tab: SetTab; onLink?: (tab?: LinkTab, input?: string) => void; goTab?: (t: SetTab) => void }) {
+export function SettingsSection({ tab, onLink, goTab, onOpenChat }: { tab: SetTab; onLink?: (tab?: LinkTab, input?: string) => void; goTab?: (t: SetTab) => void; onOpenChat?: (peer: string) => void }) {
   switch (tab) {
     case "profile": return <Profile />;
     case "hubs": return <Hubs />;
     case "devices": return <Devices onLink={onLink} goTab={goTab} />;
+    case "transfers": return <TransfersPanel onOpen={onOpenChat} />;
     case "notifications": return <Notifications />;
     case "general": return <General />;
     case "developer": return <Developer />;
@@ -620,7 +622,7 @@ export function SettingsSection({ tab, onLink, goTab }: { tab: SetTab; onLink?: 
 }
 
 /** Desktop: the settings modal. */
-export function SettingsModal({ tab, setTab, onClose }: { tab: SetTab; setTab: (t: SetTab) => void; onClose: () => void }) {
+export function SettingsModal({ tab, setTab, onClose, onOpenChat }: { tab: SetTab; setTab: (t: SetTab) => void; onClose: () => void; onOpenChat?: (peer: string) => void }) {
   const snap = useSnap();
   const hubBad = snap.state?.hubs.some((h) => h.state === "disconnected" || h.state === "refused");
   const dlg = useDialogFocus();
@@ -639,7 +641,7 @@ export function SettingsModal({ tab, setTab, onClose }: { tab: SetTab; setTab: (
         </nav>
         <div className="set-main">
           <div className="modal-h"><h3>{TABS.find((t) => t[0] === tab)![1]}</h3><button className="icon-btn" onClick={onClose} title="Close (Esc)" aria-label="Close"><Icon name="close" /></button></div>
-          <div className="set-body scroll" key={tab}><SettingsSection tab={tab} goTab={setTab} /></div>
+          <div className="set-body scroll" key={tab}><SettingsSection tab={tab} goTab={setTab} onOpenChat={onOpenChat} /></div>
         </div>
       </div>
     </div>
@@ -666,6 +668,7 @@ export function SettingsList({ onOpen, onBack }: { onOpen: (t: SetTab) => void; 
         </div>
         <Row icon="dns" t1="Hubs" t2={hs.text} right={<>{snap.state!.hubs.some((h) => h.state === "disconnected" || h.state === "refused") ? warn : null}{chev}</>} onClick={() => onOpen("hubs")} />
         <Row icon="phone" t1="Devices" t2="Link a device · key file" right={chev} onClick={() => onOpen("devices")} />
+        <Row icon="transfers" t1="Transfers" t2="In progress · transfer history" right={chev} onClick={() => onOpen("transfers")} />
         <Row icon="bell" t1="Notifications" t2={snap.state!.push?.active ? "UnifiedPush" : snap.state!.stay_connected === false ? "Checks every 15 minutes" : "Connected in the background"} right={chev} onClick={() => onOpen("notifications")} />
         <Row icon="key" t1="Recovery words" t2={snap.state!.recovery_saved ? "Saved" : <span style={{ color: "var(--warn)" }}>Not saved yet</span>} right={<>{snap.state!.recovery_saved ? null : warn}{chev}</>} onClick={() => onOpen("recovery")} />
         <Row icon="privacy" t1="Privacy" t2="Read receipts · who can reach you" right={chev} onClick={() => onOpen("privacy")} />

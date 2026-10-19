@@ -29,7 +29,6 @@ import { MessageInfoBody } from "./MessageInfo";
 import { MessageView } from "./MessageView";
 import { NewChatInput, NewChatResults, useResolve } from "./NewChat";
 import { SettingsModal, type SetTab } from "./Settings";
-import { TransfersChip } from "./Transfers";
 import { ImageViewer } from "./AttImage";
 import { Addr, Avatar, Modal, ModalHead, Toasts } from "./ui";
 
@@ -233,7 +232,6 @@ export function Desktop() {
           <aside className="side rail">
             <button className="icon-btn" onClick={() => setRail(false)} title="Show the chat list" aria-label="Show the chat list"><Icon name="chevron_right" /></button>
             <span className="rail-me" onClick={() => settings("profile")} title="Profile"><Avatar kind="me" name={me.name || me.id} size={32} /></span>
-            <TransfersChip onOpen={open} />
             <button className="icon-btn" onClick={() => setOv({ k: "newchat", q: "" })} title="New chat (F3, Ctrl+N)" aria-label="New chat"><Icon name={TASK_ICONS.newchat} /></button>
             <button className="icon-btn" onClick={() => setOv({ k: "directory" })} title="Directory (F2): everyone on your hubs" aria-label="Directory"><Icon name={TASK_ICONS.directory} /></button>
             <button className="icon-btn" onClick={() => settings("profile")} title="Settings (F1, Ctrl+,)" aria-label="Settings"><Icon name={TASK_ICONS.settings} /></button>
@@ -247,7 +245,6 @@ export function Desktop() {
           <div className="side-head">
             <span onClick={() => settings("profile")} title="Profile" style={{ cursor: "pointer", marginRight: 8 }}><Avatar kind="me" name={me.name || me.id} size={32} /></span>
             <div className="side-title">Chats</div>
-            <TransfersChip onOpen={open} />
             <button className="icon-btn" onClick={() => setOv({ k: "newchat", q: "" })} title="New chat (F3, Ctrl+N)" aria-label="New chat"><Icon name={TASK_ICONS.newchat} /></button>
             <button className="icon-btn" onClick={() => setOv({ k: "directory" })} title="Directory (F2): everyone on your hubs" aria-label="Directory"><Icon name={TASK_ICONS.directory} /></button>
             <button className="icon-btn" onClick={() => settings("profile")} title="Settings (F1, Ctrl+,)" aria-label="Settings"><Icon name={TASK_ICONS.settings} /></button>
@@ -290,7 +287,7 @@ export function Desktop() {
       {ov?.k === "newchat" ? <NewChatModal initial={ov.q} onOpen={open} onClose={() => setOv(null)} onDirectory={() => setOv({ k: "directory" })} /> : null}
       {ov?.k === "directory" ? <Directory onOpen={open} onInfo={contactInfo} onClose={() => setOv(null)} /> : null}
       {ov?.k === "link" ? <LinkDeviceModal initial={ov.tab} input={ov.input} onClose={() => setOv(null)} onRecovery={() => settings("recovery")} /> : null}
-      {ov?.k === "settings" ? <SettingsModal tab={ov.tab} setTab={(t) => setOv({ k: "settings", tab: t })} onClose={() => setOv(null)} /> : null}
+      {ov?.k === "settings" ? <SettingsModal tab={ov.tab} setTab={(t) => setOv({ k: "settings", tab: t })} onClose={() => setOv(null)} onOpenChat={open} /> : null}
       {join ? <JoinFlow key={join.n} req={join} /> : null}
       <ImageViewer />
       <Toasts />

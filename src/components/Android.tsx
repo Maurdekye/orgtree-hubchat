@@ -32,7 +32,6 @@ import { copyText, errText } from "../lib/native";
 import { toast } from "../lib/toast";
 import { closeMenu as closeContextMenu } from "../lib/ctxmenu";
 import { SettingsList, SettingsSection, TABS, type SetTab } from "./Settings";
-import { TransfersStrip } from "./Transfers";
 import { ImageViewer } from "./AttImage";
 import { AppVersion, Toasts } from "./ui";
 
@@ -80,7 +79,6 @@ function Chats({ go }: { go: (s: Scr) => void }) {
       <HubBanner />
       <FileBackgroundBanner />
       <RecoveryBanner onShow={() => go({ s: "set", tab: "recovery" })} />
-      <TransfersStrip onOpen={(p) => go({ s: "conv", p })} />
       <div className="fchips">{f("all", "All")}{f("agents", "Agents")}{f("people", "People")}</div>
       <div className="scr-body" role="main">
         {!total ? <EmptyChats onNew={() => go({ s: "newchat" })} />
@@ -353,7 +351,7 @@ export function Android() {
     case "set": screen = (
       <>
         <div className="appbar flat"><button className="icon-btn" onClick={back} aria-label="Back"><Icon name="back" /></button><div className="title">{TABS.find((t) => t[0] === top.tab)![1]}</div></div>
-        <div className="scr-body"><SettingsSection tab={top.tab} onLink={(tab, input) => go({ s: "link", tab, input })} /></div>
+        <div className="scr-body"><SettingsSection tab={top.tab} onLink={(tab, input) => go({ s: "link", tab, input })} onOpenChat={openChat} /></div>
       </>
     ); break;
     case "link": screen = (

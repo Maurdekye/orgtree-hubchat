@@ -1,6 +1,4 @@
-// Transfer progress and paged history. Desktop: a chip in the sidebar header
-// (count + overall %) with a popover listing each one. Android: a compact
-// strip at the top of the chat list that expands to the same list.
+// Transfer progress and paged history, reached through Settings on both layouts.
 import { useEffect, useRef, useState } from "react";
 import { api, type TransferHistoryView } from "../api";
 import { Icon } from "../lib/icons";
@@ -118,7 +116,19 @@ function TransferHistory({ active }: {active: Active[]}) {
   </div>;
 }
 
-/** Desktop: progress chip, retained as the history entry when idle. */
+/** Shared Settings section: active rows and bounded, on-demand history. */
+export function TransfersPanel({ onOpen }: { onOpen?: (peer: string) => void }) {
+  const list = useActiveTransfers();
+  const platform = usePlatform();
+  return <div className="transfers-panel">
+    <div className="help xhistory-label">In progress{list.length ? ` · ${overall(list)}%` : ""}</div>
+    {list.length ? list.map(t => <XRow key={t.local_id} t={t} onOpen={onOpen ?? (() => {})} android={platform === "android"} />)
+      : <div className="help xhistory-label">No transfers in progress.</div>}
+    <TransferHistory active={list} />
+  </div>;
+}
+
+/** Legacy compact control, kept for the standalone collapse/history proofs. */
 export function TransfersChip({ onOpen }: { onOpen: (peer: string) => void }) {
   const platform = usePlatform();
   const list = useActiveTransfers();
