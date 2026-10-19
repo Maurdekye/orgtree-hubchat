@@ -1,26 +1,33 @@
 const fs=require('node:fs'),path=require('node:path');const{app,BrowserWindow}=require('electron');const out=process.env.HUBCHAT_RENDERER_OUT;
 app.disableHardwareAcceleration();app.setPath('userData',path.join(out,'user-data'));
 app.whenReady().then(async()=>{
- const win=new BrowserWindow({show:false,width:1000,height:690,webPreferences:{backgroundThrottling:false}});
- win.webContents.session.webRequest.onBeforeRequest({urls:['http://*/*','https://*/*']},(_,cb)=>cb({cancel:true}));
+ const red=process.env.HUBCHAT_PROOF_PHASE==='red',results=[],pictures=[];
+ const targets=['rows expose keyboard activation','in-progress and failed rows show transfer state','image click opens existing viewer','saved file click uses bound native attachment opener','saved menu exposes platform save action','remote file offers Download','download action queues existing transfer without opening','failed file offers retry','menu dismissal keeps contact panel open','expired file has no download or open action','outgoing content URI uses native bound opener','remote click opens only after download completes','show in chat returns to conversation','show in chat loads older pages and highlights exact message'];
+ let win;
  try{
-  await win.loadFile(path.join(out,'capture.html'));
-  const results=await win.webContents.executeJavaScript(`(async()=>{
-   const frames=[...document.querySelectorAll('iframe')],deadline=performance.now()+20000;
-   while(frames.some(f=>!f.contentWindow.contactFilesResult)){
-    const failed=frames.find(f=>f.contentWindow.contactFilesError);if(failed)throw Error(failed.src+': '+failed.contentWindow.contactFilesError);
-    if(performance.now()>deadline)throw Error('No fixture verdict: '+JSON.stringify(frames.map(f=>({src:f.src,body:f.contentDocument.body.innerText.slice(0,600)}))));
-    await new Promise(r=>setTimeout(r,20));
-   }
-   await Promise.all(frames.map(f=>f.contentDocument.fonts.ready));await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));await new Promise(r=>setTimeout(r,120));
-   return frames.map(f=>f.contentWindow.contactFilesResult);
-  })()`);
-  const red=process.env.HUBCHAT_PROOF_PHASE==='red';
-  const targets=['rows expose keyboard activation','in-progress and failed rows show transfer state','image click opens existing viewer','saved file click uses bound native attachment opener','saved menu exposes platform save action','remote file offers Download','download action queues existing transfer without opening','failed file offers retry','menu dismissal keeps contact panel open','expired file has no download or open action','outgoing content URI uses native bound opener','remote click opens only after download completes','show in chat returns to conversation','show in chat loads older pages and highlights exact message'];
-  // Folder reveal is an expected red only on desktop; no accidental OS calls on Android is a control.
-  const passed=results.length===2&&results.every(r=>r.checks.length===17&&(red?JSON.stringify(r.checks.filter(c=>!c.ok).map(c=>c.name).sort())===JSON.stringify([...targets,...(r.platform==='desktop'?['folder reveal is desktop only']:[])].sort()):r.checks.every(c=>c.ok)));
+  // Top-level pages paint reliably after scrolling; hidden iframes can retain
+  // an earlier route even after their DOM assertions have settled.
+  for(const platform of ['desktop','android']){
+   win=new BrowserWindow({show:false,width:platform==='desktop'?1000:390,height:690,webPreferences:{backgroundThrottling:false}});
+   win.webContents.session.webRequest.onBeforeRequest({urls:['http://*/*','https://*/*']},(_,cb)=>cb({cancel:true}));
+   await win.loadFile(path.join(out,platform+'.html'),{query:{platform}});
+   const r=await win.webContents.executeJavaScript(`(async()=>{
+    const deadline=performance.now()+20000;
+    while(!window.contactFilesResult){if(window.contactFilesError)throw Error(window.contactFilesError);if(performance.now()>deadline)throw Error('No fixture verdict');await new Promise(r=>setTimeout(r,20));}
+    await document.fonts.ready;await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));await new Promise(r=>setTimeout(r,120));
+    return {...window.contactFilesResult,capture:{panel:!!document.querySelector('.info,.hero'),menu:!!document.querySelector('[role="menu"]'),width:innerWidth,height:innerHeight}};
+   })()`);
+   results.push(r);
+   if(!red){const png=(await win.webContents.capturePage()).toPNG();fs.writeFileSync(path.join(out,platform+'.png'),png);pictures.push('data:image/png;base64,'+png.toString('base64'));}
+   win.destroy();win=null;
+  }
+  const passed=results.length===2&&results.every(r=>r.checks.length===17&&(red?JSON.stringify(r.checks.filter(c=>!c.ok).map(c=>c.name).sort())===JSON.stringify([...targets,...(r.platform==='desktop'?['folder reveal is desktop only']:[])].sort()):r.checks.every(c=>c.ok)&&r.capture.panel&&r.capture.menu));
   fs.writeFileSync(path.join(out,'result.json'),JSON.stringify({passed,phase:red?'matched red':'green',results},null,2));
-  if(!red)fs.writeFileSync(path.join(out,'contact-files.png'),(await win.webContents.capturePage()).toPNG());
+  if(!red){
+   win=new BrowserWindow({show:false,webPreferences:{backgroundThrottling:false}});await win.loadURL('about:blank');
+   const png=await win.webContents.executeJavaScript(`(async()=>{const images=await Promise.all(${JSON.stringify(pictures)}.map(url=>new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src=url;})));const c=document.createElement('canvas');c.width=images.reduce((n,i)=>n+i.width,0);c.height=Math.max(...images.map(i=>i.height));const ctx=c.getContext('2d');let x=0;for(const i of images){ctx.drawImage(i,x,0);x+=i.width;}return c.toDataURL('image/png').split(',')[1];})()`);
+   fs.writeFileSync(path.join(out,'contact-files.png'),Buffer.from(png,'base64'));win.destroy();win=null;
+  }
   console.log(JSON.stringify({passed,results}));app.exit(passed?0:1);
- }catch(e){console.error(e.stack);app.exit(2);}
+ }catch(e){if(win&&!win.isDestroyed())win.destroy();console.error(e.stack);app.exit(2);}
 });
