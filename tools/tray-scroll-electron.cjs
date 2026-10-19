@@ -7,7 +7,9 @@ app.whenReady().then(async()=>{
   w.webContents.session.webRequest.onBeforeRequest({urls:['http://*/*','https://*/*']},(_,cb)=>cb({cancel:true}));
   const results=[];
   const paint=()=>w.webContents.executeJavaScript('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(r,120))))');
-  const measure=()=>w.webContents.executeJavaScript(`(()=>{const p=document.querySelector('.recent-pane'),box=p.getBoundingClientRect();return {rows:p.querySelectorAll('button').length,viewport:p.clientHeight-10,scrollHeight:p.scrollHeight,scrollTop:p.scrollTop,width:p.clientWidth,box:box.toJSON(),overflow:getComputedStyle(p).overflowY,focused:document.activeElement.dataset.peer,visible:[...p.querySelectorAll('button')].filter(b=>{const r=b.getBoundingClientRect();return r.top>=box.top+6-.1&&r.bottom<=box.bottom-6+.1}).map(b=>b.dataset.peer)}})()`);
+  // scrollIntoView may use the padding while still exposing the entire row.
+  // Visibility ends at the border, not at the padded initial content box.
+  const measure=()=>w.webContents.executeJavaScript(`(()=>{const p=document.querySelector('.recent-pane'),box=p.getBoundingClientRect();return {rows:p.querySelectorAll('button').length,viewport:p.clientHeight-10,scrollHeight:p.scrollHeight,scrollTop:p.scrollTop,width:p.clientWidth,box:box.toJSON(),overflow:getComputedStyle(p).overflowY,focused:document.activeElement.dataset.peer,visible:[...p.querySelectorAll('button')].filter(b=>{const r=b.getBoundingClientRect();return r.top>=box.top+1-.1&&r.bottom<=box.bottom-1+.1}).map(b=>b.dataset.peer)}})()`);
   const key=async key=>{w.webContents.sendInputEvent({type:'keyDown',keyCode:key});w.webContents.sendInputEvent({type:'keyUp',keyCode:key});await paint();};
   try{
     await w.loadFile(path.join(out,'index.html'));await paint();
