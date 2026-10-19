@@ -1465,6 +1465,15 @@ fn attachment_ids(tx: &rusqlite::Transaction, cond: &str, arg: &str) -> rusqlite
     rows.collect()
 }
 
+#[cfg(test)]
+fn legacy_schema_fixture(path: &Path, version: usize) -> Connection {
+    let c = Connection::open(path).unwrap();
+    c.execute_batch(SCHEMA).unwrap();
+    for sql in MIGRATIONS.iter().take(version) { c.execute_batch(sql).unwrap(); }
+    c.pragma_update(None, "user_version", version).unwrap();
+    c
+}
+
 /// Bring a store up to the newest schema (MIGRATIONS).
 fn migrate(con: &mut Connection) -> rusqlite::Result<()> {
     let have: usize = con.query_row("PRAGMA user_version", [], |r| r.get(0))?;

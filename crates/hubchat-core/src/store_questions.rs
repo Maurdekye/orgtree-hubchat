@@ -178,24 +178,12 @@ mod tests {
     fn migration_16_keeps_version_15_history() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("s.sqlite3");
-        let env: Envelope = serde_json::from_value(serde_json::json!({
-            "id": "old", "from": "pat.4d5e6f", "to": "me.000000", "body": "> asked
-kept", "reply_to": "q1",
-            "received_at": "2026-10-11T10:00:00.000Z", "attachments": [{"id": "f1", "name": "kept.txt", "bytes": 4}]
-        }))
-        .unwrap();
-        {
-            let s = Store::open(&path).unwrap();
-            s.add_hub("http://scratch.invalid:7370", "t0").unwrap();
-            s.insert_incoming("http://scratch.invalid:7370", &env, "t1").unwrap();
-        }
-        // a real version-15 store: no meta column, no draft_answers
-        let c = rusqlite::Connection::open(&path).unwrap();
-        c.execute_batch(
-            "DROP TABLE draft_answers; DROP TRIGGER reply_links_gone; DROP TABLE reply_links;
-             ALTER TABLE messages DROP COLUMN meta; PRAGMA user_version=15;",
-        )
-        .unwrap();
+        let c = super::super::legacy_schema_fixture(&path, 15);
+        c.execute("INSERT INTO hubs(url,added_at) VALUES(?1,'t0')", [HUB]).unwrap();
+        c.execute("INSERT INTO messages(id,peer,outgoing,hub,body,reply_to,created_at,state)
+            VALUES('old',?1,0,?2,'kept','q1','t1','received')", params![PAT,HUB]).unwrap();
+        c.execute("INSERT INTO attachments(local_id,message_id,position,hub_id,hub,name,bytes,state)
+            VALUES('fixture-file','old',0,'f1',?1,'kept.txt',4,'remote')", [HUB]).unwrap();
         drop(c);
         let s = Store::open(&path).unwrap();
         let m = s.message("old").unwrap().unwrap();
