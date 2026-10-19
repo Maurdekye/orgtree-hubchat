@@ -30,7 +30,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn recent_chat_limit_ignores_direction_and_receipt_activity_and_counts_all_unread() {
+    fn recent_chat_order_ignores_direction_and_receipt_activity_and_counts_all_unread() {
         let s = Store::open_in_memory().unwrap();
         // Existing schema's required message fields, without constructing wire messages.
         s.with(|c| {
@@ -42,10 +42,30 @@ mod tests {
             Ok(())
         }).unwrap();
         let (rows, any) = s.tray_overview().unwrap();
-        assert_eq!(rows.iter().map(|r|r.peer.as_str()).collect::<Vec<_>>(), vec!["p7","p6","p5","p4","p3","p2"]);
-        assert!(any); // unread p0 is outside the six
+        assert_eq!(rows.iter().map(|r|r.peer.as_str()).collect::<Vec<_>>(), vec!["p7","p6","p5","p4","p3","p2","p1","p0"]);
+        assert!(any);
         s.with(|c| { c.execute("UPDATE messages SET seen=1", [])?; Ok(()) }).unwrap();
         assert!(!s.tray_overview().unwrap().1);
+    }
+
+    #[test]
+    fn recent_chat_scroll_can_reach_every_open_chat_beyond_ten() {
+        let s = Store::open_in_memory().unwrap();
+        s.with(|c| {
+            for i in 0..16 {
+                c.execute("INSERT INTO messages(id,peer,outgoing,body,state,created_at,seen)
+                    VALUES(?1,?2,?3,'','read',?4,1)",
+                    params![format!("m{i}"), format!("p{i:02}"), i % 2, format!("2026-10-19T00:00:{i:02}Z")])?;
+            }
+            // A receipt arriving later must not move an old chat to the top.
+            c.execute("UPDATE messages SET read_at='2026-10-20T00:00:00Z' WHERE id='m0'", [])?;
+            c.execute("INSERT INTO closed_dms(peer) VALUES('p14')", [])?;
+            Ok(())
+        }).unwrap();
+        let (rows, any) = s.tray_overview().unwrap();
+        let expected: Vec<_> = (0..16).rev().filter(|i| *i != 14).map(|i|format!("p{i:02}")).collect();
+        assert_eq!(rows.iter().map(|r|r.peer.clone()).collect::<Vec<_>>(), expected);
+        assert!(!any);
     }
 
     #[test]

@@ -14,6 +14,38 @@ function setup(view = recentFixture(), picture?: () => Promise<unknown>) {
   return {dom,doc,calls,menu,key,close:()=>{menu.dispose();dom.window.close();}};
 }
 
+function many() {
+  const v = recentFixture();
+  v.recent = Array.from({length:16}, (_,i)=>({...v.recent[i%6],peer:`peer${i}`,name:`Recent chat ${i+1}`,pictureKey:null}));
+  return v;
+}
+test("more than ten chats retain all rows inside a ten-row viewport",()=>{
+  const t=setup(many());try{
+    assert.equal(t.doc.querySelectorAll(".recent-row").length,16);
+    const ready=t.calls.find(c=>c.command.endsWith("ready"))!;
+    assert.equal(ready.args.height,10*28+36);
+    assert.equal((t.doc.querySelector(".recent-pane") as HTMLElement).style.maxHeight,"292px");
+    t.key("End");t.key("Enter");
+    assert.equal(t.calls.at(-1)!.args.id,"peer15");
+  }finally{t.close();}
+});
+test("scroll position survives a live refresh but each new open starts at the top",()=>{
+  const t=setup(many());try{
+    (t.doc.querySelector(".recent-pane") as HTMLElement).scrollTop=140;
+    const refresh=many();refresh.revision=2;t.menu.update(refresh);
+    assert.equal((t.doc.querySelector(".recent-pane") as HTMLElement).scrollTop,140);
+    const reopen=many();reopen.generation=2;t.menu.update(reopen);
+    assert.equal((t.doc.querySelector(".recent-pane") as HTMLElement).scrollTop,0);
+  }finally{t.close();}
+});
+test("a short work area limits the viewport without dropping keyboard-reachable chats",()=>{
+  const v=many();v.maxHeight=150;const t=setup(v);try{
+    assert.equal(t.calls.find(c=>c.command.endsWith("ready"))!.args.height,150);
+    assert.equal(t.doc.querySelectorAll(".recent-row").length,16);
+    t.key("End");t.key("Enter");assert.equal(t.calls.at(-1)!.args.id,"peer15");
+  }finally{t.close();}
+});
+
 test("six recent rows retain all chat kinds, names and avatars without an Open Hubchat row",()=>{
   const t=setup();try{
     assert.equal(t.doc.querySelectorAll(".recent-row").length,6);
