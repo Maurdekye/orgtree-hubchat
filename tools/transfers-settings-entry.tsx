@@ -8,6 +8,7 @@ import { refreshTransfers } from "../src/lib/store";
 declare global { interface Window { transferSettings?: {platform:string;checks:{name:string;ok:boolean}[]}; transferSettingsError?:string; captureChats?:boolean; continueTransfers?:()=>void; } }
 const pause=()=>new Promise<void>(r=>setTimeout(r,80));
 async function run(){
+ localStorage.clear();sessionStorage.clear(); // Each synthetic layout starts on its own chat list.
  const platform=new URLSearchParams(location.search).get('platform')==='android'?'android':'desktop';
  const peer='casey.abcdef',checks:{name:string;ok:boolean}[]=[],calls:string[]=[];
  const check=(name:string,ok:unknown)=>checks.push({name,ok:!!ok});
