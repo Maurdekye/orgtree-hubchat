@@ -12,7 +12,9 @@ declare global {
     firstSendProgress?: string;
   }
 }
-const settle = () => new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 30))));
+// Chromium can suspend rAF in a hidden iframe after conversation auto-scroll.
+// Let React/event timers settle here; the capture host waits two painted frames.
+const settle = () => new Promise<void>(r => setTimeout(r, 80));
 async function run() {
   window.firstSendProgress="starting";
   const platform = new URLSearchParams(location.search).get("platform") === "android" ? "android" : "desktop";
