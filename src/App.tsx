@@ -50,5 +50,5 @@ export default function App() {
   else body = platform === "android" ? <Android key={snap.state.me.address} /> : <Desktop key={snap.state.me.address} />;
   // Scan setup code: a screen over everything on Android, a modal on desktop
   if (setup) body = <>{body}<SetupFlow key={setup.n} req={setup} /></>;
-  return <PlatformCtx.Provider value={platform}>{framed(<>{body}{desktop ? <CtxMenu /> : null}</>)}</PlatformCtx.Provider>;
+  return <PlatformCtx.Provider value={platform}>{framed(<>{body}<CtxMenu /></>)}</PlatformCtx.Provider>;
 }

@@ -38,9 +38,12 @@ interface Props {
   onMenu?: () => void;
   /** Close this DM while retaining its history. */
   onCloseDm?: () => void;
+  /** Contact info requests a scroll/highlight, including an older page. A new
+   *  object permits repeating the same target after reopening the panel. */
+  showMessage?: { id: string } | null;
 }
 
-export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, infoOn, onMenu, onCloseDm }: Props) {
+export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, infoOn, onMenu, onCloseDm, showMessage }: Props) {
   const platform = usePlatform();
   const snap = useSnap();
   const hubs = snap.state?.hubs || [];
@@ -213,17 +216,27 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   };
   // a reply's original further back: older pages until it shows
   const jumpTo = useRef<string | null>(null);
+  const jumpEpoch = useRef(0);
+  useEffect(() => () => { jumpEpoch.current++; jumpTo.current = null; }, [peer, showMessage]);
   const jump = useCallback(async (id: string) => {
+    const mine = ++jumpEpoch.current;
     const el = document.getElementById("m-" + id);
-    if (el) { flash(el); return; }
+    if (el) { jumpTo.current = null; pinned.current = false; flash(el); return; }
     jumpTo.current = id;
     let before: Message | undefined;
     for (let i = 0; i < 400; i++) {
       const p = await loadOlder(before);
+      if (mine !== jumpEpoch.current) return;
       if (!p.length || p.some((m) => m.id === id)) { if (!p.some((m) => m.id === id)) { jumpTo.current = null; toast("That message isn't in this chat on this device"); } break; }
       before = p[0];
     }
   }, [loadOlder]);
+  const handledJump = useRef<typeof showMessage>(null);
+  useEffect(() => {
+    if (!showMessage || handledJump.current === showMessage || !loaded || loadingOlder) return;
+    handledJump.current = showMessage;
+    void jump(showMessage.id);
+  }, [showMessage, loaded, loadingOlder, jump]);
   useLayoutEffect(() => {
     const id = jumpTo.current; if (!id) return;
     const el = document.getElementById("m-" + id);

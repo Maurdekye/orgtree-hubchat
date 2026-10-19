@@ -30,6 +30,7 @@ import { LinkDevice, type LinkTab } from "./LinkDevice";
 import { endJoin, routeLink, startJoin, useJoin, type JoinReq } from "../lib/join";
 import { copyText, errText } from "../lib/native";
 import { toast } from "../lib/toast";
+import { closeMenu as closeContextMenu } from "../lib/ctxmenu";
 import { SettingsList, SettingsSection, TABS, type SetTab } from "./Settings";
 import { TransfersStrip } from "./Transfers";
 import { ImageViewer } from "./AttImage";
@@ -47,6 +48,7 @@ let cancelPendingNavigation: (() => void) | null = null;
 let backOpenScreen: (() => boolean) | null = null;
 (window as unknown as { __hcBack: () => boolean }).__hcBack = () => {
   cancelPendingNavigation?.();
+  if (closeContextMenu()) return true;
   if (closeOpenMenu?.()) return true;
   const s = history.state as Record<string, unknown> | null;
   if (s && Object.keys(s).some((k) => k !== "hc")) { history.back(); return true; }
@@ -144,6 +146,7 @@ export function Android() {
   useLauncherTheme();
   const intent = useNavigationIntent();
   const [stack, setStack] = useState<Scr[]>([{ s: "chats" }]);
+  const [fileJump, setFileJump] = useState<{ peer: string; id: string } | null>(null);
   const [dir, setDir] = useState<"enter" | "back" | "">("");
   const depth = useRef(1);
   const top = stack[stack.length - 1];
@@ -184,6 +187,7 @@ export function Android() {
     commitStack([...st, s]);
   }, [closeMenu, commitStack]);
   const go = useCallback((s: Scr) => {
+    setFileJump(null);
     const current = intent.begin();
     if (s.s === "conv") void openDm(s.p).then(() => { if (current()) navigate(s); }, (e) => { if (current()) toast(errText(e)); });
     else navigate(s);
@@ -336,13 +340,13 @@ export function Android() {
       const contact = () => go({ s: "info", p });
       return (
         <Shell dir={dir} k={"conv:" + p}>
-          <Conversation key={p} peer={p} onBack={back} onInfo={onInfo} onOpenAddr={openChat} onContact={contact} onMenu={() => openMenu(p)} />
+          <Conversation key={p} peer={p} showMessage={fileJump?.peer === p ? fileJump : null} onBack={back} onInfo={onInfo} onOpenAddr={openChat} onContact={contact} onMenu={() => openMenu(p)} />
           {menu === p ? <ConvMenu peer={p} onContact={contact} onClose={closeMenu} onCloseDm={() => close(p)} /> : null}
         </Shell>
       );
     }
     case "msginfo": screen = <MsgInfoScreen id={top.id} peer={top.p} back={back} />; break;
-    case "info": screen = <ContactInfo peer={top.p} onClose={back} />; break;
+    case "info": screen = <ContactInfo peer={top.p} onClose={back} onShowMessage={id => { back(); setFileJump({peer:top.p,id}); }} />; break;
     case "newchat": screen = <NewChatScreen back={back} open={openChat} dir={() => go({ s: "directory" })} />; break;
     case "directory": return <Shell dir={dir} k="directory"><Directory onOpen={openChat} onBack={back} /></Shell>;
     case "settings": return <Shell dir={dir} k="settings"><SettingsList onOpen={(tab) => go({ s: "set", tab })} onBack={back} /></Shell>;

@@ -36,8 +36,9 @@ export function openMenu(x: number, y: number, items: MenuEntry[]): void {
   emit();
 }
 
-export function closeMenu(): void {
-  if (open) { open = null; emit(); }
+export function closeMenu(): boolean {
+  if (open) { open = null; emit(); return true; }
+  return false;
 }
 
 export function useOpenMenu(): OpenMenu | null {

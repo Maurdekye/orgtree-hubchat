@@ -3,21 +3,24 @@
 // Desktop shows it in the right-hand panel (the conversation header, its info
 // button, Ctrl+I); Android as a screen from the conversation's menu or a tap
 // on its name. An address no hub lists still opens: its name is the address.
-import { Icon, type IconName } from "../lib/icons";
-import { bytes, shortWhen } from "../lib/format";
+import { useEffect } from "react";
+import { Icon } from "../lib/icons";
+import { closeMenu } from "../lib/ctxmenu";
 import { copyText } from "../lib/native";
-import { displayName, hubCls, hubStatusText, kindInfo, kindOf, msgTime, peerHubs, splitAddr, viaHub } from "../lib/peers";
+import { displayName, hubCls, hubStatusText, kindInfo, kindOf, peerHubs, splitAddr, viaHub } from "../lib/peers";
 import { useMessages, useSnap } from "../lib/store";
 import { Addr, KindChip, PeerAvatar, PresText, useNow, usePlatform } from "./ui";
+import { ContactFile } from "./ContactFile";
 
 const ONLINE_NOTE = "“Online” means its Orgtree is connected to the hub — not that an agent is typing.";
-const fileIcon = (name: string): IconName => (/\.(png|jpe?g|gif|webp|bmp|svg|avif|heic)$/i.test(name) ? "image" : "file");
 const bare = (url: string) => url.replace(/^https?:\/\//, "");
 
 /** `onClose`: desktop closes the panel; Android goes back to the chat. */
-export function ContactInfo({ peer, onClose }: { peer: string; onClose: () => void }) {
+export function ContactInfo({ peer, onClose, onShowMessage }: { peer: string; onClose: () => void; onShowMessage: (id: string) => void }) {
   const platform = usePlatform();
   const snap = useSnap();
+  const owner = snap.state?.me?.address ?? "";
+  useEffect(() => () => { closeMenu(); }, [peer, owner]);
   const hubs = snap.state?.hubs || [];
   const c = snap.byAddr.get(peer);
   const name = displayName(c, peer);
@@ -67,10 +70,7 @@ export function ContactInfo({ peer, onClose }: { peer: string; onClose: () => vo
           )) : <div className="li"><div className="t"><div className="t2">None of your hubs</div></div></div>}
           <div className="sec-h">Files</div>
           {!loaded ? null : files.length ? files.map(({ a, m }) => (
-            <div className="li" key={a.local_id}>
-              <Icon name={fileIcon(a.name)} />
-              <div className="t"><div className="t1" style={{ fontSize: 15, overflowWrap: "anywhere" }}>{a.name}</div><div className="t2">{bytes(a.bytes)} · {shortWhen(msgTime(m))}</div></div>
-            </div>
+            <ContactFile key={owner + "/" + peer + "/" + a.local_id} a={a} m={m} owner={owner} onShowMessage={onShowMessage} />
           )) : <div className="li"><div className="t"><div className="t2">No files yet</div></div></div>}
         </div>
       </>
@@ -112,10 +112,7 @@ export function ContactInfo({ peer, onClose }: { peer: string; onClose: () => vo
         <div className="info-sec">
           <h4 aria-level={2}>Files</h4>
           {!loaded ? null : files.length ? files.map(({ a, m }) => (
-            <div className="filerow" key={a.local_id} title={a.name}>
-              <span className="att-ic"><Icon name={fileIcon(a.name)} /></span>
-              <span className="t"><span className="ell">{a.name}</span><span>{bytes(a.bytes)} · {shortWhen(msgTime(m))}</span></span>
-            </div>
+            <ContactFile key={owner + "/" + peer + "/" + a.local_id} a={a} m={m} owner={owner} onShowMessage={onShowMessage} />
           )) : <div className="dim" style={{ fontSize: 13 }}>No files yet</div>}
         </div>
       </div>

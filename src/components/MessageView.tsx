@@ -10,8 +10,9 @@ import { copyText, errText, openAttachment, openFile, openLink } from "../lib/na
 import { attView, msgTime, preview, tickInfo, type Kind } from "../lib/peers";
 import { foldAt, replyIds } from "../lib/replies";
 import { cardOf, type AnswerNote, type CardState } from "../lib/questions";
-import { openImage, previewable } from "../lib/images";
+import { previewable } from "../lib/images";
 import { openMenu, selectionIn, type MenuEntry } from "../lib/ctxmenu";
+import { attachmentMenu } from "../lib/attachmentActions";
 import { useTransfer } from "../lib/store";
 import { toast } from "../lib/toast";
 import { AttImage } from "./AttImage";
@@ -56,28 +57,6 @@ function FileCard({ a, m }: { a: Attachment; m: Message }) {
       {v.cancel ? <button className="att-x" title={m.outgoing && !a.download ? "Cancel upload" : "Cancel download"} onClick={(e) => { e.stopPropagation(); api.cancelTransfer(a.local_id).catch(e => toast(errText(e))); }}><Icon name="close" /></button> : null}
     </div>
   );
-}
-
-/** A picture's or a file's own actions, for the right-click menu: what its
- *  card and the picture viewer offer. */
-function attMenu(m: Message, a: Attachment): MenuEntry[] {
-  const v = attView(a, m);
-  const out: MenuEntry[] = [];
-  const download = () => void api.download(m.id, a.local_id).catch((e) => toast("Download failed: " + errText(e)));
-  if (previewable(a)) out.push({ label: "View", icon: "image", run: () => openImage(m, a) });
-  if (v.download) out.push({ label: "Download", icon: "download", run: download });
-  if (v.retry === "download") out.push({ label: "Retry download", icon: "refresh", run: download });
-  if (v.retry === "send") out.push({ label: "Retry upload", icon: "refresh", run: () => void api.retry(m.id).catch((e) => toast(errText(e))) });
-  if (v.open && a.local_path) {
-    out.push({ label: "Open", icon: "open_in_new", run: () => void openAttachment(m.id, a.local_id, false).catch((e) => toast(errText(e))) });
-    out.push({ label: "Show in folder", icon: "folder", run: () => void openAttachment(m.id, a.local_id, true).catch((e) => toast(errText(e))) });
-  } else if (m.outgoing && a.source && v.st === "local" && !a.source.startsWith("content://")) {
-    const src = a.source;
-    out.push({ label: "Open", icon: "open_in_new", run: () => void openFile(src).catch(() => {}) });
-  }
-  if (v.cancel) out.push({ label: m.outgoing && !a.download ? "Cancel upload" : "Cancel download", icon: "close", run: () => void api.cancelTransfer(a.local_id).catch(e => toast(errText(e))) });
-  if (m.outgoing && m.state === "failed" && !a.download) out.push({label:"Remove file",icon:"close",run:()=>void api.removeAttachment(m.id,a.local_id).catch(e=>toast(errText(e)))});
-  return out;
 }
 
 export interface MsgHandlers {
@@ -243,7 +222,7 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
       items.push({ label: "Open chat", icon: "forum", run: () => onOpenAddr(slug) }, { label: "Copy address", icon: "copy", run: () => void copyText("@net:" + slug, "Address copied") }, "sep");
     } else if (att) {
       const a = m.attachments.find((x) => x.local_id === att.dataset.att);
-      if (a) items.push(...attMenu(m, a), "sep");
+      if (a) items.push(...attachmentMenu(m, a, platform), "sep");
     }
     const sel = selectionIn(e.currentTarget);
     items.push({ label: "Reply", icon: "reply", run: () => onReply(m) });

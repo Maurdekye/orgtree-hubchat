@@ -94,9 +94,10 @@ export function Desktop() {
     setRailState(on);
   }, []);
   const [ov, setOverlay] = useState<Overlay>(null);
-  const setOv = useCallback((value: Overlay) => { intent.invalidate(); setOverlay(value); }, [intent]);
+  const [fileJump, setFileJump] = useState<{ peer: string; id: string } | null>(null);
+  const setOv = useCallback((value: Overlay) => { intent.invalidate(); setFileJump(null); setOverlay(value); }, [intent]);
   const [info, setPanel] = useState<Info>(null);
-  const setInfo = useCallback((value: Info | ((prev: Info) => Info)) => { intent.invalidate(); setPanel(value); }, [intent]);
+  const setInfo = useCallback((value: Info | ((prev: Info) => Info)) => { intent.invalidate(); setFileJump(null); setPanel(value); }, [intent]);
   const fg = useForeground("desktop");
   const inUse = useActive(fg);
   useReadTracking(ov ? null : chat, fg, IDLE_STOPS_READING ? inUse : fg);
@@ -105,6 +106,7 @@ export function Desktop() {
   // the panel stays open across chats: Contact info follows the open chat,
   // another chat's message info gives way to it (the prototype's openChat)
   const open = useCallback((peer: string, contact = false) => {
+    setFileJump(null);
     const current = intent.begin();
     void openDm(peer).then(() => {
       if (!current()) return;
@@ -113,6 +115,7 @@ export function Desktop() {
     }, (e) => { if (current()) toast(errText(e)); });
   }, [intent]);
   const close = useCallback((peer: string) => {
+    setFileJump(null);
     const current = intent.begin();
     void closeDm(peer, () => { setChat((p) => p === peer ? null : p); setPanel((i) => i?.k === "msg" && i.peer === peer ? null : i); }, current);
   }, [intent]);
@@ -270,7 +273,7 @@ export function Desktop() {
           </div>
         </aside>
         )}
-        {chat ? <Conversation key={chat} peer={chat} onInfo={onInfo} onOpenAddr={open} onContact={toggleContact} infoOn={!!info && (info.k === "contact" || info.peer === chat)} onCloseDm={() => close(chat)} /> : (
+        {chat ? <Conversation key={chat} peer={chat} showMessage={fileJump?.peer === chat ? fileJump : null} onInfo={onInfo} onOpenAddr={open} onContact={toggleContact} infoOn={!!info && (info.k === "contact" || info.peer === chat)} onCloseDm={() => close(chat)} /> : (
           <section className="conv" role="main">
             <div className="conv-empty">
               <Logo size={64} />
@@ -281,7 +284,7 @@ export function Desktop() {
             </div>
           </section>
         )}
-        {chat && info?.k === "contact" ? <ContactInfo peer={chat} onClose={() => setInfo(null)} /> : null}
+        {chat && info?.k === "contact" ? <ContactInfo peer={chat} onClose={() => setInfo(null)} onShowMessage={id => { setInfo(null); setFileJump({peer:chat,id}); }} /> : null}
         {chat && info?.k === "msg" && info.peer === chat ? <InfoPanel id={info.id} peer={info.peer} onClose={() => setInfo(null)} /> : null}
       </div>
       {ov?.k === "newchat" ? <NewChatModal initial={ov.q} onOpen={open} onClose={() => setOv(null)} onDirectory={() => setOv({ k: "directory" })} /> : null}

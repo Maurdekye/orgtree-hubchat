@@ -1,4 +1,19 @@
 /* Hubchat — shared components (desktop + mobile). Platform sheets set sizes. */
+.contact-file { gap: 4px; }
+.contact-file-open { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; padding: 6px 0; text-align: left; border: 0; background: transparent; }
+.contact-file-open:disabled { cursor: default; opacity: 1; }
+.contact-file-open:not(:disabled):hover .contact-file-name { color: var(--accent); }
+.contact-file .t { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+.contact-file-name { overflow-wrap: anywhere; font-size: 13px; }
+.contact-file .contact-file-meta { font-size: 11.5px; color: var(--faint); }
+.contact-file .contact-file-error { font-size: 12px; color: var(--dim); }
+.contact-file-more { flex: none; }
+.contact-file-progress { height: 3px; background: var(--line); margin-top: 5px; overflow: hidden; border-radius: 2px; }
+.contact-file-progress i { display: block; height: 100%; background: var(--accent); }
+.li.contact-file { padding: 6px 16px; }
+.li.contact-file .att-ic { width: 36px; height: 36px; }
+.li.contact-file .contact-file-name { font-size: 15px; }
+.li.contact-file .contact-file-more { width: 44px; height: 44px; }
 .xhistory-label { padding: 8px 10px; font-size: 12px; }
 .xhistory-more { margin: 8px 12px; }
 .xhistory .xrow { cursor: default; align-items: flex-start; }
@@ -356,4 +371,3 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .mention-name { font-weight: 600; color: var(--ink-strong); }
 .mention-addr { margin-left: auto; font-size: 12px; color: var(--dim); }
 .bubble a.addr.mention { font-weight: 600; }
-
