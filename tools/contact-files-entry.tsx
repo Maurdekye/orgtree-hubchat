@@ -44,7 +44,7 @@ async function run() {
   const contact=async()=>{await click(document.querySelector(platform==="desktop"?'[aria-label="Contact info"]':'.appbar .who'));};
   await contact();
   const row=(id:string)=>document.querySelector(`[data-contact-file="${id}"]`)??[...document.querySelectorAll(platform==="desktop"?'.filerow':'.li')].find(e=>e.textContent?.includes(messages.flatMap(m=>m.attachments).find(a=>a.local_id===id)!.name))??null;
-  const menu=async(id:string)=>{const r=row(id);const b=r?.querySelector('[aria-label^="Actions for"]');if(b)await click(b);else {r?.dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,cancelable:true,clientX:210,clientY:320}));await settle();}};
+  const menu=async(id:string)=>{const r=row(id);const scroll=r?.closest('.info-body,.scr-body');if(r&&scroll)scroll.scrollTop+=r.getBoundingClientRect().top-scroll.getBoundingClientRect().top-160;await settle();const b=r?.querySelector('[aria-label^="Actions for"]');if(b)await click(b);else {r?.dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,cancelable:true,clientX:210,clientY:320}));await settle();}};
   const item=(label:string)=>[...document.querySelectorAll('[role="menuitem"]')].find(e=>e.textContent?.trim()===label)??null;
   const closeMenu=async()=>{if(document.querySelector('[role="menu"]'))document.body.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true,cancelable:true}));await settle();};
   check("file list retains all attachment names",["photo","saved","remote","busy","failed","expired","source"].every(id=>!!row(id)));
@@ -63,7 +63,10 @@ async function run() {
   check("folder reveal is desktop only",platform==="desktop"?calls.includes("open:fixture-1:saved:true"):!calls.some(c=>c.endsWith(":true")));
   await menu("remote");check("remote file offers Download",item("Download"));await click(item("Download"));
   check("download action queues existing transfer without opening",calls.includes("download:fixture-2:remote")&&!calls.some(c=>c.startsWith("open:fixture-2")));
-  await menu("failed");check("failed file offers retry",item("Retry download"));await closeMenu();
+  await menu("failed");check("failed file offers retry",item("Retry download"));
+  const hadMenu=!!document.querySelector('[role="menu"]');
+  if(platform==="android"&&hadMenu)(window as unknown as {__hcBack:()=>void}).__hcBack();else await closeMenu();await settle();
+  check("menu dismissal keeps contact panel open",hadMenu&&!document.querySelector('[role="menu"]')&&!!row("failed"));
   await menu("expired");check("expired file has no download or open action",!!item("Show in chat")&&!item("Download")&&!item("Open")&&!item("View"));await closeMenu();
   await click(row("source")?.querySelector('.contact-file-open')??row("source"));
   check("outgoing content URI uses native bound opener",calls.includes("open:fixture-6:source:false"));
