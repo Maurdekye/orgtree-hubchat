@@ -21,7 +21,7 @@ html, body { margin:0; padding:0; background:transparent; overflow:hidden; user-
 /* Orgtree main/traylist.ts: dark list, 28px rows, 5px pane padding,
    6px row rounding, 16px numbered badge and 1.6s working glyph. */
 .recent-pane { position:absolute; padding:5px; border:1px solid #333; border-radius:10px; overflow:auto; scrollbar-width:thin; background:#181818; color:#dedede; box-shadow:0 4px 16px #0005; font:13px "Segoe UI",system-ui,sans-serif; }
-.recent-row { appearance:none; width:100%; height:28px; border:0; border-radius:6px; padding:0 5px; display:grid; grid-template-columns:18px 20px minmax(0,1fr); align-items:center; gap:5px; color:inherit; background:transparent; font:inherit; cursor:default; text-align:left; }
+.recent-row { appearance:none; width:100%; height:28px; border:0; border-radius:6px; padding:0 5px; display:grid; grid-template-columns:28px 20px minmax(0,1fr); align-items:center; gap:5px; color:inherit; background:transparent; font:inherit; cursor:default; text-align:left; }
 .recent-row:hover, .recent-row.selected { background:#d9775726; color:#fff; outline:none; }
 .recent-row.unread { background:#d9775724; color:#fff; font-weight:600; }
 .recent-activity { display:inline-flex; align-items:center; justify-content:center; }

@@ -4,7 +4,8 @@
   first (receipt changes do not reorder). Its viewport shows at most ten 28px
   rows, shrinks to the work area, and scrolls to older chats with mouse or
   keyboard. Each popup generation opens at the top; live updates retain its
-  scroll position. Preserve the existing single/double-click timing.
+  scroll position. Reserve a 28px activity column so the 99+ unread badge fits
+  inside its row. Preserve the existing single/double-click timing.
   [decided: user 2026-10-19; verified: store_tray.rs, trayrecent-view.ts;
   docs/tray-recent.md]
 - 2026-10-19: Contact info Files uses the chat's shared attachment menu and

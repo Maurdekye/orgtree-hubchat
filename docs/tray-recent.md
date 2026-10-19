@@ -24,7 +24,8 @@ native menu and existing left-click show-window behavior; Android is unchanged.
 - Unread counts include loaded incoming messages and retained hub history
   counts. A numbered badge occupies the activity column; zero shows none.
   A typing spinner replaces the badge while a heartbeat is fresh. The displayed
-  badge caps its label at `99+`, as Orgtree's org list does; accessible labels
+  badge caps its label at `99+`, as Orgtree's org list does; its reserved 28px
+  activity column keeps that wider badge inside the row. Accessible labels
   retain the actual count.
 - Native `Event::Typing` is the existing protocol signal: no new wire payload.
   Leases expire by `Instant` at one second, including while the main WebView is
