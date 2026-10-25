@@ -1,0 +1,1 @@
+Recover your Hubchat identity by choosing your saved recovery words text file on desktop or Android. Its words fill the recovery input for you to check before Continue; typing and pasting still work. Files are read locally on your device, and wrong or unreadable files show an error.
