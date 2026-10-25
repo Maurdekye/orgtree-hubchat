@@ -9,6 +9,7 @@
 // to the add-hubs step.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { copyWords, downloadWords } from "../lib/recovery";
+import { RECOVERY_FILE_ERROR, RECOVERY_FILE_LIMIT, recoveryFileWords } from "../lib/recoveryFile";
 import { api, type KeyLost, type LinkEvent, type LinkStart, type Probe } from "../api";
 import { Icon, Logo, type IconName } from "../lib/icons";
 import { baseName, errText, pickKeyFile, scanQr } from "../lib/native";
@@ -367,6 +368,12 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
   const [more, setMore] = useState(false);
   const [words, setWords] = useState<string[]>([]);
   const [restore, setRestore] = useState("");
+  const [readingWords, setReadingWords] = useState(false);
+  const recoveryInput = useRef<HTMLInputElement>(null);
+  // Invalidate reads before any navigation/edit, including unmount. Never
+  // retain the File or its name in state, storage, diagnostics or an API call.
+  const recoveryRead = useRef(0);
+  useEffect(() => () => { recoveryRead.current++; }, []);
   const [linkHub, setLinkHub] = useState<{ url: string; name: string } | null>(null);
   // what the other device shows when it asks to approve: this device's own name
   const devName = snap.state?.device_name || (platform === "android" ? "Android phone" : "Windows PC");
@@ -388,7 +395,12 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
     api.recoveryWords().then(setWords, (e) => setErr(errText(e)));
   }, [step, words.length]);
 
-  const go = (s: Step) => { setErr(null); setBusy(false); setStep(s); };
+  const go = (s: Step) => {
+    if (step === "restore" && s !== "restore") {
+      recoveryRead.current++; setRestore(""); setReadingWords(false);
+    }
+    setErr(null); setBusy(false); setStep(s);
+  };
   const pick = (f: Flow, s: Step) => { setFlow(f); go(s); };
   const toWelcome = () => (home ? home() : go("welcome"));
   /** An identity arrived (link, QR, key file): into the app if it brought hubs, else add some. */
@@ -608,7 +620,7 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
           <Opt cls="method" ic="dialpad" t="Type a code from your other device" s="Your other device shows a code under Link a device › Show a QR code. Type it here, and approve this PC there." onClick={() => { setCode(""); pick("type", "typecode"); }} />
           <Opt cls="method" ic="qr" t="Scan a QR code" s="Your other device shows your key as a QR code. No network needed." tag={<Tag>Needs a camera</Tag>} onClick={() => pick("qr", "scan")} />
           <Opt cls="method" ic="file" t="Key file" s="Open a key file saved from Hubchat, with its passphrase." onClick={() => pick("file", "keyfile")} />
-          <Opt cls="method" ic="key" t="Recovery words" s="Type the 24 words you saved when you made your identity." onClick={() => pick("words", "restore")} />
+          <Opt cls="method" ic="key" t="Recovery words" s="Choose your saved recovery words file, or type your 24 words." onClick={() => pick("words", "restore")} />
         </div>
       </Frame>
     );
@@ -772,24 +784,47 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
 
   // restore (recovery words)
   const n = restore.toLowerCase().split(/[^a-z]+/).filter(Boolean).length;
+  const readWordsFile = async (file: File | undefined) => {
+    if (!file || busy) return; // Cancelling the picker preserves the input.
+    const version = ++recoveryRead.current;
+    setReadingWords(true); setRestore(""); setErr(null);
+    try {
+      if (file.size > RECOVERY_FILE_LIMIT) throw Error(RECOVERY_FILE_ERROR);
+      const text = await file.text();
+      if (version !== recoveryRead.current) return;
+      setRestore(recoveryFileWords(text));
+    } catch {
+      if (version === recoveryRead.current) setErr(RECOVERY_FILE_ERROR);
+    } finally {
+      if (version === recoveryRead.current) setReadingWords(false);
+    }
+  };
   const doRestore = async () => {
+    if (busy || readingWords) return;
+    recoveryRead.current++;
     setBusy(true); setErr(null);
     // the words of the identity whose key this device lost: its hubs are still here
-    try { const a = await api.restoreWords(restore); await arrived(a); }
+    try { const a = await api.restoreWords(restore); setRestore(""); await arrived(a); }
     catch (e) { setErr(errText(e)); }
     finally { setBusy(false); }
   };
   return (
-    <Frame step={step} flow={flow} back={() => go("method")} wide actions={[{ label: busy ? "Checking…" : "Continue", primary: true, disabled: !n || busy, onClick: doRestore }]}>
+    <Frame step={step} flow={flow} back={busy ? undefined : () => go("method")} wide actions={[{ label: busy ? "Checking…" : "Continue", primary: true, disabled: !n || busy || readingWords, onClick: doRestore }]}>
       <h2>Recovery words</h2>
       <p className="lead">Your words carry your key and your id, so your address comes back exactly as it was.</p>
       <div className="field">
+        <button className="btn" disabled={busy} onClick={() => recoveryInput.current?.click()}><Icon name="file" />Choose recovery words file</button>
+        <input ref={recoveryInput} type="file" accept=".txt,text/plain" hidden disabled={busy} aria-label="Recovery words file"
+          onChange={(e) => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ""; void readWordsFile(file); }} />
+        <div className="help">Read only on this device. You can also type or paste your words below.</div>
+      </div>
+      <div className="field">
         <label htmlFor="ob-words">Your 24 recovery words, in order</label>
-        <textarea id="ob-words" className="wordsin" rows={4} value={restore} autoFocus placeholder="amber lantern …" spellCheck={false} autoComplete="off" autoCapitalize="off"
-          onChange={(e) => { setRestore(e.target.value); setErr(null); }} />
+        <textarea id="ob-words" className="wordsin" rows={4} value={restore} autoFocus placeholder="amber lantern …" spellCheck={false} autoComplete="off" autoCapitalize="off" disabled={busy}
+          onChange={(e) => { recoveryRead.current++; setReadingWords(false); setRestore(e.target.value); setErr(null); }} />
       </div>
       <div className={"wstat" + (err ? " bad" : "")}>
-        <span>{err ? <><Icon name="error" />{err}</> : n + " of 24 words"}</span>
+        <span role={err ? "alert" : "status"}>{err ? <><Icon name="error" />{err}</> : readingWords ? "Reading recovery words…" : n + " of 24 words"}</span>
       </div>
     </Frame>
   );

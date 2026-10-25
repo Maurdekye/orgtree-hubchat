@@ -60,6 +60,28 @@ pub fn to_words(me: &Identity) -> Result<Vec<String>> {
     Ok(m.words().map(str::to_owned).collect())
 }
 
+/// The saved recovery text, shared by desktop/Android and synthetic fixtures.
+pub fn to_file(me: &Identity, saved_at: &str) -> Result<String> {
+    let words = to_words(me)?;
+    let mut text = String::new();
+    text.push_str("Hubchat recovery words\r\n\r\n");
+    text.push_str(&format!("Address: @net:{}\r\n", me.address()));
+    text.push_str(&format!("Saved:   {saved_at}\r\n\r\n"));
+    for (i, w) in words.iter().enumerate() {
+        text.push_str(&format!("{:>2}. {w}\r\n", i + 1));
+    }
+    text.push_str(
+        "\r\nThese 24 words ARE your Hubchat identity: they bring back your address on a new\r\n",
+    );
+    text.push_str(
+        "device (Hubchat > I already use Hubchat > Recovery words). Anyone who has them can\r\n",
+    );
+    text.push_str(
+        "be you. Keep this file somewhere safe and private, or print it and delete it.\r\n",
+    );
+    Ok(text)
+}
+
 /// Rebuild the identity from its 24 words (any spacing and case).
 pub fn from_words(words: &str) -> Result<Identity> {
     let norm = words
@@ -94,6 +116,27 @@ pub fn from_words(words: &str) -> Result<Identity> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saved_file_keeps_the_existing_export_format() {
+        let me = Identity::from_parts("recovery-proof", "00112233445566778899aabbccddeeff").unwrap();
+        let text = to_file(&me, "2026-10-25T00:00:00Z").unwrap();
+        let lines: Vec<_> = text.split("\r\n").collect();
+        assert_eq!(lines[0], "Hubchat recovery words");
+        assert_eq!(lines[2], format!("Address: @net:{}", me.address()));
+        assert_eq!(lines[3], "Saved:   2026-10-25T00:00:00Z");
+        let mut words = Vec::new();
+        for (i, line) in lines[5..29].iter().enumerate() {
+            let prefix = format!("{:>2}. ", i + 1);
+            words.push(line.strip_prefix(&prefix).unwrap());
+        }
+        assert_eq!(from_words(&words.join(" ")).unwrap().address(), me.address());
+        assert_eq!(lines.len(), 34);
+        assert_eq!(lines[30], "These 24 words ARE your Hubchat identity: they bring back your address on a new");
+        assert_eq!(lines[31], "device (Hubchat > I already use Hubchat > Recovery words). Anyone who has them can");
+        assert_eq!(lines[32], "be you. Keep this file somewhere safe and private, or print it and delete it.");
+        assert!(lines[33].is_empty());
+    }
 
     #[test]
     fn round_trips_ids_up_to_the_limit() {

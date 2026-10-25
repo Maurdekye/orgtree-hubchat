@@ -898,23 +898,7 @@ pub fn hc_save_recovery<RT: tauri::Runtime>(
     use std::io::Write;
     let c = core::get()?;
     let e = c.engine()?;
-    let words = recovery::to_words(e.me()).map_err(s)?;
-    let mut text = String::new();
-    text.push_str("Hubchat recovery words\r\n\r\n");
-    text.push_str(&format!("Address: @net:{}\r\n", e.me().address()));
-    text.push_str(&format!("Saved:   {}\r\n\r\n", hubchat_core::engine::now()));
-    for (i, w) in words.iter().enumerate() {
-        text.push_str(&format!("{:>2}. {w}\r\n", i + 1));
-    }
-    text.push_str(
-        "\r\nThese 24 words ARE your Hubchat identity: they bring back your address on a new\r\n",
-    );
-    text.push_str(
-        "device (Hubchat > I already use Hubchat > Recovery words). Anyone who has them can\r\n",
-    );
-    text.push_str(
-        "be you. Keep this file somewhere safe and private, or print it and delete it.\r\n",
-    );
+    let text = recovery::to_file(e.me(), &hubchat_core::engine::now()).map_err(s)?;
     let file_name = format!("hubchat-recovery-{}.txt", e.me().id());
     let place = match dest {
         Some(dest) => {
