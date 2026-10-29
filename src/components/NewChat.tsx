@@ -6,9 +6,9 @@ import { api, type Contact, type Resolved } from "../api";
 import { Icon } from "../lib/icons";
 import { displayName, kindInfo, kindOf, presence, viaHub } from "../lib/peers";
 import { useSnap } from "../lib/store";
-import { isLinkWaiting, listed } from "./Directory";
+import { ContactRow, isLinkWaiting, listed } from "./Directory";
 import { scanSetup } from "../lib/setup";
-import { Addr, KindGlyph, PeerAvatar, pressKeys, usePlatform, useSeenTick } from "./ui";
+import { Addr, PeerAvatar, pressKeys, usePlatform, useSeenTick } from "./ui";
 
 export function useResolve(q: string): Resolved | null {
   const [r, setR] = useState<Resolved | null>(null);
@@ -34,7 +34,7 @@ export function NewChatInput({ q, setQ, onEnter }: { q: string; setQ: (v: string
   );
 }
 
-export function NewChatResults({ q, r, onOpen, onDirectory }: { q: string; r: Resolved | null; onOpen: (address: string) => void; onDirectory: () => void }) {
+export function NewChatResults({ q, r, onOpen, onInfo, onDirectory }: { q: string; r: Resolved | null; onOpen: (address: string) => void; onInfo?: (address: string) => void; onDirectory: () => void }) {
   const snap = useSnap();
   const platform = usePlatform();
   const hubs = snap.state?.hubs || [];
@@ -47,18 +47,8 @@ export function NewChatResults({ q, r, onOpen, onDirectory }: { q: string; r: Re
   const onlineN = everyone.filter((c) => presence(c, hubs).state === "online").length;
   useSeenTick(everyone.some((c) => presence(c, hubs).state === "offline"));
 
-  const row = (c: Contact) => {
-    const p = presence(c, hubs);
-    return (
-      <div className="nc-row" key={c.address} onClick={() => onOpen(c.address)} role="button" tabIndex={0} onKeyDown={pressKeys(() => onOpen(c.address))}>
-        <PeerAvatar address={c.address} c={c} hubs={hubs} size={platform === "android" ? 44 : 36} />
-        <div className="t"><div className="t1">{displayName(c, c.address)} <KindGlyph kind={kindOf(c)} /></div><div className="t2"><Addr a={c.address} /></div></div>
-        <div className="r"><span>{p.state === "online" ? "online" : p.short}</span>
-          {platform === "desktop" && hubs.length > 1 ? <span className="chip hubchip">{c.hubs.map((u) => hubs.find((h) => h.url === u)?.name).filter(Boolean).join(" · ")}</span> : null}
-        </div>
-      </div>
-    );
-  };
+  // a contact is the Directory's own row here too (symmetry audit ux05 S3/S4): its about line, a chip per hub, its menu
+  const row = (c: Contact) => <ContactRow key={c.address} c={c} hubs={hubs} onOpen={onOpen} onInfo={onInfo} />;
 
   if (!q.trim()) {
     const recent = snap.chats.slice(0, 4);

@@ -36,7 +36,7 @@ type Overlay = null | { k: "newchat"; q: string } | { k: "directory" } | { k: "s
 /** The right-hand panel: the open chat's Contact info, or one message's info. */
 type Info = null | { k: "contact" } | { k: "msg"; id: string; peer: string };
 
-function NewChatModal({ initial, onOpen, onClose, onDirectory }: { initial: string; onOpen: (a: string) => void; onClose: () => void; onDirectory: () => void }) {
+function NewChatModal({ initial, onOpen, onInfo, onClose, onDirectory }: { initial: string; onOpen: (a: string) => void; onInfo: (a: string) => void; onClose: () => void; onDirectory: () => void }) {
   const [q, setQ] = useState(initial);
   const r = useResolve(q);
   const enter = () => {
@@ -48,7 +48,7 @@ function NewChatModal({ initial, onOpen, onClose, onDirectory }: { initial: stri
       <ModalHead title="New chat" onClose={onClose} />
       <div className="modal-b">
         <NewChatInput q={q} setQ={setQ} onEnter={enter} />
-        <div className="nc-res"><NewChatResults q={q} r={r} onOpen={onOpen} onDirectory={onDirectory} /></div>
+        <div className="nc-res"><NewChatResults q={q} r={r} onOpen={onOpen} onInfo={onInfo} onDirectory={onDirectory} /></div>
       </div>
     </Modal>
   );
@@ -284,7 +284,7 @@ export function Desktop() {
         {chat && info?.k === "contact" ? <ContactInfo peer={chat} onClose={() => setInfo(null)} onShowMessage={id => { setInfo(null); setFileJump({peer:chat,id}); }} /> : null}
         {chat && info?.k === "msg" && info.peer === chat ? <InfoPanel id={info.id} peer={info.peer} onClose={() => setInfo(null)} /> : null}
       </div>
-      {ov?.k === "newchat" ? <NewChatModal initial={ov.q} onOpen={open} onClose={() => setOv(null)} onDirectory={() => setOv({ k: "directory" })} /> : null}
+      {ov?.k === "newchat" ? <NewChatModal initial={ov.q} onOpen={open} onInfo={contactInfo} onClose={() => setOv(null)} onDirectory={() => setOv({ k: "directory" })} /> : null}
       {ov?.k === "directory" ? <Directory onOpen={open} onInfo={contactInfo} onClose={() => setOv(null)} /> : null}
       {ov?.k === "link" ? <LinkDeviceModal initial={ov.tab} input={ov.input} onClose={() => setOv(null)} onRecovery={() => settings("recovery")} /> : null}
       {ov?.k === "settings" ? <SettingsModal tab={ov.tab} setTab={(t) => setOv({ k: "settings", tab: t })} onClose={() => setOv(null)} onOpenChat={open} /> : null}

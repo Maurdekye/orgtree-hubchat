@@ -2,7 +2,7 @@
 // seen in the last 7 days, then the rest. Filters: the hub's address kinds
 // (people, orgs, chats) and, with several hubs, the hub.
 import { useState } from "react";
-import type { Contact } from "../api";
+import type { Contact, HubStatus } from "../api";
 import { Icon } from "../lib/icons";
 import { ms } from "../lib/format";
 import { displayName, kindOf, presence, type Kind } from "../lib/peers";
@@ -20,6 +20,32 @@ const LINK_WAITING = "Waiting to be linked to a Hubchat identity";
 export const isLinkWaiting = (c: Contact) => /^link\.[^.]+$/.test(c.address) && c.blurb === LINK_WAITING;
 /** The directory as people see it: without you and without waiting link addresses. */
 export const listed = (dir: Contact[], me: string | undefined) => dir.filter((c) => c.address !== me && !isLinkWaiting(c));
+
+/** One contact as the Directory lists it: avatar, name, address, about line, one chip per hub that lists it (a hub
+ *  that is not connected is dashed) and presence. New chat lists its contacts with this same row (symmetry audit
+ *  ux05 S3/S4), so a contact reads the same wherever it is listed. Click, tap or Enter/Space opens its chat; a
+ *  desktop right-click offers the chat menu. */
+export function ContactRow({ c, hubs, onOpen, onInfo }: { c: Contact; hubs: HubStatus[]; onOpen: (address: string) => void; onInfo?: (address: string) => void }) {
+  const platform = usePlatform();
+  const p = presence(c, hubs);
+  const via = c.hubs.map((u) => { const h = hubs.find((x) => x.url === u); return h ? <span key={u} className={"chip hubchip" + (h.state === "connected" ? "" : " stale")} title={"Reachable through " + h.name + (h.state === "connected" ? "" : " (not connected)")}>{h.name}</span> : null; });
+  return (
+    <div className="nc-row dir-row" onClick={() => onOpen(c.address)} role="button" tabIndex={0} onKeyDown={pressKeys(() => onOpen(c.address))}
+      onContextMenu={platform === "desktop" ? (e) => chatMenu(e, c.address, onOpen, onInfo, "Message") : undefined}>
+      <PeerAvatar address={c.address} c={c} hubs={hubs} size={platform === "android" ? 44 : 40} />
+      <div className="t">
+        <div className="t1">{displayName(c, c.address)} <KindGlyph kind={kindOf(c)} /></div>
+        <div className="t2" title={c.address}><Addr a={c.address} /></div>
+        {c.blurb ? <div className="t3" title={c.blurb}>{c.blurb}</div> : null}
+        {platform === "android" ? <div className="via">{via}</div> : null}
+      </div>
+      {platform === "desktop" ? <div className="via">{via}</div> : null}
+      <div className="r">
+        <span>{p.state === "online" ? "online" : p.short}</span>
+      </div>
+    </div>
+  );
+}
 
 export function Directory({ onOpen, onClose, onBack, onInfo }: { onOpen: (address: string) => void; onClose?: () => void; onBack?: () => void; onInfo?: (address: string) => void }) {
   const snap = useSnap();
@@ -47,28 +73,8 @@ export function Directory({ onOpen, onClose, onBack, onInfo }: { onOpen: (addres
   const recent = rest.filter((c) => ms(c.last_seen) >= week).sort((a, b) => ms(b.last_seen) - ms(a.last_seen));
   const quiet = rest.filter((c) => ms(c.last_seen) < week).sort((a, b) => ms(b.last_seen) - ms(a.last_seen) || byName(a, b));
   const onlineCount = all.filter((c) => live(c) === "online").length;
-  const hubN = (u: string) => hubs.find((h) => h.url === u);
 
-  const row = (c: Contact) => {
-    const p = presence(c, hubs);
-    const via = c.hubs.map((u) => { const h = hubN(u); return h ? <span key={u} className={"chip hubchip" + (h.state === "connected" ? "" : " stale")} title={"Reachable through " + h.name + (h.state === "connected" ? "" : " (not connected)")}>{h.name}</span> : null; });
-    return (
-      <div className="nc-row dir-row" key={c.address} onClick={() => onOpen(c.address)} role="button" tabIndex={0} onKeyDown={pressKeys(() => onOpen(c.address))}
-        onContextMenu={platform === "desktop" ? (e) => chatMenu(e, c.address, onOpen, onInfo, "Message") : undefined}>
-        <PeerAvatar address={c.address} c={c} hubs={hubs} size={platform === "android" ? 44 : 40} />
-        <div className="t">
-          <div className="t1">{displayName(c, c.address)} <KindGlyph kind={kindOf(c)} /></div>
-          <div className="t2" title={c.address}><Addr a={c.address} /></div>
-          {c.blurb ? <div className="t3" title={c.blurb}>{c.blurb}</div> : null}
-          {platform === "android" ? <div className="via">{via}</div> : null}
-        </div>
-        {platform === "desktop" ? <div className="via">{via}</div> : null}
-        <div className="r">
-          <span>{p.state === "online" ? "online" : p.short}</span>
-        </div>
-      </div>
-    );
-  };
+  const row = (c: Contact) => <ContactRow key={c.address} c={c} hubs={hubs} onOpen={onOpen} onInfo={onInfo} />;
   const sec = (title: string, l: Contact[]) => (l.length ? <><div className="nc-sec">{title} · {l.length}</div>{l.map(row)}</> : null);
 
   const fchip = (k: KindF, label: string) => <button key={k} className={"fchip" + (kf === k ? " on" : "")} onClick={() => setKf(k)}>{label}</button>;
