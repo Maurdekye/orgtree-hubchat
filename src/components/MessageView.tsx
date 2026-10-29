@@ -140,7 +140,7 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
     if (!q) return null;
     const kc = q.outgoing ? "k-me" : peerKind === "person" ? "" : "k-" + peerKind;
     return (
-      <div className={"quote " + kc} key={id} onClick={(e) => { e.stopPropagation(); onJump(q.id); }} title="Show the original message">
+      <div className={"quote " + kc} key={id} onClick={(e) => { e.stopPropagation(); onJump(q.id); }} title="Show the original message" role="button" tabIndex={0} onKeyDown={pressKeys(() => onJump(q.id))}>
         <span className="q-who">{q.outgoing ? "You" : peerName}</span>
         <span className="q-txt" dir="auto">{preview(q).slice(0, 140)}</span>
         {noteEl(id)}
