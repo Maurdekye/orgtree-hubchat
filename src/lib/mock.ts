@@ -19,6 +19,8 @@
 // =unknown (gone; whose wasn't noted), =unreadable (the key store doesn't
 // answer; ?keyback=S: it does after S seconds); ?keyrestored=1 (restored
 // from Hubchat's backup at start).
+// Orgtree on this PC: the Orgtree org is one of its orgs (its badge in Contact
+// info opens it); ?orgtree=none: no Orgtree here.
 // Tailscale (Android): ?vpn=off: Android reports no VPN (tests flip
 // window.__hcVpn); ?labts=1: the lab hub's address is a Tailscale name.
 // Linking: a waiting device shows up on the third lookup; a device joining a
@@ -1056,6 +1058,9 @@ export const mockApi: Api = {
   openLogsFolder: async () => { toast("[Opens the logs folder]"); },
   appInstalled: async () => (st.platform === "android" ? setupFail !== "no-ts" : null),
   openApp: async (what) => { toast("[Opens " + (what === "get_tailscale" ? "Tailscale in Google Play" : what === "open_tailscale" ? "the Tailscale app" : what === "connection_notification" ? "Android's settings for Hubchat's Background connection notifications" : "Android's Wi-Fi settings") + "]"); return true; },
+  localOrgtreeOrgs: async () => (st.platform === "android" || params.get("orgtree") === "none" ? []
+    : [{ slug: "orgtree", name: "Orgtree", address: "orgtree.alex.7c41d2" }]),
+  openOrgtreeOrg: async (slug) => { toast("[Opens " + slug + " in Orgtree]"); },
   vpnActive: async () => (st.platform !== "android" ? null : (window as unknown as { __hcVpn?: boolean }).__hcVpn ?? params.get("vpn") !== "off"),
   setupStart: async (input, name) => {
     const l = parseSetupLink(input).link;

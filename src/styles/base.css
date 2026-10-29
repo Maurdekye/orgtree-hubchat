@@ -94,6 +94,9 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .chip.k-org { color: var(--k-org); border-color: transparent; background: var(--k-org-bg); }
 .chip.k-chat { color: var(--k-chat); border-color: transparent; background: var(--k-chat-bg); }
 .chip.k-person { color: var(--k-person); border-color: transparent; background: var(--k-person-bg); }
+/* a chip that does something (Contact info: a local Orgtree org's badge opens
+   it in Orgtree); a button, otherwise the same chip */
+.chip.chip-open:hover { filter: brightness(1.2); text-decoration: underline; text-underline-offset: 2px; }
 .chip.hubchip { font-family: var(--mono); font-size: 11px; }
 .chip.ok { color: var(--ok); border-color: transparent; background: var(--ok-soft); }
 .chip.warn { color: var(--warn); border-color: transparent; background: var(--warn-soft); }

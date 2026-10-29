@@ -4,11 +4,14 @@
 // button, Ctrl+I); Android as a screen from the conversation's menu or a tap
 // on its name. An address no hub lists still opens: its name is the address.
 import { useEffect } from "react";
+import { api } from "../api";
 import { Icon } from "../lib/icons";
 import { closeMenu } from "../lib/ctxmenu";
+import { forgetLocalOrgtreeOrg, useLocalOrgtreeOrg } from "../lib/localOrgtree";
 import { copyText } from "../lib/native";
 import { displayName, hubCls, hubStatusText, kindInfo, kindOf, peerHubs, splitAddr, viaHub } from "../lib/peers";
 import { useMessages, useSnap } from "../lib/store";
+import { toast } from "../lib/toast";
 import { Addr, KindChip, PeerAvatar, PresText, useNow, usePlatform } from "./ui";
 import { ContactFile } from "./ContactFile";
 
@@ -26,6 +29,14 @@ export function ContactInfo({ peer, onClose, onShowMessage }: { peer: string; on
   const name = displayName(c, peer);
   const kind = kindOf(c);
   const k = kindInfo(kind);
+  // An org the Orgtree install on this PC hosts: its badge opens it in Orgtree
+  // (user 2026-10-29). Desktop only, a phone hosts no Orgtree; the header's
+  // badge stays plain.
+  const local = useLocalOrgtreeOrg(peer, platform !== "android" && !!c && kind === "org");
+  const openLocal = local ? {
+    title: "Open in Orgtree", label: "Open " + name + " in Orgtree",
+    onOpen: () => { api.openOrgtreeOrg(local.slug).catch(() => { toast("Orgtree couldn't be opened"); forgetLocalOrgtreeOrg(local.slug); }); },
+  } : undefined;
   const ph = peerHubs(c, hubs);
   const via = viaHub(c, hubs);
   const now = useNow(ph.some((h) => h.state === "disconnected"));
@@ -84,7 +95,7 @@ export function ContactInfo({ peer, onClose, onShowMessage }: { peer: string; on
         <div className="info-hero">
           <PeerAvatar address={peer} c={c} hubs={hubs} size={96} />
           <div className="name">{name}</div>
-          {c ? <KindChip kind={kind} /> : null}
+          {c ? <KindChip kind={kind} open={openLocal} /> : null}
           <div style={{ marginTop: 4 }}><PresText c={c} hubs={hubs} /></div>
         </div>
         <div className="info-sec">

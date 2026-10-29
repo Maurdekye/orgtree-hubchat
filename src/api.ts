@@ -396,6 +396,8 @@ export interface SetupLink {
 export type SetupError = { kind: "not_setup" } | { kind: "needs_newer"; v: string } | { kind: "invalid"; param: string };
 export interface ParsedSetup { link: SetupLink | null; error: SetupError | null }
 export interface SetupReach { reachable: boolean; name: string | null; error: string | null }
+/** An org the Orgtree install on this PC hosts (Windows; src-tauri/src/local_orgtree.rs). */
+export interface LocalOrgtreeOrg { slug: string; name: string; address: string }
 /** Where a setup with one org stands: outcome null while waiting for its answer. */
 export interface SetupState {
   outcome: "linked" | "expired" | null;
@@ -551,6 +553,11 @@ export const tauriApi = {
   appInstalled: (pkg: string) => invoke<boolean | null>("hc_app_installed", { package: pkg }),
   /** Android: open "get_tailscale" (its store page), "open_tailscale" or "wifi_settings". */
   openApp: (what: "get_tailscale" | "open_tailscale" | "wifi_settings" | "connection_notification") => invoke<boolean>("hc_open_app", { what }),
+  /** Windows: the orgs the Orgtree install on this PC hosts (its local-orgs.json, when an
+   *  Orgtree is registered); Contact info's "Orgtree org" badge opens them. Elsewhere none. */
+  localOrgtreeOrgs: () => invoke<LocalOrgtreeOrg[]>("hc_local_orgtree_orgs"),
+  /** Start (or bring forward) the registered Orgtree on one of them; rejects when it can't. */
+  openOrgtreeOrg: (slug: string) => invoke<void>("hc_open_orgtree_org", { slug }),
   /** Android: whether this device's traffic goes through a VPN now; null where it can't be told. */
   vpnActive: () => invoke<boolean | null>("hc_vpn_active"),
   /** Join the setup link's hub and send its org the code; returns the chat to open. */

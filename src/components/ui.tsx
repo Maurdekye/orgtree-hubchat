@@ -45,9 +45,13 @@ export function PresText({ c, hubs }: { c: Contact | undefined; hubs: HubStatus[
   return <span className={"ptext p-" + p.state}>{p.state === "disconnected" ? <Icon name="cloud_off" /> : null}{p.text}</span>;
 }
 
-export function KindChip({ kind, short }: { kind: Kind; short?: boolean }) {
+/** `open`: the chip is a button that does it (Contact info: a local Orgtree
+ *  org's badge opens it in Orgtree), with that tooltip and spoken label. */
+export function KindChip({ kind, short, open }: { kind: Kind; short?: boolean; open?: { title: string; label: string; onOpen: () => void } }) {
   const k = kindInfo(kind);
-  return <span className={"chip " + k.cls}><Icon name={k.icon} />{short ? k.short : k.label}</span>;
+  const body = <><Icon name={k.icon} />{short ? k.short : k.label}</>;
+  if (open) return <button type="button" className={"chip chip-open " + k.cls} title={open.title} aria-label={open.label} onClick={open.onOpen}>{body}</button>;
+  return <span className={"chip " + k.cls}>{body}</span>;
 }
 
 /** The small org / session glyph after a name (people get none). */
