@@ -99,7 +99,7 @@ export const PAGE = 50;
 /** `a` comes before `b` in a chat (by time, then id, as the core pages). */
 const earlier = (a: Message, b: Message) => a.created_at < b.created_at || (a.created_at === b.created_at && a.id < b.id);
 
-interface Paged { peer: string | null; msgs: Message[]; loaded: boolean; more: boolean; unreachable: string[] }
+interface Paged { peer: string | null; msgs: Message[]; loaded: boolean; more: boolean; unreachable: string[]; error: string }
 // Before a chat's messages load, every render must hand out the SAME empty
 // lists: a new [] each time changes every memo and effect keyed on them, and
 // an effect that then sets state re-renders forever. After a tap or Back that
@@ -112,7 +112,7 @@ const NO_HUBS: string[] = [];
  *  (`loadOlder`), and on every change the core reports a re-read of the
  *  range already shown plus anything new. */
 export function useMessages(peer: string | null, page = PAGE) {
-  const [data, setData] = useState<Paged>({ peer: null, msgs: [], loaded: false, more: false, unreachable: [] });
+  const [data, setData] = useState<Paged>({ peer: null, msgs: [], loaded: false, more: false, unreachable: [], error: "" });
   const [tick, setTick] = useState(0);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const cur = useRef(data);
@@ -127,11 +127,15 @@ export function useMessages(peer: string | null, page = PAGE) {
       if (!live) return;
       setData((prev) => {
         // fewer than a page: the hubs may still hold older ones (lazy history)
-        if (!oldest || prev.peer !== peer) return { peer, msgs, loaded: true, more: true, unreachable: [] };
+        if (!oldest || prev.peer !== peer) return { peer, msgs, loaded: true, more: true, unreachable: [], error: "" };
         // an older page that arrived meanwhile stays
-        return { ...prev, msgs: [...prev.msgs.filter((m) => earlier(m, oldest)), ...msgs], loaded: true };
+        return { ...prev, msgs: [...prev.msgs.filter((m) => earlier(m, oldest)), ...msgs], loaded: true, error: "" };
       });
-    }, (e) => console.warn("hc_chat", e));
+    }, (e) => {
+      console.warn("hc_chat", e);
+      // say so (Contact info Files shows it with a Retry); what was loaded stays
+      if (live) setData((prev) => (prev.peer === peer ? { ...prev, error: errText(e) } : { peer, msgs: [], loaded: false, more: false, unreachable: [], error: errText(e) }));
+    });
     return () => { live = false; };
   }, [peer, tick, page]);
   useEffect(() => (peer ? onChatChange(peer, () => setTick((t) => t + 1)) : undefined), [peer]);
@@ -171,6 +175,8 @@ export function useMessages(peer: string | null, page = PAGE) {
   return {
     msgs: same ? data.msgs : NO_MESSAGES,
     loaded: same && data.loaded,
+    /** Why the last read failed ("" when it did not). */
+    error: same ? data.error : "",
     reload: () => setTick((t) => t + 1),
     /** Older messages exist beyond what is shown. */
     more: same && data.more,

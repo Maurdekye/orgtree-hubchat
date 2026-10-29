@@ -3,7 +3,7 @@
 // Desktop shows it in the right-hand panel (the conversation header, its info
 // button, Ctrl+I); Android as a screen from the conversation's menu or a tap
 // on its name. An address no hub lists still opens: its name is the address.
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import { api } from "../api";
 import { Icon } from "../lib/icons";
 import { closeMenu } from "../lib/ctxmenu";
@@ -40,11 +40,24 @@ export function ContactInfo({ peer, onClose, onShowMessage }: { peer: string; on
   const ph = peerHubs(c, hubs);
   const via = viaHub(c, hubs);
   const now = useNow(ph.some((h) => h.state === "disconnected"));
-  const { msgs, loaded } = useMessages(peer, 5000); // every file in the chat, not just the newest page
+  const { msgs, loaded, error, reload } = useMessages(peer, 5000); // every file in the chat, not just the newest page
   const files = msgs.flatMap((m) => m.attachments.map((a) => ({ a, m })));
   const tag = splitAddr(peer)[1];
   const blurb = (c?.blurb || "").trim();
   const copy = () => void copyText("@net:" + peer, "Address copied");
+  // The Files section says what state it is in (symmetry audit ux07 S4, like Transfers history): still reading, why
+  // a read failed with Retry (files already read stay), and "No files yet" only after a read that answered.
+  const note = (text: ReactNode, status = true) => platform === "android"
+    ? <div className="li"><div className="t"><div className="t2" role={status ? "status" : undefined}>{text}</div></div></div>
+    : <div className="dim" role={status ? "status" : undefined} style={{ fontSize: 13 }}>{text}</div>;
+  const filesBody = (
+    <>
+      {error ? note(<>{error} <button className="link" onClick={reload}>Retry</button></>) : null}
+      {files.map(({ a, m }) => <ContactFile key={owner + "/" + peer + "/" + a.local_id} a={a} m={m} owner={owner} onShowMessage={onShowMessage} />)}
+      {!error && !loaded ? note("Loading files…") : null}
+      {!error && loaded && !files.length ? note("No files yet", false) : null}
+    </>
+  );
 
   if (platform === "android") {
     return (
@@ -80,9 +93,7 @@ export function ContactInfo({ peer, onClose, onShowMessage }: { peer: string; on
             </div>
           )) : <div className="li"><div className="t"><div className="t2">None of your hubs</div></div></div>}
           <div className="sec-h">Files</div>
-          {!loaded ? null : files.length ? files.map(({ a, m }) => (
-            <ContactFile key={owner + "/" + peer + "/" + a.local_id} a={a} m={m} owner={owner} onShowMessage={onShowMessage} />
-          )) : <div className="li"><div className="t"><div className="t2">No files yet</div></div></div>}
+          {filesBody}
         </div>
       </>
     );
@@ -122,9 +133,7 @@ export function ContactInfo({ peer, onClose, onShowMessage }: { peer: string; on
         </div>
         <div className="info-sec">
           <h4 aria-level={2}>Files</h4>
-          {!loaded ? null : files.length ? files.map(({ a, m }) => (
-            <ContactFile key={owner + "/" + peer + "/" + a.local_id} a={a} m={m} owner={owner} onShowMessage={onShowMessage} />
-          )) : <div className="dim" style={{ fontSize: 13 }}>No files yet</div>}
+          {filesBody}
         </div>
       </div>
     </aside>
