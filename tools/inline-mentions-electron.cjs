@@ -9,13 +9,16 @@ app.commandLine.appendSwitch('mute-audio');app.disableHardwareAcceleration();app
 app.on('window-all-closed',()=>{});
 const sessionOf=pid=>{try{return Number(execFileSync('powershell',['-NoProfile','-NonInteractive','-Command',`(Get-Process -Id ${pid}).SessionId`],{encoding:'utf8',windowsHide:true}).trim());}catch{return null;}};
 const views=[['desktop','marks'],['desktop','menu'],['desktop','live'],['android','marks'],['android','tap'],['android','open']];
-// What the source before the marks fails, view by view (and nothing else).
+// What the source before the latest change fails, view by view (and nothing else).
+// Latest: a reachable named mention shows the roster name (symmetry audit #2), on
+// top of the marks, whose own red (before any mark) is recorded in
+// docs/inline-mentions.md.
 const expectedRed={
- 'desktop/marks':["an accessible person's mention shows their DM-list letters and colours","a picture mention shows the DM list's picture","an org's mention shows its DM-list letters, colours and shape","an agent session's mention shows the DM list's terminal icon","a mention of yourself shows your own avatar","a sent message's mention shows its mark too","inaccessible mentions show a small grey dot and no picture","their tooltip says they aren't on your hubs","an inaccessible mention's text is muted, without a pointer","an accessible mention's tooltip reads as Orgtree's: presence and type, name, description, address, action"],
- 'desktop/menu':["clicking an inaccessible mention opens nothing and says nothing","right-click on an inaccessible mention offers Copy address, not Open chat"],
- 'desktop/live':["enabling a hub turns a mention into its avatar, live, without re-rendering the message","a contact leaving the directory turns its mention into the dot, live"],
- 'android/marks':["an accessible mention shows its DM-list avatar","an inaccessible mention shows the grey dot","its tooltip says they aren't on your hubs"],
- 'android/tap':["tapping an inaccessible mention says why once, and stays in the chat"],
+ 'desktop/marks':["a reachable named mention shows the roster name, not the address"],
+ 'desktop/menu':[],
+ 'desktop/live':["enabling a hub shows the contact's roster name, live"],
+ 'android/marks':["a reachable named mention shows the roster name (phone)"],
+ 'android/tap':[],
  'android/open':[],
 };
 // The views a reader should see, and what each picture is of.

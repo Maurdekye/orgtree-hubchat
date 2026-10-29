@@ -3,7 +3,9 @@
 // Someone one of my hubs that isn't disabled lists shows with their DM-list
 // picture or letters (an agent session: its terminal icon); anyone else gets a
 // small grey dot, a tooltip saying they aren't on my hubs, and a click that
-// opens nothing (Android: a tap says why). No native calls, files or network.
+// opens nothing (Android: a tap says why). A reachable mention with a roster
+// name shows that name, the address staying its text out of sight, as
+// Orgtree's chip does (symmetry audit #2). No native calls, files or network.
 // ?platform=desktop|android
 // ?view= desktop: marks | menu | live; android: marks | tap | open
 import { createRoot } from "react-dom/client";
@@ -18,8 +20,8 @@ const settle = () => new Promise<void>((r) => setTimeout(r, 70));
 const settled = async (n = 4) => { for (let i = 0; i < n; i++) await settle(); };
 
 const A = "wss://hub-a.invalid", B = "wss://hub-b.invalid";
-const ME = "scratch.abcdef", PAT = "pat.1a2b3c", ALICE = "alice.111111", ACME = "acme.222222", AGENT = "claude.333333", GHOST = "ghost.444444", STRANGER = "stranger.555555";
-const INCOMING = `Ask @net:${ALICE} or @net:${ACME}, or the session @net:${AGENT}. @net:${GHOST} and @net:${STRANGER} can't hear us. Pat is @net:${PAT} and I am @net:${ME}. In code: \`@net:${ALICE}\``;
+const ME = "scratch.abcdef", PAT = "pat.1a2b3c", ALICE = "alice.111111", ACME = "acme.222222", AGENT = "claude.333333", GHOST = "ghost.444444", STRANGER = "stranger.555555", ANON = "anon.666666";
+const INCOMING = `Ask @net:${ALICE} or @net:${ACME}, or the session @net:${AGENT}. @net:${GHOST} and @net:${STRANGER} can't hear us. Pat is @net:${PAT} and I am @net:${ME}. In code: \`@net:${ALICE}\`. Nameless: @net:${ANON}.`;
 const OUTGOING = `I'll tell @net:${ALICE}.`;
 const NOT_ON = " isn't on any of the mail hubs you're connected to.";
 
@@ -50,6 +52,8 @@ async function run() {
     { ...contact(ACME, "org", "Acme Org", [A]), blurb: "Acme's agents answer here." }, { ...contact(AGENT, "chat", "Claude session", [A]), online: false },
     // listed only by a hub that is disabled on this device: not accessible
     contact(GHOST, "person", "Ghost", [B]),
+    // listed, but the roster gives no name: its address stays as written
+    contact(ANON, "person", "", [A]),
   ];
   const hub = (url: string, name: string, state: HubStatus["state"]): HubStatus => ({ url, name, state, error: null, retry_at_ms: null, max_attachment_bytes: 1 << 30, features: ["v2"] });
   let hubs: HubStatus[] = [hub(A, "Hub A", "connected"), hub(B, "Hub B", "disabled")];
@@ -87,6 +91,10 @@ async function run() {
   const menuItems = () => [...document.querySelectorAll(".pop.ctx .mi")].map((b) => b.textContent ?? "");
   const rightClick = async (e: HTMLElement | null) => { if (!e) return; const r = e.getBoundingClientRect(); e.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.x + 4, clientY: r.y + 4, button: 2 })); await settled(2); };
   const closeMenu = async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); await settled(1); };
+  // the name a mention shows in place of its address (drawn by CSS), and the address kept as its text out of sight
+  const shownName = (a: HTMLElement | null) => { const n = a?.querySelector(".mname"); return n ? getComputedStyle(n, "::before").content : null; };
+  const hiddenToken = (a: HTMLElement | null, token: string) => { const t = a?.querySelector<HTMLElement>(".mtok"); return !!t && t.textContent === token && t.getBoundingClientRect().width <= 1; };
+  const asWritten = (a: HTMLElement | null) => !!a && !a.querySelector(".mname") && a.getBoundingClientRect().width > 80;
 
   check("the conversation with Pat is open", header() === "Pat", header());
   if (view === "marks" && platform === "desktop") {
@@ -124,6 +132,12 @@ async function run() {
     const copied = sel.toString().replace(/\s+/g, " "); sel.removeAllRanges();
     check("a selection copies the words, not the letters", copied.includes(`Ask @net:${ALICE} or @net:${ACME}, or the session @net:${AGENT}. @net:${GHOST} and @net:${STRANGER} can't hear us.`), copied);
     check("the message HTML itself carries no mark (the sanitizer is unchanged)", !md(INCOMING).includes("mmark") && !md(INCOMING).includes("<img"));
+    // Orgtree's chip shows the roster's name (symmetry audit #2; coordinator 2026-10-29)
+    check("a reachable named mention shows the roster name, not the address", shownName(anchor(ALICE)) === '"Alice"' && hiddenToken(anchor(ALICE), `@net:${ALICE}`)
+      && shownName(anchor(ACME)) === '"Acme Org"' && hiddenToken(anchor(ACME), `@net:${ACME}`) && shownName(anchor(ALICE, "out")) === '"Alice"'
+      && anchor(ALICE)?.getAttribute("aria-label") === `Alice, @net:${ALICE}`, { alice: anchor(ALICE)?.outerHTML, acme: anchor(ACME)?.outerHTML });
+    check("an unnamed or unlisted mention shows its address as written", [ANON, GHOST, STRANGER].every((x) => asWritten(anchor(x))), [ANON, GHOST, STRANGER].map((x) => anchor(x)?.outerHTML));
+    check("copying a named mention gives the address as written, never the name", copied.includes(`@net:${ALICE}`) && !copied.includes("Alice") && !copied.includes("Acme Org"), copied);
   } else if (view === "menu" && platform === "desktop") {
     await click(anchor(GHOST));
     check("clicking an inaccessible mention opens nothing and says nothing", header() === "Pat" && !calls.some((c) => c === "open:" + GHOST) && !toasts().length, { header: header(), calls, toasts: toasts() });
@@ -145,14 +159,17 @@ async function run() {
     const ghost = anchor(GHOST);
     check("enabling a hub turns a mention into its avatar, live, without re-rendering the message", ghost === before && !!mark(ghost)?.classList.contains("av")
       && letters(mark(ghost)) === '"G"' && ghost?.title === `Online · person\nGhost\n@net:${GHOST}\nOpen chat`, { same: ghost === before, mark: mark(ghost)?.outerHTML, title: ghost?.title });
+    check("enabling a hub shows the contact's roster name, live", shownName(ghost) === '"Ghost"' && hiddenToken(ghost, `@net:${GHOST}`), ghost?.outerHTML);
     directory = directory.filter((c) => c.address !== ALICE);
     await refreshAll(); await settled(4);
     check("a contact leaving the directory turns its mention into the dot, live", isDot(mark(anchor(ALICE))) && anchor(ALICE)?.title === ALICE + NOT_ON, { mark: mark(anchor(ALICE))?.outerHTML, title: anchor(ALICE)?.title });
+    check("and its mention shows the address as written again", asWritten(anchor(ALICE)), anchor(ALICE)?.outerHTML);
   } else if (platform === "android" && view === "marks") {
     const alice = mark(anchor(ALICE));
     check("an accessible mention shows its DM-list avatar", !!alice?.classList.contains("av") && alice.classList.contains("k-person") && letters(alice) === '"A"' && alice.textContent === "", alice?.outerHTML);
     check("an inaccessible mention shows the grey dot", isDot(mark(anchor(GHOST))), mark(anchor(GHOST))?.outerHTML);
     check("its tooltip says they aren't on your hubs", anchor(GHOST)?.title === "Ghost" + NOT_ON, anchor(GHOST)?.title);
+    check("a reachable named mention shows the roster name (phone)", shownName(anchor(ALICE)) === '"Alice"' && hiddenToken(anchor(ALICE), `@net:${ALICE}`) && asWritten(anchor(GHOST)), anchor(ALICE)?.outerHTML);
   } else if (platform === "android" && view === "tap") {
     await click(anchor(GHOST));
     // left showing for the capture
