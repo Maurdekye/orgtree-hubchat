@@ -1,5 +1,19 @@
 # Hubchat development invariants
 
+- 2026-10-29: Inline mentions carry a mark (`src/components/MentionMark.tsx`):
+  the chat-list avatar at text size when one of my non-disabled hubs lists the
+  address or it is mine (`mentionReach` in `src/lib/mentions.ts`, the
+  composer's test; its tooltip then reads as Orgtree's: presence and type, name,
+  description, address, "Open chat"; Orgtree's chip shares the letters and
+  colours), else a grey dot, muted text, the composer's "<name> isn't
+  on any of the mail hubs you're connected to." as tooltip, no chat on click
+  (Android: that sentence as a toast) and no Open chat in its menu. Marks are
+  portals that `useMentionMarks` places after each render: never add markup to
+  md()'s sanitized HTML or widen its allow-list for them. Letters come from CSS
+  (`data-initials`), so selections copy none. [decided: user 2026-10-29 via the
+  Orgtree coordinator; verified: MentionMark.tsx, MessageView.tsx, mentions.ts;
+  tools/proof-inline-mentions.mjs; docs/inline-mentions.md]
+
 - 2026-10-29: Desktop (Windows) Contact info shows the "Orgtree org" badge of an
   org the Orgtree install on this PC hosts as a button that starts the
   registered Orgtree.exe with exactly `--orgtree-taskbar=org:<slug>`
@@ -86,7 +100,8 @@
   cancelling an active reply. In message Markdown (`src/lib/md.ts`),
   `@net:<address>`, `@org:<slug>`, and `@<known-contact>` mentions render as
   clickable `a.addr.mention` links (`data-slug`) that open the chat via
-  `onOpenAddr`. [decided: user 2026-10-17; verified: `src/lib/mentions.ts`,
+  `onOpenAddr` (since 2026-10-29 only when a hub of mine lists the address:
+  see that entry). [decided: user 2026-10-17; verified: `src/lib/mentions.ts`,
   `src/lib/md.ts`, `src/components/Composer.tsx`,
   `tools/proof-mentions-renderer.mjs`]
 
