@@ -17,6 +17,21 @@
   Orgtree coordinator; verified: MentionMark.tsx, MessageView.tsx, mentions.ts;
   tools/proof-inline-mentions.mjs; docs/inline-mentions.md]
 
+- 2026-10-29: UX symmetry S3 (audit #5, 8, 16-18, 22, 29, 30, 36, 42, 44, 47,
+  50): symmetry wins unless a signed user ruling overrides it, and a conflict is
+  reported, not resolved. Active transfer rows, quotes and the Android profile
+  card are tab stops that open on Enter/Space through the shared pressKeys (Cancel
+  and Copy address stay separate). Android theme choices are native radios in one
+  radiogroup; the system option is "Match system" on both. The expanded chat row's
+  name has the rail's hover and its unread badge says "N unread" (unreadLabel);
+  directory address/about and composer chips (fileTitle) have full-text hovers;
+  the header picture says Contact info; the collapsed hub button's name carries
+  the hub summary; a message clock is a time element with the full local
+  date-time (fullWhen). Offline stays the grey --faint ring everywhere.
+  [decided: user 2026-10-29 12:50Z mb6da9f3ee862, 13:25Z m72500eeca0c0; verified:
+  ChatList.tsx, Directory.tsx, Composer.tsx, Settings.tsx, MessageView.tsx,
+  Transfers.tsx, format.ts; docs/symmetry-s3.md; tools/proof-symmetry-s3.mjs]
+
 - 2026-10-29: Desktop (Windows) Contact info shows the "Orgtree org" badge of an
   org the Orgtree install on this PC hosts as a button that starts the
   registered Orgtree.exe with exactly `--orgtree-taskbar=org:<slug>`
