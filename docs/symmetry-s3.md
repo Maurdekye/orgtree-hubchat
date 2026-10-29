@@ -30,13 +30,14 @@ batch is the small single-surface Hubchat items; none of them met a signed rulin
 - `tools/proof-symmetry-s3.mjs` (through `tools/verify-symmetry-s3.ps1`, kernel
   Job, a new output folder under `C:/orgtree-build`): mounts the real `App` on
   the synthetic API (`tools/symmetry-s3-entry.tsx`) on desktop and Android in a
-  DOM with no window. 65 checks: at the base exactly the 35 `#<audit number>`
-  checks fail and the 30 controls pass; at the fixes all 65 pass. Any session.
+  DOM with no window. 66 checks: at the base exactly the 36 `#<audit number>`
+  checks fail and the 30 controls pass; at the fixes all 66 pass. Any session.
 - `tools/proof-symmetry-s3-capture.mjs` (same script with `-Script`): the same
   checks in real Chromium, in an offscreen Electron window, **Session 0 only**
   (it asserts the session; muted, permissions refused, http(s) blocked), and a
   screenshot of each changed state. Before each focus screenshot a trusted Escape
   key goes through the window's own DevTools connection so a script `focus()` is
   drawn as keyboard focus; the proof fails if any focused element is not
-  `:focus-visible`.
+  `:focus-visible`. A script `click()` on a radio does not move the focus, so the
+  fixture moves it first, as the arrow keys do, and checks that the chosen radio holds it.
 - `tsc --noEmit` over `src` (dependencies read in place, no copy or link).
