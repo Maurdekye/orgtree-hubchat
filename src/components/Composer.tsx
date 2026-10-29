@@ -5,7 +5,7 @@
 import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
 import { api, newId, type Contact, type HubStatus, type Message, type NewAttachment, type NewOutgoing } from "../api";
 import { Icon } from "../lib/icons";
-import { bytes, isLong, MAX_FILES, num, utf8Len } from "../lib/format";
+import { bytes, fileTitle, isLong, MAX_FILES, num, utf8Len } from "../lib/format";
 import { isImage, pastedImages, pastedName, thumbable, useFilePreview } from "../lib/images";
 import { errText, pickFiles } from "../lib/native";
 import { displayName, kindOf, limitFor, msgTime, preview } from "../lib/peers";
@@ -53,7 +53,7 @@ export interface ComposerApi {
 /** A file waiting to be sent: its name and size. */
 function AttChip({ a, onRemove, disabled }: { a: NewAttachment; onRemove: () => void; disabled?: boolean }) {
   return (
-    <span className="attchip">
+    <span className="attchip" title={fileTitle(a.name, a.bytes)}>
       <Icon name={isImage(a.name) ? "image" : "file"} /><span className="ell">{a.name}</span> <span className="s">{bytes(a.bytes)}</span>
       <button className="icon-btn" title="Remove" aria-label={"Remove " + a.name} disabled={disabled} onClick={onRemove}><Icon name="close" /></button>
     </span>
@@ -66,7 +66,7 @@ function AttThumb({ a, onRemove, disabled }: { a: NewAttachment; onRemove: () =>
   const url = useFilePreview(a.source, a.name);
   if (url === "failed") return <AttChip a={a} onRemove={onRemove} disabled={disabled} />;
   return (
-    <span className="attthumb" title={a.name + " · " + bytes(a.bytes)}>
+    <span className="attthumb" title={fileTitle(a.name, a.bytes)}>
       {url ? <img src={url} alt={a.name} draggable={false} /> : <span className="ph"><Icon name="image" /></span>}
       <button className="icon-btn" title="Remove" aria-label={"Remove " + a.name} disabled={disabled} onClick={onRemove}><Icon name="close" /></button>
     </span>

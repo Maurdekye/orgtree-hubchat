@@ -58,8 +58,8 @@ export function Directory({ onOpen, onClose, onBack, onInfo }: { onOpen: (addres
         <PeerAvatar address={c.address} c={c} hubs={hubs} size={platform === "android" ? 44 : 40} />
         <div className="t">
           <div className="t1">{displayName(c, c.address)} <KindGlyph kind={kindOf(c)} /></div>
-          <div className="t2"><Addr a={c.address} /></div>
-          {c.blurb ? <div className="t3">{c.blurb}</div> : null}
+          <div className="t2" title={c.address}><Addr a={c.address} /></div>
+          {c.blurb ? <div className="t3" title={c.blurb}>{c.blurb}</div> : null}
           {platform === "android" ? <div className="via">{via}</div> : null}
         </div>
         {platform === "desktop" ? <div className="via">{via}</div> : null}

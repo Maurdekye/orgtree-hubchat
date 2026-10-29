@@ -53,6 +53,9 @@ export function bytes(n: number): string {
   return (n / 1073741824).toFixed(1).replace(/\.0$/, "") + " GB";
 }
 
+/** A file's hover: its whole name and its size, for the composer's thumbnail and chip alike. */
+export const fileTitle = (name: string, size: number) => name + " · " + bytes(size);
+
 export const num = (n: number) => n.toLocaleString("en-US");
 
 export function initials(name: string): string {
