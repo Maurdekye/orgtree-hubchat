@@ -16,6 +16,8 @@
 .li.contact-file .contact-file-more { width: 44px; height: 44px; }
 .xhistory-label { padding: 8px 10px; font-size: 12px; }
 .xhistory-more { margin: 8px 12px; }
+.xhistory-end { height: 1px; }
+.xhistory .xrow .t .xpeer { font: inherit; font-weight: 600; text-align: left; }
 .xhistory .xrow { cursor: default; align-items: flex-start; }
 .xhistory .xactions { display: flex; flex-direction: column; gap: 8px; flex: none; }
 .xhistory .xactions button { min-height: 32px; }

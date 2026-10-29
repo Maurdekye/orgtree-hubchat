@@ -39,7 +39,10 @@ function XRow({ t, onOpen, android }: { t: Active; onOpen: (peer: string) => voi
   );
 }
 
-function HistoryRow({ t, refresh }: {t: TransferHistoryView; refresh: () => void}) {
+function HistoryRow({ t, refresh, onOpen }: {t: TransferHistoryView; refresh: () => void; onOpen?: (peer: string) => void}) {
+  const snap = useSnap();
+  // the same "to / from <who>" an unfinished row shows (symmetry audit ux05 S5)
+  const who = t.peer ? displayName(snap.byAddr.get(t.peer), t.peer) : "";
   const [busy, setBusy] = useState(false);
   const pending = useRef(false);
   const live = useRef(true);
@@ -59,7 +62,9 @@ function HistoryRow({ t, refresh }: {t: TransferHistoryView; refresh: () => void
   const remote=t.state === "expired" ? "File no longer available on the hub." : "";
   return <div className={"xrow xhistory-row " + t.state} data-transfer={t.local_id}>
     <span className="xic"><Icon name={t.upload ? "upload" : "download"} /></span>
-    <div className="t"><b>{t.name || "File"}</b><span>{t.upload ? "Sent" : "Received"} · {bytes(t.total)}</span>
+    <div className="t"><b>{t.name || "File"}</b><span>{t.upload ? "Sent" : "Received"}{who && <>{t.upload ? " to " : " from "}{onOpen
+        ? <button type="button" className="link xpeer" title={"Open the chat with " + who} onClick={() => onOpen(t.peer)}>{who}</button>
+        : who}</>} · {bytes(t.total)}</span>
       {!t.available && <span className="xreason">{missing}</span>}
       {(error || remote || t.error) && <span className="xreason" role="status">{error || remote || t.error}</span>}
     </div>
@@ -71,12 +76,15 @@ function HistoryRow({ t, refresh }: {t: TransferHistoryView; refresh: () => void
 }
 
 /** Read only visible pages. Progress ticks do not query attachment history. */
-function TransferHistory({ active }: {active: Active[]}) {
+function TransferHistory({ active, onOpen }: {active: Active[]; onOpen?: (peer: string) => void}) {
   const snap=useSnap();
   const [rows,setRows]=useState<TransferHistoryView[]>([]);
   const [next,setNext]=useState<string|null>(null);
   const [error,setError]=useState("");
+  // which request the error belongs to: a later page's cursor, or null for the first read (Retry repeats that one only)
+  const [failedAfter,setFailedAfter]=useState<string|null>(null);
   const [loading,setLoading]=useState(false);
+  const end=useRef<HTMLDivElement>(null);
   const epoch=useRef(0);
   const pending=useRef(false);
   const [revision,setRevision]=useState(0);
@@ -85,35 +93,47 @@ function TransferHistory({ active }: {active: Active[]}) {
   const activeKey=active.map(t=>t.local_id+":"+t.state).join("|");
   useEffect(()=>{
     const mine=++epoch.current;
-    pending.current=true;setLoading(true);setRows([]);setNext(null);setError("");
+    pending.current=true;setLoading(true);setRows([]);setNext(null);setError("");setFailedAfter(null);
     api.transferHistory().then(page=>{
       if(epoch.current!==mine)return;
       setRows(page.rows);setNext(page.next);setPageOwner(owner);
-    },e=>{if(epoch.current===mine)setError(errText(e));}).finally(()=>{
+    },e=>{if(epoch.current===mine){setError(errText(e));setFailedAfter(null);}}).finally(()=>{
       if(epoch.current===mine){pending.current=false;setLoading(false);}
     });
     return ()=>{epoch.current++;};
   },[owner,activeKey,revision]);
-  const more=async()=>{
-    if(!next||pending.current)return;
-    const mine=epoch.current,after=next;
-    pending.current=true;setLoading(true);setError("");
+  const more=async(cursor=next)=>{
+    if(!cursor||pending.current)return;
+    const mine=epoch.current,after=cursor;
+    pending.current=true;setLoading(true);setError("");setFailedAfter(null);
     try {
       const page=await api.transferHistory(after);
       if(epoch.current!==mine)return;
       if(page.next===after)throw Error("Transfer history page did not advance");
       setRows(old=>[...new Map([...old,...page.rows].map(r=>[r.local_id,r])).values()]);setNext(page.next);
-    } catch(e){if(epoch.current===mine)setError(errText(e));}
+    } catch(e){if(epoch.current===mine){setError(errText(e));setFailedAfter(after);}}
     finally{if(epoch.current===mine){pending.current=false;setLoading(false);}}
   };
+  // Load the next page when the end of the list comes into view (the sibling lists grow on scroll); the Load more
+  // button stays as the manual path, and nothing loads by itself while a page error stands. The observer is made
+  // again after every page, so a list that still ends in view keeps loading, one bounded page at a time.
+  useEffect(()=>{
+    const el=end.current;
+    if(!el||!next||error||typeof IntersectionObserver==="undefined")return;
+    const io=new IntersectionObserver(es=>{if(es.some(e=>e.isIntersecting))void more();},{rootMargin:"240px"});
+    io.observe(el);
+    return ()=>io.disconnect();
+  },[next,error,loading]);
+  const retry=()=>{if(failedAfter)void more(failedAfter);else setRevision(r=>r+1);};
   const visible=pageOwner===owner?rows.filter(r=>!active.some(t=>t.local_id===r.local_id)):[];
   return <div className="xhistory">
     <div className="help xhistory-label">Transfer history</div>
-    {visible.map(t=><HistoryRow key={t.local_id} t={t} refresh={()=>setRevision(r=>r+1)} />)}
+    {visible.map(t=><HistoryRow key={t.local_id} t={t} refresh={()=>setRevision(r=>r+1)} onOpen={onOpen} />)}
     {!visible.length&&!loading&&!error&&<div className="help xhistory-label">No finished transfers yet.</div>}
-    {error&&<div role="status" className="help xhistory-label">{error} <button className="link" onClick={()=>setRevision(r=>r+1)}>Retry</button></div>}
+    {error&&<div role="status" className="help xhistory-label">{error} <button className="link" onClick={retry}>Retry</button></div>}
     {loading&&<div role="status" className="help xhistory-label">Loading…</div>}
     {next&&<button className="link xhistory-more" disabled={loading} onClick={()=>void more()}>Load more</button>}
+    {next&&<div ref={end} className="xhistory-end" aria-hidden="true" />}
   </div>;
 }
 
@@ -125,7 +145,7 @@ export function TransfersPanel({ onOpen }: { onOpen?: (peer: string) => void }) 
     <div className="help xhistory-label">In progress{list.length ? ` · ${overall(list)}%` : ""}</div>
     {list.length ? list.map(t => <XRow key={t.local_id} t={t} onOpen={onOpen ?? (() => {})} android={platform === "android"} />)
       : <div className="help xhistory-label">No transfers in progress.</div>}
-    <TransferHistory active={list} />
+    <TransferHistory active={list} onOpen={onOpen} />
   </div>;
 }
 
@@ -162,7 +182,7 @@ export function TransfersChip({ onOpen }: { onOpen: (peer: string) => void }) {
         <div className="pop xpop" ref={pop} style={{ left: pos.x, top: pos.y }}>
           <div className="pop-h">Transfers</div>
           {list.map((t) => <XRow key={t.local_id} t={t} onOpen={(peer) => { setOpen(false); onOpen(peer); }} />)}
-          <TransferHistory active={list} />
+          <TransferHistory active={list} onOpen={(peer) => { setOpen(false); onOpen(peer); }} />
           <div className="sep" />
           <div className="help" style={{ padding: "4px 10px 6px", fontSize: 12, maxWidth: 380 }}>{platform === "android" ? "If Android pauses a transfer, open Hubchat to resume it." : "Transfers keep going while Hubchat is open or in the tray."} Interrupted files resume when the hub supports it; older hubs restart from zero.</div>
         </div>
@@ -186,7 +206,7 @@ export function TransfersStrip({ onOpen }: { onOpen: (peer: string) => void }) {
         <Icon name={open ? "expand_less" : "expand_more"} className="xchev" />
         {!!list.length&&<i className="tb-bar"><b style={{ width: p + "%" }} /></i>}
       </div>
-      {open ? <div className="xlist">{list.map((t) => <XRow key={t.local_id} t={t} onOpen={onOpen} android />)}<TransferHistory active={list} /></div> : null}
+      {open ? <div className="xlist">{list.map((t) => <XRow key={t.local_id} t={t} onOpen={onOpen} android />)}<TransferHistory active={list} onOpen={onOpen} /></div> : null}
     </div>
   );
 }
