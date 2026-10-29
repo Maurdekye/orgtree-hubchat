@@ -10,8 +10,9 @@ item #2 joined it (user 2026-10-29: "A2 use the lettering on the colored
 background as the icon instead of the hubchat icon when hubchat is connected
 for both"): Orgtree's contact chip now uses this same picture, letters and
 colours (agreed with its implementer: `initials()` over the roster name, the
-kind tokens, circles for people, 28% squares for orgs and sessions), and the
-tooltip below follows Orgtree's lines.
+kind tokens, circles for people, 28% squares for orgs and sessions); the
+tooltip below follows Orgtree's lines; and, as on Orgtree's chip, a named
+contact's mention shows the name (the coordinator confirmed it the same day).
 
 Since 2026-10-17, `@net:<address>`, `@org:<slug>` and `@<known contact>` in
 message text are links (`a.addr.mention`, `src/lib/md.ts`). This adds what each
@@ -24,7 +25,10 @@ In every message, received or sent, on desktop and Android:
 - **Someone one of my hubs lists**: before the mention, their avatar as the
   chat list draws it, at text size. That is their picture, else their letters
   in their kind's colours and shape; an agent session shows its terminal icon,
-  and my own address my own avatar. A click opens the chat with them (or
+  and my own address my own avatar. When the roster gives them a name, the
+  mention shows that name in place of the address, as Orgtree's chip does;
+  copying it still gives the mention as written, and a contact with no name
+  keeps its address. A click opens the chat with them (or
   starts it), as before. The tooltip reads like Orgtree's for the same address
   (symmetry audit #2, user 2026-10-29): presence and type ("Online · person",
   "Offline · independent chat", "Status unknown · org"; "You" for my own
@@ -66,6 +70,10 @@ so a hub that is briefly disconnected doesn't grey its contacts; presence
   message. The same component also sets the link's tooltip and its muted state.
 - Letters are drawn by CSS from `data-initials`, so a copied selection holds
   none; pictures (`alt=""`) and the dot add no text either.
+- A shown name is drawn the same way (`.mname`, `data-name`), and the mention
+  as written moves into a visually hidden `.mtok` inside the link: still its
+  text, so it is what a selection copies, and the link's accessible name is the
+  name, then that text.
 
 Render the hook's result inside the element whose handlers should see a click
 on a mark: React passes a portal's events up its own tree, not the DOM's.
@@ -82,7 +90,9 @@ On desktop it checks:
   list's own avatars, in a received and a sent message;
 - the dots, tooltips and muted text;
 - code staying code;
-- a selection copying no letters;
+- a selection copying no letters and no names;
+- a named contact showing the name, the address kept out of sight, and an
+  unnamed or unlisted one keeping its address;
 - `md()` output without marks;
 - the click and menu rules;
 - a hub being enabled and a contact leaving the directory, both updating
@@ -90,4 +100,7 @@ On desktop it checks:
 
 On Android it checks the marks, the tap message and an accessible tap opening
 the chat. `HUBCHAT_PROOF_PHASE=red` expects exactly the checks the source
-before the marks fails. Green captures each view.
+before the latest change fails: today the name display (one check each in
+desktop marks, desktop live and Android marks). Before any mark (at the
+first test commit) it was 10, 2, 2, 3, 1 and 0 checks over the six views.
+Green captures each view.

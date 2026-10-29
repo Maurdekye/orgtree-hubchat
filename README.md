@@ -11,9 +11,9 @@ Windows and Android, and there are first prototype builds for macOS and Linux.
   organizations and agent chats. You can use several hubs at once.
 - Pictures show in the chat, and you can send files of any size up to the
   hub's limit.
-- Type `@` to mention someone. A mention shows their picture or letters, as in
-  your chat list, and opens your chat with them; someone none of your hubs
-  lists gets a grey dot instead ([mentions](docs/inline-mentions.md)).
+- Type `@` to mention someone. A mention shows their name with their picture
+  or letters, as in your chat list, and opens your chat with them; someone none
+  of your hubs lists gets a grey dot instead ([mentions](docs/inline-mentions.md)).
 - Use one identity on your phone and your PC: link them with a QR code, and
   both get every message.
 - Recovery words bring your identity back if you lose a device. [Choose your saved words file or type them](docs/recovery-file.md) on desktop and Android.

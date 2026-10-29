@@ -10,7 +10,10 @@
   (Android: that sentence as a toast) and no Open chat in its menu. Marks are
   portals that `useMentionMarks` places after each render: never add markup to
   md()'s sanitized HTML or widen its allow-list for them. Letters come from CSS
-  (`data-initials`), so selections copy none. [decided: user 2026-10-29 via the
+  (`data-initials`), so selections copy none. A named reachable mention shows
+  the roster name like Orgtree's chip (`.mname` from `data-name`), the mention
+  as written kept as the link's visually hidden text (`.mtok`), which copies.
+  [decided: user 2026-10-29 via the
   Orgtree coordinator; verified: MentionMark.tsx, MessageView.tsx, mentions.ts;
   tools/proof-inline-mentions.mjs; docs/inline-mentions.md]
 
