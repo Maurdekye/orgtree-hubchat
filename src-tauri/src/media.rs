@@ -1,5 +1,5 @@
 //! Images in the chat: previews of image attachments in the bubble (user
-//! 23:29Z, design att-img), and images pasted into the composer (user 23:40Z).
+//! 23:29Z, design att-img), and images (since 2026-10-29 any file) pasted into the composer (user 23:40Z).
 //!
 //! A preview comes from a copy in the app's own previews folder: what we
 //! sent is copied there the first time it shows, and an incoming image this
@@ -8,7 +8,7 @@
 //! its copies.
 
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Once;
 
 use crate::commands::on_core;
@@ -167,29 +167,44 @@ pub fn forget(message_ids: &[String]) {
     }
 }
 
-/// The name a pasted file is saved under, from the page's `x-name` header.
+/// The longest name a pasted file is saved under.
+const PASTED_NAME_MAX: usize = 150;
+
+/// The name a pasted file is saved under, from the page's `x-name` header: the file's own name (any kind of file
+/// since the composer takes pasted files, an image by its time-stamped name), reduced to its last path component,
+/// with the characters Windows refuses replaced and a device name (CON, NUL, COM1...) made an ordinary one. A name
+/// that is missing or empty after that is `pasted.png`.
 fn pasted_file_name(given: Option<&str>) -> String {
-    given
-        .and_then(|n| Path::new(n).file_name())
-        .map(|f| f.to_string_lossy().into_owned())
-        .filter(|n| !n.is_empty() && is_image(n))
-        .unwrap_or_else(|| "pasted.png".into())
+    let last = given.unwrap_or("").rsplit(['/', '\\']).next().unwrap_or("");
+    let clean: String = last.chars().map(|c| if c.is_control() || "<>:\"|?*".contains(c) { '_' } else { c }).collect();
+    let clean = clean.trim_matches(['.', ' ']);
+    if clean.is_empty() {
+        return "pasted.png".into();
+    }
+    let mut name: String = clean.chars().take(PASTED_NAME_MAX).collect();
+    let device = name.split('.').next().unwrap_or("").trim_end().to_ascii_uppercase();
+    let numbered = |prefix: &str| device.strip_prefix(prefix).is_some_and(|n| n.len() == 1 && matches!(n.as_bytes()[0], b'1'..=b'9'));
+    if matches!(device.as_str(), "CON" | "PRN" | "AUX" | "NUL") || numbered("COM") || numbered("LPT") {
+        name.insert(0, '_');
+    }
+    name
 }
 
-/// A pasted image (raw bytes in the request body, its name in the
+/// A pasted file (raw bytes in the request body, its name in the
 /// `x-name` header) saved as a file the composer can attach. Returns the path.
 #[tauri::command]
 pub fn hc_save_pasted(request: tauri::ipc::Request<'_>) -> R<String> {
-    let data = pasted_bytes(request.body()).ok_or("expected the image's bytes")?;
+    let data = pasted_bytes(request.body()).ok_or("expected the file's bytes")?;
     if data.is_empty() {
-        return Err("the pasted image is empty".into());
+        return Err("the pasted file is empty".into());
     }
     let name = pasted_file_name(request.headers().get("x-name").and_then(|v| v.to_str().ok()));
     let dir = core::get()?.dir.join("pasted");
     std::fs::create_dir_all(&dir).map_err(s)?;
-    let (stem, ext) = name.rsplit_once('.').unwrap_or((&name, "png"));
+    // a name with no extension stays without one: `notes`, `notes-2`
+    let (stem, ext) = name.rsplit_once('.').map_or((name.as_str(), String::new()), |(s, e)| (s, format!(".{e}")));
     let path = (1..)
-        .map(|i| if i == 1 { dir.join(&name) } else { dir.join(format!("{stem}-{i}.{ext}")) })
+        .map(|i| if i == 1 { dir.join(&name) } else { dir.join(format!("{stem}-{i}{ext}")) })
         .find(|p| !p.exists())
         .expect("unbounded");
     std::fs::write(&path, data).map_err(s)?;
