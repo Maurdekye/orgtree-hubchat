@@ -5,7 +5,7 @@
 // as a clickable chat-opening link in both Hubchat (`a.addr.mention`) and
 // Orgtree (`HubContactChip`).
 import type { ChatSummary, Contact, HubStatus } from "../api";
-import { displayName, notOnYourHubs, peerHubs, presence } from "./peers";
+import { displayName, kindOf, notOnYourHubs, peerHubs, presence } from "./peers";
 import { getSnap, type Snap } from "./store";
 
 const LINK_WAITING = "Waiting to be linked to a Hubchat identity";
@@ -128,20 +128,33 @@ export function completeMentionText(
   return { text: next, caret: token.start + inserted.length };
 }
 
+/** A contact's type in the user's words, as Orgtree's hover names it
+ *  (Orgtree netmentions.tsx, USER 2026-10-29 "(org, person, independent chat)"). */
+const TYPE_WORD = { org: "org", person: "person", chat: "independent chat" } as const;
+const PRESENCE_WORD = { online: "Online", offline: "Offline", disconnected: "Status unknown" } as const;
+
 /** How a mention of `address` shows (user 2026-10-29, docket
  *  hubchat-inline-mentions-of-other-hubchat-clients): "on" when one of my hubs
  *  that isn't disabled lists it in its directory (the composer's own test) or
  *  it is mine; "off" when none does; "unknown" before any directory arrived
- *  (like the composer, it blocks nothing then). `title` is the link's tooltip. */
+ *  (like the composer, it blocks nothing then). `title` is the link's tooltip:
+ *  for "on", Orgtree's lines for the same address (symmetry audit #2): presence
+ *  and type, then the name, the hub's description and the address (when it has
+ *  a name), then what a click does; for "off", the composer's sentence. */
 export interface MentionReach { state: "on" | "off" | "unknown"; contact: Contact | undefined; me: boolean; name: string; title: string }
 export function mentionReach(address: string, snap: Snap = getSnap()): MentionReach {
   const me = snap.state?.me;
   const mine = !!me && me.address === address;
   const contact = snap.byAddr.get(address);
   const name = mine ? me!.name || address : displayName(contact, address);
-  const listed = !!contact && peerHubs(contact, snap.state?.hubs ?? []).some((h) => h.state !== "disabled");
+  const hubs = snap.state?.hubs ?? [];
+  const listed = !!contact && peerHubs(contact, hubs).some((h) => h.state !== "disabled");
   const state = mine || listed ? "on" : snap.directory.length ? "off" : "unknown";
-  const title = state === "off" ? notOnYourHubs(name) : mine || contact ? `${name} · @net:${address}` : `@net:${address}`;
+  const named = mine ? !!me!.name : !!(contact && (contact.org_name || contact.username));
+  const status = mine ? "You" : listed ? PRESENCE_WORD[presence(contact, hubs).state] + " · " + TYPE_WORD[kindOf(contact)] : null;
+  const title = state === "off" ? notOnYourHubs(name)
+    : status ? [status, named ? name : null, mine ? null : contact?.blurb, named ? "@net:" + address : null, "Open chat"].filter(Boolean).join("\n")
+    : "@net:" + address;
   return { state, contact, me: mine, name, title };
 }
 
