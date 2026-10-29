@@ -6,7 +6,7 @@ import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type
 import { api, newId, type Contact, type HubStatus, type Message, type NewAttachment, type NewOutgoing } from "../api";
 import { Icon } from "../lib/icons";
 import { bytes, fileTitle, isLong, MAX_FILES, num, utf8Len } from "../lib/format";
-import { isImage, pastedImages, pastedName, thumbable, useFilePreview } from "../lib/images";
+import { isImage, isPastedImage, MAX_PASTED_BYTES, pastedFiles, pastedName, thumbable, useFilePreview } from "../lib/images";
 import { errText, pickFiles } from "../lib/native";
 import { displayName, kindOf, limitFor, msgTime, preview } from "../lib/peers";
 import { activeMentionToken, completeMentionText, filterMentionContacts, mentionContacts } from "../lib/mentions";
@@ -15,6 +15,7 @@ import { cardOf, type CardKnown } from "../lib/questions";
 import { noteDraft, usePreparation, getPreparation, prepareSend, clearPreparation, getSnap, useSnap } from "../lib/store";
 import { KindGlyph, PeerAvatar, usePlatform } from "./ui";
 import { refreshKey, useRestoredRefreshState, useRefreshState } from "../lib/refresh";
+import { sendsOnEnter, useEnterKey } from "../lib/enterKey";
 
 interface Props {
   peer: string;
@@ -75,6 +76,7 @@ function AttThumb({ a, onRemove, disabled }: { a: NewAttachment; onRemove: () =>
 
 export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRemoveReply, onUnpick, onCancelReply, onSent, ref, off }: Props) {
   const platform = usePlatform();
+  const enter = useEnterKey();
   const snap = useSnap();
   const [text, setText] = useState("");
   const [caret, setCaret] = useState(0);
@@ -232,14 +234,19 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
     setAtts(next);
   };
   useImperativeHandle(ref, () => ({ addFiles: (sources) => void addFiles(sources), focus: () => ta.current?.focus(), busy: () => sending }));
-  // an image pasted into the box joins the attachments (user 23:40Z); text
-  // still pastes as text
+  // a file pasted into the box joins the attachments, an image since user 23:40Z and any file now (symmetry audit
+  // ux10 S4, as Orgtree's composer); text still pastes as text. A file is read into memory to hand it to the app, so
+  // one over MAX_PASTED_BYTES is refused with a pointer to the picker.
   const paste = async (files: File[]) => {
     const when = new Date();
     const paths: string[] = [];
     for (const [i, f] of files.entries()) {
-      try { paths.push(await api.savePasted(pastedName(f.type, when, i + 1), new Uint8Array(await f.arrayBuffer()))); }
-      catch (e) { setErr("Can't attach the pasted image: " + errText(e)); }
+      const image = isPastedImage(f);
+      const name = image ? pastedName(f.type, when, i + 1) : f.name || "pasted-file";
+      const label = image ? "pasted image" : "\u201c" + name + "\u201d";
+      if (f.size > MAX_PASTED_BYTES) { setErr("Can't attach " + label + ": it is too large to paste (over " + bytes(MAX_PASTED_BYTES) + "). Attach it with the paperclip or drop it on the chat."); continue; }
+      try { paths.push(await api.savePasted(name, new Uint8Array(await f.arrayBuffer()))); }
+      catch (e) { setErr("Can't attach " + label + ": " + errText(e)); }
     }
     if (paths.length) await addFiles(paths);
   };
@@ -347,7 +354,9 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
   const meta = over
     ? <span style={{ color: "var(--bad)" }}>{overNote}</span>
     : <>
-        {platform === "desktop" ? <span><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line</span> : null}
+        {platform === "desktop" ? (enter === "newline"
+          ? <span><kbd>Ctrl</kbd>+<kbd>Enter</kbd> send · <kbd>Enter</kbd> new line</span>
+          : <span><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line</span>) : null}
         {picked.length ? <span className="answer-note">Picked cards use their options; other reply targets use your message.</span> : null}
         {checking ? <span className="skipnote">Checking whether {checking === 1 ? "the question you reply to is" : checking + " questions you reply to are"} still open</span>
           : skips && !text.trim() ? <span className="skipnote">Sending with no text skips {skips === 1 ? "the question" : skips + " questions"} you reply to</span> : null}
@@ -362,7 +371,7 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
           onSelect={syncCaret}
           onClick={syncCaret}
           onKeyUp={syncCaret}
-          onPaste={(e) => { const imgs = pastedImages(e.clipboardData); if (imgs.length) { e.preventDefault(); void paste(imgs); } }}
+          onPaste={(e) => { const pasted = pastedFiles(e.clipboardData); if (pasted.length) { e.preventDefault(); void paste(pasted); } }}
           onKeyDown={(e) => {
             if (mentionOpen && !e.nativeEvent.isComposing) {
               if (e.key === "ArrowDown") { e.preventDefault(); e.stopPropagation(); setMentionIdx((i) => (i + 1) % mentionItems.length); return; }
@@ -373,7 +382,7 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
               }
               if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); if (mentionKey) setDismissedAt(mentionKey); return; }
             }
-            if (platform === "desktop" && e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); }
+            if (platform === "desktop" && sendsOnEnter(enter, { key: e.key, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, isComposing: e.nativeEvent.isComposing })) { e.preventDefault(); void send(); }
             // Escape cancels the reply as its × does; an IME composition or an
             // open modal keeps the key
             else if (e.key === "Escape" && replies.length && !sending && !e.nativeEvent.isComposing
@@ -381,7 +390,7 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
           }} />
       </div>
       {/* pressing Send leaves the focus (and Android's keyboard) in the message box */}
-      <button className="sendbtn" disabled={!can} onMouseDown={(e) => e.preventDefault()} onClick={send}title={platform === "desktop" ? "Send (Enter)" : "Send"} aria-label="Send"><Icon name="send" /></button>
+      <button className="sendbtn" disabled={!can} onMouseDown={(e) => e.preventDefault()} onClick={send}title={platform === "desktop" ? (enter === "newline" ? "Send (Ctrl+Enter)" : "Send (Enter)") : "Send"} aria-label="Send"><Icon name="send" /></button>
     </div>
   );
   if (off && !sending) {

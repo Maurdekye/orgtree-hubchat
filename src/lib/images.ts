@@ -97,5 +97,19 @@ export function pastedName(type: string, when: Date, i: number): string {
  *  some apps (Word, say) puts a picture of it there too, and text wins. */
 export function pastedImages(dt: DataTransfer | null): File[] {
   if (!dt || dt.types.includes("text/plain")) return [];
-  return [...dt.files].filter((f) => f.type in { "image/png": 1, "image/jpeg": 1, "image/gif": 1, "image/webp": 1 });
+  return [...dt.files].filter(isPastedImage);
+}
+
+/** A pasted picture (the clipboard names these `image.png`; Hubchat names them by the time, see pastedName). */
+export const isPastedImage = (f: File) => f.type in { "image/png": 1, "image/jpeg": 1, "image/gif": 1, "image/webp": 1 };
+
+/** The most a pasted file may weigh: the bytes go through the page into the app. Bigger files are attached with the
+ *  picker or dropped on the chat, which hand over a path instead. */
+export const MAX_PASTED_BYTES = 64 * 1024 * 1024;
+
+/** Files on the clipboard (an image, or files copied in a file manager), unless it also holds text, which wins as it
+ *  does for images. Pictures only used to qualify (symmetry audit ux10 S4). */
+export function pastedFiles(dt: DataTransfer | null): File[] {
+  if (!dt || dt.types.includes("text/plain")) return [];
+  return [...dt.files];
 }

@@ -11,6 +11,7 @@ import { routeLink, startJoin } from "../lib/join";
 import { hubCls, hubStatusText, hubSummary, hubVersion } from "../lib/peers";
 import { refreshDirectory, refreshState, useSnap } from "../lib/store";
 import { setThemePref, useThemePref, type ThemePref } from "../lib/theme";
+import { setEnterKey, useEnterKey } from "../lib/enterKey";
 import { toast } from "../lib/toast";
 import { ALLOW_TEXT, allowInstalls, checkForUpdate, installUpdate, setAutoChecks, useAutoChecks, useCheckState, useInstallStep, useUpdate } from "../lib/updates";
 import { formatCode, LinkDeviceModal, type LinkTab } from "./LinkDevice";
@@ -364,6 +365,7 @@ function Devices({ onLink, goTab }: { onLink?: (tab?: LinkTab, input?: string) =
 }
 
 function General() {
+  const enter = useEnterKey();
   const [on, setOn] = useState<boolean | null>(null);
   const [exit, setExit] = useState<boolean | null>(null);
   useEffect(() => {
@@ -392,6 +394,13 @@ function General() {
           t2={exit ? "Closing the window quits Hubchat. No notifications arrive until you open it again."
             : "Closing the window keeps Hubchat running in the tray. To quit, right-click the Hubchat icon in the tray and choose Quit Hubchat."}
           on={exit} onChange={setExitOn} label="Exit on close" />
+        <Row icon="send" t1="Enter key" t2={enter === "newline"
+          ? "Enter starts a new line in a message; Ctrl+Enter (or Command+Enter) sends it."
+          : "Enter sends a message; Shift+Enter starts a new line."}
+          right={<select aria-label="Enter key" value={enter} onChange={(e) => setEnterKey(e.target.value === "newline" ? "newline" : "send")}>
+            <option value="send">Send message</option>
+            <option value="newline">Insert new line</option>
+          </select>} />
       </Card>
     </Sec>
   );
