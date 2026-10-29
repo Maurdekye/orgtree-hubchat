@@ -13,6 +13,13 @@ export function ms(s: string | null | undefined): number {
 export const pad = (n: number) => String(n).padStart(2, "0");
 export const time = (t: number) => { const d = new Date(t); return pad(d.getHours()) + ":" + pad(d.getMinutes()); };
 export const timeSec = (t: number) => time(t) + ":" + pad(new Date(t).getSeconds());
+/** The full local date and time of an instant, 2026-10-28 13:25:12 GMT+3: a message time's hover, as Orgtree's mail rows show theirs. */
+export function fullWhen(t: number): string {
+  if (!t) return "";
+  const d = new Date(t);
+  const zone = new Intl.DateTimeFormat("en-US", { timeZoneName: "short" }).formatToParts(d).find((p) => p.type === "timeZoneName")?.value;
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + timeSec(t) + (zone ? " " + zone : "");
+}
 export const dayStart = (t: number) => { const d = new Date(t); d.setHours(0, 0, 0, 0); return d.getTime(); };
 export const dayDiff = (t: number) => Math.round((dayStart(Date.now()) - dayStart(t)) / 864e5);
 

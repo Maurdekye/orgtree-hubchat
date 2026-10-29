@@ -4,7 +4,7 @@
 import { memo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { api, type Attachment, type Message } from "../api";
 import { Icon, iconHTML } from "../lib/icons";
-import { isLong, num, time } from "../lib/format";
+import { fullWhen, isLong, num, time } from "../lib/format";
 import { esc, md } from "../lib/md";
 import { copyText, errText, openAttachment, openFile, openLink } from "../lib/native";
 import { attView, msgTime, preview, tickInfo, type Kind } from "../lib/peers";
@@ -21,7 +21,10 @@ import { useMentionMarks } from "./MentionMark";
 import { pressKeys, usePlatform } from "./ui";
 
 function metaHTML(m: Message): string {
-  let h = '<span class="meta"><span class="mt">' + time(msgTime(m)) + "</span>";
+  // the clock; its hover and spoken label carry the full date and time (a message with no time keeps a plain clock)
+  const at = msgTime(m), full = esc(fullWhen(at));
+  const clock = at ? '<time class="mt" datetime="' + new Date(at).toISOString() + '" title="' + full + '" aria-label="' + full + '">' + time(at) + "</time>" : '<span class="mt">' + time(at) + "</span>";
+  let h = '<span class="meta">' + clock;
   if (m.outgoing) { const t = tickInfo(m); h += '<span class="tick ' + t.cls + '" title="' + esc(t.label) + '" role="img" aria-label="' + esc(t.label) + '">' + iconHTML(t.ic) + "</span>"; }
   return h + "</span>";
 }

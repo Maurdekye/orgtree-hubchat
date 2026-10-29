@@ -513,7 +513,7 @@ function Privacy() {
 function Appearance() {
   const platform = usePlatform();
   const pref = useThemePref();
-  const opts: [ThemePref, string, IconName, string][] = [["dark", "Dark", "dark_mode", "The default, like Orgtree"], ["light", "Light", "light_mode", ""], ["system", platform === "android" ? "Follow system" : "Match system", "contrast", "Follows your system's dark theme setting"]];
+  const opts: [ThemePref, string, IconName, string][] = [["dark", "Dark", "dark_mode", "The default, like Orgtree"], ["light", "Light", "light_mode", ""], ["system", "Match system", "contrast", "Follows your system's dark theme setting"]];
   if (platform === "android") {
     return (
       <Sec title="Theme">
@@ -680,7 +680,7 @@ export function SettingsList({ onOpen, onBack }: { onOpen: (t: SetTab) => void; 
         <Row icon="bell" t1="Notifications" t2={snap.state!.push?.active ? "UnifiedPush" : snap.state!.stay_connected === false ? "Checks every 15 minutes" : "Connected in the background"} right={chev} onClick={() => onOpen("notifications")} />
         <Row icon="key" t1="Recovery words" t2={snap.state!.recovery_saved ? "Saved" : <span style={{ color: "var(--warn)" }}>Not saved yet</span>} right={<>{snap.state!.recovery_saved ? null : warn}{chev}</>} onClick={() => onOpen("recovery")} />
         <Row icon="privacy" t1="Privacy" t2="Read receipts · who can reach you" right={chev} onClick={() => onOpen("privacy")} />
-        <Row icon="palette" t1="Appearance" t2={pref === "system" ? "Follow system" : pref === "light" ? "Light" : "Dark"} right={chev} onClick={() => onOpen("appearance")} />
+        <Row icon="palette" t1="Appearance" t2={pref === "system" ? "Match system" : pref === "light" ? "Light" : "Dark"} right={chev} onClick={() => onOpen("appearance")} />
         <Row icon="help" t1="Help" t2="Setting up Hubchat" right={chev} onClick={() => onOpen("help")} />
         <Row icon="info" t1="About" t2={version ? "Version " + version : undefined} right={chev} onClick={() => onOpen("about")} />
       </div>
