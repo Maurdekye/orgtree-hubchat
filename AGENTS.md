@@ -1,5 +1,18 @@
 # Hubchat development invariants
 
+- 2026-10-29: Desktop (Windows) Contact info shows the "Orgtree org" badge of an
+  org the Orgtree install on this PC hosts as a button that starts the
+  registered Orgtree.exe with exactly `--orgtree-taskbar=org:<slug>`
+  (Orgtree's taskbar entry point; no shell, network or Orgtree token). Local =
+  the address is listed in `%APPDATA%\Orgtree v2\data\local-orgs.json` AND an
+  Orgtree Uninstall entry names an existing Orgtree.exe; the program comes from
+  the registry, never the listing, and open takes only a slug listed now.
+  Android, other orgs and the conversation header keep the plain chip. A failed
+  start: one toast, plain until the next check. No env/config override for the
+  Orgtree path in shipped code. [decided: user 2026-10-29 via the Orgtree
+  coordinator; verified: local_orgtree.rs, commands.rs, localOrgtree.ts,
+  ContactInfo.tsx; docs/orgtree-org-link.md]
+
 - 2026-10-25: Desktop/Android/lost-key recovery share Onboarding's local file
   input. Parse at most 64 KiB of the saved numbered export or plain 24 words;
   selecting fills the existing input, and Continue still calls restoreWords.

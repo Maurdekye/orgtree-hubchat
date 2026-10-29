@@ -150,6 +150,10 @@ port, whose page shows every message on the hub, so anyone on your Wi-Fi
 could read them all. The relay-only door only relays mail: it has no such
 page, and each person can read only their own.
 
+On the computer that runs Orgtree, Contact info shows the **Orgtree org** badge
+of that computer's own orgs as a link: click it to open the org in Orgtree.
+Orgs on other computers keep a plain badge.
+
 ### On its own (mail hub v2.0)
 
 This is the shared standalone mailhub recommended for a developer team when
