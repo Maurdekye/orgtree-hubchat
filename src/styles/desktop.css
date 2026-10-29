@@ -196,6 +196,7 @@
 /* settings */
 .settings { width: 900px; height: min(660px, 84vh); flex-direction: row; overflow: hidden; }
 .set-nav { width: 220px; flex: none; background: var(--side); border-right: 1px solid var(--line-soft); padding: 18px 10px; display: flex; flex-direction: column; gap: 2px; border-radius: 14px 0 0 14px; }
+.set-tabs { display: flex; flex-direction: column; gap: 2px; }
 .set-nav h3 { margin: 0 0 12px 12px; font: 600 18px var(--font-display); color: var(--ink-strong); }
 .set-nav button { display: flex; align-items: center; gap: 12px; height: 38px; padding: 0 12px; border-radius: 8px; border: 0; background: transparent; color: var(--ink); font-size: 13.5px; text-align: left; position: relative; }
 .set-nav button .ic { width: 19px; height: 19px; color: var(--dim); }

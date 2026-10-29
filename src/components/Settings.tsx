@@ -1,7 +1,7 @@
 // Settings: Profile, Hubs, Devices, Recovery words, Privacy, Appearance,
 // General (desktop), About.
 // Desktop: one modal with a nav column. Android: a list and a screen each.
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { api, type Devices, type HubStatus, type LogInfo } from "../api";
 import { chatLink, chatLinkTarget } from "../lib/chatlink";
 import { Icon, Logo, type IconName } from "../lib/icons";
@@ -38,6 +38,21 @@ function Row({ icon, t1, t2, right, onClick }: { icon?: IconName; t1: ReactNode;
     </div>
   );
 }
+/** A boolean setting: its label and hint toggle the switch too (a label for it), and the row says on or off, like
+ *  Orgtree's toggle rows (symmetry audit ux08 S5). `on` null = still loading: a plain row, no switch. */
+function ToggleRow({ icon, t1, t2, on, onChange, label }: { icon?: IconName; t1: ReactNode; t2?: ReactNode; on: boolean | null; onChange: (v: boolean) => void; label: string }) {
+  const platform = usePlatform();
+  const id = useId();
+  if (on == null) return <Row icon={icon} t1={t1} t2={t2} />;
+  return (
+    <div className={platform === "android" ? "li" : "set-row"}>
+      {icon ? <Icon name={icon} /> : null}
+      <label className="t toggle-label" htmlFor={id}><div className="t1">{t1}</div>{t2 ? <div className="t2">{t2}</div> : null}</label>
+      <label className={"set-state" + (on ? " on" : "")} htmlFor={id} aria-hidden="true">{on ? "on" : "off"}</label>
+      <Switch id={id} on={on} onChange={onChange} label={label} />
+    </div>
+  );
+}
 function Sec({ title, children, first }: { title?: ReactNode; children: ReactNode; first?: boolean }) {
   const platform = usePlatform();
   if (platform === "android") return <>{title ? <div className="sec-h">{title}</div> : null}{children}</>;
@@ -48,17 +63,23 @@ function Card({ children }: { children: ReactNode }) {
 }
 
 // --------------------------------------------------------------- sections
-function Profile() {
+/** Unsaved Profile edits, held by the settings modal so they survive a switch to another section (and back); closing
+ *  Settings or Save ends them (symmetry audit ux08 S3). */
+export interface ProfileDraft { name: string; about: string }
+
+function Profile({ draft, onDraft }: { draft?: ProfileDraft | null; onDraft?: (d: ProfileDraft | null) => void }) {
   const snap = useSnap();
   const platform = usePlatform();
   const me = snap.state!.me!;
-  const [name, setName] = useState(me.name);
-  const [about, setAbout] = useState(me.about);
+  const [name, setNameLocal] = useState(draft?.name ?? me.name);
+  const [about, setAboutLocal] = useState(draft?.about ?? me.about);
+  const setName = (v: string) => { setNameLocal(v); onDraft?.({ name: v, about }); };
+  const setAbout = (v: string) => { setAboutLocal(v); onDraft?.({ name, about: v }); };
   const [busy, setBusy] = useState(false);
   const dirty = name.trim() !== me.name || about.trim() !== me.about;
   const save = async () => {
     setBusy(true);
-    try { await api.setProfile(name.trim(), about.trim()); await refreshState(); toast("Profile saved"); }
+    try { await api.setProfile(name.trim(), about.trim()); await refreshState(); onDraft?.(null); toast("Profile saved"); }
     catch (e) { toast("Couldn't save: " + errText(e)); }
     finally { setBusy(false); }
   };
@@ -366,11 +387,11 @@ function General() {
   return (
     <Sec first>
       <Card>
-        <Row icon="play" t1="Start with Windows" t2="Hubchat starts hidden in the tray when you sign in to Windows, so messages arrive before you open it." right={on == null ? null : <Switch on={on} onChange={set} label="Start with Windows" />} />
-        <Row icon="minimize" t1="Exit on close"
+        <ToggleRow icon="play" t1="Start with Windows" t2="Hubchat starts hidden in the tray when you sign in to Windows, so messages arrive before you open it." on={on} onChange={set} label="Start with Windows" />
+        <ToggleRow icon="minimize" t1="Exit on close"
           t2={exit ? "Closing the window quits Hubchat. No notifications arrive until you open it again."
             : "Closing the window keeps Hubchat running in the tray. To quit, right-click the Hubchat icon in the tray and choose Quit Hubchat."}
-          right={exit == null ? null : <Switch on={exit} onChange={setExitOn} label="Exit on close" />} />
+          on={exit} onChange={setExitOn} label="Exit on close" />
       </Card>
     </Sec>
   );
@@ -391,7 +412,7 @@ function Developer() {
   return (
     <Sec first>
       <Card>
-        <Row icon="terminal" t1="Verbose logging" t2={verbose ?? undefined} right={info && info.active && !info.pinned ? <Switch on={info.verbose} onChange={setVerbose} label="Verbose logging" /> : null} />
+        <ToggleRow icon="terminal" t1="Verbose logging" t2={verbose ?? undefined} on={info && info.active && !info.pinned ? info.verbose : null} onChange={setVerbose} label="Verbose logging" />
         <Row icon="folder" t1="Open logs folder" t2={info ? (info.files ? info.files + (info.files === 1 ? " file, " : " files, ") + bytes(info.bytes) : "No files yet") + " (up to " + bytes(info.max_bytes) + ", kept " + info.retention_days + " days). Logs stay on this device and are never sent anywhere." + (info.fallback ? " Hubchat could not write to its own folder, so this log is in a temporary folder." : "") : undefined} right={<button className="btn" onClick={() => void openFolder()}><Icon name="folder" />Open</button>} />
       </Card>
     </Sec>
@@ -433,16 +454,16 @@ function Notifications() {
     <>
       <Sec first>
         <Card>
-          <Row icon="bell" t1={platform === "android" ? "Notifications" : "Show notifications"} t2={platform === "android" ? "For chats that are not on screen." : "When a message arrives in a chat that is not on screen."} right={<Switch on={n.enabled} onChange={(v) => void set({ enabled: v })} label="Show notifications" />} />
-          <Row icon="visibility" t1="Show message text" t2="Off: notifications only say who wrote." right={<Switch on={n.preview} onChange={(v) => void set({ preview: v })} label="Show message text" />} />
-          {platform === "desktop" ? <Row icon="bell" t1="Play a sound" right={<Switch on={n.sound} onChange={(v) => void set({ sound: v })} label="Play a sound" />} /> : null}
+          <ToggleRow icon="bell" t1={platform === "android" ? "Notifications" : "Show notifications"} t2={platform === "android" ? "For chats that are not on screen." : "When a message arrives in a chat that is not on screen."} on={n.enabled} onChange={(v) => void set({ enabled: v })} label="Show notifications" />
+          <ToggleRow icon="visibility" t1="Show message text" t2="Off: notifications only say who wrote." on={n.preview} onChange={(v) => void set({ preview: v })} label="Show message text" />
+          {platform === "desktop" ? <ToggleRow icon="bell" t1="Play a sound" on={n.sound} onChange={(v) => void set({ sound: v })} label="Play a sound" /> : null}
         </Card>
       </Sec>
       {platform === "android" && stay != null ? (
         <Sec title="Background">
           {push ? <>
             <Card>
-              <Row icon="bell" t1="Use UnifiedPush" t2="Receive a wake-up through your chosen distributor, then fetch messages from your hubs." right={<Switch on={push.enabled} onChange={(v) => { if (!busy) void setPush(v); }} label="Use UnifiedPush" />} />
+              <ToggleRow icon="bell" t1="Use UnifiedPush" t2="Receive a wake-up through your chosen distributor, then fetch messages from your hubs." on={push.enabled} onChange={(v) => { if (!busy) void setPush(v); }} label="Use UnifiedPush" />
               {push.distributors.length ? <Row t1="Distributor" right={<select aria-label="UnifiedPush distributor" disabled={busy} value={distributor} onChange={(e) => {
                 const next = e.target.value; setChosen(next); if (push.enabled) void setPush(true, next);
               }}>
@@ -461,7 +482,7 @@ function Notifications() {
           </> : null}
           {!push?.active ? <>
           <Card>
-            <Row icon="sync" t1="Stay connected" t2="Messages arrive instantly. Android requires a quiet ongoing notification (“Hubchat is connected”) while Hubchat waits for mail." right={<Switch on={stay} onChange={(v) => { if (!busy) void setStay(v); }} label="Stay connected" />} />
+            <ToggleRow icon="sync" t1="Stay connected" t2="Messages arrive instantly. Android requires a quiet ongoing notification (“Hubchat is connected”) while Hubchat waits for mail." on={stay} onChange={(v) => { if (!busy) void setStay(v); }} label="Stay connected" />
           </Card>
           <div className="pad"><NoteCard icon="info">{stay ? <><b>On:</b> instant messages, a little more battery.</> : <><b>Off:</b> Hubchat checks about every 15 minutes, so messages and receipts can arrive late. Your status shows offline in between.</>} This setting is used when UnifiedPush is off or still being set up.</NoteCard></div>
           {stay && !push?.active && (snap.state?.device_maker ?? "").toLowerCase() === "samsung" ? <SamsungHide /> : null}
@@ -501,7 +522,7 @@ function Privacy() {
   return (
     <Sec first>
       <Card>
-        <Row icon="done_all" t1="Send read receipts" t2="Off: people and agents see your messages as delivered, never read. You still see theirs." right={<Switch on={on} onChange={set} label="Send read receipts" />} />
+        <ToggleRow icon="done_all" t1="Send read receipts" t2="Off: people and agents see your messages as delivered, never read. You still see theirs." on={on} onChange={set} label="Send read receipts" />
         <Row icon="contacts" t1="Directory" t2="Everyone on your hubs finds you in their directory: your name, address and about line. Being on a hub means being listed." />
         <Row icon="person" t1="Online status" t2="The hub shows you as online while Hubchat is connected, to everyone on that hub. This can't be hidden." />
         <Row icon="privacy" t1="Who can message you" t2="Anyone on your hubs who has your address." />
@@ -585,7 +606,7 @@ function UpdateCheck() {
         <span className={"help" + (st.k === "error" || st.k === "failed" || step.k === "failed" ? " bad" : "")}>{text}</span>
       </div>
       <Card>
-        <Row icon="sync" t1="Check for updates automatically" t2="When Hubchat starts and every 6 hours. Updates never install on their own." right={<Switch on={auto} onChange={setAutoChecks} label="Check for updates automatically" />} />
+        <ToggleRow icon="sync" t1="Check for updates automatically" t2="When Hubchat starts and every 6 hours. Updates never install on their own." on={auto} onChange={setAutoChecks} label="Check for updates automatically" />
       </Card>
     </>
   );
@@ -612,9 +633,9 @@ function About() {
   );
 }
 
-export function SettingsSection({ tab, onLink, goTab, onOpenChat }: { tab: SetTab; onLink?: (tab?: LinkTab, input?: string) => void; goTab?: (t: SetTab) => void; onOpenChat?: (peer: string) => void }) {
+export function SettingsSection({ tab, onLink, goTab, onOpenChat, profileDraft, onProfileDraft }: { tab: SetTab; onLink?: (tab?: LinkTab, input?: string) => void; goTab?: (t: SetTab) => void; onOpenChat?: (peer: string) => void; profileDraft?: ProfileDraft | null; onProfileDraft?: (d: ProfileDraft | null) => void }) {
   switch (tab) {
-    case "profile": return <Profile />;
+    case "profile": return <Profile draft={profileDraft} onDraft={onProfileDraft} />;
     case "hubs": return <Hubs />;
     case "devices": return <Devices onLink={onLink} goTab={goTab} />;
     case "transfers": return <TransfersPanel onOpen={onOpenChat} />;
@@ -634,22 +655,37 @@ export function SettingsModal({ tab, setTab, onClose, onOpenChat }: { tab: SetTa
   const snap = useSnap();
   const hubBad = snap.state?.hubs.some((h) => h.state === "disconnected" || h.state === "refused");
   const dlg = useDialogFocus();
+  const [profileDraft, setProfileDraft] = useState<ProfileDraft | null>(null);
+  // the section list is a tab list, as Orgtree's SettingsTabs: the open section is announced as selected, one tab
+  // stop for the list, and arrows, Home and End move between sections (symmetry audit ux08 S4)
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const go = (to: number) => { setTab(TABS[to]![0]); tabRefs.current[to]?.focus(); };
   return (
     <div className="scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal settings" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabIndex={-1} ref={dlg.ref} onKeyDown={dlg.onKeyDown}>
         <nav className="set-nav">
           <h3 id="settings-title" aria-level={2}>Settings</h3>
-          {TABS.map(([k, label, ic]) => (
-            <button key={k} className={tab === k ? "on" : ""} onClick={() => setTab(k)}>
-              <Icon name={ic} />{label}
-              {k === "recovery" && !snap.state?.recovery_saved ? <span className="warnmark" title="Recovery words not saved" /> : null}
-              {k === "hubs" && hubBad ? <span className="warnmark" title="A hub is unreachable" /> : null}
-            </button>
-          ))}
+          <div role="tablist" aria-label="Settings sections" aria-orientation="vertical" className="set-tabs">
+            {TABS.map(([k, label, ic], i) => (
+              <button key={k} type="button" role="tab" id={"settab-" + k} aria-selected={tab === k} aria-controls={tab === k ? "set-panel" : undefined}
+                tabIndex={tab === k ? 0 : -1} className={tab === k ? "on" : ""} ref={(el) => { tabRefs.current[i] = el; }} onClick={() => setTab(k)}
+                onKeyDown={(e) => {
+                  if (e.altKey || e.ctrlKey || e.metaKey || e.nativeEvent.isComposing) return;
+                  if (e.key === "ArrowDown" || e.key === "ArrowRight") { e.preventDefault(); go((i + 1) % TABS.length); }
+                  else if (e.key === "ArrowUp" || e.key === "ArrowLeft") { e.preventDefault(); go((i - 1 + TABS.length) % TABS.length); }
+                  else if (e.key === "Home") { e.preventDefault(); go(0); }
+                  else if (e.key === "End") { e.preventDefault(); go(TABS.length - 1); }
+                }}>
+                <Icon name={ic} />{label}
+                {k === "recovery" && !snap.state?.recovery_saved ? <span className="warnmark" title="Recovery words not saved" /> : null}
+                {k === "hubs" && hubBad ? <span className="warnmark" title="A hub is unreachable" /> : null}
+              </button>
+            ))}
+          </div>
         </nav>
         <div className="set-main">
           <div className="modal-h"><h3>{TABS.find((t) => t[0] === tab)![1]}</h3><button className="icon-btn" onClick={onClose} title="Close (Esc)" aria-label="Close"><Icon name="close" /></button></div>
-          <div className="set-body scroll" key={tab}><SettingsSection tab={tab} goTab={setTab} onOpenChat={onOpenChat} /></div>
+          <div className="set-body scroll" key={tab} role="tabpanel" id="set-panel" aria-labelledby={"settab-" + tab}><SettingsSection tab={tab} goTab={setTab} onOpenChat={onOpenChat} profileDraft={profileDraft} onProfileDraft={setProfileDraft} /></div>
         </div>
       </div>
     </div>
