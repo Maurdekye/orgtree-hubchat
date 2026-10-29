@@ -167,6 +167,15 @@ pub fn forget(message_ids: &[String]) {
     }
 }
 
+/// The name a pasted file is saved under, from the page's `x-name` header.
+fn pasted_file_name(given: Option<&str>) -> String {
+    given
+        .and_then(|n| Path::new(n).file_name())
+        .map(|f| f.to_string_lossy().into_owned())
+        .filter(|n| !n.is_empty() && is_image(n))
+        .unwrap_or_else(|| "pasted.png".into())
+}
+
 /// A pasted image (raw bytes in the request body, its name in the
 /// `x-name` header) saved as a file the composer can attach. Returns the path.
 #[tauri::command]
@@ -175,13 +184,7 @@ pub fn hc_save_pasted(request: tauri::ipc::Request<'_>) -> R<String> {
     if data.is_empty() {
         return Err("the pasted image is empty".into());
     }
-    let name = request
-        .headers()
-        .get("x-name")
-        .and_then(|v| v.to_str().ok())
-        .map(|n| Path::new(n).file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default())
-        .filter(|n| !n.is_empty() && is_image(n))
-        .unwrap_or_else(|| "pasted.png".into());
+    let name = pasted_file_name(request.headers().get("x-name").and_then(|v| v.to_str().ok()));
     let dir = core::get()?.dir.join("pasted");
     std::fs::create_dir_all(&dir).map_err(s)?;
     let (stem, ext) = name.rsplit_once('.').unwrap_or((&name, "png"));
@@ -228,6 +231,39 @@ mod tests {
         assert_eq!(pasted_bytes(&json).as_deref(), Some(&[137u8, 80, 78, 71][..]));
         assert_eq!(pasted_bytes(&InvokeBody::Json(serde_json::json!([1, 256]))), None);
         assert_eq!(pasted_bytes(&InvokeBody::Json(serde_json::json!({"a": 1}))), None);
+    }
+
+    #[test]
+    fn a_pasted_file_keeps_its_own_name() {
+        assert_eq!(pasted_file_name(Some("report.pdf")), "report.pdf");
+        assert_eq!(pasted_file_name(Some("Q3 plan (final).xlsx")), "Q3 plan (final).xlsx");
+        assert_eq!(pasted_file_name(Some("noext")), "noext");
+        assert_eq!(pasted_file_name(Some("pasted-20261029-101010.png")), "pasted-20261029-101010.png");
+    }
+
+    #[test]
+    fn a_pasted_name_cannot_leave_the_folder_or_be_a_device() {
+        assert_eq!(pasted_file_name(Some("..\\..\\evil.exe")), "evil.exe");
+        assert_eq!(pasted_file_name(Some("../a/b.txt")), "b.txt");
+        assert_eq!(pasted_file_name(Some("a:b*c?.txt")), "a_b_c_.txt");
+        assert_eq!(pasted_file_name(Some("CON.txt")), "_CON.txt");
+        assert_eq!(pasted_file_name(Some("nul")), "_nul");
+        assert_eq!(pasted_file_name(Some("COM1")), "_COM1");
+        assert_eq!(pasted_file_name(Some("COM10.txt")), "COM10.txt");
+    }
+
+    #[test]
+    fn a_missing_or_empty_pasted_name_is_a_png() {
+        assert_eq!(pasted_file_name(None), "pasted.png");
+        assert_eq!(pasted_file_name(Some("")), "pasted.png");
+        assert_eq!(pasted_file_name(Some(" . ")), "pasted.png");
+        assert_eq!(pasted_file_name(Some("a/")), "pasted.png");
+    }
+
+    #[test]
+    fn a_long_pasted_name_is_cut() {
+        let long = format!("{}.pdf", "x".repeat(400));
+        assert!(pasted_file_name(Some(&long)).chars().count() <= 150);
     }
 
     #[test]
