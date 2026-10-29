@@ -141,7 +141,12 @@ const PRESENCE_WORD = { online: "Online", offline: "Offline", disconnected: "Sta
  *  for "on", Orgtree's lines for the same address (symmetry audit #2): presence
  *  and type, then the name, the hub's description and the address (when it has
  *  a name), then what a click does; for "off", the composer's sentence. */
-export interface MentionReach { state: "on" | "off" | "unknown"; contact: Contact | undefined; me: boolean; name: string; title: string }
+export interface MentionReach {
+  state: "on" | "off" | "unknown"; contact: Contact | undefined; me: boolean; name: string; title: string;
+  /** The roster's name a reachable mention shows in place of its address, as
+   *  Orgtree's contact chip does (symmetry audit #2); null keeps the address. */
+  shown: string | null;
+}
 export function mentionReach(address: string, snap: Snap = getSnap()): MentionReach {
   const me = snap.state?.me;
   const mine = !!me && me.address === address;
@@ -155,7 +160,7 @@ export function mentionReach(address: string, snap: Snap = getSnap()): MentionRe
   const title = state === "off" ? notOnYourHubs(name)
     : status ? [status, named ? name : null, mine ? null : contact?.blurb, named ? "@net:" + address : null, "Open chat"].filter(Boolean).join("\n")
     : "@net:" + address;
-  return { state, contact, me: mine, name, title };
+  return { state, contact, me: mine, name, title, shown: state === "on" && named ? name : null };
 }
 
 /** Resolve `@net:<addr>`, `@org:<slug>`, or `@<known-contact>` in message Markdown. */

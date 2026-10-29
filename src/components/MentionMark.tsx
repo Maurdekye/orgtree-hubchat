@@ -4,6 +4,11 @@
 // agent session its terminal icon; me my own avatar), anyone else a small grey
 // dot, a tooltip saying they aren't on my hubs, muted text and no chat to open.
 //
+// A reachable mention with a roster name shows that name in place of its
+// address, as Orgtree's contact chip does (symmetry audit #2): the address
+// stays the link's text out of sight (.mtok), so a copied selection gives the
+// mention as written, and CSS draws the name (.mname, data-name).
+//
 // MentionMark is the mark alone and reads the store itself, so it follows hub,
 // directory and picture changes wherever it sits. useMentionMarks places one
 // in each mention link of a message: that HTML is md()'s, sanitized and set
@@ -47,16 +52,19 @@ export function MentionMark({ address }: { address: string }) {
     : <MarkAvatar kind={kindOf(r.contact)} name={r.name} address={address} picture={r.contact?.picture} />;
 }
 
-/** The link around a mark: its tooltip, and "off" (muted, opens nothing) when
- *  none of my hubs lists the address. */
+/** The link around a mark: its tooltip; "off" (muted, opens nothing) when
+ *  none of my hubs lists the address; "named" when it shows the roster's name. */
 function MentionLink({ anchor, address }: { anchor: HTMLElement; address: string }) {
   const r = mentionReach(address, useSnap());
   useLayoutEffect(() => {
     anchor.title = r.title;
     anchor.classList.toggle("off", r.state === "off");
     if (r.state === "off") anchor.setAttribute("aria-disabled", "true"); else anchor.removeAttribute("aria-disabled");
-  }, [anchor, r.title, r.state]);
-  return <MentionMark address={address} />;
+    anchor.classList.toggle("named", !!r.shown);
+    const token = anchor.querySelector(":scope > .mtok")?.textContent ?? "";
+    if (r.shown) anchor.setAttribute("aria-label", r.shown + ", " + token); else anchor.removeAttribute("aria-label");
+  }, [anchor, r.title, r.state, r.shown]);
+  return <><MentionMark address={address} />{r.shown ? <span className="mname" data-name={r.shown} aria-hidden="true" /> : null}</>;
 }
 
 interface Host { host: HTMLElement; anchor: HTMLElement; address: string }
@@ -75,7 +83,11 @@ export function useMentionMarks(root: RefObject<HTMLElement | null>): ReactNode[
         host = document.createElement("span");
         host.className = "mmark-host";
         host.setAttribute("aria-hidden", "true");
-        anchor.prepend(host);
+        // the mention as written, kept as the link's text (and its copy)
+        const token = document.createElement("span");
+        token.className = "mtok";
+        token.append(...anchor.childNodes);
+        anchor.append(host, token);
       }
       return { host, anchor, address: anchor.dataset.slug || "" };
     });

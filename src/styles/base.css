@@ -386,3 +386,9 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .mmark.mdot { width: 6px; height: 6px; margin: 0 .35em 0 .1em; border-radius: 50%; background: var(--faint); }
 .bubble a.addr.mention.off { color: var(--dim); text-decoration: none; cursor: default; }
 .msg.out .bubble a.addr.mention.off { color: var(--out-dim); }
+/* A reachable mention with a roster name shows the name (Orgtree's chip,
+   symmetry audit #2); the address stays its text out of sight, so a copy gives
+   the mention as written. */
+.bubble a.addr.mention.named { position: relative; }
+.bubble a.addr.mention.named .mtok { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.mname::before { content: attr(data-name); }
