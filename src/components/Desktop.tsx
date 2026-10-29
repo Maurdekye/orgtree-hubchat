@@ -235,7 +235,7 @@ export function Desktop() {
             <button className="icon-btn" onClick={() => setOv({ k: "newchat", q: "" })} title="New chat (F3, Ctrl+N)" aria-label="New chat"><Icon name={TASK_ICONS.newchat} /></button>
             <button className="icon-btn" onClick={() => setOv({ k: "directory" })} title="Directory (F2): everyone on your hubs" aria-label="Directory"><Icon name={TASK_ICONS.directory} /></button>
             <button className="icon-btn" onClick={() => settings("profile")} title="Settings (F1, Ctrl+,)" aria-label="Settings"><Icon name={TASK_ICONS.settings} /></button>
-            <button className={"hubpill rail-hub " + hs.state} onClick={() => settings("hubs")} title={hs.text + " · Hub connections (F4)"} aria-label="Hub connections"><span className="dot" /></button>
+            <button className={"hubpill rail-hub " + hs.state} onClick={() => settings("hubs")} title={hs.text + " · Hub connections (F4)"} aria-label={hs.text + " · Hub connections"}><span className="dot" /></button>
             <div className="clist scroll rail-list">
               <RailRows rows={rows} selected={chat} onOpen={open} onInfo={contactInfo} onCloseDm={close} />
             </div>

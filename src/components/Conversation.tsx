@@ -515,7 +515,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
   return (
     <section className="conv" role="main" ref={conv} onKeyDown={keys}>
       <div className="conv-head">
-        <span className="conv-av" onClick={onContact}><PeerAvatar address={peer} c={c} hubs={hubs} size={40} /></span>
+        <span className="conv-av" onClick={onContact} title="Contact info"><PeerAvatar address={peer} c={c} hubs={hubs} size={40} /></span>
         <div className="who" onClick={onContact} title="Contact info">
           <div className="n1"><span className="name">{name}</span>{c ? <KindChip kind={kind} /> : null}</div>
           <div className="n2">
