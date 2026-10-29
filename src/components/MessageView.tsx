@@ -1,7 +1,7 @@
 // One message: question tag, reply quotes, file cards, markdown body with the
 // time and ticks, a question card's options, the failed line, and
 // (desktop) the hover actions.
-import { memo, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { memo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { api, type Attachment, type Message } from "../api";
 import { Icon, iconHTML } from "../lib/icons";
 import { isLong, num, time } from "../lib/format";
@@ -12,10 +12,12 @@ import { foldAt, replyIds } from "../lib/replies";
 import { cardOf, type AnswerNote, type CardState } from "../lib/questions";
 import { previewable } from "../lib/images";
 import { openMenu, selectionIn, type MenuEntry } from "../lib/ctxmenu";
+import { mentionReach } from "../lib/mentions";
 import { attachmentMenu } from "../lib/attachmentActions";
 import { useTransfer } from "../lib/store";
 import { toast } from "../lib/toast";
 import { AttImage } from "./AttImage";
+import { useMentionMarks } from "./MentionMark";
 import { pressKeys, usePlatform } from "./ui";
 
 function metaHTML(m: Message): string {
@@ -96,6 +98,16 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
   const [open, setOpen] = useState(false);
   const [allQuotes, setAllQuotes] = useState(false);
   const long = !!m.body && isLong(m.body);
+  const bubble = useRef<HTMLDivElement>(null);
+  const marks = useMentionMarks(bubble);
+
+  // a mention opens its chat; one that none of my hubs lists opens nothing
+  // (user 2026-10-29): its tooltip says why, and on Android a tap says it
+  const openMention = (slug: string) => {
+    const r = mentionReach(slug);
+    if (r.state !== "off") onOpenAddr(slug);
+    else if (platform === "android") toast(r.title);
+  };
 
   const delegate = (e: MouseEvent<HTMLDivElement>) => {
     const t = e.target as HTMLElement;
@@ -104,7 +116,7 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
     const link = t.closest("a.md-a") as HTMLElement | null;
     if (link) { e.preventDefault(); void openLink(link.dataset.href || ""); return; }
     const addr = t.closest("a.addr") as HTMLElement | null;
-    if (addr) { e.preventDefault(); onOpenAddr(addr.dataset.slug || ""); return; }
+    if (addr) { e.preventDefault(); openMention(addr.dataset.slug || ""); return; }
     // desktop: Ctrl+click adds the message to the selection (multi-reply)
     if ((e.ctrlKey || e.metaKey) && platform === "desktop" && !t.closest("button, [data-att], .quote") && onSelect) { e.preventDefault(); onSelect(m); }
   };
@@ -114,7 +126,7 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
     if (e.key !== "Enter" && e.key !== " ") return;
     const t = e.target as HTMLElement;
     if (t.matches("a.md-a")) { e.preventDefault(); void openLink(t.dataset.href || ""); }
-    else if (t.matches("a.addr")) { e.preventDefault(); onOpenAddr(t.dataset.slug || ""); }
+    else if (t.matches("a.addr")) { e.preventDefault(); openMention(t.dataset.slug || ""); }
   };
 
   // what this reply did to a question card it answers
@@ -219,7 +231,8 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
       items.push({ label: "Open link", icon: "open_in_new", run: () => void openLink(href) }, { label: "Copy link", icon: "link", run: () => void copyText(href, "Link copied") }, "sep");
     } else if (addr) {
       const slug = addr.dataset.slug || "";
-      items.push({ label: "Open chat", icon: "forum", run: () => onOpenAddr(slug) }, { label: "Copy address", icon: "copy", run: () => void copyText("@net:" + slug, "Address copied") }, "sep");
+      if (mentionReach(slug).state !== "off") items.push({ label: "Open chat", icon: "forum", run: () => onOpenAddr(slug) });
+      items.push({ label: "Copy address", icon: "copy", run: () => void copyText("@net:" + slug, "Address copied") }, "sep");
     } else if (att) {
       const a = m.attachments.find((x) => x.local_id === att.dataset.att);
       if (a) items.push(...attachmentMenu(m, a, platform), "sep");
@@ -237,12 +250,13 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
     <div className={"msg " + (m.outgoing ? "out" : "in") + (first ? " first" : "") + (selected ? " sel" : "") + (highlighted ? " hl" : "")} id={"m-" + m.id} data-id={m.id}>
       {platform === "android" ? <span className="swipe-ic"><Icon name="reply" /></span> : null}
       <div className="row">
-        <div className={"bubble" + (m.attachments.length && !m.body ? " only-att" : "") + (m.reply_to ? " has-quote" : "") + (qc ? " qcard" : "")} onClick={delegate} onKeyDown={keyOpen} onContextMenu={menu}>
+        <div ref={bubble} className={"bubble" + (m.attachments.length && !m.body ? " only-att" : "") + (m.reply_to ? " has-quote" : "") + (qc ? " qcard" : "")} onClick={delegate} onKeyDown={keyOpen} onContextMenu={menu}>
           <span className="sr">{(m.outgoing ? "You" : peerName) + (qc ? ", Question" : "") + ": "}</span>
           {qhead}
           {quote}
           {m.attachments.length ? <div className="atts">{m.attachments.map((a) => <AttCard key={a.local_id} a={a} m={m} />)}</div> : null}
           {body}
+          {marks}
           {qopts}
           {qfoot}
           {metaLast ? <div className="meta-line" dangerouslySetInnerHTML={{ __html: meta }} /> : null}

@@ -22,6 +22,10 @@ export function kindInfo(kind: Kind): KindInfo {
 /** contact.org_name || contact.username || the address. */
 export const displayName = (c: Contact | undefined, address: string) => (c && (c.org_name || c.username)) || address;
 
+/** Why nothing reaches an address: the composer says it in place of the box,
+ *  and an inline mention's tooltip says it (user 2026-10-29). */
+export const notOnYourHubs = (name: string) => name + " isn't on any of the mail hubs you're connected to.";
+
 /** Address with its tag dimmed: maya.<tag>e71f2b</tag>. */
 export function splitAddr(a: string): [string, string] {
   const i = a.lastIndexOf(".");

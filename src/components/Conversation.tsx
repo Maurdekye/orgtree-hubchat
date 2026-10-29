@@ -8,7 +8,7 @@ import { Icon } from "../lib/icons";
 import { useFileDrop } from "../lib/drop";
 import { bytes, dayLabel, dayStart, MAX_FILES } from "../lib/format";
 import { copyText, errText } from "../lib/native";
-import { displayName, hubByUrl, hubName, hubStatusText, kindInfo, kindOf, limitFor, msgTime, peerHubs, presence, preview, viaHub } from "../lib/peers";
+import { displayName, hubByUrl, hubName, hubStatusText, kindInfo, kindOf, limitFor, msgTime, notOnYourHubs, peerHubs, presence, preview, viaHub } from "../lib/peers";
 import { scanSetup } from "../lib/setup";
 import { refreshChats, useMessages, useSendRoute, useSnap, useTyping } from "../lib/store";
 import { replyIds } from "../lib/replies";
@@ -460,7 +460,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
 
   // no hub you're connected to lists this address: nothing can reach it
   // (an empty directory, say before any hub answered, blocks nothing)
-  const off = !c && snap.directory.length > 0 ? name + " isn't on any of the mail hubs you're connected to." : null;
+  const off = !c && snap.directory.length > 0 ? notOnYourHubs(name) : null;
   const comp = useRef<ComposerApi>(null);
   const conv = useRef<HTMLElement>(null);
   const dragging = useFileDrop(conv, platform === "desktop" && !off, (paths) => comp.current?.addFiles(paths));
