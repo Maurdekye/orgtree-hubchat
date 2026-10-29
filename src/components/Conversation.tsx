@@ -30,6 +30,8 @@ interface Props {
   onBack?: () => void;
   onInfo: (m: Message) => void;
   onOpenAddr: (address: string) => void;
+  /** Desktop: an address in a message offers that contact's Contact info. */
+  onContactInfo?: (address: string) => void;
   /** Contact info: desktop toggles the panel, Android opens the screen. */
   onContact?: () => void;
   /** Desktop: the info panel is open (its header button shows it). */
@@ -43,7 +45,7 @@ interface Props {
   showMessage?: { id: string } | null;
 }
 
-export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, infoOn, onMenu, onCloseDm, showMessage }: Props) {
+export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, onContact, infoOn, onMenu, onCloseDm, showMessage }: Props) {
   const platform = usePlatform();
   const snap = useSnap();
   const hubs = snap.state?.hubs || [];
@@ -392,7 +394,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContact, info
     const first = !prev || prev.outgoing !== m.outgoing || t - msgTime(prev) > GROUP_GAP || (!m.outgoing && m.kind === "question");
     rows.push(
       <MessageView key={m.id} m={m} first={first} peerName={name} peerKind={kind} quoted={quoted(m.reply_to)} quotes={quoteLists.get(m.id)} card={cards.get(m.id)} picks={pending.picks[m.id]} notes={notes.get(m.id)} hover={platform === "desktop"} selected={sel.includes(m.id)} highlighted={hl === m.id}
-        onReply={reply} onSelect={toggleSel} onPick={onPick} onInfo={info} onDelete={del} onJump={jump} onOpenAddr={onOpenAddr} />,
+        onReply={reply} onSelect={toggleSel} onPick={onPick} onInfo={info} onDelete={del} onJump={jump} onOpenAddr={onOpenAddr} onContactInfo={onContactInfo} />,
     );
     prev = m;
     if (setup?.reply_id === m.id) rows.push(setupNote(setup, platform));

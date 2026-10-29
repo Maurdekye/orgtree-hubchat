@@ -270,7 +270,7 @@ export function Desktop() {
           </div>
         </aside>
         )}
-        {chat ? <Conversation key={chat} peer={chat} showMessage={fileJump?.peer === chat ? fileJump : null} onInfo={onInfo} onOpenAddr={open} onContact={toggleContact} infoOn={!!info && (info.k === "contact" || info.peer === chat)} onCloseDm={() => close(chat)} /> : (
+        {chat ? <Conversation key={chat} peer={chat} showMessage={fileJump?.peer === chat ? fileJump : null} onInfo={onInfo} onOpenAddr={open} onContactInfo={contactInfo} onContact={toggleContact} infoOn={!!info && (info.k === "contact" || info.peer === chat)} onCloseDm={() => close(chat)} /> : (
           <section className="conv" role="main">
             <div className="conv-empty">
               <Logo size={64} />

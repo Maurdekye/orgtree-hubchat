@@ -8,6 +8,7 @@ import { fullWhen, isLong, num, time } from "../lib/format";
 import { esc, md } from "../lib/md";
 import { copyText, errText, openAttachment, openFile, openLink } from "../lib/native";
 import { attView, msgTime, preview, tickInfo, type Kind } from "../lib/peers";
+import { contactEntries } from "./ChatList";
 import { foldAt, replyIds } from "../lib/replies";
 import { cardOf, type AnswerNote, type CardState } from "../lib/questions";
 import { previewable } from "../lib/images";
@@ -74,6 +75,8 @@ export interface MsgHandlers {
   onDelete: (m: Message) => void;
   onJump: (id: string) => void;
   onOpenAddr: (address: string) => void;
+  /** Desktop: open that address's Contact info (its chat, with the panel). */
+  onContactInfo?: (address: string) => void;
 }
 
 interface Props extends MsgHandlers {
@@ -96,7 +99,7 @@ interface Props extends MsgHandlers {
   highlighted?: boolean;
 }
 
-export const MessageView = memo(function MessageView({ m, first, peerName, peerKind, quoted, quotes, card, picks, notes, hover, selected, highlighted, onReply, onSelect, onPick, onInfo, onDelete, onJump, onOpenAddr }: Props) {
+export const MessageView = memo(function MessageView({ m, first, peerName, peerKind, quoted, quotes, card, picks, notes, hover, selected, highlighted, onReply, onSelect, onPick, onInfo, onDelete, onJump, onOpenAddr, onContactInfo }: Props) {
   const platform = usePlatform();
   const [open, setOpen] = useState(false);
   const [allQuotes, setAllQuotes] = useState(false);
@@ -234,8 +237,10 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
       items.push({ label: "Open link", icon: "open_in_new", run: () => void openLink(href) }, { label: "Copy link", icon: "link", run: () => void copyText(href, "Link copied") }, "sep");
     } else if (addr) {
       const slug = addr.dataset.slug || "";
-      if (mentionReach(slug).state !== "off") items.push({ label: "Open chat", icon: "forum", run: () => onOpenAddr(slug) });
-      items.push({ label: "Copy address", icon: "copy", run: () => void copyText("@net:" + slug, "Address copied") }, "sep");
+      // the contact block (Open chat, Contact info, Copy address); an address no hub of mine lists has no chat to open, so
+      // it keeps only Copy address (inline mentions, user 2026-10-29), and Contact info would open that same chat
+      const block = contactEntries(slug, onOpenAddr, onContactInfo, "Open chat");
+      items.push(...(mentionReach(slug).state !== "off" ? block : block.filter((x) => x !== "sep" && x.label === "Copy address")), "sep");
     } else if (att) {
       const a = m.attachments.find((x) => x.local_id === att.dataset.att);
       if (a) items.push(...attachmentMenu(m, a, platform), "sep");

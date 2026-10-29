@@ -5,7 +5,7 @@ import { Icon, Logo } from "../lib/icons";
 import { shortWhen } from "../lib/format";
 import { displayName, isAgent, kindOf, msgTime, preview } from "../lib/peers";
 import { useSnap, useTypingPeers } from "../lib/store";
-import { openMenu } from "../lib/ctxmenu";
+import { openMenu, type MenuEntry } from "../lib/ctxmenu";
 import { copyText } from "../lib/native";
 import { Addr, KindGlyph, PeerAvatar, Tick, pressKeys, usePlatform } from "./ui";
 
@@ -29,14 +29,22 @@ export function useFilteredChats(filter: ChatFilter, q: string, open: string | n
   return { rows, counts, total: snap.chats.length };
 }
 
+/** The contact block of every desktop menu on a contact: open its chat, its Contact info, copy its address. The chat
+ *  list, the Directory, New chat and an address in a message all offer this one block (symmetry audit ux02 S4). */
+export function contactEntries(peer: string, onOpen: (peer: string) => void, onInfo?: (peer: string) => void, open = "Open"): MenuEntry[] {
+  return [
+    { label: open, icon: "forum", run: () => onOpen(peer) },
+    ...(onInfo ? [{ label: "Contact info", icon: "info" as const, run: () => onInfo(peer) }] : []),
+    { label: "Copy address", icon: "copy", run: () => void copyText("@net:" + peer, "Address copied") },
+  ];
+}
+
 /** Desktop right-click on a chat (user 2026-10-09 05:54Z): what the chat's
  *  header and Android's chat menu offer. */
 export function chatMenu(e: ReactMouseEvent, peer: string, onOpen: (peer: string) => void, onInfo?: (peer: string) => void, open = "Open", onCloseDm?: (peer: string) => void) {
   e.preventDefault();
   openMenu(e.clientX, e.clientY, [
-    { label: open, icon: "forum", run: () => onOpen(peer) },
-    ...(onInfo ? [{ label: "Contact info", icon: "info" as const, run: () => onInfo(peer) }] : []),
-    { label: "Copy address", icon: "copy", run: () => void copyText("@net:" + peer, "Address copied") },
+    ...contactEntries(peer, onOpen, onInfo, open),
     ...(onCloseDm ? [{ label: "Close DM", icon: "close" as const, run: () => onCloseDm(peer) }] : []),
   ]);
 }
