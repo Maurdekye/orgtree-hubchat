@@ -45,6 +45,27 @@
   coordinator; verified: local_orgtree.rs, commands.rs, localOrgtree.ts,
   ContactInfo.tsx; docs/orgtree-org-link.md]
 
+- 2026-10-29: Symmetry S4 (USER via the Orgtree coordinator: "symmetry wins unless my
+  ruling overrides it", and every conflict with a ruling is reported, none was
+  found): a contact is one row and one menu everywhere (`ContactRow` in
+  Directory.tsx, used by New chat too; `contactEntries` = Open/Message, Contact
+  info, Copy address, also for an address in a message); a finished transfer reads
+  "Sent to / Received from <name>" with the name opening the chat; transfer history
+  loads its next page when `.xhistory-end` is within 240 px (`Load more` stays) and
+  Retry repeats only the failed request; Contact info Files says Loading / why a
+  read failed with Retry / "No files yet" only after a read that answered
+  (`useMessages` reports `error`); the desktop Settings section list is a tab list
+  (aria-selected, roving tabindex, arrows/Home/End) and holds an unsaved Profile
+  edit across sections until Save or close; boolean rows are `ToggleRow` (label
+  toggles the switch, says on/off; the hub enable switch keeps its own row);
+  desktop Settings > General > Enter key (localStorage `hubchat.enter-key`: Enter
+  sends, or Ctrl/Command+Enter sends and Enter makes a new line; Android keeps
+  Send); any pasted clipboard file is staged under its own name (text on the
+  clipboard still wins, over `MAX_PASTED_BYTES` 64 MiB is refused) and
+  `hc_save_pasted` keeps a safe own name. [decided: user 2026-10-29 via the
+  coordinator; verified: tools/proof-symmetry-s4-*.mjs, cargo test -p hubchat
+  --lib media; docs/symmetry-s4.md]
+
 - 2026-10-25: Desktop/Android/lost-key recovery share Onboarding's local file
   input. Parse at most 64 KiB of the saved numbered export or plain 24 words;
   selecting fills the existing input, and Continue still calls restoreWords.
