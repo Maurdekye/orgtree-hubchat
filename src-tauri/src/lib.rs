@@ -14,6 +14,8 @@ mod crash;
 mod diagnostics;
 mod keylog;
 mod link;
+#[cfg(windows)]
+mod local_orgtree;
 mod media;
 mod secrets;
 mod trace;
