@@ -19,12 +19,13 @@ function overall(list: Active[]) {
 
 function XRow({ t, onOpen, android }: { t: Active; onOpen: (peer: string) => void; android?: boolean }) {
   const snap = useSnap();
-  const who = t.peer ? displayName(snap.byAddr.get(t.peer), t.peer) : "…";
+  const peer = t.peer;
+  const who = peer ? displayName(snap.byAddr.get(peer), peer) : "…";
   const cancel = () => cancelTransfer(t.local_id).catch((e) => toast(errText(e)));
   const finishing = ["publishing", "exporting"].includes(t.state) || (!t.upload && t.state === "running" && t.done === t.total);
   const label = finishing ? "Finishing..." : ["queued", "pending"].includes(t.state) ? "Waiting" : t.state === "paused" ? "Paused" : pct(t.done, t.total) + "%";
   return (
-    <div className={"xrow " + (t.upload ? "up" : "down")} onClick={() => t.peer && onOpen(t.peer)} role="button">
+    <div className={"xrow " + (t.upload ? "up" : "down")} onClick={() => peer && onOpen(peer)} role="button" tabIndex={peer ? 0 : undefined} onKeyDown={peer ? pressKeys(() => onOpen(peer)) : undefined}>
       <span className="xic"><Icon name={t.upload ? "upload" : "download"} /></span>
       <div className="t">
         <b>{t.name || "File"}</b>
