@@ -517,7 +517,15 @@ function Appearance() {
   if (platform === "android") {
     return (
       <Sec title="Theme">
-        {opts.map(([v, l, , d]) => <div key={v} className="li" onClick={() => setThemePref(v)} role="radio" aria-checked={pref === v}><span className={"radio" + (pref === v ? " on" : "")} /><div className="t"><div className="t1">{l}</div>{d ? <div className="t2">{d}</div> : null}</div></div>)}
+        <div role="radiogroup" aria-label="Theme">
+          {opts.map(([v, l, , d]) => (
+            <label key={v} className="li">
+              <input type="radio" name="theme" className="sr" value={v} checked={pref === v} onChange={() => setThemePref(v)} />
+              <span className={"radio" + (pref === v ? " on" : "")} aria-hidden="true" />
+              <div className="t"><div className="t1">{l}</div>{d ? <div className="t2">{d}</div> : null}</div>
+            </label>
+          ))}
+        </div>
       </Sec>
     );
   }
@@ -661,7 +669,7 @@ export function SettingsList({ onOpen, onBack }: { onOpen: (t: SetTab) => void; 
     <div className="scr">
       <div className="appbar flat"><button className="icon-btn" onClick={onBack} aria-label="Back"><Icon name="back" /></button><div className="title">Settings</div></div>
       <div className="scr-body">
-        <div className="profile-card" onClick={() => onOpen("profile")} role="button">
+        <div className="profile-card" onClick={() => onOpen("profile")} role="button" tabIndex={0} onKeyDown={pressKeys(() => onOpen("profile"))}>
           <Avatar kind="me" name={me.name || me.id} size={56} />
           <div className="t"><div className="n">{me.name || me.id}</div><div className="a"><Addr a={me.address} net /></div></div>
           <button className="icon-btn" onClick={(e) => { e.stopPropagation(); void copyText("@net:" + me.address, "Address copied"); }} aria-label="Copy address"><Icon name="copy" /></button>

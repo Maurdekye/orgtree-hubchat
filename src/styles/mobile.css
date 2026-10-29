@@ -137,6 +137,9 @@
 .radio { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--faint); flex: none; position: relative; }
 .radio.on { border-color: var(--accent); }
 .radio.on::after { content: ""; position: absolute; inset: 4px; border-radius: 50%; background: var(--accent); }
+/* the theme rows are labels around a hidden native radio: the row shows the keyboard focus */
+.li:has(> input.sr:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px; }
+.profile-card:focus-visible { border-radius: 18px; }
 .field { padding: 0 20px; }
 .input { height: 52px; border-radius: 12px; font-size: 16px; }
 .btn { height: 44px; border-radius: 22px; font-size: 14.5px; padding: 0 20px; }
