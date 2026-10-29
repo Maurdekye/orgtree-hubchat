@@ -41,6 +41,9 @@ export function chatMenu(e: ReactMouseEvent, peer: string, onOpen: (peer: string
   ]);
 }
 
+/** What a chat's unread badge says to a screen reader and on hover; the rail's button says it too. */
+const unreadLabel = (n: number) => n + " unread";
+
 export function ChatRows({ rows, selected, onOpen, onInfo, onCloseDm }: { rows: ReturnType<typeof useFilteredChats>["rows"]; selected: string | null; onOpen: (peer: string) => void; onInfo?: (peer: string) => void; onCloseDm?: (peer: string) => void }) {
   const snap = useSnap();
   const platform = usePlatform();
@@ -50,6 +53,7 @@ export function ChatRows({ rows, selected, onOpen, onInfo, onCloseDm }: { rows: 
     <>
       {rows.map((c) => {
         const ct = snap.byAddr.get(c.peer);
+        const name = displayName(ct, c.peer);
         const m = c.last;
         const draft = c.peer !== selected ? snap.drafts[c.peer] : "";
         let prev;
@@ -64,8 +68,8 @@ export function ChatRows({ rows, selected, onOpen, onInfo, onCloseDm }: { rows: 
             onKeyDown={pressKeys(() => onOpen(c.peer))}>
             <PeerAvatar address={c.peer} c={ct} hubs={hubs} size={platform === "android" ? 52 : 44} />
             <div className="crow-main">
-              <div className="crow-l1"><span className="crow-name">{displayName(ct, c.peer)}</span><KindGlyph kind={kindOf(ct)} /><span className="crow-time">{m ? shortWhen(msgTime(m)) : ""}</span></div>
-              <div className="crow-l2"><span className="crow-prev">{prev}</span>{c.unread ? <span className="badge">{c.unread}</span> : null}</div>
+              <div className="crow-l1"><span className="crow-name" title={name}>{name}</span><KindGlyph kind={kindOf(ct)} /><span className="crow-time">{m ? shortWhen(msgTime(m)) : ""}</span></div>
+              <div className="crow-l2"><span className="crow-prev">{prev}</span>{c.unread ? <span className="badge" title={unreadLabel(c.unread)} role="img" aria-label={unreadLabel(c.unread)}>{c.unread}</span> : null}</div>
             </div>
           </div>
         );
@@ -86,7 +90,7 @@ export function RailRows({ rows, selected, onOpen, onInfo, onCloseDm }: { rows: 
         const name = displayName(ct, c.peer);
         return (
           <button key={c.peer} className={"rrow" + (selected === c.peer ? " sel" : "") + (c.unread ? " unread" : "")} onClick={() => onOpen(c.peer)}
-            title={name} aria-label={name + (c.unread ? ", " + c.unread + " unread" : "")}
+            title={name} aria-label={name + (c.unread ? ", " + unreadLabel(c.unread) : "")}
             onContextMenu={(e) => chatMenu(e, c.peer, onOpen, onInfo, "Open", onCloseDm)}>
             <PeerAvatar address={c.peer} c={ct} hubs={hubs} size={40} />
             {c.unread ? <span className="badge">{c.unread}</span> : null}
