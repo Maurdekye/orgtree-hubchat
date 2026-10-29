@@ -995,6 +995,40 @@ pub fn hc_open_app(what: String) -> R<bool> {
     Ok(core::get()?.platform().open_app(&what))
 }
 
+/// The orgs the Orgtree install on this PC hosts (local_orgtree.rs):
+/// Contact info shows their "Orgtree org" badge as a link. Windows only;
+/// elsewhere, and without a registered Orgtree, none.
+#[tauri::command]
+pub fn hc_local_orgtree_orgs(app: tauri::AppHandle) -> R<serde_json::Value> {
+    #[cfg(windows)]
+    let orgs = {
+        use tauri::Manager;
+        app.path().data_dir().map(|roaming| crate::local_orgtree::local_orgs(&roaming)).unwrap_or_default()
+    };
+    #[cfg(not(windows))]
+    let orgs: Vec<serde_json::Value> = {
+        let _ = app;
+        Vec::new()
+    };
+    serde_json::to_value(orgs).map_err(s)
+}
+
+/// Start (or bring forward) the registered Orgtree on one of those orgs.
+#[tauri::command]
+pub fn hc_open_orgtree_org(app: tauri::AppHandle, slug: String) -> R<()> {
+    #[cfg(windows)]
+    {
+        use tauri::Manager;
+        let roaming = app.path().data_dir().map_err(|_| "Orgtree isn't on this PC".to_string())?;
+        crate::local_orgtree::open(&roaming, &slug)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, slug);
+        Err("Orgtree isn't on this device".into())
+    }
+}
+
 /// Whether this device's traffic goes through a VPN now (Android); None
 /// where it can't be told.
 #[tauri::command]
