@@ -2,14 +2,22 @@
 // options picked on question cards, attachments (up to 10, picked or dropped
 // on the chat) and a size check against the hub's limit before anything is
 // sent.
-import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
+import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
 import { api, newId, type Contact, type HubStatus, type Message, type NewAttachment, type NewOutgoing } from "../api";
 import { Icon } from "../lib/icons";
 import { bytes, fileTitle, isLong, MAX_FILES, num, utf8Len } from "../lib/format";
 import { isImage, isPastedImage, MAX_PASTED_BYTES, pastedFiles, pastedName, thumbable, useFilePreview } from "../lib/images";
 import { errText, pickFiles } from "../lib/native";
 import { displayName, kindOf, limitFor, msgTime, preview } from "../lib/peers";
-import { activeMentionToken, completeMentionText, filterMentionContacts, mentionContacts } from "../lib/mentions";
+import {
+  activeMentionToken,
+  completeMentionText,
+  extractMentionRecency,
+  filterMentionContacts,
+  mentionContacts,
+  MENU_STEP,
+  useAccountMentions,
+} from "../lib/mentions";
 import { foldAt } from "../lib/replies";
 import { cardOf, type CardKnown } from "../lib/questions";
 import { noteDraft, usePreparation, getPreparation, prepareSend, clearPreparation, getSnap, useSnap } from "../lib/store";
@@ -21,6 +29,8 @@ interface Props {
   peer: string;
   c: Contact | undefined;
   hubs: HubStatus[];
+  /** Messages currently loaded in the open conversation, oldest first. */
+  msgs?: readonly Message[];
   /** What the message replies to, oldest first. */
   replies: Message[];
   /** Options picked on open question cards. */
@@ -74,13 +84,22 @@ function AttThumb({ a, onRemove, disabled }: { a: NewAttachment; onRemove: () =>
   );
 }
 
-export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRemoveReply, onUnpick, onCancelReply, onSent, ref, off }: Props) {
+export function Composer({ peer, c, hubs, msgs, replies, picked, cardState, pos, onRemoveReply, onUnpick, onCancelReply, onSent, ref, off }: Props) {
   const platform = usePlatform();
   const enter = useEnterKey();
   const snap = useSnap();
   const [text, setText] = useState("");
   const [caret, setCaret] = useState(0);
-  const [mentionIdx, setMentionIdx] = useState(0);
+  const [selection, setSelection] = useState<{ key: string | null; index: number; pick: string | null }>({
+    key: null,
+    index: -1,
+    pick: null,
+  });
+  const [shownState, setShownState] = useState<{ key: string | null; count: number }>({
+    key: null,
+    count: MENU_STEP,
+  });
+  const [below, setBelow] = useState(false);
   const [dismissedAt, setDismissedAt] = useState<string | null>(null);
   const [atts, setAtts] = useState<NewAttachment[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -88,6 +107,7 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
   const preparation = usePreparation(peer);
   const sending = preparation?.phase === "preparing";
   const ta = useRef<HTMLTextAreaElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const saveT = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textRef = useRef(text);
   textRef.current = text;
@@ -125,7 +145,7 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
   // load this chat's draft; flush the previous chat's on switch
   useEffect(() => {
     let live = true;
-    setText(""); setCaret(0); setMentionIdx(0); setDismissedAt(null); setAtts([]); setErr(null);
+    setText(""); setCaret(0); setSelection({ key: null, index: -1, pick: null }); setShownState({ key: null, count: MENU_STEP }); setDismissedAt(null); setAtts([]); setErr(null);
     const saved = getPreparation(peer);
     const refreshed = retainedRefresh;
     if (refreshed) {
@@ -150,7 +170,7 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
   useEffect(() => {
     if (preparation?.phase !== "queued") return;
     setText(preparation.retainedDraft?.body ?? "");
-    setCaret(0); setMentionIdx(0); setDismissedAt(null);
+    setCaret(0); setSelection({ key: null, index: -1, pick: null }); setShownState({ key: null, count: MENU_STEP }); setDismissedAt(null);
     setAtts(preparation.retainedDraft?.attachments ?? []); setErr(null);
     clearPreparation(peer);
     onSent(preparation.message);
@@ -179,12 +199,98 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
   };
   const mentionTok = sending ? null : activeMentionToken(text, caret);
   const mentionKey = mentionTok ? `${mentionTok.start}:${mentionTok.query}` : null;
-  useEffect(() => { setMentionIdx(0); }, [mentionKey]);
-  const mentionItems = mentionTok && dismissedAt !== mentionKey
-    ? filterMentionContacts(mentionContacts(snap), hubs, snap.chats, mentionTok.query)
-    : [];
+  const canShowMention = !sending && mentionTok !== null && dismissedAt !== mentionKey;
+  const contacts = useMemo(
+    () => mentionContacts(snap),
+    [snap.directory, snap.chats, snap.byAddr, snap.state?.me?.address],
+  );
+  const recencySessionRef = useRef<{
+    start: number;
+    msgs: readonly Message[] | undefined;
+    contacts: Contact[];
+    recency: ReadonlyMap<string, number>;
+  } | null>(null);
+  if (!canShowMention || !mentionTok) {
+    recencySessionRef.current = null;
+  } else if (
+    recencySessionRef.current === null ||
+    recencySessionRef.current.start !== mentionTok.start ||
+    recencySessionRef.current.msgs !== msgs ||
+    recencySessionRef.current.contacts !== contacts
+  ) {
+    recencySessionRef.current = {
+      start: mentionTok.start,
+      msgs,
+      contacts,
+      recency: extractMentionRecency(msgs ?? [], contacts, snap),
+    };
+  }
+  const activeRecency = recencySessionRef.current?.recency;
+  const mentioned = useAccountMentions(canShowMention, snap.chats, contacts, peer, msgs, snap.state?.me?.address);
+  const rankedMentions = useMemo(
+    () =>
+      canShowMention && mentionTok
+        ? filterMentionContacts(contacts, hubs, snap.chats, mentionTok.query, activeRecency, mentioned)
+        : [],
+    [canShowMention, mentionTok, contacts, hubs, snap.chats, activeRecency, mentioned],
+  );
+  const shown = mentionKey && shownState.key === mentionKey ? shownState.count : MENU_STEP;
+  // Drawn bottom-up (the best match last, next to the box), oldest first.
+  const mentionItems = useMemo(() => rankedMentions.slice(0, shown).reverse(), [rankedMentions, shown]);
   const mentionOpen = mentionItems.length > 0;
-  const activeMentionIdx = mentionOpen ? Math.min(mentionIdx, mentionItems.length - 1) : 0;
+  const extendMentions = () => {
+    if (!mentionKey || rankedMentions.length <= shown) return;
+    setShownState({ key: mentionKey, count: shown + MENU_STEP });
+  };
+  const activeMentionIdx = useMemo(() => {
+    if (mentionItems.length === 0) return 0;
+    if (selection.key !== mentionKey) return mentionItems.length - 1;
+    if (selection.pick) {
+      const found = mentionItems.findIndex((item) => item.address === selection.pick);
+      if (found >= 0) return found;
+    }
+    if (selection.index >= 0 && selection.index < mentionItems.length) {
+      return selection.index;
+    }
+    return mentionItems.length - 1;
+  }, [mentionItems, mentionKey, selection]);
+
+  useLayoutEffect(() => {
+    if (!mentionOpen) {
+      setBelow(false);
+      return;
+    }
+    const el = ta.current;
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      const viewHeight = (el.ownerDocument?.defaultView ?? window).innerHeight;
+      if (!viewHeight || (r.top === 0 && r.bottom === 0 && r.height === 0)) {
+        setBelow(false);
+        return;
+      }
+      const aboveRoom = r.top;
+      const belowRoom = viewHeight - r.bottom;
+      setBelow(aboveRoom < 224 && belowRoom > aboveRoom);
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [mentionOpen, text]);
+
+  useLayoutEffect(() => {
+    if (!mentionOpen || !listRef.current) return;
+    const listEl = listRef.current;
+    if (selection.key !== mentionKey && !below) {
+      listEl.scrollTop = listEl.scrollHeight;
+    }
+    const active = listEl.querySelector(".mention-item.active") as HTMLElement | null;
+    active?.scrollIntoView?.({ block: "nearest" });
+  }, [mentionOpen, mentionKey, selection, below]);
 
   const pickMention = (contact: Contact) => {
     if (!mentionTok || sending) return;
@@ -277,6 +383,39 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
   const one = replies.length === 1 ? replies[0] : null;
   const who = one ? (one.outgoing ? "yourself" : displayName(c, peer)) : "";
   const fold = foldAt(replies.length), folded = !allReplies && fold < replies.length;
+  const mentionList = mentionOpen ? (
+    <div
+      ref={listRef}
+      className={"mention-list" + (below ? " below" : "")}
+      role="listbox"
+      aria-label="Mention a contact"
+      onScroll={(e) => {
+        if (e.currentTarget.scrollTop <= 40) extendMentions();
+      }}
+    >
+      {mentionItems.map((item, idx) => {
+        const itemName = displayName(item, item.address);
+        const active = idx === activeMentionIdx;
+        return (
+          <button
+            key={item.address}
+            type="button"
+            role="option"
+            aria-selected={active}
+            data-mention-address={item.address}
+            className={"mention-item" + (active ? " active" : "")}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => pickMention(item)}
+          >
+            <PeerAvatar c={item} address={item.address} hubs={hubs} size={24} />
+            <span className="mention-name ell">{itemName}</span>
+            <KindGlyph kind={kindOf(item)} />
+            <span className="mention-addr mono ell">{"@net:" + item.address}</span>
+          </button>
+        );
+      })}
+    </div>
+  ) : null;
   const top = (
     <>
       {one ? (
@@ -324,31 +463,7 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
         <span className="spin" /><span><b>Preparing files...</b> {bytes(preparation.done)} / {bytes(preparation.total)}<br /><small>{preparation.name}. Your message will queue when its files are ready.</small></span>
       </div> : sending ? <div className="comp-preparing" role="status">Queuing message...</div> : null}
       {err || preparation?.error ? <div className="comp-err" role="alert"><Icon name="error" />{err || preparation?.error}</div> : null}
-      {mentionOpen ? (
-        <div className="mention-list" role="listbox" aria-label="Mention a contact">
-          {mentionItems.map((item, idx) => {
-            const itemName = displayName(item, item.address);
-            const active = idx === activeMentionIdx;
-            return (
-              <button
-                key={item.address}
-                type="button"
-                role="option"
-                aria-selected={active}
-                data-mention-address={item.address}
-                className={"mention-item" + (active ? " active" : "")}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => pickMention(item)}
-              >
-                <PeerAvatar c={item} address={item.address} hubs={hubs} size={24} />
-                <span className="mention-name ell">{itemName}</span>
-                <KindGlyph kind={kindOf(item)} />
-                <span className="mention-addr mono ell">{"@net:" + item.address}</span>
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
+      {!below ? mentionList : null}
     </>
   );
   const meta = over
@@ -374,13 +489,26 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
           onPaste={(e) => { const pasted = pastedFiles(e.clipboardData); if (pasted.length) { e.preventDefault(); void paste(pasted); } }}
           onKeyDown={(e) => {
             if (mentionOpen && !e.nativeEvent.isComposing) {
-              if (e.key === "ArrowDown") { e.preventDefault(); e.stopPropagation(); setMentionIdx((i) => (i + 1) % mentionItems.length); return; }
-              if (e.key === "ArrowUp") { e.preventDefault(); e.stopPropagation(); setMentionIdx((i) => (i - 1 + mentionItems.length) % mentionItems.length); return; }
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                e.stopPropagation();
+                const step = (e.key === "ArrowDown") === !below ? 1 : -1;
+                const next = (activeMentionIdx + step + mentionItems.length) % mentionItems.length;
+                setSelection({ key: mentionKey, index: next, pick: mentionItems[next]?.address ?? null });
+                if (next <= 2) extendMentions();
+                return;
+              }
               if ((e.key === "Tab" && !e.shiftKey) || (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey)) {
                 const chosen = mentionItems[activeMentionIdx];
                 if (chosen) { e.preventDefault(); e.stopPropagation(); pickMention(chosen); return; }
               }
-              if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); if (mentionKey) setDismissedAt(mentionKey); return; }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                setSelection({ key: null, index: -1, pick: null });
+                if (mentionKey) setDismissedAt(mentionKey);
+                return;
+              }
             }
             if (platform === "desktop" && sendsOnEnter(enter, { key: e.key, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, isComposing: e.nativeEvent.isComposing })) { e.preventDefault(); void send(); }
             // Escape cancels the reply as its × does; an IME composition or an
@@ -397,6 +525,6 @@ export function Composer({ peer, c, hubs, replies, picked, cardState, pos, onRem
     const note = <div className="comp-off" role="status"><Icon name="cloud_off" /><span>{off}</span></div>;
     return platform === "android" ? <div className="composer">{note}</div> : <div className="composer"><div className="composer-in">{note}</div></div>;
   }
-  if (platform === "android") return <div className="composer">{top}{row}<div className="comp-meta">{meta}</div></div>;
-  return <div className="composer"><div className="composer-in">{top}{row}<div className="comp-meta">{meta}</div></div></div>;
+  if (platform === "android") return <div className="composer">{top}{row}{below ? mentionList : null}<div className="comp-meta">{meta}</div></div>;
+  return <div className="composer"><div className="composer-in">{top}{row}{below ? mentionList : null}<div className="comp-meta">{meta}</div></div></div>;
 }

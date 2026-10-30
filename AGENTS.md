@@ -130,18 +130,30 @@
   [decided: user 2026-10-18; verified: MessageInfo.tsx, desktop.css, mobile.css;
   focused fixture: tools/proof-message-info.mjs]
 
-- 2026-10-18: Typing `@` in the composer (`Composer.tsx`, desktop and Android)
-  opens a completion hint list of known Hubchat contacts (`mentionContacts` in
-  `src/lib/mentions.ts`: directory + active chats, excluding self and
-  link-waiting placeholders). `Tab`/`Enter` or click (desktop) and tap
-  (Android) complete the active `@` token as `@net:<address> ` so older clients
-  and Orgtree read it as plain text; `Escape` dismisses the hint list before
-  cancelling an active reply. In message Markdown (`src/lib/md.ts`),
-  `@net:<address>`, `@org:<slug>`, and `@<known-contact>` mentions render as
-  clickable `a.addr.mention` links (`data-slug`) that open the chat via
-  `onOpenAddr` (since 2026-10-29 only when a hub of mine lists the address:
-  see that entry). [decided: user 2026-10-17; verified: `src/lib/mentions.ts`,
-  `src/lib/md.ts`, `src/components/Composer.tsx`,
+- 2026-10-30: Typing `@` in the composer (`Composer.tsx`, desktop and Android)
+  opens a bottom-up completion hint list of known Hubchat contacts
+  (`mentionContacts` and `filterMentionContacts` in `src/lib/mentions.ts`:
+  directory + active chats, excluding self and link-waiting placeholders),
+  mirroring Orgtree's mentions menu: Bucket 1 is contacts mentioned in the open
+  chat (newest first, ignoring Markdown code spans/fences); Bucket 2 is the
+  rest ordered by `max(lastChatted, lastMentionedByThisAccount)` descending
+  (scanning and caching up to `MENTION_SCAN_LIMIT = 200` outgoing messages per
+  chat without calling `api.chat` per keystroke), then lowercased display name,
+  kind and address ascending (word-substring filtering on `/[-_./\s]+/` narrows
+  without reordering; exact/prefix score and online-presence sort keys are
+  dropped). The menu renders up to `MENU_STEP = 60` rows bottom-up via
+  `.reverse()` (expanding by `+60` on scroll/step near the top) with the initial
+  highlight on the bottom row (`mentionItems.length - 1`, rank #1) and `ArrowUp`
+  moving away from the input (`ArrowDown` toward it, flipping when `.below`).
+  `Tab`/`Enter` or click (desktop) and tap (Android) complete the active `@`
+  token as `@net:<address> ` so older clients and Orgtree read it as plain text;
+  `Escape` dismisses the hint list before cancelling an active reply. In message
+  Markdown (`src/lib/md.ts`), `@net:<address>`, `@org:<slug>`, and
+  `@<known-contact>` mentions render as clickable `a.addr.mention` links
+  (`data-slug`) that open the chat via `onOpenAddr` (since 2026-10-29 only when
+  a hub of mine lists the address: see that entry). [decided: user 2026-10-17,
+  2026-10-30 via the Orgtree coordinator; verified: `src/lib/mentions.ts`,
+  `src/lib/md.ts`, `src/components/Composer.tsx`, `src/components/Conversation.tsx`,
   `tools/proof-mentions-renderer.mjs`]
 
 - 2026-10-18: Transfers stays accessible when idle and reads bounded finished
