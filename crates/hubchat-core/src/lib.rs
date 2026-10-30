@@ -11,6 +11,7 @@ pub mod hub;
 pub mod hub_v2;
 pub mod identity;
 pub mod link;
+pub mod media;
 pub mod recovery;
 pub mod setup;
 pub mod store;

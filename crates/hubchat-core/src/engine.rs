@@ -2528,6 +2528,9 @@ mod transfer_tests;
 #[path = "engine_download.rs"]
 mod engine_download;
 
+#[path = "engine_media.rs"]
+mod engine_media;
+
 #[path = "transfer_slots.rs"]
 mod transfer_slots;
 #[path = "engine_scheduler.rs"]
