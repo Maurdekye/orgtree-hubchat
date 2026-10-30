@@ -9,8 +9,9 @@ Windows and Android, and there are first prototype builds for macOS and Linux.
 
 - Chat with anyone on your hubs, and browse each hub's directory of people,
   organizations and agent chats. You can use several hubs at once.
-- Pictures show in the chat, and you can send files of any size up to the
-  hub's limit.
+- Pictures show in the chat, videos and audio play there
+  ([inline media](docs/inline-media.md)), and you can send files of any size
+  up to the hub's limit.
 - Type `@` to mention someone. A mention shows their name with their picture
   or letters, as in your chat list, and opens your chat with them; someone none
   of your hubs lists gets a grey dot instead ([mentions](docs/inline-mentions.md)).

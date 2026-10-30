@@ -1,5 +1,19 @@
 # Hubchat development invariants
 
+- 2026-10-30: Inline video and audio (`src/components/AttMedia.tsx`,
+  `src/lib/media.ts`) follow Orgtree's media card (formats, 256 MiB, notes,
+  on-screen first frame, Play audio, release offscreen/hidden/unmounted, no
+  auto-resume). Players read only through the hcmedia scheme (main window
+  only): `Engine::media_range` answers 1 MiB 206 pieces from the sent
+  original, a finished download, then the hub (`HubClient::get_range`); never
+  save or change download state there. Escape on a fullscreen player is
+  stopped by a window listener registered at module load. Android fullscreen
+  is `FullscreenChromeClient` (VideoFullscreen.kt): forward every wry override
+  by delegation and re-run `tools/check-fullscreen-client.mjs` when wry
+  changes. [decided: user 2026-10-30 m7c1593eecfb1, m11fb29e6c6ae;
+  coordinator me8701e974d99; verified: hubchat-core media.rs,
+  engine_media.rs, AttMedia.tsx; docs/inline-media.md]
+
 - 2026-10-30: The composer `@` mention menu (`src/components/Composer.tsx`,
   `src/lib/mentions.ts`, `src/styles/base.css`) mirrors Orgtree's bottom-up
   mention menu: Bucket 1 is contacts mentioned in the open chat (newest first,
