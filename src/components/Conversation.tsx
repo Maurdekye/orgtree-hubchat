@@ -426,7 +426,8 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
     onPointerDown: (e: React.PointerEvent) => {
       const t = e.target as HTMLElement;
       const msg = t.closest(".msg") as HTMLElement | null;
-      if (!msg || t.closest("button, a, .att-file, .quote")) return;
+      // a player's controls (inline video and audio) are no swipe or long-press either
+      if (!msg || t.closest("button, a, .att-file, .quote, video, audio")) return;
       const id = msg.dataset.id!;
       gesture.current = { id, row: msg.querySelector(".row") as HTMLElement, ic: msg.querySelector(".swipe-ic"), x: e.clientX, y: e.clientY, dx: 0, swiping: false, done: false,
         lp: setTimeout(() => { const g = gesture.current; if (g && !g.swiping) { g.done = true; setSel((s) => (s.includes(id) ? s : [...s, id])); } }, 450) };
@@ -443,7 +444,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
     onClick: (e: React.MouseEvent) => {
       // the click that ends a long-press (or a swipe) is not a tap
       if (suppressClick.current) { suppressClick.current = false; return; }
-      if (!sel.length || (e.target as HTMLElement).closest("button, a")) return;
+      if (!sel.length || (e.target as HTMLElement).closest("button, a, video, audio")) return;
       const msg = (e.target as HTMLElement).closest(".msg") as HTMLElement | null;
       const m = msg ? byId.get(msg.dataset.id!) : undefined;
       if (m) toggleSel(m);

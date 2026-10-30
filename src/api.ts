@@ -5,7 +5,7 @@
 // Outside Tauri (a plain browser during `npm run dev`) main.tsx installs the
 // in-memory mock from src/lib/mock.ts over `api` before the first render, so
 // the UI can be developed and screenshotted without the Rust core.
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 
 export type HubState = "connecting" | "connected" | "refused" | "disconnected" | "disabled";
@@ -490,6 +490,9 @@ export const tauriApi = {
   attachmentPreview: (messageId: string, localId: string) => invoke<ArrayBuffer>("hc_attachment_preview", { messageId, localId }),
   /** An image the composer holds, for its thumbnail. */
   filePreview: (source: string, name: string) => invoke<ArrayBuffer>("hc_file_preview", { source, name }),
+  /** Where a chat's player reads a video or audio attachment: the hcmedia scheme answers its ranges from this
+   *  device's copy or the hub, saving nothing (src-tauri/src/media.rs). Null: no player here. */
+  mediaUrl: (messageId: string, localId: string): string | null => convertFileSrc(messageId + "/" + localId, "hcmedia"),
   /** The clipboard, read natively (desktop: the right-click menu's Paste). */
   clipboardText: () => invoke<string | null>("hc_clipboard_text"),
   clipboardImage: () => invoke<ArrayBuffer>("hc_clipboard_image"),

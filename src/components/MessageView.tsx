@@ -12,12 +12,14 @@ import { contactEntries } from "./ChatList";
 import { foldAt, replyIds } from "../lib/replies";
 import { cardOf, type AnswerNote, type CardState } from "../lib/questions";
 import { previewable } from "../lib/images";
+import { playable } from "../lib/media";
 import { openMenu, selectionIn, type MenuEntry } from "../lib/ctxmenu";
 import { mentionReach } from "../lib/mentions";
 import { attachmentMenu } from "../lib/attachmentActions";
 import { useTransfer } from "../lib/store";
 import { toast } from "../lib/toast";
 import { AttImage } from "./AttImage";
+import { AttMedia } from "./AttMedia";
 import { useMentionMarks } from "./MentionMark";
 import { pressKeys, usePlatform } from "./ui";
 
@@ -30,11 +32,12 @@ function metaHTML(m: Message): string {
   return h + "</span>";
 }
 
-/** An attachment: an image shows as itself (falling back to its card),
+/** An attachment: an image shows as itself (falling back to its card), a
+ *  video or audio file with its player above its card (lib/media.ts),
  *  anything else as a file card. */
 export function AttCard({ a, m }: { a: Attachment; m: Message }) {
   const card = <FileCard a={a} m={m} />;
-  return previewable(a) ? <AttImage a={a} m={m} fallback={card} /> : card;
+  return playable(a) ? <AttMedia a={a} m={m} fallback={card} /> : previewable(a) ? <AttImage a={a} m={m} fallback={card} /> : card;
 }
 
 function FileCard({ a, m }: { a: Attachment; m: Message }) {

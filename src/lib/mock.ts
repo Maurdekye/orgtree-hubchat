@@ -919,6 +919,8 @@ export const mockApi: Api = {
     const own = a.source ? pasted.get(a.source) : undefined;
     return own ? (own.slice().buffer as ArrayBuffer) : picture(a.name, m.outgoing);
   },
+  // no hcmedia in a browser: a video or audio attachment shows its file row only
+  mediaUrl: () => null,
   // the browser has no native clipboard: tests set window.__clip (text) or
   // window.__clipImage (PNG bytes)
   clipboardText: async () => (window as unknown as { __clip?: string }).__clip || null,

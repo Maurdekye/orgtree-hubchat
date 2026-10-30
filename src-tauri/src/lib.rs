@@ -448,6 +448,8 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        // inline video and audio: a player's ranges of an attachment (media.rs)
+        .register_asynchronous_uri_scheme_protocol("hcmedia", media::media_protocol)
         .invoke_handler(trace::commands({
             // The guarded wrapper needs a concrete input type for the macro's closure.
             let handler: fn(tauri::ipc::Invoke) -> bool = tauri::generate_handler![

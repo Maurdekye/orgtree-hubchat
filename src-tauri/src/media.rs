@@ -226,6 +226,70 @@ fn pasted_bytes(body: &tauri::ipc::InvokeBody) -> Option<std::borrow::Cow<'_, [u
     }
 }
 
+/// Inline video and audio (Hubchat 1.2.7): the hcmedia scheme a chat's player
+/// reads an attachment through, `http://hcmedia.localhost/<message id>%2F<local
+/// id>` (src/lib/media.ts builds it). Each request is one range, answered a
+/// bounded piece at a time from this device's copy or the hub
+/// (hubchat_core::media), never saved. Only the main window's page may ask.
+pub fn media_protocol<R: tauri::Runtime>(
+    ctx: tauri::UriSchemeContext<'_, R>,
+    request: tauri::http::Request<Vec<u8>>,
+    responder: tauri::UriSchemeResponder,
+) {
+    if ctx.webview_label() != "main" {
+        return responder.respond(refused(403));
+    }
+    let Some((message_id, local_id)) = hubchat_core::media::media_ids(request.uri().path()) else {
+        return responder.respond(refused(404));
+    };
+    let range = request
+        .headers()
+        .get(tauri::http::header::RANGE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    tauri::async_runtime::spawn(async move {
+        let got = match core::get().and_then(|c| c.engine()) {
+            Ok(e) => on_core(async move { Ok(e.media_range(&message_id, &local_id, range.as_deref()).await) }).await,
+            Err(e) => Err(e),
+        };
+        responder.respond(match got {
+            Ok(Ok(answer)) => media_answer(answer),
+            Ok(Err(e)) => refused(hubchat_core::media::refusal_status(&e)),
+            // still starting, or no identity yet
+            Err(_) => refused(503),
+        });
+    });
+}
+
+fn media_answer(answer: hubchat_core::media::MediaAnswer) -> tauri::http::Response<Vec<u8>> {
+    use hubchat_core::media::MediaAnswer;
+    let r = tauri::http::Response::builder().header("Cache-Control", "no-store");
+    let r = match answer {
+        MediaAnswer::Part { content_type, span, total, body } => r
+            .status(206)
+            .header("Content-Type", content_type)
+            .header("Content-Range", format!("bytes {}-{}/{total}", span.start, span.end))
+            .header("Content-Length", body.len())
+            .header("Accept-Ranges", "bytes")
+            .body(body),
+        MediaAnswer::Unsatisfiable { total } => {
+            let r = r.status(416).header("Accept-Ranges", "bytes");
+            match total {
+                Some(t) => r.header("Content-Range", format!("bytes */{t}")),
+                None => r,
+            }
+            .body(Vec::new())
+        }
+    };
+    r.unwrap_or_else(|_| refused(500))
+}
+
+fn refused(status: u16) -> tauri::http::Response<Vec<u8>> {
+    let mut r = tauri::http::Response::new(Vec::new());
+    *r.status_mut() = tauri::http::StatusCode::from_u16(status).unwrap_or(tauri::http::StatusCode::INTERNAL_SERVER_ERROR);
+    r
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
