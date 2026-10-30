@@ -84,6 +84,21 @@ function AttThumb({ a, onRemove, disabled }: { a: NewAttachment; onRemove: () =>
   );
 }
 
+function keepMentionItemInView(listEl: HTMLElement, activeEl: HTMLElement | null): void {
+  if (!activeEl) return;
+  if (listEl.clientHeight > 0 && activeEl.offsetHeight > 0) {
+    const itemTop = activeEl.offsetTop;
+    const itemBottom = itemTop + activeEl.offsetHeight;
+    if (itemTop < listEl.scrollTop) {
+      listEl.scrollTop = itemTop;
+    } else if (itemBottom > listEl.scrollTop + listEl.clientHeight) {
+      listEl.scrollTop = itemBottom - listEl.clientHeight;
+    }
+    return;
+  }
+  activeEl.scrollIntoView?.({ block: "nearest" });
+}
+
 export function Composer({ peer, c, hubs, msgs, replies, picked, cardState, pos, onRemoveReply, onUnpick, onCancelReply, onSent, ref, off }: Props) {
   const platform = usePlatform();
   const enter = useEnterKey();
@@ -108,6 +123,17 @@ export function Composer({ peer, c, hubs, msgs, replies, picked, cardState, pos,
   const sending = preparation?.phase === "preparing";
   const ta = useRef<HTMLTextAreaElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const moreRef = useRef<HTMLDivElement>(null);
+  const mentionSessionRef = useRef(0);
+  const wasMentionOpenRef = useRef(false);
+  const prevSessionKeyRef = useRef<string | null>(null);
+  const prependAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const scrollSnapRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const userScrolledRef = useRef(false);
+  const lastScrollSourceRef = useRef<"init" | "user" | "keyboard">("init");
+  const programmaticScrollTopRef = useRef<number | null>(null);
+  const keyMoveSeqRef = useRef(0);
+  const ackedKeyMoveSeqRef = useRef(0);
   const saveT = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textRef = useRef(text);
   textRef.current = text;
@@ -234,17 +260,45 @@ export function Composer({ peer, c, hubs, msgs, replies, picked, cardState, pos,
         : [],
     [canShowMention, mentionTok, contacts, hubs, snap.chats, activeRecency, mentioned],
   );
-  const shown = mentionKey && shownState.key === mentionKey ? shownState.count : MENU_STEP;
+  const hasMentions = rankedMentions.length > 0;
+  const sessionTokenKey = mentionTok && mentionKey ? `${text.slice(0, mentionTok.start)}:${mentionKey}` : null;
+  if (!hasMentions || !mentionKey || !sessionTokenKey) {
+    wasMentionOpenRef.current = false;
+    prevSessionKeyRef.current = null;
+  } else if (!wasMentionOpenRef.current || prevSessionKeyRef.current !== sessionTokenKey) {
+    wasMentionOpenRef.current = true;
+    prevSessionKeyRef.current = sessionTokenKey;
+    mentionSessionRef.current += 1;
+    prependAnchorRef.current = null;
+    scrollSnapRef.current = null;
+    userScrolledRef.current = false;
+    lastScrollSourceRef.current = "init";
+    programmaticScrollTopRef.current = null;
+  }
+  const sessionKey = hasMentions && mentionKey ? `${mentionSessionRef.current}:${mentionKey}` : null;
+  const shown = sessionKey && shownState.key === sessionKey ? shownState.count : MENU_STEP;
   // Drawn bottom-up (the best match last, next to the box), oldest first.
   const mentionItems = useMemo(() => rankedMentions.slice(0, shown).reverse(), [rankedMentions, shown]);
   const mentionOpen = mentionItems.length > 0;
-  const extendMentions = () => {
-    if (!mentionKey || rankedMentions.length <= shown) return;
-    setShownState({ key: mentionKey, count: shown + MENU_STEP });
+  const moreMentions = rankedMentions.length > shown;
+  const capturePrependAnchor = () => {
+    if (prependAnchorRef.current) return;
+    const el = listRef.current;
+    if (el) {
+      prependAnchorRef.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop };
+    } else if (scrollSnapRef.current) {
+      prependAnchorRef.current = { ...scrollSnapRef.current };
+    }
   };
+  const extendMentions = () => {
+    if (!sessionKey || rankedMentions.length <= shown) return;
+    capturePrependAnchor();
+    setShownState({ key: sessionKey, count: shown + MENU_STEP });
+  };
+  const hasExplicitSelection = sessionKey !== null && selection.key === sessionKey;
   const activeMentionIdx = useMemo(() => {
     if (mentionItems.length === 0) return 0;
-    if (selection.key !== mentionKey) return mentionItems.length - 1;
+    if (!hasExplicitSelection) return mentionItems.length - 1;
     if (selection.pick) {
       const found = mentionItems.findIndex((item) => item.address === selection.pick);
       if (found >= 0) return found;
@@ -253,7 +307,7 @@ export function Composer({ peer, c, hubs, msgs, replies, picked, cardState, pos,
       return selection.index;
     }
     return mentionItems.length - 1;
-  }, [mentionItems, mentionKey, selection]);
+  }, [mentionItems, hasExplicitSelection, selection]);
 
   useLayoutEffect(() => {
     if (!mentionOpen) {
@@ -285,12 +339,49 @@ export function Composer({ peer, c, hubs, msgs, replies, picked, cardState, pos,
   useLayoutEffect(() => {
     if (!mentionOpen || !listRef.current) return;
     const listEl = listRef.current;
-    if (selection.key !== mentionKey && !below) {
-      listEl.scrollTop = listEl.scrollHeight;
+    const anchor = prependAnchorRef.current;
+    prependAnchorRef.current = null;
+    const hasKeyMove = keyMoveSeqRef.current !== ackedKeyMoveSeqRef.current;
+    if (hasKeyMove) {
+      ackedKeyMoveSeqRef.current = keyMoveSeqRef.current;
     }
-    const active = listEl.querySelector(".mention-item.active") as HTMLElement | null;
-    active?.scrollIntoView?.({ block: "nearest" });
-  }, [mentionOpen, mentionKey, selection, below]);
+    if (anchor && listEl.scrollHeight > anchor.scrollHeight) {
+      listEl.scrollTop = anchor.scrollTop + (listEl.scrollHeight - anchor.scrollHeight);
+      programmaticScrollTopRef.current = listEl.scrollTop;
+    } else if (!hasExplicitSelection && !userScrolledRef.current) {
+      const maxScroll = listEl.clientHeight > 0 ? Math.max(0, listEl.scrollHeight - listEl.clientHeight) : listEl.scrollHeight;
+      listEl.scrollTop = below ? 0 : maxScroll;
+      programmaticScrollTopRef.current = listEl.scrollTop;
+    }
+    if (hasKeyMove) {
+      const active = listEl.querySelector(".mention-item.active") as HTMLElement | null;
+      const prevTop = listEl.scrollTop;
+      keepMentionItemInView(listEl, active);
+      if (listEl.scrollTop !== prevTop) {
+        programmaticScrollTopRef.current = listEl.scrollTop;
+      }
+    }
+    scrollSnapRef.current = { scrollHeight: listEl.scrollHeight, scrollTop: listEl.scrollTop };
+  }, [mentionOpen, sessionKey, mentionItems, activeMentionIdx, hasExplicitSelection, below]);
+
+  const extendMentionsRef = useRef(extendMentions);
+  extendMentionsRef.current = extendMentions;
+  useEffect(() => {
+    const root = listRef.current;
+    const marker = moreRef.current;
+    const Observer = root?.ownerDocument?.defaultView?.IntersectionObserver;
+    if (!mentionOpen || !moreMentions || !root || !marker || !Observer) return;
+    const seen = new Observer(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting) && lastScrollSourceRef.current !== "keyboard") {
+          extendMentionsRef.current();
+        }
+      },
+      { root },
+    );
+    seen.observe(marker);
+    return () => seen.disconnect();
+  }, [mentionOpen, moreMentions, mentionItems.length]);
 
   const pickMention = (contact: Contact) => {
     if (!mentionTok || sending) return;
@@ -390,9 +481,20 @@ export function Composer({ peer, c, hubs, msgs, replies, picked, cardState, pos,
       role="listbox"
       aria-label="Mention a contact"
       onScroll={(e) => {
-        if (e.currentTarget.scrollTop <= 40) extendMentions();
+        const el = e.currentTarget;
+        if (programmaticScrollTopRef.current !== null && Math.abs(el.scrollTop - programmaticScrollTopRef.current) <= 1) {
+          programmaticScrollTopRef.current = null;
+          scrollSnapRef.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop };
+          return;
+        }
+        programmaticScrollTopRef.current = null;
+        userScrolledRef.current = true;
+        lastScrollSourceRef.current = "user";
+        scrollSnapRef.current = { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop };
+        if (el.scrollTop <= 40) extendMentions();
       }}
     >
+      {moreMentions ? <div ref={moreRef} className="mention-more" aria-hidden="true" /> : null}
       {mentionItems.map((item, idx) => {
         const itemName = displayName(item, item.address);
         const active = idx === activeMentionIdx;
@@ -493,9 +595,32 @@ export function Composer({ peer, c, hubs, msgs, replies, picked, cardState, pos,
                 e.preventDefault();
                 e.stopPropagation();
                 const step = (e.key === "ArrowDown") === !below ? 1 : -1;
-                const next = (activeMentionIdx + step + mentionItems.length) % mentionItems.length;
-                setSelection({ key: mentionKey, index: next, pick: mentionItems[next]?.address ?? null });
-                if (next <= 2) extendMentions();
+                if (step === 1) {
+                  if (activeMentionIdx >= mentionItems.length - 1) return;
+                  const next = activeMentionIdx + 1;
+                  lastScrollSourceRef.current = "keyboard";
+                  keyMoveSeqRef.current += 1;
+                  setSelection({ key: sessionKey, index: next, pick: mentionItems[next]?.address ?? null });
+                  return;
+                }
+                if (activeMentionIdx > 0) {
+                  const next = activeMentionIdx - 1;
+                  lastScrollSourceRef.current = "keyboard";
+                  keyMoveSeqRef.current += 1;
+                  setSelection({ key: sessionKey, index: next, pick: mentionItems[next]?.address ?? null });
+                  return;
+                }
+                if (sessionKey && rankedMentions.length > shown) {
+                  const nextCount = shown + MENU_STEP;
+                  const nextLen = Math.min(rankedMentions.length, nextCount);
+                  const nextTarget = rankedMentions[shown];
+                  const nextIdx = Math.max(0, nextLen - 1 - shown);
+                  capturePrependAnchor();
+                  lastScrollSourceRef.current = "keyboard";
+                  keyMoveSeqRef.current += 1;
+                  setShownState({ key: sessionKey, count: nextCount });
+                  setSelection({ key: sessionKey, index: nextIdx, pick: nextTarget?.address ?? null });
+                }
                 return;
               }
               if ((e.key === "Tab" && !e.shiftKey) || (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey)) {

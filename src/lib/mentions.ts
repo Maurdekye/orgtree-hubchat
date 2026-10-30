@@ -15,8 +15,8 @@ const isLinkWaiting = (c: Contact) => /^link\.[^.]+$/.test(c.address) && c.blurb
 
 /** Maximum outgoing messages scanned per chat when computing account-wide mention recency. */
 export const MENTION_SCAN_LIMIT = 200;
-/** Page step for the bottom-up mention menu, matching Orgtree's MENU_STEP = 60. */
-export const MENU_STEP = 60;
+/** Page step for the bottom-up mention menu, matching Orgtree's 20-row mention page size. */
+export const MENU_STEP = 20;
 
 export interface MentionToken {
   start: number;

@@ -1,5 +1,22 @@
 # Hubchat development invariants
 
+- 2026-10-30: The composer `@` mention menu (`src/components/Composer.tsx`,
+  `src/lib/mentions.ts`, `src/styles/base.css`) mirrors Orgtree's bottom-up
+  mention menu: Bucket 1 is contacts mentioned in the open chat (newest first,
+  ignoring Markdown code spans/fences), Bucket 2 is the rest by
+  `max(lastChatted, lastMentionedByThisAccount)` (up to `MENTION_SCAN_LIMIT = 200`
+  outgoing messages per chat) then display name, kind and address, rendered
+  bottom-up with the best match at the bottom next to the input. It draws
+  `MENU_STEP = 20` rows at a time, opens scrolled to the bottom and resets to
+  the bottom when the filter changes, scrolls to keep the highlighted row fully
+  in view on `ArrowUp`/`ArrowDown`, lazy-loads 20 more rows upward on scroll or
+  `ArrowUp` at the top loaded row while preserving `scrollTop` (`scrollTop +=
+  newScrollHeight - prevScrollHeight`) without jumping, and never wraps
+  (`ArrowDown` on the bottom row and `ArrowUp` at the very top do nothing).
+  [decided: user 2026-10-30 m866ba2a5777c, m21f1fd661676, m3e70256cdcbc,
+  m95ee007ff363; verified: Composer.tsx, mentions.ts, base.css;
+  tools/proof-mentions-renderer.mjs]
+
 - 2026-10-29: Inline mentions carry a mark (`src/components/MentionMark.tsx`):
   the chat-list avatar at text size when one of my non-disabled hubs lists the
   address or it is mine (`mentionReach` in `src/lib/mentions.ts`, the
