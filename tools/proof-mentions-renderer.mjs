@@ -19,10 +19,10 @@ const esbuild = orgdeps('esbuild');
 const out = process.env.HUBCHAT_RENDERER_OUT;
 fs.mkdirSync(out, { recursive: true });
 
-const baseRev = 'f917b7d503300a602eafc3a998c8828848c6ffe3';
+const baseRev = '6e33076b6c41bf0bf1a624707298d213faf7300c';
 const baseFiles = phase === 'red' ? new Map([
   [path.resolve(repo, 'src/lib/mentions.ts').toLowerCase(), execFileSync('git', ['show', `${baseRev}:src/lib/mentions.ts`], { cwd: repo, encoding: 'utf8' })],
-  [path.resolve(repo, 'src/components/Composer.tsx').toLowerCase(), execFileSync('git', ['show', `${baseRev}:src/components/Composer.tsx`], { cwd: repo, encoding: 'utf8' })],
+  [path.resolve(repo, 'src/components/Composer.tsx').toLowerCase(), execFileSync('git', ['show', `${baseRev}:src/lib/mentions.ts`], { cwd: repo, encoding: 'utf8' }) ? execFileSync('git', ['show', `${baseRev}:src/components/Composer.tsx`], { cwd: repo, encoding: 'utf8' }) : ''],
   [path.resolve(repo, 'src/components/Conversation.tsx').toLowerCase(), execFileSync('git', ['show', `${baseRev}:src/components/Conversation.tsx`], { cwd: repo, encoding: 'utf8' })],
 ]) : null;
 
@@ -65,6 +65,46 @@ for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'HTMLTextAr
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 globalThis.requestAnimationFrame = (f) => setTimeout(f, 0);
 globalThis.cancelAnimationFrame = clearTimeout;
+
+Object.defineProperties(dom.window.HTMLElement.prototype, {
+  clientHeight: {
+    configurable: true,
+    get() {
+      if (this.classList?.contains('mention-list')) {
+        const total = 8 + this.querySelectorAll('.mention-item').length * 36;
+        return Math.min(224, total);
+      }
+      return 0;
+    },
+  },
+  scrollHeight: {
+    configurable: true,
+    get() {
+      if (this.classList?.contains('mention-list')) {
+        return 8 + this.querySelectorAll('.mention-item').length * 36;
+      }
+      return 0;
+    },
+  },
+  offsetTop: {
+    configurable: true,
+    get() {
+      if (this.classList?.contains('mention-item') && this.parentElement) {
+        const items = [...this.parentElement.querySelectorAll('.mention-item')];
+        const idx = items.indexOf(this);
+        return idx >= 0 ? 4 + idx * 36 : 0;
+      }
+      return 0;
+    },
+  },
+  offsetHeight: {
+    configurable: true,
+    get() {
+      if (this.classList?.contains('mention-item')) return 34;
+      return 0;
+    },
+  },
+});
 
 const { api, store, Conversation, setReplies, act, createElement, createRoot } = await import(pathToFileURL(path.join(out, `entry-${phase}.mjs`)));
 
@@ -354,16 +394,13 @@ await pressKey(ta(), 'ArrowDown');
 const stepDown1 = activeAddr(); // alice.111111 (index 6)
 await pressKey(ta(), 'ArrowDown');
 const stepDown2 = activeAddr(); // acme.222222 (index 7)
-await pressKey(ta(), 'ArrowDown');
-const stepWrap = activeAddr(); // quiz.888888 (index 0, wrapped)
 check(
   'ArrowUp moves selection upward away from the input and ArrowDown moves downward toward the input',
   step0 === 'acme.222222' &&
     stepUp1 === 'alice.111111' &&
     stepUp2 === 'pat.abcdef' &&
     stepDown1 === 'alice.111111' &&
-    stepDown2 === 'acme.222222' &&
-    stepWrap === 'quiz.888888',
+    stepDown2 === 'acme.222222',
 );
 
 // 13. Word-substring filtering narrows without reordering (exact/prefix score and online keys dropped)
@@ -391,8 +428,8 @@ check(
     oldMentionIdx < bobIdx,
 );
 
-// 15. Menu drops the 8-row cap for MENU_STEP = 60 and expands on scroll near the top
-const extraContacts = Array.from({ length: 60 }, (_, idx) => ({
+// Add 42 extra contacts so 50 total contacts match @ (more than 2 pages of MENU_STEP = 20 and taller than 224px max-height)
+const extraContacts = Array.from({ length: 42 }, (_, idx) => ({
   address: `extra_${String(idx).padStart(2, '0')}.666666`,
   kind: 'person',
   org_name: '',
@@ -407,31 +444,161 @@ await act(async () => {
   await store.refreshAll();
   await new Promise((r) => setTimeout(r, 20));
 });
+
+const isActiveInView = () => {
+  const list = document.querySelector('.mention-list');
+  const active = document.querySelector('.mention-item.active');
+  if (!list || !active) return false;
+  const top = active.offsetTop;
+  const bottom = top + active.offsetHeight;
+  return top >= list.scrollTop && bottom <= list.scrollTop + list.clientHeight;
+};
+
+// 15. Menu opens scrolled to the bottom and stays scrolled to the bottom when the filter changes or reopens
 await setInputValue(ta(), 'Many @');
-const firstPageCount = document.querySelectorAll('.mention-item').length;
-const listEl = document.querySelector('.mention-list');
-if (listEl) {
+const listEl15 = document.querySelector('.mention-list');
+const openAtBottom =
+  !!listEl15 &&
+  document.querySelectorAll('.mention-item').length === 20 &&
+  listEl15.scrollTop === listEl15.scrollHeight - listEl15.clientHeight &&
+  activeAddr() === 'acme.222222' &&
+  isActiveInView();
+for (let i = 0; i < 10; i++) await pressKey(ta(), 'ArrowUp');
+const movedAwayFromBottom = !!listEl15 && listEl15.scrollTop < listEl15.scrollHeight - listEl15.clientHeight;
+await setInputValue(ta(), 'Many @extra_');
+const listAfterFilter = document.querySelector('.mention-list');
+const filterAtBottom =
+  !!listAfterFilter &&
+  document.querySelectorAll('.mention-item').length === 20 &&
+  listAfterFilter.scrollTop === listAfterFilter.scrollHeight - listAfterFilter.clientHeight &&
+  activeAddr() === 'extra_00.666666' &&
+  isActiveInView();
+for (let i = 0; i < 10; i++) await pressKey(ta(), 'ArrowUp');
+await pressKey(ta(), 'Escape');
+await setInputValue(ta(), 'Many @extra');
+await setInputValue(ta(), 'Many @extra_');
+const listAfterReopen = document.querySelector('.mention-list');
+const reopenAtBottom =
+  !!listAfterReopen &&
+  listAfterReopen.scrollTop === listAfterReopen.scrollHeight - listAfterReopen.clientHeight &&
+  activeAddr() === 'extra_00.666666' &&
+  isActiveInView();
+check(
+  'menu opens scrolled to the bottom and stays scrolled to the bottom when the filter changes',
+  openAtBottom && movedAwayFromBottom && filterAtBottom && reopenAtBottom,
+);
+
+// 16. Arrow keys scroll the menu just enough to keep the highlighted row fully in view in both directions
+await setInputValue(ta(), 'View @');
+const listEl16 = document.querySelector('.mention-list');
+let allUpInView = true;
+for (let i = 0; i < 12; i++) {
+  await pressKey(ta(), 'ArrowUp');
+  if (!isActiveInView()) allUpInView = false;
+}
+const scrollAfterUp12 = listEl16 ? listEl16.scrollTop : -1;
+const activeTopAfterUp12 = document.querySelector('.mention-item.active')?.offsetTop ?? -2;
+let allDownInView = true;
+for (let i = 0; i < 12; i++) {
+  await pressKey(ta(), 'ArrowDown');
+  if (!isActiveInView()) allDownInView = false;
+}
+const scrollAfterDown12 = listEl16 ? listEl16.scrollTop : -1;
+const activeBottomAfterDown12 =
+  (document.querySelector('.mention-item.active')?.offsetTop ?? 0) +
+  (document.querySelector('.mention-item.active')?.offsetHeight ?? 0);
+check(
+  'arrow keys scroll the menu just enough to keep the highlighted row fully in view in both directions',
+  allUpInView &&
+    allDownInView &&
+    scrollAfterUp12 === activeTopAfterUp12 &&
+    !!listEl16 &&
+    scrollAfterDown12 + listEl16.clientHeight === activeBottomAfterDown12,
+);
+
+// 17. Lazy loading upward on scroll: first page of 20 rows at the bottom, more loaded above on scroll with no jump in scroll position
+await setInputValue(ta(), 'Lazy @');
+const listEl17 = document.querySelector('.mention-list');
+const firstPage17 = document.querySelectorAll('.mention-item').length;
+const topItemBeforeScroll = document.querySelector('.mention-item');
+const topAddrBeforeScroll = topItemBeforeScroll?.getAttribute('data-mention-address');
+const offsetBeforeScroll = topItemBeforeScroll ? 20 - topItemBeforeScroll.offsetTop : -999;
+if (listEl17) {
   await act(async () => {
-    listEl.scrollTop = 0;
-    listEl.dispatchEvent(new dom.window.Event('scroll', { bubbles: true }));
+    listEl17.scrollTop = 20;
+    listEl17.dispatchEvent(new dom.window.Event('scroll', { bubbles: true }));
     await new Promise((r) => setTimeout(r, 20));
   });
 }
-const expandedCount = document.querySelectorAll('.mention-item').length;
+const secondPage17 = document.querySelectorAll('.mention-item').length;
+const anchoredItemAfterScroll = topAddrBeforeScroll
+  ? document.querySelector(`.mention-item[data-mention-address="${topAddrBeforeScroll}"]`)
+  : null;
+const offsetAfterScroll =
+  listEl17 && anchoredItemAfterScroll ? listEl17.scrollTop - anchoredItemAfterScroll.offsetTop : -998;
 check(
-  'menu drops the 8-row cap for MENU_STEP = 60 and expands on scroll near the top',
-  firstPageCount === 60 && expandedCount === 68,
+  'lazy loading upward on scroll: first page at bottom, more loaded above on scroll with no jump in scroll position',
+  firstPage17 === 20 &&
+    secondPage17 === 40 &&
+    topAddrBeforeScroll === 'extra_13.666666' &&
+    offsetBeforeScroll === offsetAfterScroll &&
+    activeAddr() === 'acme.222222',
+);
+
+// 18. No wrapping: Down on the bottom row does nothing, Up on the top loaded row loads more above and moves onto it, Up at the very top does nothing
+await setInputValue(ta(), 'Nowrap @');
+const bottomAddrBeforeDown = activeAddr();
+await pressKey(ta(), 'ArrowDown');
+await pressKey(ta(), 'ArrowDown');
+const bottomAddrAfterDown = activeAddr();
+for (let i = 0; i < 19; i++) {
+  await pressKey(ta(), 'ArrowUp');
+}
+const countAtTopPage1 = document.querySelectorAll('.mention-item').length;
+const addrAtTopPage1 = activeAddr();
+await pressKey(ta(), 'ArrowUp'); // on top loaded row (index 0 of 20) -> loads page 2 (40 items) and steps onto extra_14.666666
+const countAfterStepPage2 = document.querySelectorAll('.mention-item').length;
+const addrAfterStepPage2 = activeAddr();
+const inViewAfterStepPage2 = isActiveInView();
+for (let i = 0; i < 19; i++) {
+  await pressKey(ta(), 'ArrowUp');
+}
+const countAtTopPage2 = document.querySelectorAll('.mention-item').length;
+const addrAtTopPage2 = activeAddr();
+await pressKey(ta(), 'ArrowUp'); // on top loaded row (index 0 of 40) -> loads page 3 (50 items) and steps onto extra_34.666666
+const countAfterStepPage3 = document.querySelectorAll('.mention-item').length;
+const addrAfterStepPage3 = activeAddr();
+for (let i = 0; i < 9; i++) {
+  await pressKey(ta(), 'ArrowUp');
+}
+const addrAtVeryTop = activeAddr();
+await pressKey(ta(), 'ArrowUp');
+await pressKey(ta(), 'ArrowUp');
+const addrAfterUpAtVeryTop = activeAddr();
+check(
+  'no wrapping: Down on bottom row does nothing, Up on top loaded row loads more above and moves onto it, Up at very top does nothing',
+  bottomAddrBeforeDown === 'acme.222222' &&
+    bottomAddrAfterDown === 'acme.222222' &&
+    countAtTopPage1 === 20 &&
+    addrAtTopPage1 === 'extra_13.666666' &&
+    countAfterStepPage2 === 40 &&
+    addrAfterStepPage2 === 'extra_14.666666' &&
+    inViewAfterStepPage2 &&
+    countAtTopPage2 === 40 &&
+    addrAtTopPage2 === 'extra_33.666666' &&
+    countAfterStepPage3 === 50 &&
+    addrAfterStepPage3 === 'extra_34.666666' &&
+    addrAtVeryTop === 'quiz.888888' &&
+    addrAfterUpAtVeryTop === 'quiz.888888',
 );
 
 await act(async () => { root.unmount(); });
 const failed = checks.filter((c) => !c.ok).map((c) => c.name).sort();
 const expected = [
-  'mentions menu sorts bottom-up: Bucket 1 (mentioned in open chat, newest first, ignoring Markdown code) above Bucket 2 (max(lastChatted, lastMentionedByMe) then name/kind/address)',
-  'initial highlight is on the bottom row (rank #1) and Tab completes that bottom row',
-  'ArrowUp moves selection upward away from the input and ArrowDown moves downward toward the input',
-  'word-substring filtering narrows without reordering (exact/prefix score and online keys dropped)',
-  'account mention recency scans at most MENTION_SCAN_LIMIT = 200 outgoing messages per chat and never calls api.chat per keystroke',
-  'menu drops the 8-row cap for MENU_STEP = 60 and expands on scroll near the top',
+  'menu opens scrolled to the bottom and stays scrolled to the bottom when the filter changes',
+  'arrow keys scroll the menu just enough to keep the highlighted row fully in view in both directions',
+  'lazy loading upward on scroll: first page at bottom, more loaded above on scroll with no jump in scroll position',
+  'no wrapping: Down on bottom row does nothing, Up on top loaded row loads more above and moves onto it, Up at very top does nothing',
 ].sort();
 fs.writeFileSync(process.env.HUBCHAT_RENDERER_EVIDENCE, JSON.stringify({ phase, checks, failed }, null, 2));
 dom.window.close();
