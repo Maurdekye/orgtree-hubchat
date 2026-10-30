@@ -1,0 +1,1 @@
+Mentions now show the person's name and picture, or a grey dot when none of your hubs lists them, and the mentions menu sorts like Orgtree's and opens at the bottom, right above the message box. On Windows, Contact info opens your local Orgtree orgs in Orgtree, and menus, settings, the Enter key and pasting files now match Orgtree.
