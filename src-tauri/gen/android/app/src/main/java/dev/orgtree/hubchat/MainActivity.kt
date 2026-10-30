@@ -85,6 +85,8 @@ class MainActivity : TauriActivity() {
   // Added after Tauri's callback so this handler runs first.
   override fun onWebViewCreate(webView: android.webkit.WebView) {
     super.onWebViewCreate(webView)
+    // a video's fullscreen (VideoFullscreen.kt), once wry has set its own chrome client right after this callback
+    webView.post { FullscreenChromeClient.install(this, webView) }
     onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
       override fun handleOnBackPressed() {
         webView.evaluateJavascript("!!(window.__hcBack && window.__hcBack())") { handled ->
