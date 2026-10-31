@@ -66,6 +66,40 @@ after Busy now. It outranks busy, and offline outranks it.
   proof: the chat list, the header, the hub picker, a mention's hover, Contact info and the Directory;
   `HUBCHAT_PROOF_PHASE=red` expects exactly the DND checks to fail on the source before DND).
 
+## Your status
+
+User request 2026-10-31 08:52Z (same docket): "users on hubchat should be able to manually set their status (do not
+disturb prevents notifications from appearing on their desktop / phone)". The person picks **Automatic** (the hubs'
+rules: online, busy an hour after their last device in use), **Online** (even while away), **Busy** or **Do not
+disturb**. It is theirs, not a device's: the hubs keep it until they pick again, so it is the same on all their
+devices, and others see it only while one of them is connected (offline wins, 09:03Z "Offline for both").
+
+- Where: your own avatar wears the dot others see (offline while none of your hubs is connected) and opens the picker:
+  desktop, the chat list's head (and its rail), a popover under it; Android, the Chats screen's app bar (the avatar is
+  new there), a bottom sheet. The rows are the hub picker's (`ChoiceRow` in `src/components/HubPicker.tsx`): each
+  choice with what it does and its dot, the one in use checked; then **Profile**, which the avatar opened before.
+- Do not disturb: no notification and no sound on any of your devices, for a message or a failed file (the shell's
+  `notify_now`, `src-tauri/src/core.rs`; desktop and Android both notify through it). Messages still arrive, unread
+  counts and badges still update, and turning it off replays nothing. Settings > Notifications says so while it is on,
+  with **Turn it off**; its own settings stay as set.
+- The hub (Mail hub 2.3.0, feature `status`): `POST /api/status {status}` keeps it in `identities.status`; every sync
+  answer of ours carries `status`; others see only its effect (`online`, `busy`, `dnd`).
+- The core (`crates/hubchat-core/src/engine_status.rs`): `status.mine` is what this device shows and acts on. A pick is
+  owed to every saved hub (`status.owed.<url>`) and told by that hub's sync before its next request; a pick wakes a
+  parked sync to do so at once. Each hub's last word is kept (`status.said.<url>`): a word that changed is a pick on
+  another of our devices and is taken (a hub still owed the old pick is owed this one instead); a first word (a new
+  device, a new hub, a reset) is taken when it is a choice, and a hub that says Automatic without having heard ours is
+  told ours. While a hub is owed our pick, only its own word ends the wait, so an answer from before the pick is not
+  taken as a change. A hub without the feature, or one that refuses it, is owed nothing.
+- Contact info says what a person's states mean: Busy, "they set themselves busy, or Hubchat hasn't been in front on
+  any of their devices for an hour"; Do not disturb, "they've turned off notifications on all their devices: your
+  messages still arrive, and they'll see them when they look".
+- Proofs: `crates/hubchat-core/src/engine_status_tests.rs` (`cargo test -p hubchat-core --lib status_tests`: the rules,
+  telling a hub (200/403/503), and a pick waking a parked sync against a fake hub on 127.0.0.1); the shell's
+  `do_not_disturb_tests`; `tools/proof-status-picker.mjs [repo]` (Electron, desktop and Android: the avatar's dot, the
+  picker, picking Do not disturb, Settings > Notifications, Profile, a person on Do not disturb, offline winning;
+  `HUBCHAT_PROOF_PHASE=red` expects every check to fail on the source before the picker).
+
 ## Proofs
 
 - Core: `crates/hubchat-core/src/store_busy_tests.rs` (`cargo test -p hubchat-core --lib store::busy_tests`): a row's

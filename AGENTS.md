@@ -1,5 +1,21 @@
 # Hubchat development invariants
 
+- 2026-10-31: Your status (Mail hub 2.3.0 feature `status`) is the person's,
+  not the device's: `engine_status.rs` keeps it (`status.mine`), owes a pick
+  to every saved hub (`status.owed.<url>`, told by that hub's sync before its
+  next request; a pick wakes a parked sync through `status_wake`) and keeps
+  each hub's word (`status.said.<url>`): a changed word is a pick on another
+  device and is taken; a first word is taken when it is a choice; while a hub
+  is owed our pick only its own word ends the wait. On Do not disturb the
+  shell's `notify_now` turns notifications and sound off for messages and
+  failed files, desktop and Android alike; mail, unread counts and badges go
+  on. The picker is the own avatar (desktop list head and rail, Android
+  Chats app bar), built from the hub picker's `ChoiceRow`; the avatar's dot
+  is `myPresence()` (offline while no hub is connected). [decided: user
+  2026-10-31 m6b28c323a7cd, m65f544179c74; coordinator mec85dfe5bb13;
+  verified: engine_status.rs, engine.rs, src-tauri core.rs,
+  StatusPicker.tsx; docs/busy-presence.md]
+
 - 2026-10-31: Busy presence (Mail hub 2.3.0) is a part of online: `presence()`
   (`src/lib/peers.ts`) says `busy` only when online and `Contact.busy`, after
   the disconnected check. The core keeps it per hub like online
