@@ -13,6 +13,17 @@
   mac1516a71553, mfb051a00d947; coordinator m85f032bb0b12; verified:
   store.rs, engine_pictures.rs, peers.ts; docs/busy-presence.md]
 
+- 2026-10-31: Do not disturb presence (Mail hub 2.3.0) is a part of busy:
+  `presence()` says `dnd` when online and `Contact.dnd`, before busy; offline
+  outranks it ("Offline for both"). The core keeps it per hub like busy
+  (`roster.dnd`, store migration 22; `Store::set_dnd` whenever a sync answer
+  carries `online`), and `Store::directory` merges it as busy (DND only if DND
+  on every hub where online). One `--dnd` token (`var(--bad)`, every theme
+  scope) colours every DND dot; the Directory's Do not disturb follows Busy
+  now. [decided: user 2026-10-31 md63cf5e0960f, m65f544179c74; coordinator
+  mec85dfe5bb13; verified: store.rs, engine_pictures.rs, peers.ts;
+  docs/busy-presence.md]
+
 - 2026-10-30: Inline video and audio (`src/components/AttMedia.tsx`,
   `src/lib/media.ts`) follow Orgtree's media card (formats, 256 MiB, notes,
   on-screen first frame, Play audio, release offscreen/hidden/unmounted, no

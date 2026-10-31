@@ -43,6 +43,29 @@ Privacy says you show as busy after the hour.
 - The web reads `Contact.busy` through `presence()` (`src/lib/peers.ts`): state `busy`, text `Busy`, short `busy`,
   after the disconnected check (a contact whose hubs are all down stays status unknown).
 
+## Do not disturb
+
+User request 2026-10-31 08:51Z (same docket): "when an org's outside operations are set to do not disturb, it should
+show a red status icon in hubchat / elsewhere"; offline wins over it, "Offline for both" (09:03Z). An org whose
+outside mail is set to Do not disturb in Orgtree (Org settings > Connections > External org inbox) shows **Do not
+disturb**: the presence dot filled red through one token (`--dnd` is `var(--bad)` on every theme scope,
+`src/styles/tokens.css`) and the words Do not disturb wherever presence shows (Android's app bar line: "do not
+disturb"). The hub picker says "<name> is on Do not disturb here"; Contact info says its outside mail is on hold (kept,
+but no agent there sees it until one checks its inbox); the Directory gives it its own section, **Do not disturb**,
+after Busy now. It outranks busy, and offline outranks it.
+
+- The hub (Mail hub 2.3.0, feature `dnd`): an org says it with `POST /api/presence {busy, dnd}`. Roster rows carry
+  `dnd`, and a sync answer's `dnd` comes with `online` and `busy`; a DND address is in `busy` too, so a Hubchat that
+  knows busy but not DND shows it busy.
+- The core keeps it per hub like busy: `roster.dnd` (store migration 22), `Store::set_dnd` from a sync answer's list
+  (an answer with `online` and no `dnd` clears it: a hub before DND), `Store::directory`'s merge (DND only if DND on
+  every hub where the address is online, so the most available presence any hub lists wins), and `Store::dnd_hubs`
+  for the hub picker (`RouteHub.dnd`).
+- The web: `presence()` says `dnd` (text `Do not disturb`, short `do not disturb`) before busy.
+- Proofs: the DND tests in `store_busy_tests.rs`, and `tools/proof-dnd-presence.mjs [repo]` (Electron, as the busy
+  proof: the chat list, the header, the hub picker, a mention's hover, Contact info and the Directory;
+  `HUBCHAT_PROOF_PHASE=red` expects exactly the DND checks to fail on the source before DND).
+
 ## Proofs
 
 - Core: `crates/hubchat-core/src/store_busy_tests.rs` (`cargo test -p hubchat-core --lib store::busy_tests`): a row's

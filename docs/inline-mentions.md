@@ -52,7 +52,7 @@ when it is my own address. That is the composer's test (Conversation shows the
 same sentence in place of the box when no directory lists the address). The
 directory is each hub's roster as the core stored it, kept while a hub is down,
 so a hub that is briefly disconnected doesn't grey its contacts; presence
-(online, busy, offline, status unknown) stays the chat list's job.
+(online, busy, Do not disturb, offline, status unknown) stays the chat list's job.
 
 ## How it's drawn
 
