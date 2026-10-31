@@ -240,6 +240,13 @@ fn failure_notice(
     Some((format!("{name}: {suffix}"), body, settings.sound && notice.attempts == 0))
 }
 
+/// What notifications may do now: Settings › Notifications, unless our
+/// status is Do not disturb. RED: not yet.
+#[allow(dead_code)]
+fn notify_now(settings: NotifySettings, _dnd: bool) -> NotifySettings {
+    settings
+}
+
 /// Public Android settings only. Push capabilities never cross the webview bridge.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct PushState {
@@ -838,6 +845,28 @@ mod transfer_notice_tests {
         assert!(!download.1.contains("remove"));
         assert!(failure_notice(NotifySettings { enabled: false, ..settings }, "Pat", &n).is_none());
         assert!(!failure_notice(NotifySettings { sound: false, ..settings }, "Pat", &n).unwrap().2);
+    }
+}
+
+#[cfg(test)]
+mod do_not_disturb_tests {
+    use super::{failure_notice, notify_now, NotifySettings};
+    use hubchat_core::store::TransferFailure;
+
+    /// On Do not disturb (user 2026-10-31 08:52Z): no notification and no
+    /// sound, of a message or a failed file; the settings themselves stay.
+    #[test]
+    fn do_not_disturb_shows_no_notification_and_plays_no_sound() {
+        let settings = NotifySettings { enabled: true, preview: true, sound: true };
+        let now = notify_now(settings, true);
+        assert_eq!((now.enabled, now.sound, now.preview), (false, false, true), "nothing shown or heard");
+        let off = notify_now(settings, false);
+        assert_eq!((off.enabled, off.sound, off.preview), (true, true, true), "otherwise the settings as they are");
+        let n = TransferFailure {
+            message_id: "m".into(), peer: "peer".into(), episode: 0, attempts: 0, error: String::new(), download: false,
+        };
+        assert!(failure_notice(notify_now(settings, true), "Pat", &n).is_none(), "a failed file: no notice either");
+        assert!(failure_notice(notify_now(settings, false), "Pat", &n).is_some());
     }
 }
 

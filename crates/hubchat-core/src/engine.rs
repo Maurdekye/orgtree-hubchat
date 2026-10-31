@@ -99,6 +99,9 @@ pub enum Event {
     /// second, by its own clock. Shown in the chat only: never a
     /// notification.
     Typing { peer: String },
+    /// Our status changed: picked here, or picked on another of our devices
+    /// and heard from a hub (`engine_status`).
+    Status,
     /// Local immutable-copy preparation, before queue admission.
     Preparing {
         message_id: String,
@@ -2572,3 +2575,11 @@ mod engine_pictures;
 
 #[path = "engine_typing.rs"]
 mod engine_typing;
+
+#[path = "engine_status.rs"]
+mod engine_status;
+pub use engine_status::{chosen_status, STATUSES};
+
+#[cfg(test)]
+#[path = "engine_status_tests.rs"]
+mod status_tests;
