@@ -1,5 +1,18 @@
 # Hubchat development invariants
 
+- 2026-10-31: Busy presence (Mail hub 2.3.0) is a part of online: `presence()`
+  (`src/lib/peers.ts`) says `busy` only when online and `Contact.busy`, after
+  the disconnected check. The core keeps it per hub like online
+  (`roster.busy`, store migration 21; `Store::set_busy` whenever a sync answer
+  carries `online`, so `online` without `busy` clears it: a hub before busy).
+  `Store::directory` merges: busy only if busy on every hub where online (one
+  online, not busy hub wins; offline never busy). One `--busy` token
+  (`var(--warn)`, on every theme scope in `tokens.css`) colours every busy dot;
+  the Directory's Busy now follows Online now, and its "N online" counts only
+  Online now. Routing ignores busy. [decided: user 2026-10-30 ma662ce2d2385,
+  mac1516a71553, mfb051a00d947; coordinator m85f032bb0b12; verified:
+  store.rs, engine_pictures.rs, peers.ts; docs/busy-presence.md]
+
 - 2026-10-30: Inline video and audio (`src/components/AttMedia.tsx`,
   `src/lib/media.ts`) follow Orgtree's media card (formats, 256 MiB, notes,
   on-screen first frame, Play audio, release offscreen/hidden/unmounted, no

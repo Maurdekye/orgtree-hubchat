@@ -9,6 +9,8 @@ Windows and Android, and there are first prototype builds for macOS and Linux.
 
 - Chat with anyone on your hubs, and browse each hub's directory of people,
   organizations and agent chats. You can use several hubs at once.
+- See who is online, busy or offline: busy means connected, but no one can
+  answer right now ([busy presence](docs/busy-presence.md)).
 - Pictures show in the chat, videos and audio play there
   ([inline media](docs/inline-media.md)), and you can send files of any size
   up to the hub's limit.
