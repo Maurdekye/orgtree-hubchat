@@ -55,6 +55,13 @@
 .conv-head .name { font-weight: 600; font-size: 15.5px; color: var(--ink-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .conv-head .n2 { font-size: 12.5px; color: var(--dim); display: flex; align-items: center; gap: 8px; white-space: nowrap; overflow: hidden; }
 .conv-head .n2 .mono { font-size: 12px; color: var(--faint); }
+/* The state keeps its whole width up to the line's own, then ends in an
+   ellipsis, never cut mid-word (it read "Do not disturl" beside Contact info
+   in a 1000 px window; coordinator 2026-10-31); the address gives way first.
+   Inline, its dot inline-block, as in Contact info's hero. */
+.conv-head .n2 .ptext { display: block; flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.conv-head .n2 .ptext:not(.p-disconnected)::before { display: inline-block; margin-right: 6px; vertical-align: 1px; }
+.conv-head .n2 .ptext .ic { display: inline-block; vertical-align: -3px; margin-right: 6px; }
 .conv-head .sep { width: 3px; height: 3px; border-radius: 50%; background: var(--faint); flex: none; }
 .tl-wrap { flex: 1; min-height: 0; position: relative; }
 .timeline { position: absolute; inset: 0; padding: 6px 28px 18px; }
