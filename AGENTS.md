@@ -804,3 +804,5 @@
   and limits: `docs/logging.md`]
 
 - 2026-10-14: Desktop and Android Profile share SquareCrop: drag/resize corner handles over the native preview, arrow movement and Shift-arrow resize; no crop sliders. Native PictureCrop coordinates and original-byte saves stay unchanged. Pointer cancellation ends the gesture. Contract and unrun batch checks: docs/crop-square.md. [decided: user 2026-10-14; verified from source: PictureEditor.tsx, SquareCrop.tsx, cropmath.ts]
+
+- 2026-10-31: The image viewer zooms only the picture: it takes the touches (`touch-action: none`), pinch/pan/double tap (desktop Ctrl+wheel, double click) move a CSS transform, and `resetPageZoom` pins the viewport meta to scale 1 on open and close, so closing a zoomed image never leaves the app zoomed. A gesture's end is not a closing tap. Gotcha: nested `resetPageZoom` calls must restore the ORIGINAL meta once. Contract, proof and limits (jsdom only; the Android-viewport check is the integrator's): `docs/image-viewer.md`. [decided: user 2026-10-31; verified from source: AttImage.tsx, pinchmath.ts, images.css]
