@@ -143,6 +143,17 @@ async function run() {
         i.words.includes(ONLINE_NOTE) && i.words.includes(DND_NOTE) && i.words.indexOf(ONLINE_NOTE) < i.words.indexOf(DND_NOTE), i.words.slice(0, 700));
       return { dot: i.dot, text: i.text };
     },
+    "header-fit": async () => {
+      // the chat header's status line beside an open Contact info (desktop, 1000 px): the state keeps its whole width
+      // up to the line's own, then ends in an ellipsis, never cut mid-word ("Do not disturl"; coordinator 2026-10-31)
+      const n2 = document.querySelector<HTMLElement>(".conv-head .n2"), p = n2?.querySelector<HTMLElement>(".ptext");
+      const r = p?.getBoundingClientRect(), row = n2?.getBoundingClientRect(), cs = p ? getComputedStyle(p) : null;
+      const facts = { text: p?.textContent ?? null, right: r?.right ?? null, rowRight: row?.right ?? null, scroll: p?.scrollWidth ?? null,
+        client: p?.clientWidth ?? null, overflow: cs?.overflowX ?? null, textOverflow: cs?.textOverflow ?? null };
+      check("the chat header's state ends in an ellipsis inside its line, never cut mid-word (Contact info open, 1000 px)",
+        !!r && !!row && r.right <= row.right + 0.5 && cs?.textOverflow === "ellipsis" && cs?.overflowX === "hidden", facts);
+      return facts;
+    },
     "directory": async () => {
       await closeInfo(); await backToList();
       (document.querySelector('[aria-label="Directory"]') as HTMLElement | null)?.click();
