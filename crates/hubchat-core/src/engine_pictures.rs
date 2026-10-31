@@ -6,8 +6,9 @@ use crate::pictures::PictureRecord;
 impl Engine {
     /// Shared synchronous roster admission for poll, sync and setup refresh.
     /// `snapshot` preserves poll's empty-snapshot and sync's nonempty-first-page rules.
-    /// `busy` comes with `online` from hubs with busy (Mail hub 2.3.0). Red: not applied yet.
-    pub(crate) fn admit_roster_batch(&self, client:&HubClient, entries:&[crate::hub::RosterEntry], snapshot:bool, removed:&[String], online:Option<&[String]>, _busy:Option<&[String]>)->Result<()> {
+    /// `busy` comes with `online` from hubs with busy (Mail hub 2.3.0): `online`
+    /// alone is a hub before busy, where no one is busy.
+    pub(crate) fn admit_roster_batch(&self, client:&HubClient, entries:&[crate::hub::RosterEntry], snapshot:bool, removed:&[String], online:Option<&[String]>, busy:Option<&[String]>)->Result<()> {
         // Hold the originating generation for ALL namespace-changing effects.
         // No await or runtime-map acquisition is allowed in this closure.
         client.session_commit(|| {
@@ -20,6 +21,7 @@ impl Engine {
         self.observe_pictures(entries)?;
         self.picture_changed.send_replace(());
         if let Some(online)=online {self.store.set_online(url,online)?;changed=true;}
+        if online.is_some()||busy.is_some() {self.store.set_busy(url,busy.unwrap_or(&[]))?;changed=true;}
         if changed {self.host.event(Event::Directory);}
         Ok(())
         }).ok_or(Error::FilePaused)?

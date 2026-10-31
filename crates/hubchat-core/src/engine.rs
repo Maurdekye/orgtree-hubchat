@@ -1534,10 +1534,11 @@ impl Engine {
     /// the Automatic choice, and the hubs that list the peer.
     pub fn send_route(&self, peer: &str) -> Result<SendRoute> {
         let r = self.route(peer, &self.connected_hubs())?;
+        let busy = self.store.busy_hubs(peer)?;
         let mut hubs: Vec<RouteHub> = r
             .reaching
             .into_iter()
-            .map(|(url, online)| RouteHub { url, online, busy: false })
+            .map(|(url, online)| RouteHub { busy: online && busy.contains(&url), url, online })
             .collect();
         hubs.sort_by(|a, b| a.url.cmp(&b.url));
         Ok(SendRoute {

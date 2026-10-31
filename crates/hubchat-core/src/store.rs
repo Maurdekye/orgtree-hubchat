@@ -300,6 +300,9 @@ END;
 "#,
     include_str!("taskbar_attention.sql"),
     include_str!("taskbar_later_reply.sql"),
+    // 21: busy presence (Mail hub 2.3.0): the address is online on that hub,
+    // but no one can answer it now
+    r#"ALTER TABLE roster ADD COLUMN busy INTEGER NOT NULL DEFAULT 0;"#,
 ];
 
 pub struct Store {
@@ -544,10 +547,10 @@ impl Store {
             tx.execute("DELETE FROM roster WHERE hub=?", [hub])?;
             {
                 let mut st = tx.prepare(
-                    "INSERT INTO roster(address, hub, kind, org_name, username, blurb, online, last_seen) VALUES(?,?,?,?,?,?,?,?)",
+                    "INSERT INTO roster(address, hub, kind, org_name, username, blurb, online, busy, last_seen) VALUES(?,?,?,?,?,?,?,?,?)",
                 )?;
                 for e in entries {
-                    st.execute(params![e.slug, hub, e.kind, e.org_name, e.username, e.blurb, e.online, e.last_seen])?;
+                    st.execute(params![e.slug, hub, e.kind, e.org_name, e.username, e.blurb, e.online, e.busy, e.last_seen])?;
                     store_pictures::roster_owner(&tx,hub,e)?;
                 }
             }
@@ -555,11 +558,13 @@ impl Store {
         })
     }
 
-    /// The merged directory: one row per address, online if online on any hub.
+    /// The merged directory: one row per address, online if online on any hub,
+    /// busy if busy on every hub where it is online (one hub where it is online
+    /// and not busy wins; offline is never busy).
     pub fn directory(&self) -> Result<Vec<Contact>> {
         self.with(|c| {
             let mut st = c.prepare(
-                "SELECT r.address, r.kind, r.org_name, r.username, r.blurb, r.online, r.last_seen, r.hub FROM roster r ORDER BY r.address, r.hub",
+                "SELECT r.address, r.kind, r.org_name, r.username, r.blurb, r.online, r.busy, r.last_seen, r.hub FROM roster r ORDER BY r.address, r.hub",
             )?;
             let mut out: Vec<Contact> = Vec::new();
             let rows = st.query_map([], |r| {
@@ -570,25 +575,39 @@ impl Store {
                     r.get::<_, String>(3)?,
                     r.get::<_, String>(4)?,
                     r.get::<_, bool>(5)?,
-                    r.get::<_, Option<String>>(6)?,
-                    r.get::<_, String>(7)?,
+                    r.get::<_, bool>(6)?,
+                    r.get::<_, Option<String>>(7)?,
+                    r.get::<_, String>(8)?,
                 ))
             })?;
             for row in rows {
-                let (address, kind, org_name, username, blurb, online, last_seen, hub) = row?;
+                let (address, kind, org_name, username, blurb, online, busy, last_seen, hub) = row?;
+                let busy = online && busy;
                 let picture=if matches!(kind.as_str(),"person"|"org") { store_pictures::visible_meta(c,&address)? } else {None};
                 match out.last_mut() {
                     Some(c) if c.address == address => {
+                        if online {
+                            c.busy = if c.online { c.busy && busy } else { busy };
+                        }
                         c.online |= online;
                         if last_seen > c.last_seen {
                             c.last_seen = last_seen;
                         }
                         c.hubs.push(hub);
                     }
-                    _ => out.push(Contact { address, kind, org_name, username, blurb, online, busy: false, last_seen, hubs: vec![hub], picture }),
+                    _ => out.push(Contact { address, kind, org_name, username, blurb, online, busy, last_seen, hubs: vec![hub], picture }),
                 }
             }
             Ok(out)
+        })
+    }
+
+    /// The hubs where `address` is online but busy (the hub picker).
+    pub fn busy_hubs(&self, address: &str) -> Result<Vec<String>> {
+        self.with(|c| {
+            let mut st = c.prepare("SELECT hub FROM roster WHERE address=? AND online=1 AND busy=1 ORDER BY hub")?;
+            let rows = st.query_map([address], |r| r.get(0))?;
+            rows.collect()
         })
     }
 
@@ -1237,12 +1256,13 @@ impl Store {
             let tx = c.transaction()?;
             {
                 let mut st = tx.prepare(
-                    "INSERT INTO roster(address, hub, kind, org_name, username, blurb, online, last_seen) VALUES(?,?,?,?,?,?,?,?)
+                    "INSERT INTO roster(address, hub, kind, org_name, username, blurb, online, busy, last_seen) VALUES(?,?,?,?,?,?,?,?,?)
                      ON CONFLICT(address, hub) DO UPDATE SET kind=excluded.kind, org_name=excluded.org_name,
-                       username=excluded.username, blurb=excluded.blurb, online=excluded.online, last_seen=excluded.last_seen",
+                       username=excluded.username, blurb=excluded.blurb, online=excluded.online, busy=excluded.busy,
+                       last_seen=excluded.last_seen",
                 )?;
                 for e in entries {
-                    st.execute(params![e.slug, hub, e.kind, e.org_name, e.username, e.blurb, e.online, e.last_seen])?;
+                    st.execute(params![e.slug, hub, e.kind, e.org_name, e.username, e.blurb, e.online, e.busy, e.last_seen])?;
                     store_pictures::roster_owner(&tx,hub,e)?;
                 }
             }
@@ -1278,9 +1298,20 @@ impl Store {
         })
     }
 
-    /// Exactly these addresses are busy on this hub now. Red: not kept yet.
-    pub fn set_busy(&self, _hub: &str, _busy: &[String]) -> Result<()> {
-        Ok(())
+    /// Exactly these addresses are busy on this hub now (Mail hub 2.3.0: the
+    /// list comes with `online`; none from a hub before busy).
+    pub fn set_busy(&self, hub: &str, busy: &[String]) -> Result<()> {
+        self.with(|c| {
+            let tx = c.transaction()?;
+            tx.execute("UPDATE roster SET busy=0 WHERE hub=?", [hub])?;
+            for a in busy {
+                tx.execute(
+                    "UPDATE roster SET busy=1 WHERE hub=? AND address=?",
+                    params![hub, a],
+                )?;
+            }
+            tx.commit()
+        })
     }
 
     // ------------------------------------------------------ attachments
