@@ -10,10 +10,11 @@ const sessionOf=pid=>{try{return Number(execFileSync('powershell',['-NoProfile',
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 // What each view does: fixture steps and captures (green only).
 const views={
- 'desktop/header':[['step','list'],['step','header'],['step','info-org'],['step','header-fit'],['shot','desktop-header-narrow']],
+ 'desktop/header':[['step','list'],['step','header'],['step','info-org'],['step','header-fit'],['shot','desktop-header-narrow'],['step','header-parts'],['step','pose-115'],['shot','desktop-header-115'],['step','pose-220'],['shot','desktop-header-220'],['step','unpose']],
 };
-// What the source before the ellipsis fails (and nothing else): the header's state cut at its line's edge
-const expectedRed={'desktop/header':["the chat header's state ends in an ellipsis inside its line, never cut mid-word (Contact info open, 1000 px)"]};
+// What the source before whole parts fails (and nothing else): a separator ending the header's status line
+// (the ellipsis's own red, b0444da's parent bb2c3f1, named the ellipsis check instead)
+const expectedRed={'desktop/header':["the chat header's status line never ends in a separator: each • is followed by the whole hub chip or at least 30 px of the address, at every width from 40 to 520 px"]};
 app.whenReady().then(async()=>{
  const s=session.defaultSession;
  s.setPermissionRequestHandler((_w,_p,cb)=>cb(false));s.setPermissionCheckHandler(()=>false);
@@ -31,7 +32,8 @@ app.whenReady().then(async()=>{
    const r={platform,view,visibility:await js('document.visibilityState'),actions:[]};
    for(const [act,arg] of script){
     if(act==='step')r.actions.push({step:arg,state:await js(`window.dndFixture.step(${JSON.stringify(arg)})`)});
-    else if(act==='shot'&&!red){win.webContents.invalidate();await sleep(350);fs.writeFileSync(path.join(out,arg+'.png'),(await win.webContents.capturePage()).toPNG());}
+    else if(act==='shot'&&(!red||/-(115|220)$/.test(arg))){ // the posed widths are captured red too: the old line, seen
+   win.webContents.invalidate();await sleep(350);fs.writeFileSync(path.join(out,arg+'.png'),(await win.webContents.capturePage()).toPNG());}
    }
    r.checks=await js('window.dndFixture.checks');
    r.session={main:sessionOf(process.pid),renderer:sessionOf(win.webContents.getOSProcessId())};

@@ -93,6 +93,13 @@ async function run() {
   const backToList = async () => { if (platform === "android") { (document.querySelector('.appbar [aria-label="Back"]') as HTMLElement | null)?.click(); await settle(); } };
   const infoOf = () => { const r = infoRoot(); return { dot: state(dotOf(r)), text: r?.querySelector(".ptext")?.textContent ?? null, words: r?.textContent ?? "" }; };
 
+  const pose = async (wd: number | null) => {
+    const n2 = document.querySelector<HTMLElement>(".conv-head .n2"); if (!n2) return null;
+    n2.style.flex = wd === null ? "" : "none"; n2.style.width = wd === null ? "" : wd + "px";
+    for (let i = 0; i < 3; i++) await new Promise((r) => requestAnimationFrame(() => r(null)));
+    return [...n2.children].filter((e) => getComputedStyle(e).visibility !== "hidden" && e.getBoundingClientRect().left < n2.getBoundingClientRect().right - 0.5).map((e) => e.className);
+  };
+
   const steps: Record<string, () => Promise<unknown>> = {
     "list": async () => {
       await until(() => !!row("Delta Org") && !!row("Acme Labs") && !!row("Ollie"), 3000);
@@ -154,6 +161,37 @@ async function run() {
         !!r && !!row && r.right <= row.right + 0.5 && cs?.textOverflow === "ellipsis" && cs?.overflowX === "hidden", facts);
       return facts;
     },
+    "header-parts": async () => {
+      // the same line at every width from 40 to 520 px: after the state it shows whole parts, each with its separator,
+      // or neither, so it never ends in a "•" (coordinator 2026-10-31): the address at least 30 px, the hub chip whole
+      const n2 = document.querySelector<HTMLElement>(".conv-head .n2");
+      const bad: unknown[] = [], seen = new Set<string>();
+      const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
+      for (let wd = 40; n2 && wd <= 520; wd += 3) {
+        n2.style.flex = "none"; n2.style.width = wd + "px";
+        await frame(); await frame(); await frame();
+        const row = n2.getBoundingClientRect();
+        const vis = [...n2.children].filter((e): e is HTMLElement => e instanceof HTMLElement && getComputedStyle(e).visibility !== "hidden"
+          && e.getBoundingClientRect().width > 0 && e.getBoundingClientRect().left < row.right - 0.5);
+        const tag = (e: HTMLElement) => e.classList.contains("sep") ? "•" : e.classList.contains("ptext") ? "S" : e.classList.contains("hubchip") ? "H" : "A";
+        seen.add(vis.map(tag).join(""));
+        vis.forEach((e, i) => {
+          if (tag(e) !== "•") return;
+          const next = vis[i + 1], r = next?.getBoundingClientRect();
+          const ok = !!next && !!r && (tag(next) === "H" ? r.right <= row.right + 0.5 : tag(next) === "A" && Math.min(r.right, row.right) - r.left >= 30);
+          if (!ok) bad.push({ width: wd, line: vis.map(tag).join(""), next: next ? tag(next) : null, shown: r ? Math.round(Math.min(r.right, row.right) - r.left) : null });
+        });
+      }
+      if (n2) { n2.style.width = ""; n2.style.flex = ""; }
+      const facts = { bad: bad.slice(0, 8), badCount: bad.length, seen: [...seen] };
+      check("the chat header's status line never ends in a separator: each • is followed by the whole hub chip or at least 30 px of the address, at every width from 40 to 520 px",
+        !!n2 && bad.length === 0 && ["S", "S•H", "S•A•H"].every((l) => seen.has(l)), facts);
+      return facts;
+    },
+    // posed widths of the same line for the captures (115 px: the old line ended "Do not disturb •"; 220 px)
+    "pose-115": async () => pose(115),
+    "pose-220": async () => pose(220),
+    "unpose": async () => pose(null),
     "directory": async () => {
       await closeInfo(); await backToList();
       (document.querySelector('[aria-label="Directory"]') as HTMLElement | null)?.click();
