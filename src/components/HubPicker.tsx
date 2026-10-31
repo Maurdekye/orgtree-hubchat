@@ -27,7 +27,7 @@ export function routeLabel(r: SendRoute | null, hubs: HubStatus[]): string {
 /** There is a choice to make: two or more of my hubs list them. */
 export const hasChoice = (r: SendRoute | null) => !!r && r.hubs.length >= 2;
 
-type HubAt = "online" | "offline" | "down";
+type HubAt = "online" | "busy" | "offline" | "down";
 
 /** Automatic and each hub, with their state there (shared by both layouts). */
 function Choices({ peer, route, who, onDone }: { peer: string; route: SendRoute; who: string; onDone: () => void }) {
@@ -48,10 +48,10 @@ function Choices({ peer, route, who, onDone }: { peer: string; route: SendRoute;
       {row("auto", !route.pinned, "Automatic",
         route.automatic ? "Now: " + hubName(hubs, route.automatic) : "None of your hubs can reach " + who + " right now.",
         () => pick(null))}
-      {route.hubs.map(({ url, online }) => {
-        const at: HubAt = hubByUrl(hubs, url)?.state !== "connected" ? "down" : online ? "online" : "offline";
+      {route.hubs.map(({ url, online, busy }) => {
+        const at: HubAt = hubByUrl(hubs, url)?.state !== "connected" ? "down" : online ? (busy ? "busy" : "online") : "offline";
         return row(url, route.pinned === url, hubName(hubs, url),
-          hubByUrl(hubs, url)?.state === "disabled" ? "Disabled on this device" : at === "down" ? "Can't reach this hub" : who + (online ? " is online here" : " is offline here"),
+          hubByUrl(hubs, url)?.state === "disabled" ? "Disabled on this device" : at === "down" ? "Can't reach this hub" : who + " is " + at + " here",
           () => pick(url), at);
       })}
     </>

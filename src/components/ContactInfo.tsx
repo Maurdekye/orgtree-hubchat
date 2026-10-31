@@ -9,13 +9,18 @@ import { Icon } from "../lib/icons";
 import { closeMenu } from "../lib/ctxmenu";
 import { forgetLocalOrgtreeOrg, useLocalOrgtreeOrg } from "../lib/localOrgtree";
 import { copyText } from "../lib/native";
-import { displayName, hubCls, hubStatusText, kindInfo, kindOf, peerHubs, splitAddr, viaHub } from "../lib/peers";
+import { displayName, hubCls, hubStatusText, kindInfo, kindOf, peerHubs, presence, splitAddr, viaHub, type Kind } from "../lib/peers";
 import { useMessages, useSnap } from "../lib/store";
 import { toast } from "../lib/toast";
 import { Addr, KindChip, PeerAvatar, PresText, useNow, usePlatform } from "./ui";
 import { ContactFile } from "./ContactFile";
 
 const ONLINE_NOTE = "“Online” means its Orgtree is connected to the hub — not that an agent is typing.";
+/** What busy means (Mail hub 2.3.0; user 2026-10-30), said while they are busy. */
+const BUSY_NOTE: Partial<Record<Kind, string>> = {
+  person: "“Busy” means Hubchat hasn't been in front on any of their devices for an hour.",
+  org: "“Busy” means it is connected, but none of the agents who answer its outside mail can start a turn right now.",
+};
 const bare = (url: string) => url.replace(/^https?:\/\//, "");
 
 /** `onClose`: desktop closes the panel; Android goes back to the chat. */
@@ -38,6 +43,7 @@ export function ContactInfo({ peer, onClose, onShowMessage }: { peer: string; on
     onOpen: () => { api.openOrgtreeOrg(local.slug).catch(() => { toast("Orgtree couldn't be opened"); forgetLocalOrgtreeOrg(local.slug); }); },
   } : undefined;
   const ph = peerHubs(c, hubs);
+  const busyNote = presence(c, hubs).state === "busy" ? BUSY_NOTE[kind] : undefined;
   const via = viaHub(c, hubs);
   const now = useNow(ph.some((h) => h.state === "disconnected"));
   const { msgs, loaded, error, reload } = useMessages(peer, 5000); // every file in the chat, not just the newest page
@@ -83,7 +89,7 @@ export function ContactInfo({ peer, onClose, onShowMessage }: { peer: string; on
             </div>
           </div>
           {blurb ? <><div className="sec-h">About</div><div className="li"><Icon name="info" /><div className="t"><div className="t1" style={{ fontSize: 15, overflowWrap: "anywhere" }}>{blurb}</div></div></div></> : null}
-          {c ? <><div className="sec-h">What this is</div><div className="li"><Icon name={k.icon} /><div className="t"><div className="t2" style={{ fontSize: 14, color: "var(--ink)" }}>{k.what}{kind === "org" ? " " + ONLINE_NOTE : ""}</div></div></div></> : null}
+          {c ? <><div className="sec-h">What this is</div><div className="li"><Icon name={k.icon} /><div className="t"><div className="t2" style={{ fontSize: 14, color: "var(--ink)" }}>{k.what}{kind === "org" ? " " + ONLINE_NOTE : ""}{busyNote ? " " + busyNote : ""}</div></div></div></> : null}
           <div className="sec-h">Reachable through</div>
           {ph.length ? ph.map((h) => (
             <div className="li" key={h.url}>
@@ -118,7 +124,7 @@ export function ContactInfo({ peer, onClose, onShowMessage }: { peer: string; on
         {c ? (
           <div className="info-sec">
             <h4 aria-level={2}>What this is</h4>
-            <div style={{ fontSize: 13, color: "var(--ink)" }}>{k.what}{kind === "org" ? <> <span className="dim">{ONLINE_NOTE}</span></> : null}</div>
+            <div style={{ fontSize: 13, color: "var(--ink)" }}>{k.what}{kind === "org" ? <> <span className="dim">{ONLINE_NOTE}</span></> : null}{busyNote ? <> <span className="dim">{busyNote}</span></> : null}</div>
           </div>
         ) : null}
         <div className="info-sec">

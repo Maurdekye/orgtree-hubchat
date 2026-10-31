@@ -211,6 +211,9 @@ export interface Contact {
   username: string;
   blurb: string;
   online: boolean;
+  /** Online, but no one can answer now (Mail hub 2.3.0): busy on every hub
+   *  where they are online. Older cores never say it. */
+  busy?: boolean;
   last_seen: string | null;
   hubs: string[];
   picture?: PictureMeta | null;
@@ -224,8 +227,8 @@ export interface SendRoute {
   automatic: string | null;
   /** The hub the next message goes through (null: it waits). */
   next: string | null;
-  /** My hubs whose directory lists the peer, by address. */
-  hubs: { url: string; online: boolean }[];
+  /** My hubs whose directory lists the peer, by address; `busy`: online there, but busy (Mail hub 2.3.0). */
+  hubs: { url: string; online: boolean; busy?: boolean }[];
 }
 
 export type Probe =

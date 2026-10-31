@@ -403,7 +403,7 @@ export function completeMentionText(
 /** A contact's type in the user's words, as Orgtree's hover names it
  *  (Orgtree netmentions.tsx, USER 2026-10-29 "(org, person, independent chat)"). */
 const TYPE_WORD = { org: "org", person: "person", chat: "independent chat" } as const;
-const PRESENCE_WORD = { online: "Online", offline: "Offline", disconnected: "Status unknown" } as const;
+const PRESENCE_WORD = { online: "Online", busy: "Busy", offline: "Offline", disconnected: "Status unknown" } as const;
 
 /** How a mention of `address` shows (user 2026-10-29, docket
  *  hubchat-inline-mentions-of-other-hubchat-clients): "on" when one of my hubs

@@ -533,7 +533,7 @@ function Privacy() {
       <Card>
         <ToggleRow icon="done_all" t1="Send read receipts" t2="Off: people and agents see your messages as delivered, never read. You still see theirs." on={on} onChange={set} label="Send read receipts" />
         <Row icon="contacts" t1="Directory" t2="Everyone on your hubs finds you in their directory: your name, address and about line. Being on a hub means being listed." />
-        <Row icon="person" t1="Online status" t2="The hub shows you as online while Hubchat is connected, to everyone on that hub. This can't be hidden." />
+        <Row icon="person" t1="Online status" t2="The hub shows you as online while Hubchat is connected, to everyone on that hub, and as busy once Hubchat hasn't been in front on any of your devices for an hour. This can't be hidden." />
         <Row icon="privacy" t1="Who can message you" t2="Anyone on your hubs who has your address." />
       </Card>
     </Sec>

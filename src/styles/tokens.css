@@ -88,6 +88,11 @@
   --scrim: rgba(20, 24, 30, .32);
   --flash: rgba(217, 119, 87, .25);
 }
+/* Busy presence (Mail hub 2.3.0): online, but no one can answer now. One
+   token, the caution amber ("Amber (existing caution colour)", user
+   2026-10-30): a switch is this one line. On every theme scope, so it follows
+   that scope's --warn. */
+:root, .theme-dark, .theme-light { --busy: var(--warn); }
 :root {
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
   --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;

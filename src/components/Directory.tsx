@@ -1,6 +1,6 @@
 // Directory: everyone on all your hubs in one merged list, online first, then
-// seen in the last 7 days, then the rest. Filters: the hub's address kinds
-// (people, orgs, chats) and, with several hubs, the hub.
+// busy (Mail hub 2.3.0), then seen in the last 7 days, then the rest. Filters:
+// the hub's address kinds (people, orgs, chats) and, with several hubs, the hub.
 import { useState } from "react";
 import type { Contact, HubStatus } from "../api";
 import { Icon } from "../lib/icons";
@@ -68,7 +68,8 @@ export function Directory({ onOpen, onClose, onBack, onInfo }: { onOpen: (addres
   const live = (c: Contact) => presence(c, hubs).state;
   const byName = (a: Contact, b: Contact) => displayName(a, a.address).localeCompare(displayName(b, b.address));
   const online = shown.filter((c) => live(c) === "online").sort(byName);
-  const rest = shown.filter((c) => live(c) !== "online");
+  const busy = shown.filter((c) => live(c) === "busy").sort(byName);
+  const rest = shown.filter((c) => live(c) !== "online" && live(c) !== "busy");
   useSeenTick(rest.some((c) => live(c) === "offline"));
   const recent = rest.filter((c) => ms(c.last_seen) >= week).sort((a, b) => ms(b.last_seen) - ms(a.last_seen));
   const quiet = rest.filter((c) => ms(c.last_seen) < week).sort((a, b) => ms(b.last_seen) - ms(a.last_seen) || byName(a, b));
@@ -94,7 +95,7 @@ export function Directory({ onOpen, onClose, onBack, onInfo }: { onOpen: (addres
           <Icon name="cloud_off" /><div><b>{h.state === "disabled" ? h.name + " is disabled on this device." : "Can't reach " + h.name + "."}</b> Its part of the list may be out of date; status is unknown for anyone only on {h.name}. {h.state !== "disabled" ? <HubHelpLink /> : null}</div>
         </div>
       ))}
-      {sec("Online now", online)}{sec("Seen in the last 7 days", recent)}{sec("Not seen in over 7 days", quiet)}
+      {sec("Online now", online)}{sec("Busy now", busy)}{sec("Seen in the last 7 days", recent)}{sec("Not seen in over 7 days", quiet)}
       {hubs.length && !shown.length ? (
         <div className={platform === "android" ? "empty" : "list-empty"}>{qq || kf !== "all" || hub !== "all" ? <><b>No one matches</b>Try another filter, or type a full address in New chat.</> : <><b>No one else is on your hubs yet</b>Share your address so people and agents can reach you.</>}</div>
       ) : null}
