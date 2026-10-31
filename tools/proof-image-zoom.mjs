@@ -24,7 +24,9 @@ for(const k of ['window','document','navigator','history','HTMLElement','Event',
 globalThis.requestAnimationFrame=f=>setTimeout(f,0);globalThis.cancelAnimationFrame=clearTimeout;
 globalThis.IS_REACT_ACT_ENVIRONMENT=true;
 globalThis.URL.createObjectURL=()=>'blob:scratch/x';
+let captured=0;
 const P=dom.window.HTMLElement.prototype;
+P.setPointerCapture=function(){captured++};
 Object.defineProperty(P,'offsetWidth',{configurable:true,get(){return this.tagName==='IMG'?300:0}});
 Object.defineProperty(P,'offsetHeight',{configurable:true,get(){return this.tagName==='IMG'?200:0}});
 P.getBoundingClientRect=function(){return this.tagName==='IMG'?{left:100,top:100,width:300,height:200,right:400,bottom:300,x:100,y:100}:{left:0,top:0,width:0,height:0,right:0,bottom:0,x:0,y:0}};
@@ -48,6 +50,7 @@ for(const platform of ['desktop','android']){
   await act(async()=>openImage(m,a));await tick();await tick();
   const ov=document.querySelector('.imgview'),img=document.querySelector('.imgview img');
   check(platform+': the viewer is open',!!ov&&!!img);
+  check(platform+': the controls stay above a zoomed picture (z-index on the close icon and caption)',/\.iv-close\s*\{[^}]*z-index:\s*2/.test(css)&&/\.iv-cap\s*\{[^}]*z-index:\s*2/.test(css));
   check(platform+': the overlay takes the touches (touch-action: none in images.css)',/\.imgview\s*\{[^}]*touch-action:\s*none/.test(css));
   check(platform+': opening pins the page scale to 1 for a moment',metaLog.some(c=>/maximum-scale=1/.test(c)));
   await tick();await tick();
@@ -56,6 +59,7 @@ for(const platform of ['desktop','android']){
     await pointer('pointerdown',ov,1,200,200);await pointer('pointerdown',ov,2,240,200);
     await pointer('pointermove',ov,1,160,200);await pointer('pointermove',ov,2,280,200);
     check(platform+': a pinch zooms the PICTURE (scale '+scaleOf()+')',scaleOf()>2.5);
+    check(platform+': no pointer capture (it would retarget the picture own clicks to the overlay)',captured===0);
     await pointer('pointerup',ov,1,160,200);await pointer('pointerup',ov,2,280,200);
     await act(async()=>ov.dispatchEvent(new dom.window.MouseEvent('click',{bubbles:true})));await tick();
     check(platform+': the end of a pinch does not close the viewer',!!document.querySelector('.imgview'));

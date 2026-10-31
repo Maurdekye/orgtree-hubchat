@@ -37,6 +37,11 @@ scaled the whole page, and nothing put it back on close.
 - Pinch, pan, double tap and Ctrl + wheel are `src/components/pinchmath.ts`
   (pure functions) driven by pointer events in `AttImage.tsx`; the picture is
   moved with a CSS transform.
+- The overlay does NOT capture the pointer: capture retargets the click that
+  ends a tap to the overlay, so the picture's own double click never arrived
+  and the tap closed the viewer (found by the integrator's emulated-desktop
+  capture, 2026-10-31). The close icon and caption sit above a zoomed picture
+  (`z-index: 2`), which otherwise paints over them.
 - On opening and on closing, `resetPageZoom` pins the viewport meta to
   `minimum-scale=1, maximum-scale=1` for two animation frames and restores its
   original content, which returns the page to 1:1 even if something else scaled
@@ -46,11 +51,12 @@ scaled the whole page, and nothing put it back on close.
 ## Proof, and what it does not show
 
 - `tools/pinchmath.test.ts`: the math and the reset (7 Node tests).
-- `tools/proof-image-zoom.mjs`: the mounted viewer in jsdom, mock core only:
+- `tools/proof-image-zoom.mjs` (24 checks): the mounted viewer in jsdom, mock core only:
   overlay claims the touches, a pinch zooms the picture and not the page, the
   end of a pinch does not close, opening and closing pin and restore the
   viewport meta. At the predecessor 3c19428 it passes 10 of 20 checks; with the
-  fix, 20 of 20.
+  fix, all of them. The integrator's mobile-emulation capture reproduces the base (page scale
+  2.87 after close) and shows 1.0 at the tip.
 - jsdom has no pinch-zoom of its own, so this does not show the real WebView.
   The Android-viewport check (emulated mobile with touch pinch, reading
   `window.visualViewport.scale` before, during and after) is the integrator's;

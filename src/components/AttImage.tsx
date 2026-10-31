@@ -111,7 +111,8 @@ function Viewer({ m, a }: { m: Message; a: Attachment }) {
   const down = (e: ReactPointerEvent) => {
     if ((e.target as HTMLElement).closest(".iv-close, .iv-cap")) return;
     fingers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    // no setPointerCapture: capture would retarget the click that ends a tap to the overlay (the picture's
+    // own double click, and the tap that must not close, never reach their target); touches already stay with the picture
     moved.current = false;
     begin();
   };

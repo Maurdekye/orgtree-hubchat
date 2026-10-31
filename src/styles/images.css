@@ -12,8 +12,8 @@
 
 .imgview { cursor: zoom-out; padding: 20px; touch-action: none; overflow: hidden; } /* the viewer takes the touches: pinch/pan move the picture, never the page */
 .imgview img { cursor: default; max-width: 100%; object-fit: contain; touch-action: none; user-select: none; -webkit-user-select: none; transform-origin: center; }
-.imgview .iv-close { position: absolute; top: 14px; right: 16px; color: #ddd; }
-.imgview .iv-cap { display: flex; align-items: baseline; gap: 0; max-width: 90%; cursor: default; color: #ddd; }
+.imgview .iv-close { position: absolute; top: 14px; right: 16px; color: #ddd; z-index: 2; } /* above a zoomed picture, which paints over its siblings */
+.imgview .iv-cap { position: relative; z-index: 2; display: flex; align-items: baseline; gap: 0; max-width: 90%; cursor: default; color: #ddd; text-shadow: 0 0 4px #000, 0 0 2px #000; }
 .imgview .iv-cap .dim { color: #aaa; white-space: nowrap; }
 .imgview .iv-acts { display: inline-flex; gap: 14px; margin-left: 16px; }
 .imgview .iv-acts .link { color: #9cc7ff; font-size: 13px; }
