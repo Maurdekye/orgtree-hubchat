@@ -3,7 +3,7 @@
 // viewer a click opens (desktop overlay, Android screen; Esc or back closes
 // it). Without a preview (too big, gone from the hub, none fetched) the
 // file card shows instead.
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent as ReactWheelEvent } from "react";
 import { api, type Attachment, type Message } from "../api";
 import { bytes } from "../lib/format";
 import { Icon } from "../lib/icons";
@@ -12,6 +12,7 @@ import { errText, openAttachment, openFile } from "../lib/native";
 import { attView } from "../lib/peers";
 import { onChatChange, useTransfer } from "../lib/store";
 import { toast } from "../lib/toast";
+import { HOME, panView, pinchView, resetPageZoom, toggleZoom, wheelView, type Pt, type View } from "./pinchmath";
 import { pressKeys, usePlatform } from "./ui";
 import "../styles/images.css";
 
@@ -82,6 +83,64 @@ function Viewer({ m, a }: { m: Message; a: Attachment }) {
   }, [platform, m.id, a.local_id]);
   const close = () => { if (platform === "android") history.back(); else closeImage(); };
 
+  // pinch, pan and double tap move the picture only: the overlay takes the touches (touch-action: none),
+  // so the WebView never scales the page, and a page scale left by anything else is undone on open and close
+  const img = useRef<HTMLImageElement>(null);
+  const [zoom, setZoom] = useState<View>(HOME);
+  const viewRef = useRef<View>(HOME);
+  const fingers = useRef(new Map<number, Pt>());
+  const gesture = useRef<{ view: View; a: Pt; b: Pt } | { view: View; at: Pt } | null>(null);
+  const moved = useRef(false);
+  const put = (v: View) => { viewRef.current = v; setZoom(v); };
+  useEffect(() => {
+    resetPageZoom(document);
+    return () => { resetPageZoom(document); };
+  }, []);
+  const size = () => ({ w: img.current?.offsetWidth ?? 0, h: img.current?.offsetHeight ?? 0 });
+  // the picture's unscaled centre on screen: its box centre less the current pan
+  const centre = (): Pt => {
+    const r = img.current?.getBoundingClientRect();
+    return r ? { x: r.left + r.width / 2 - viewRef.current.x, y: r.top + r.height / 2 - viewRef.current.y } : { x: 0, y: 0 };
+  };
+  const from = (p: Pt): Pt => { const c = centre(); return { x: p.x - c.x, y: p.y - c.y }; };
+  const begin = () => {
+    const pts = [...fingers.current.values()];
+    gesture.current = pts.length >= 2 ? { view: viewRef.current, a: pts[0]!, b: pts[1]! }
+      : pts.length === 1 ? { view: viewRef.current, at: pts[0]! } : null;
+  };
+  const down = (e: ReactPointerEvent) => {
+    if ((e.target as HTMLElement).closest(".iv-close, .iv-cap")) return;
+    fingers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    moved.current = false;
+    begin();
+  };
+  const move = (e: ReactPointerEvent) => {
+    if (!fingers.current.has(e.pointerId) || !gesture.current) return;
+    fingers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const pts = [...fingers.current.values()];
+    const g = gesture.current;
+    if ("a" in g && pts.length >= 2) {
+      put(pinchView(g.view, from(g.a), from(g.b), from(pts[0]!), from(pts[1]!), size()));
+      moved.current = true;
+    } else if ("at" in g && pts.length === 1) {
+      const dx = pts[0]!.x - g.at.x, dy = pts[0]!.y - g.at.y;
+      if (Math.abs(dx) + Math.abs(dy) > 4) moved.current = true;
+      if (g.view.scale > 1) put(panView(g.view, dx, dy, size()));
+    }
+  };
+  const up = (e: ReactPointerEvent) => {
+    fingers.current.delete(e.pointerId);
+    begin();
+  };
+  const wheel = (e: ReactWheelEvent) => {
+    if (!e.ctrlKey) return;
+    put(wheelView(viewRef.current, e.deltaY, from({ x: e.clientX, y: e.clientY }), size()));
+  };
+  const dbl = (e: { clientX: number; clientY: number }) => {
+    put(toggleZoom(viewRef.current, from({ x: e.clientX, y: e.clientY }), size()));
+  };
+
   const download = () => {
     setRequesting(true);
     api.download(m.id, a.local_id).catch((e) => toast("Download failed: " + errText(e))).finally(() => setRequesting(false));
@@ -97,11 +156,12 @@ function Viewer({ m, a }: { m: Message; a: Attachment }) {
         : <button className="link" onClick={download}>{view.retry ? "Retry download" : "Download"}</button>;
 
   return (
-    <div className="imgview" role="dialog" aria-label={a.name} onClick={close}>
+    <div className="imgview" role="dialog" aria-label={a.name} onClick={() => { if (!moved.current) close(); moved.current = false; }}
+      onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onWheel={wheel}>
       <button className="icon-btn iv-close" onClick={(e) => { e.stopPropagation(); close(); }} title={platform === "desktop" ? "Close (Esc)" : undefined} aria-label="Close">
         <Icon name={platform === "android" ? "back" : "close"} />
       </button>
-      {url ? <img src={url} alt={a.name} onClick={(e) => e.stopPropagation()} /> : <span className="att-ph"><Icon name="image" /></span>}
+      {url ? <img ref={img} src={url} alt={a.name} draggable={false} style={{ transform: `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.scale})` }} onClick={(e) => e.stopPropagation()} onDoubleClick={dbl} /> : <span className="att-ph"><Icon name="image" /></span>}
       <div className="iv-cap" onClick={(e) => e.stopPropagation()}>
         <span className="ell">{a.name}</span><span className="dim"> · {bytes(a.bytes)}</span>{actions ? <span className="iv-acts">{actions}</span> : null}
       </div>
