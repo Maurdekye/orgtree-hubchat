@@ -206,3 +206,32 @@ async fn a_pick_wakes_a_parked_sync_to_tell_its_hub_at_once() {
     }
     assert_eq!(said(&s, &hub.url), some("dnd"), "its word is ours now; the sync goes on");
 }
+
+/// Invisible (Mail hub feature `invisible`, schema 12; user 2026-10-31 14:13Z,
+/// people only): a status like the others, but told only to a hub that can
+/// hide us; one that can't is not asked (it would refuse it) and keeps its
+/// last word. It mutes nothing: the shell mutes on `dnd` only.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn invisible_is_told_only_to_a_hub_that_can_hide_us() {
+    let hub = fake_hub(200).await;
+    let (e, ev, s) = engine_with(&[&hub.url]);
+    let client = HubClient::new(HubAddress::parse(&hub.url).unwrap());
+    e.set_status("invisible").unwrap();
+    assert_eq!((e.status(), owed(&s, &hub.url), told_window(&ev)), ("invisible".into(), some("invisible"), 1));
+    assert_eq!(chosen_status(&s), "invisible");
+    assert_ne!(chosen_status(&s), "dnd", "the shell mutes on dnd only: Invisible hides presence, not notifications");
+    e.tell_status(&client, &hub.url, &["sync".to_string(), "status".to_string()]).await.unwrap();
+    assert_eq!((hub.seen("/api/status").len(), owed(&s, &hub.url), said(&s, &hub.url)), (0, None, None), "a hub that can't hide us is not asked");
+    e.set_status("invisible").unwrap();
+    e.tell_status(&client, &hub.url, &["sync".to_string(), "status".to_string(), "invisible".to_string()]).await.unwrap();
+    assert_eq!(hub.seen("/api/status"), vec![r#"{"status":"invisible"}"#.to_string()], "told a hub with the feature");
+    assert_eq!((owed(&s, &hub.url), said(&s, &hub.url)), (None, some("invisible")));
+}
+
+#[test]
+fn invisible_picked_on_another_of_our_devices_is_taken() {
+    let (e, ev, _) = engine_with(&[A]);
+    e.hub_said_status(A, "auto", false).unwrap();
+    e.hub_said_status(A, "invisible", false).unwrap();
+    assert_eq!((e.status(), told_window(&ev)), ("invisible".into(), 1));
+}

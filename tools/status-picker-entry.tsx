@@ -7,6 +7,9 @@
 // (hc_set_status) and the dot follows it; with no hub connected the dot says offline (offline wins, 09:03Z). On Do
 // not disturb, Settings › Notifications says nothing will show or sound, with a way to turn it off. A person on Do
 // not disturb: Contact info says what it means.
+// Invisible (Mail hub feature `invisible`; docket hubchat-status-picker-add-invisible, user 2026-10-31 14:13Z "add
+// invisible as a selectable status in hubchat", people only): a fifth row with the offline dot; picked, your own dot
+// is hollow as offline and says Invisible; a connected hub that can't hide you is named in the row.
 // ?platform=desktop|android
 import { createRoot } from "react-dom/client";
 import App from "../src/App";
@@ -31,6 +34,7 @@ const CHOICES = [
   { label: "Online", sub: "Online even while you're away", dot: "hdot online", checked: false },
   { label: "Busy", sub: "Shown busy to everyone", dot: "hdot busy", checked: false },
   { label: "Do not disturb", sub: "No notifications on any of your devices", dot: "hdot dnd", checked: false },
+  { label: "Invisible", sub: "Shown offline to everyone", dot: "hdot offline", checked: false },
 ];
 const PERSON_DND_NOTE = "“Do not disturb” means they've turned off notifications on all their devices: your messages still arrive, and they'll see them when they look.";
 
@@ -38,7 +42,7 @@ async function run() {
   const platform = new URLSearchParams(location.search).get("platform") === "android" ? "android" : "desktop";
   const checks: Check[] = [];
   const check = (name: string, ok: unknown, detail?: unknown) => { checks.push({ name, ok: !!ok, ...(ok ? {} : { detail }) }); };
-  let status = "auto", connected = true;
+  let status = "auto", connected = true, oldB = false;
   const picks: string[] = [];
   const contact = (address: string, kind: "person" | "org", name: string, online: boolean, busy: boolean, dnd: boolean): Contact =>
     ({ address, kind, org_name: kind === "org" ? name : "", username: kind === "org" ? "" : name, blurb: "", online, busy, dnd,
@@ -50,7 +54,7 @@ async function run() {
     contact(ACME, "org", "Acme Labs", true, false, false),
   ];
   const hub = (url: string, name: string): HubStatus => ({ url, name, state: connected ? "connected" : "disconnected", error: null, retry_at_ms: null,
-    max_attachment_bytes: 1 << 30, features: ["v2", "busy", "dnd", "status"] });
+    max_attachment_bytes: 1 << 30, features: url === B && oldB ? ["v2", "busy", "dnd", "status"] : ["v2", "busy", "dnd", "status", "invisible"] });
   let n = 0;
   const message = (peer: string, body: string, outgoing = false): Message => ({ id: peer + "-" + n, peer, outgoing, hub: A, body, kind: null, reply_to: null,
     created_at: new Date(1700000000000 + n++ * 60000).toISOString(), sent_at: null, received_at: null, state: outgoing ? "delivered" : "received", fetched_at: null, delivered_at: null, read_at: null,
@@ -90,7 +94,7 @@ async function run() {
   const rows = () => [...(menu()?.querySelectorAll<HTMLElement>(".statusopt") ?? [])];
   const choices = () => rows().map((o) => ({ label: o.querySelector("b")?.textContent ?? "", sub: o.querySelector("small")?.textContent ?? "",
     dot: o.querySelector(".hdot")?.className ?? null, checked: o.getAttribute("aria-checked") === "true" }));
-  const openMenu = async () => { me()?.click(); await until(() => rows().length === 4, 3000); await settle(); };
+  const openMenu = async () => { me()?.click(); await until(() => rows().length === 5, 3000); await settle(); };
   const closeMenu = async () => {
     if (platform === "desktop") me()?.click(); else document.querySelector<HTMLElement>(".sheet-scrim")?.click();
     await until(() => !menu(), 3000); await settle();
@@ -108,9 +112,9 @@ async function run() {
     "open": async () => {
       await openMenu();
       const m = menu(), c = choices();
-      check("the picker: Automatic, Online, Busy and Do not disturb, each with what it does and the dot others see; Automatic checked",
+      check("the picker: Automatic, Online, Busy, Do not disturb and Invisible, each with what it does and the dot others see; Automatic checked",
         JSON.stringify(c) === JSON.stringify(CHOICES), c);
-      check("each choice is a radio item, as in the hub picker", rows().length === 4 && rows().every((o) => o.getAttribute("role") === "menuitemradio" && o.classList.contains("hubopt")), rows().map((o) => o.outerHTML.slice(0, 120)));
+      check("each choice is a radio item, as in the hub picker", rows().length === 5 && rows().every((o) => o.getAttribute("role") === "menuitemradio" && o.classList.contains("hubopt")), rows().map((o) => o.outerHTML.slice(0, 120)));
       const items = [...(m?.querySelectorAll<HTMLElement>(".mi") ?? [])];
       check("the picker ends with Profile", items.at(-1)?.textContent === "Profile" && items.at(-1)?.getAttribute("role") === "menuitem", items.map((i) => i.textContent));
       check(platform === "desktop" ? "desktop: a popover under your avatar, headed Your status" : "Android: a bottom sheet with its grip, headed Your status",
@@ -198,6 +202,33 @@ async function run() {
         busy.dot === "p-busy" && busy.label === "Your status: Busy" && off.dot === "p-offline" && off.title === "Your status: Busy · offline: none of your hubs is connected", { busy, off });
       connected = true; status = "auto"; await refreshState(); await settle();
       return { busy, off };
+    },
+    "pick-invisible": async () => {
+      await openMenu(); await pick("Invisible");
+      await until(() => mine().title.startsWith("Your status: Invisible"), 3000);
+      const m = mine();
+      check("Invisible picked: the core is told, and your dot is hollow, as others now see you: offline",
+        picks.at(-1) === "invisible" && !menu() && m.dot === "p-offline" && m.title === "Your status: Invisible · shown offline to everyone" && m.label === m.title, { picks, m });
+      return m;
+    },
+    "reopen-invisible": async () => {
+      await openMenu();
+      const c = choices(), on = c.filter((x) => x.checked).map((x) => x.label);
+      check("reopened: Invisible is the one checked, with the offline dot", JSON.stringify(on) === JSON.stringify(["Invisible"]) && c.at(-1)?.dot === "hdot offline", c);
+      return c;
+    },
+    "old-hub": async () => {
+      // Hub B is connected but can't hide you (no feature invisible): the row names it
+      oldB = true; await refreshState(); await settle();
+      await openMenu();
+      const sub = choices().find((x) => x.label === "Invisible")?.sub ?? null;
+      check("a connected hub that can't hide you is named in the Invisible row", sub === "Shown offline to everyone · Hub B can't hide you yet", sub);
+      return sub;
+    },
+    "old-hub-end": async () => {
+      await closeMenu();
+      oldB = false; status = "auto"; await refreshState(); await settle();
+      return mine();
     },
   };
   window.statusFixture = { checks, platform, step: async (name) => { const f = steps[name]; if (!f) throw Error("no step " + name); return f(); } };

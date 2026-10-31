@@ -11,19 +11,31 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 // What each view does: fixture steps and captures (green only).
 const script=p=>[['step','me'],['shot',p+'-status-me'],['step','open'],['shot',p+'-status-menu'],['step','pick-dnd'],['shot',p+'-status-dnd'],
  ['step','reopen'],['shot',p+'-status-menu-dnd'],['step','close'],['step','notifications'],['shot',p+'-status-notifications'],['step','turn-off'],
- ['step','profile'],['step','person-dnd'],['shot',p+'-status-person-dnd'],['step','person-close'],['step','offline']];
+ ['step','profile'],['step','person-dnd'],['shot',p+'-status-person-dnd'],['step','person-close'],['step','offline'],
+ ['step','pick-invisible'],['shot',p+'-status-invisible'],['step','reopen-invisible'],['shot',p+'-status-menu-invisible'],['step','close'],
+ ['step','old-hub'],['shot',p+'-status-menu-old-hub'],['step','old-hub-end']];
 const views={'desktop/status':script('desktop'),'android/status':script('android')};
-// What the source before the picker fails: every check (nothing of it exists yet)
+// Every check, by name (13 + Invisible's 3). What the source before Invisible fails: the two that count the rows, and
+// Invisible's three (the picker's red, 26c81c4, failed all 13 of the picker's own)
 const names=p=>["your own avatar wears the dot others see: Automatic shows online",
- "the picker: Automatic, Online, Busy and Do not disturb, each with what it does and the dot others see; Automatic checked",
+ "the picker: Automatic, Online, Busy, Do not disturb and Invisible, each with what it does and the dot others see; Automatic checked",
  "each choice is a radio item, as in the hub picker","the picker ends with Profile",
  p==='desktop'?"desktop: a popover under your avatar, headed Your status":"Android: a bottom sheet with its grip, headed Your status",
  "Do not disturb picked: the core is told, the picker closes and your dot turns red","reopened: Do not disturb is the one checked",
  "Settings › Notifications on Do not disturb: nothing shows or sounds on any device, messages still arrive","…with a way to turn it off",
  "Turn it off: Automatic again, and the note goes","Profile in the picker opens your profile, as your avatar did",
  "Contact info of a person on Do not disturb: the red dot, and what it means for a person",
- "your dot follows your status (Busy), and says offline while none of your hubs is connected"];
-const expectedRed={'desktop/status':names('desktop'),'android/status':names('android')};
+ "your dot follows your status (Busy), and says offline while none of your hubs is connected",
+ "Invisible picked: the core is told, and your dot is hollow, as others now see you: offline",
+ "reopened: Invisible is the one checked, with the offline dot",
+ "a connected hub that can't hide you is named in the Invisible row"];
+const redNames=["the picker: Automatic, Online, Busy, Do not disturb and Invisible, each with what it does and the dot others see; Automatic checked",
+ "each choice is a radio item, as in the hub picker",
+ "Invisible picked: the core is told, and your dot is hollow, as others now see you: offline",
+ "reopened: Invisible is the one checked, with the offline dot",
+ "a connected hub that can't hide you is named in the Invisible row"];
+const expectedRed={'desktop/status':redNames,'android/status':redNames};
+const allChecks={'desktop/status':names('desktop'),'android/status':names('android')};
 app.whenReady().then(async()=>{
  const s=session.defaultSession;
  s.setPermissionRequestHandler((_w,_p,cb)=>cb(false));s.setPermissionCheckHandler(()=>false);
@@ -46,7 +58,7 @@ app.whenReady().then(async()=>{
    r.checks=await js('window.statusFixture.checks');
    r.session={main:sessionOf(process.pid),renderer:sessionOf(win.webContents.getOSProcessId())};
    const failed=r.checks.filter(c=>!c.ok).map(c=>c.name).sort();r.failed=failed;
-   r.verdict=red?JSON.stringify(failed)===JSON.stringify([...expectedRed[key]].sort()):failed.length===0&&r.checks.length===expectedRed[key].length;
+   r.verdict=red?JSON.stringify(failed)===JSON.stringify([...expectedRed[key]].sort()):failed.length===0&&r.checks.length===allChecks[key].length;
    results.push(r);win.destroy();win=null;
   }
   const passed=results.length===Object.keys(views).length&&results.every(r=>r.verdict&&r.session.renderer===0&&r.session.main===0);
