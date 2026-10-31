@@ -5,9 +5,12 @@
 // bottom sheet. The rows are the hub picker's: Automatic, Online, Busy and Do not disturb, each with what it does and
 // its dot, the one in use checked; then Profile, which the avatar opened before. Your hubs keep the choice, so it is
 // the same on all your devices; others see it only while one of them is connected (offline wins, 09:03Z).
+// Invisible (hub feature `invisible`; docket hubchat-status-picker-add-invisible, user 2026-10-31 14:13Z, people only):
+// the offline dot; others see you offline while you stay connected. A connected hub without it can't hide you, and the
+// row names it.
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api, type MyStatus } from "../api";
+import { api, type HubStatus, type MyStatus } from "../api";
 import { Icon } from "../lib/icons";
 import { errText } from "../lib/native";
 import { myPresence } from "../lib/peers";
@@ -17,20 +20,28 @@ import { ChoiceRow } from "./HubPicker";
 import { Avatar } from "./ui";
 
 /** Each choice: what it does, and the dot others see (Automatic follows the hubs' own rules: no one dot). */
-const CHOICES: { v: MyStatus; label: string; sub: string; dot?: "online" | "busy" | "dnd" }[] = [
+const CHOICES: { v: MyStatus; label: string; sub: string; dot?: "online" | "busy" | "dnd" | "offline" }[] = [
   { v: "auto", label: "Automatic", sub: "Online while you're here, busy after an hour away" },
   { v: "online", label: "Online", sub: "Online even while you're away", dot: "online" },
   { v: "busy", label: "Busy", sub: "Shown busy to everyone", dot: "busy" },
   { v: "dnd", label: "Do not disturb", sub: "No notifications on any of your devices", dot: "dnd" },
+  { v: "invisible", label: "Invisible", sub: "Shown offline to everyone", dot: "offline" },
 ];
+
+/** Invisible's line, naming each connected hub that can't hide you (it lacks the feature). */
+function invisibleSub(sub: string, hubs: HubStatus[]): string {
+  const cant = hubs.filter((h) => h.state === "connected" && !h.features.includes("invisible")).map((h) => h.name);
+  return cant.length ? sub + " · " + cant.join(", ") + " can't hide you yet" : sub;
+}
 
 /** Pick a status: the core keeps it and tells your hubs. */
 export const pickStatus = (v: MyStatus) => api.setStatus(v).then(() => refreshState()).catch((e) => toast(errText(e)));
 
 function Choices({ onDone }: { onDone: () => void }) {
-  const status = useSnap().state?.status ?? "auto";
+  const snap = useSnap();
+  const status = snap.state?.status ?? "auto";
   return <>{CHOICES.map((c) => (
-    <ChoiceRow key={c.v} cls="statusopt" sel={status === c.v} label={c.label} sub={c.sub} dot={c.dot}
+    <ChoiceRow key={c.v} cls="statusopt" sel={status === c.v} label={c.label} sub={c.v === "invisible" ? invisibleSub(c.sub, snap.state?.hubs ?? []) : c.sub} dot={c.dot}
       run={() => { onDone(); if (c.v !== status) void pickStatus(c.v); }} />
   ))}</>;
 }

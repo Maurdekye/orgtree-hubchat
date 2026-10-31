@@ -53,14 +53,16 @@ export interface Presence { state: PresState; text: string; short: string }
  *  both", user 2026-10-31); disconnected = none
  *  of their hubs is connected, so status is unknown. */
 /** Your status's words (Mail hub 2.3.0 feature `status`). */
-export const STATUS_WORD: Record<MyStatus, string> = { auto: "Automatic", online: "Online", busy: "Busy", dnd: "Do not disturb" };
+export const STATUS_WORD: Record<MyStatus, string> = { auto: "Automatic", online: "Online", busy: "Busy", dnd: "Do not disturb", invisible: "Invisible" };
 
 /** How others see you now, for your own avatar: your status (Automatic: online, as you're here), or offline while none
  *  of your hubs is connected (offline wins, user 2026-10-31 09:03Z). */
 export function myPresence(status: MyStatus, hubs: HubStatus[]): { state: PresState; title: string } {
   const on = hubs.some((h) => h.state === "connected");
-  const state: PresState = !on ? "offline" : status === "busy" ? "busy" : status === "dnd" ? "dnd" : "online";
-  return { state, title: "Your status: " + STATUS_WORD[status] + (on ? "" : " · offline: none of your hubs is connected") };
+  // Invisible: offline, as everyone else sees you
+  const state: PresState = !on || status === "invisible" ? "offline" : status === "busy" ? "busy" : status === "dnd" ? "dnd" : "online";
+  const why = !on ? " · offline: none of your hubs is connected" : status === "invisible" ? " · shown offline to everyone" : "";
+  return { state, title: "Your status: " + STATUS_WORD[status] + why };
 }
 
 export function presence(c: Contact | undefined, hubs: HubStatus[]): Presence {

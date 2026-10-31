@@ -105,7 +105,7 @@ export interface PushState {
 }
 
 /** Your status (Mail hub 2.3.0 feature `status`): your hubs keep it, so it is the same on all your devices. */
-export type MyStatus = "auto" | "online" | "busy" | "dnd";
+export type MyStatus = "auto" | "online" | "busy" | "dnd" | "invisible";
 
 export interface State {
   me: Me | null;

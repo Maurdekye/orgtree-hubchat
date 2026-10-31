@@ -24,13 +24,20 @@
 //! and a hub still owed the pick it replaces is owed this one instead. A
 //! first word (a new device, a new hub, a reset) is taken when it is a
 //! choice; Automatic from a hub that never heard ours is told ours.
+//!
+//! **Invisible** (hub feature `invisible`, schema 12; Orgtree docket
+//! hubchat-status-picker-add-invisible, user 2026-10-31 14:13Z, people
+//! only): offline to everyone else while connected. It is told only to a hub
+//! with the feature; one without would refuse it, so it is not asked and
+//! keeps its last word (the picker names such a hub). It mutes nothing: the
+//! shell mutes on `dnd` only.
 
 use super::{Engine, Event};
 use crate::store::{status_owed_key, status_said_key, Store};
 use crate::{Error, HubClient, Result};
 
-/// The four choices, as the hubs have them.
-pub const STATUSES: [&str; 4] = ["auto", "online", "busy", "dnd"];
+/// The five choices, as the hubs have them.
+pub const STATUSES: [&str; 5] = ["auto", "online", "busy", "dnd", "invisible"];
 
 const MINE: &str = "status.mine";
 
@@ -50,7 +57,7 @@ impl Engine {
     /// sync wakes for it); the others are told when they connect.
     pub fn set_status(&self, status: &str) -> Result<()> {
         if !STATUSES.contains(&status) {
-            return Err(Error::Invalid(format!("\"{status}\" is not a status: auto, online, busy or dnd")));
+            return Err(Error::Invalid(format!("\"{status}\" is not a status: auto, online, busy, dnd or invisible")));
         }
         self.store.set_meta(MINE, status)?;
         for h in self.store.hubs()? {
@@ -128,7 +135,9 @@ impl Engine {
         let Some(owed) = self.store.meta(&owed_key)? else {
             return Ok(());
         };
-        if !features.iter().any(|f| f == "status") {
+        let has = |f: &str| features.iter().any(|x| x == f);
+        // a hub that can't keep it is not asked: one without Invisible would refuse it
+        if !has("status") || (owed == "invisible" && !has("invisible")) {
             return self.store.delete_meta(&owed_key);
         }
         match client.set_status(&self.me, &owed).await {
