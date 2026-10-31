@@ -54,16 +54,28 @@ export interface ZoomDoc {
   defaultView: { requestAnimationFrame(cb: () => void): unknown; setTimeout(cb: () => void, ms: number): unknown } | null
 }
 
+/** The content each viewport meta had before a reset pinned it, and the latest reset's number: a reset
+ *  inside another (open then close, or React's double effect) must restore the ORIGINAL, once, at the end. */
+const original = new WeakMap<object, string>();
+const latest = new WeakMap<object, number>();
+
 /** Put the page back at scale 1 by pinning the viewport meta to 1 for a moment, then restoring it.
  *  Android's WebView takes the new bounds on the next frame; a zoom the user could not undo (closing
  *  a pinched image) is gone. A no-op when the meta is missing. */
 export function resetPageZoom(doc: ZoomDoc): boolean {
   const meta = doc.querySelector('meta[name=viewport]')
   if (!meta) return false
-  const was = meta.getAttribute('content') ?? ''
+  const was = original.get(meta) ?? meta.getAttribute('content') ?? ''
+  original.set(meta, was)
+  const n = (latest.get(meta) ?? 0) + 1
+  latest.set(meta, n)
   meta.setAttribute('content', was.replace(/,?\s*(minimum|maximum)-scale=[^,]*/g, '') + ', minimum-scale=1, maximum-scale=1')
   const win = doc.defaultView
-  const restore = () => meta.setAttribute('content', was)
+  const restore = () => {
+    if (latest.get(meta) !== n) return
+    meta.setAttribute('content', was)
+    original.delete(meta)
+  }
   if (win) win.requestAnimationFrame(() => win.requestAnimationFrame(restore))
   else restore()
   return true

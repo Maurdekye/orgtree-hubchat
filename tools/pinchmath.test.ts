@@ -35,8 +35,9 @@ test('double tap toggles between fit and 2.5x, wheel zooms about the pointer', (
 const fakeDoc = (content: string) => {
   const attrs = new Map([['content', content]])
   const frames: (() => void)[] = []
+  const meta = { getAttribute: (n: string) => attrs.get(n) ?? null, setAttribute: (n: string, v: string) => { attrs.set(n, v) } }
   const doc: ZoomDoc = {
-    querySelector: () => ({ getAttribute: (n) => attrs.get(n) ?? null, setAttribute: (n, v) => { attrs.set(n, v) } }),
+    querySelector: () => meta,
     defaultView: { requestAnimationFrame: (cb) => frames.push(cb), setTimeout: (cb) => frames.push(cb) },
   }
   return { doc, attrs, frames }
@@ -55,4 +56,15 @@ test('resetPageZoom pins the viewport scale to 1, then restores the original con
 test('resetPageZoom without a viewport meta does nothing', () => {
   const doc: ZoomDoc = { querySelector: () => null, defaultView: null }
   assert.equal(resetPageZoom(doc), false)
+})
+
+test('a reset inside another restores the original content once, at the end', () => {
+  const orig = 'width=device-width, initial-scale=1.0'
+  const { doc, attrs, frames } = fakeDoc(orig)
+  resetPageZoom(doc)
+  resetPageZoom(doc)
+  assert.match(attrs.get('content')!, /maximum-scale=1$/)
+  let guard = 0
+  while (frames.length && guard++ < 20) frames.shift()!()
+  assert.equal(attrs.get('content'), orig, 'never left pinned, never saved as the pinned value')
 })
