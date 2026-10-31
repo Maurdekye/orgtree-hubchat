@@ -303,6 +303,9 @@ END;
     // 21: busy presence (Mail hub 2.3.0): the address is online on that hub,
     // but no one can answer it now
     r#"ALTER TABLE roster ADD COLUMN busy INTEGER NOT NULL DEFAULT 0;"#,
+    // 22: Do not disturb (Mail hub 2.3.0): an org on that hub whose outside
+    // mail is set to Do not disturb (a part of busy)
+    r#"ALTER TABLE roster ADD COLUMN dnd INTEGER NOT NULL DEFAULT 0;"#,
 ];
 
 pub struct Store {
@@ -550,10 +553,10 @@ impl Store {
             tx.execute("DELETE FROM roster WHERE hub=?", [hub])?;
             {
                 let mut st = tx.prepare(
-                    "INSERT INTO roster(address, hub, kind, org_name, username, blurb, online, busy, last_seen) VALUES(?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO roster(address, hub, kind, org_name, username, blurb, online, busy, dnd, last_seen) VALUES(?,?,?,?,?,?,?,?,?,?)",
                 )?;
                 for e in entries {
-                    st.execute(params![e.slug, hub, e.kind, e.org_name, e.username, e.blurb, e.online, e.busy, e.last_seen])?;
+                    st.execute(params![e.slug, hub, e.kind, e.org_name, e.username, e.blurb, e.online, e.busy, e.dnd, e.last_seen])?;
                     store_pictures::roster_owner(&tx,hub,e)?;
                 }
             }
@@ -563,11 +566,13 @@ impl Store {
 
     /// The merged directory: one row per address, online if online on any hub,
     /// busy if busy on every hub where it is online (one hub where it is online
-    /// and not busy wins; offline is never busy).
+    /// and not busy wins; offline is never busy), and on Do not disturb
+    /// likewise (Mail hub 2.3.0; a DND row is busy too, so the most available
+    /// presence any hub lists wins, and offline wins over DND).
     pub fn directory(&self) -> Result<Vec<Contact>> {
         self.with(|c| {
             let mut st = c.prepare(
-                "SELECT r.address, r.kind, r.org_name, r.username, r.blurb, r.online, r.busy, r.last_seen, r.hub FROM roster r ORDER BY r.address, r.hub",
+                "SELECT r.address, r.kind, r.org_name, r.username, r.blurb, r.online, r.busy, r.dnd, r.last_seen, r.hub FROM roster r ORDER BY r.address, r.hub",
             )?;
             let mut out: Vec<Contact> = Vec::new();
             let rows = st.query_map([], |r| {
@@ -579,18 +584,21 @@ impl Store {
                     r.get::<_, String>(4)?,
                     r.get::<_, bool>(5)?,
                     r.get::<_, bool>(6)?,
-                    r.get::<_, Option<String>>(7)?,
-                    r.get::<_, String>(8)?,
+                    r.get::<_, bool>(7)?,
+                    r.get::<_, Option<String>>(8)?,
+                    r.get::<_, String>(9)?,
                 ))
             })?;
             for row in rows {
-                let (address, kind, org_name, username, blurb, online, busy, last_seen, hub) = row?;
+                let (address, kind, org_name, username, blurb, online, busy, dnd, last_seen, hub) = row?;
                 let busy = online && busy;
+                let dnd = online && dnd;
                 let picture=if matches!(kind.as_str(),"person"|"org") { store_pictures::visible_meta(c,&address)? } else {None};
                 match out.last_mut() {
                     Some(c) if c.address == address => {
                         if online {
                             c.busy = if c.online { c.busy && busy } else { busy };
+                            c.dnd = if c.online { c.dnd && dnd } else { dnd };
                         }
                         c.online |= online;
                         if last_seen > c.last_seen {
@@ -598,7 +606,7 @@ impl Store {
                         }
                         c.hubs.push(hub);
                     }
-                    _ => out.push(Contact { address, kind, org_name, username, blurb, online, busy, dnd: false, last_seen, hubs: vec![hub], picture }),
+                    _ => out.push(Contact { address, kind, org_name, username, blurb, online, busy, dnd, last_seen, hubs: vec![hub], picture }),
                 }
             }
             Ok(out)
@@ -615,9 +623,13 @@ impl Store {
     }
 
     /// The hubs where `address` is online but on Do not disturb (the hub
-    /// picker). Red: none yet.
-    pub fn dnd_hubs(&self, _address: &str) -> Result<Vec<String>> {
-        Ok(Vec::new())
+    /// picker).
+    pub fn dnd_hubs(&self, address: &str) -> Result<Vec<String>> {
+        self.with(|c| {
+            let mut st = c.prepare("SELECT hub FROM roster WHERE address=? AND online=1 AND dnd=1 ORDER BY hub")?;
+            let rows = st.query_map([address], |r| r.get(0))?;
+            rows.collect()
+        })
     }
 
     /// Hubs whose roster lists `address`, with whether it is online there:
@@ -1265,13 +1277,13 @@ impl Store {
             let tx = c.transaction()?;
             {
                 let mut st = tx.prepare(
-                    "INSERT INTO roster(address, hub, kind, org_name, username, blurb, online, busy, last_seen) VALUES(?,?,?,?,?,?,?,?,?)
+                    "INSERT INTO roster(address, hub, kind, org_name, username, blurb, online, busy, dnd, last_seen) VALUES(?,?,?,?,?,?,?,?,?,?)
                      ON CONFLICT(address, hub) DO UPDATE SET kind=excluded.kind, org_name=excluded.org_name,
                        username=excluded.username, blurb=excluded.blurb, online=excluded.online, busy=excluded.busy,
-                       last_seen=excluded.last_seen",
+                       dnd=excluded.dnd, last_seen=excluded.last_seen",
                 )?;
                 for e in entries {
-                    st.execute(params![e.slug, hub, e.kind, e.org_name, e.username, e.blurb, e.online, e.busy, e.last_seen])?;
+                    st.execute(params![e.slug, hub, e.kind, e.org_name, e.username, e.blurb, e.online, e.busy, e.dnd, e.last_seen])?;
                     store_pictures::roster_owner(&tx,hub,e)?;
                 }
             }
@@ -1323,10 +1335,20 @@ impl Store {
         })
     }
 
-    /// Exactly these addresses are on Do not disturb on this hub now. Red:
-    /// not kept yet.
-    pub fn set_dnd(&self, _hub: &str, _dnd: &[String]) -> Result<()> {
-        Ok(())
+    /// Exactly these addresses are on Do not disturb on this hub now (Mail
+    /// hub 2.3.0: the list comes with `online`; none from a hub before it).
+    pub fn set_dnd(&self, hub: &str, dnd: &[String]) -> Result<()> {
+        self.with(|c| {
+            let tx = c.transaction()?;
+            tx.execute("UPDATE roster SET dnd=0 WHERE hub=?", [hub])?;
+            for a in dnd {
+                tx.execute(
+                    "UPDATE roster SET dnd=1 WHERE hub=? AND address=?",
+                    params![hub, a],
+                )?;
+            }
+            tx.commit()
+        })
     }
 
     // ------------------------------------------------------ attachments

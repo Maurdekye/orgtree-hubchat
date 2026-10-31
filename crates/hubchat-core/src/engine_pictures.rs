@@ -8,8 +8,8 @@ impl Engine {
     /// `snapshot` preserves poll's empty-snapshot and sync's nonempty-first-page rules.
     /// `busy` comes with `online` from hubs with busy (Mail hub 2.3.0): `online`
     /// alone is a hub before busy, where no one is busy. `dnd` (Do not
-    /// disturb) likewise. Red: `dnd` not applied yet.
-    pub(crate) fn admit_roster_batch(&self, client:&HubClient, entries:&[crate::hub::RosterEntry], snapshot:bool, removed:&[String], online:Option<&[String]>, busy:Option<&[String]>, _dnd:Option<&[String]>)->Result<()> {
+    /// disturb) likewise: `online` without it is a hub before DND.
+    pub(crate) fn admit_roster_batch(&self, client:&HubClient, entries:&[crate::hub::RosterEntry], snapshot:bool, removed:&[String], online:Option<&[String]>, busy:Option<&[String]>, dnd:Option<&[String]>)->Result<()> {
         // Hold the originating generation for ALL namespace-changing effects.
         // No await or runtime-map acquisition is allowed in this closure.
         client.session_commit(|| {
@@ -23,6 +23,7 @@ impl Engine {
         self.picture_changed.send_replace(());
         if let Some(online)=online {self.store.set_online(url,online)?;changed=true;}
         if online.is_some()||busy.is_some() {self.store.set_busy(url,busy.unwrap_or(&[]))?;changed=true;}
+        if online.is_some()||dnd.is_some() {self.store.set_dnd(url,dnd.unwrap_or(&[]))?;changed=true;}
         if changed {self.host.event(Event::Directory);}
         Ok(())
         }).ok_or(Error::FilePaused)?

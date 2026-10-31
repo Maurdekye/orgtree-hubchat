@@ -1535,10 +1535,11 @@ impl Engine {
     pub fn send_route(&self, peer: &str) -> Result<SendRoute> {
         let r = self.route(peer, &self.connected_hubs())?;
         let busy = self.store.busy_hubs(peer)?;
+        let dnd = self.store.dnd_hubs(peer)?;
         let mut hubs: Vec<RouteHub> = r
             .reaching
             .into_iter()
-            .map(|(url, online)| RouteHub { busy: online && busy.contains(&url), dnd: false, url, online })
+            .map(|(url, online)| RouteHub { busy: online && busy.contains(&url), dnd: online && dnd.contains(&url), url, online })
             .collect();
         hubs.sort_by(|a, b| a.url.cmp(&b.url));
         Ok(SendRoute {
