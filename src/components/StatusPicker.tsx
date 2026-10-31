@@ -6,6 +6,7 @@
 // its dot, the one in use checked; then Profile, which the avatar opened before. Your hubs keep the choice, so it is
 // the same on all your devices; others see it only while one of them is connected (offline wins, 09:03Z).
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, type MyStatus } from "../api";
 import { Icon } from "../lib/icons";
 import { errText } from "../lib/native";
@@ -80,7 +81,8 @@ export function StatusButton({ size, onProfile }: { size: number; onProfile: () 
           {items}
         </div>
       ) : null}
-      {open && android ? (
+      {/* the app bar is positioned: the sheet goes to the screen, where the chat menu's sheet is */}
+      {open && android ? createPortal(
         <>
           <div className="sheet-scrim" onClick={() => setOpen(false)} />
           <div className="sheet" role="menu" aria-label="Your status">
@@ -88,8 +90,7 @@ export function StatusButton({ size, onProfile }: { size: number; onProfile: () 
             <h4>Your status</h4>
             {items}
           </div>
-        </>
-      ) : null}
+        </>, btn.current?.closest(".scr-anim") ?? document.body) : null}
     </>
   );
 }

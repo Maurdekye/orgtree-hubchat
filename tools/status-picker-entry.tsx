@@ -115,8 +115,10 @@ async function run() {
       check("the picker ends with Profile", items.at(-1)?.textContent === "Profile" && items.at(-1)?.getAttribute("role") === "menuitem", items.map((i) => i.textContent));
       check(platform === "desktop" ? "desktop: a popover under your avatar, headed Your status" : "Android: a bottom sheet with its grip, headed Your status",
         platform === "desktop" ? !!m?.classList.contains("pop") && m.querySelector(".pop-h")?.textContent === "Your status" && (m.getBoundingClientRect().top >= (me()?.getBoundingClientRect().bottom ?? 1e9))
-          : !!m?.classList.contains("sheet") && !!m.querySelector(".grip") && m.querySelector("h4")?.textContent === "Your status",
-        { cls: m?.className, head: m?.querySelector(".pop-h, h4")?.textContent });
+          : !!m?.classList.contains("sheet") && !!m.querySelector(".grip") && m.querySelector("h4")?.textContent === "Your status"
+          // over the screen, at its foot: not clipped inside the (positioned) app bar
+          && !m.closest(".appbar") && Math.abs(m.getBoundingClientRect().bottom - window.innerHeight) < 2 && m.getBoundingClientRect().height > 300,
+        { cls: m?.className, head: m?.querySelector(".pop-h, h4")?.textContent, inBar: !!m?.closest(".appbar"), rect: m?.getBoundingClientRect().toJSON(), h: window.innerHeight });
       return c;
     },
     "pick-dnd": async () => {
