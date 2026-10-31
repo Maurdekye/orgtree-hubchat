@@ -1,5 +1,12 @@
 # Hubchat development invariants
 
+- 2026-10-31: Invisible (hub feature `invisible`, schema 12) is a fifth
+  status: offline to everyone else (the hub's job), the offline dot on your
+  own avatar (`myPresence`), and it mutes nothing (the shell mutes on `dnd`
+  only). `tell_status` asks only a hub with the feature; the picker names a
+  connected hub without it. [decided: user 2026-10-31 14:13Z, people only
+  14:14Z; coordinator 2026-10-31 (actions still show); verified:
+  engine_status.rs, StatusPicker.tsx, peers.ts]
 - 2026-10-31: Your status (Mail hub 2.3.0 feature `status`) is the person's,
   not the device's: `engine_status.rs` keeps it (`status.mine`), owes a pick
   to every saved hub (`status.owed.<url>`, told by that hub's sync before its

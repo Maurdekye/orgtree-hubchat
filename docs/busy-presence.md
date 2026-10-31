@@ -97,8 +97,25 @@ devices, and others see it only while one of them is connected (offline wins, 09
 - Proofs: `crates/hubchat-core/src/engine_status_tests.rs` (`cargo test -p hubchat-core --lib status_tests`: the rules,
   telling a hub (200/403/503), and a pick waking a parked sync against a fake hub on 127.0.0.1); the shell's
   `do_not_disturb_tests`; `tools/proof-status-picker.mjs [repo]` (Electron, desktop and Android: the avatar's dot, the
-  picker, picking Do not disturb, Settings > Notifications, Profile, a person on Do not disturb, offline winning;
-  `HUBCHAT_PROOF_PHASE=red` expects every check to fail on the source before the picker).
+  picker, picking Do not disturb, Settings > Notifications, Profile, a person on Do not disturb, offline winning,
+  Invisible; `HUBCHAT_PROOF_PHASE=red` expects the two row-counting checks and Invisible's three to fail on the source
+  before Invisible).
+
+### Invisible
+
+User request 2026-10-31 14:13Z (Orgtree docket hubchat-status-picker-add-invisible): "add invisible as a selectable
+status in hubchat"; people only (14:14Z). A fifth row, **Invisible** ("Shown offline to everyone", the offline dot):
+everyone else sees you exactly as offline, with your last seen held at the moment you chose it, while you stay
+connected and everything works as ever. It hides presence, not what you do: notifications are not muted (Do not
+disturb stays the mute), and what you send, your typing and read receipts still reach people (coordinator 2026-10-31).
+
+- Your own avatar shows the hollow offline dot, titled "Your status: Invisible · shown offline to everyone"; the
+  picker checks Invisible.
+- The hub (Mail hub 2.3.0, feature `invisible`, schema 12) keeps it and tells it to no one else: no presence payload
+  tells it from offline (the hub's test `nobody_can_tell_invisible_from_offline`).
+- The core tells Invisible only to a hub with the feature; one without would refuse it, so it is not asked and keeps
+  its last word. The row names each connected hub that can't hide you: "Shown offline to everyone · <hub> can't hide
+  you yet".
 
 ## Proofs
 
