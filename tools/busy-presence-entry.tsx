@@ -23,7 +23,7 @@ const until = async (f: () => boolean, ms: number) => { const t = performance.no
 
 const A = "wss://hub-a.invalid", B = "wss://hub-b.invalid";
 const ME = "scratch.abcdef", PAT = "pat.1a2b3c", ACME = "acme.4d5e6f", ALICE = "alice.111111", BETA = "beta.222222", OLLIE = "ollie.333333";
-const PERSON_NOTE = "“Busy” means Hubchat hasn't been in front on any of their devices for an hour.";
+const PERSON_NOTE = "“Busy” means they set themselves busy, or Hubchat hasn't been in front on any of their devices for an hour."; // a person can pick Busy (your status, 2026-10-31)
 const ORG_NOTE = "“Busy” means it is connected, but none of the agents who answer its outside mail can start a turn right now.";
 const ONLINE_NOTE = "“Online” means its Orgtree is connected to the hub — not that an agent is typing.";
 
