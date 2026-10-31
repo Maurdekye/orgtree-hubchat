@@ -67,6 +67,10 @@ pub struct SyncResult {
     /// Every address online now; only present when that set changed.
     #[serde(default)]
     pub online: Option<Vec<String>>,
+    /// The online addresses that are busy now (Mail hub 2.3.0): it comes
+    /// with `online`, so `online` without it is a hub before busy.
+    #[serde(default)]
+    pub busy: Option<Vec<String>>,
     #[serde(default)]
     pub more: bool,
     #[serde(default)]

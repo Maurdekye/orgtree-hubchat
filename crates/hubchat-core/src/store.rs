@@ -402,6 +402,8 @@ pub struct Contact {
     pub username: String,
     pub blurb: String,
     pub online: bool,
+    /// Online, and busy on every hub where they are online (Mail hub 2.3.0).
+    pub busy: bool,
     pub last_seen: Option<String>,
     pub hubs: Vec<String>,
     pub picture: Option<crate::pictures::PictureMeta>,
@@ -583,7 +585,7 @@ impl Store {
                         }
                         c.hubs.push(hub);
                     }
-                    _ => out.push(Contact { address, kind, org_name, username, blurb, online, last_seen, hubs: vec![hub], picture }),
+                    _ => out.push(Contact { address, kind, org_name, username, blurb, online, busy: false, last_seen, hubs: vec![hub], picture }),
                 }
             }
             Ok(out)
@@ -1276,6 +1278,11 @@ impl Store {
         })
     }
 
+    /// Exactly these addresses are busy on this hub now. Red: not kept yet.
+    pub fn set_busy(&self, _hub: &str, _busy: &[String]) -> Result<()> {
+        Ok(())
+    }
+
     // ------------------------------------------------------ attachments
 
     pub fn set_attachment(
@@ -1465,6 +1472,10 @@ fn attachment_ids(tx: &rusqlite::Transaction, cond: &str, arg: &str) -> rusqlite
     let rows = st.query_map([arg], |r| r.get(0))?;
     rows.collect()
 }
+
+#[cfg(test)]
+#[path = "store_busy_tests.rs"]
+mod busy_tests;
 
 #[cfg(test)]
 fn legacy_schema_fixture(path: &Path, version: usize) -> Connection {
@@ -1779,6 +1790,7 @@ mod tests {
             username: "maya".into(),
             blurb: String::new(),
             online,
+            busy: false,
             last_seen: None,
             kind: "chat".into(),
             picture: None,

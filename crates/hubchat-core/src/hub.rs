@@ -176,6 +176,11 @@ pub struct RosterEntry {
     pub blurb: String,
     #[serde(default)]
     pub online: bool,
+    /// Online, but no one can answer now (Mail hub 2.3.0): an org none of
+    /// whose org-inbox holders can start a turn, a person away from Hubchat
+    /// on all their devices for an hour. Hubs before 2.3.0 never say it.
+    #[serde(default)]
+    pub busy: bool,
     #[serde(default)]
     pub last_seen: Option<String>,
     #[serde(default)]

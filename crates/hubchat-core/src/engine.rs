@@ -625,7 +625,7 @@ impl Engine {
         // A v1 hub sends its roster with the next poll answer, up to a minute
         // away: ask now, so the first message goes through this hub.
         let roster = client.roster(&self.me).await?;
-        self.admit_roster_batch(&client,&roster,true,&[],None)?;
+        self.admit_roster_batch(&client,&roster,true,&[],None,None)?;
         if !roster.iter().any(|r| r.slug == link.org) {
             return Err(Error::Invalid(format!("{} isn't on {}'s hub", link.orgname, link.pc)));
         }
@@ -905,7 +905,7 @@ impl Engine {
         }
         if health.supports("sync") && self.store.meta(&cursor_key(url))?.is_some() {
             match client.roster(&self.me).await {
-                Ok(roster) => self.admit_roster_batch(client, &roster, true, &[], None)?,
+                Ok(roster) => self.admit_roster_batch(client, &roster, true, &[], None, None)?,
                 // a hub that refuses the call keeps what its sync brings, as
                 // before; a network failure ends the session and it retries
                 Err(e) if e.status().is_some() => {}
@@ -945,7 +945,7 @@ impl Engine {
                 let v = p.version.clone();
                 self.set_status_for(url, stop, |s| s.version = v);
             }
-            self.admit_roster_batch(client,&p.roster,true,&[],None)?;
+            self.admit_roster_batch(client,&p.roster,true,&[],None,None)?;
             for r in &p.receipts {
                 self.store.apply_receipt(r)?;
                 if let Some(m) = self.store.message(&r.id)? {
@@ -1104,7 +1104,7 @@ impl Engine {
                 self.start_from(url, r.now)?;
             }
             let start_ms: Option<i64> = self.store.meta(&start_key)?.and_then(|v| v.parse().ok());
-            self.admit_roster_batch(client,&r.roster,first_page&&!r.roster.is_empty(),&r.roster_removed,r.online.as_deref())?;
+            self.admit_roster_batch(client,&r.roster,first_page&&!r.roster.is_empty(),&r.roster_removed,r.online.as_deref(),r.busy.as_deref())?;
             let t = now();
             let mut to_deliver = Vec::new();
             let mut peers = std::collections::BTreeSet::new();
@@ -1537,7 +1537,7 @@ impl Engine {
         let mut hubs: Vec<RouteHub> = r
             .reaching
             .into_iter()
-            .map(|(url, online)| RouteHub { url, online })
+            .map(|(url, online)| RouteHub { url, online, busy: false })
             .collect();
         hubs.sort_by(|a, b| a.url.cmp(&b.url));
         Ok(SendRoute {
@@ -2363,6 +2363,8 @@ pub struct RouteHub {
     pub url: String,
     /// The peer is online there.
     pub online: bool,
+    /// Online there, but busy (Mail hub 2.3.0).
+    pub busy: bool,
 }
 
 struct Route {

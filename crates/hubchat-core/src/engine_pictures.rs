@@ -6,7 +6,8 @@ use crate::pictures::PictureRecord;
 impl Engine {
     /// Shared synchronous roster admission for poll, sync and setup refresh.
     /// `snapshot` preserves poll's empty-snapshot and sync's nonempty-first-page rules.
-    pub(crate) fn admit_roster_batch(&self, client:&HubClient, entries:&[crate::hub::RosterEntry], snapshot:bool, removed:&[String], online:Option<&[String]>)->Result<()> {
+    /// `busy` comes with `online` from hubs with busy (Mail hub 2.3.0). Red: not applied yet.
+    pub(crate) fn admit_roster_batch(&self, client:&HubClient, entries:&[crate::hub::RosterEntry], snapshot:bool, removed:&[String], online:Option<&[String]>, _busy:Option<&[String]>)->Result<()> {
         // Hold the originating generation for ALL namespace-changing effects.
         // No await or runtime-map acquisition is allowed in this closure.
         client.session_commit(|| {
@@ -262,7 +263,7 @@ mod tests {
         };
         let mut pixels=image();pixels.meta.picture_owner=Some(a.clone());
         let old_entry=entry(&a,"old owner",Some(pixels.meta.clone()));
-        e.admit_roster_batch(&old,&[old_entry.clone()],true,&[],None).unwrap();
+        e.admit_roster_batch(&old,&[old_entry.clone()],true,&[],None,None).unwrap();
         e.admit_picture(&old,peer,&pixels,None).unwrap();
         assert!(e.store.picture(peer).unwrap().unwrap().data.is_some());
         let (arrived_tx,arrived_rx)=std::sync::mpsc::channel();let (resume_tx,resume_rx)=std::sync::mpsc::channel();
@@ -270,9 +271,9 @@ mod tests {
             assert!(!old.session_cancelled());arrived_tx.send(()).unwrap();
             resume_rx.recv_timeout(Duration::from_secs(5)).unwrap();
             match mode {
-                0|1=>e.admit_roster_batch(&old,&[old_entry],true,&[],None),
-                2=>e.admit_roster_batch(&old,&[old_entry],false,&[],None),
-                _=>e.admit_roster_batch(&old,&[],false,&[peer.into()],Some(&[])),
+                0|1=>e.admit_roster_batch(&old,&[old_entry],true,&[],None,None),
+                2=>e.admit_roster_batch(&old,&[old_entry],false,&[],None,None),
+                _=>e.admit_roster_batch(&old,&[],false,&[peer.into()],Some(&[]),Some(&[])),
             }
         })};
         arrived_rx.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -280,7 +281,7 @@ mod tests {
         let fresh=e.hub_client(&url).unwrap();
         let removed=PictureRecord::removed(next_revision(None).unwrap());
         let fresh_entry=entry(&b,"fresh owner",Some(removed.meta.clone()));
-        e.admit_roster_batch(&fresh,&[fresh_entry.clone()],true,&[],None).unwrap();
+        e.admit_roster_batch(&fresh,&[fresh_entry.clone()],true,&[],None,None).unwrap();
         assert!(e.store.picture(peer).unwrap().unwrap().data.is_none());
         resume_tx.send(()).unwrap();let result=worker.join().unwrap();
         assert!(matches!(result,Err(Error::FilePaused)));
@@ -289,8 +290,8 @@ mod tests {
         assert_eq!(e.store.picture(peer).unwrap().unwrap().meta.picture_owner.as_deref(),Some(b.as_str()));
         assert!(e.store.picture(peer).unwrap().unwrap().data.is_none());
         // Positive control through the same mode: a fresh generation still works.
-        if mode==3 {e.admit_roster_batch(&fresh,&[],false,&[peer.into()],Some(&[])).unwrap();assert!(e.store.directory().unwrap().is_empty());}
-        else {let mut updated=fresh_entry;updated.org_name="fresh update".into();e.admit_roster_batch(&fresh,&[updated],mode<2,&[],None).unwrap();assert_eq!(e.store.directory().unwrap()[0].org_name,"fresh update");}
+        if mode==3 {e.admit_roster_batch(&fresh,&[],false,&[peer.into()],Some(&[]),Some(&[])).unwrap();assert!(e.store.directory().unwrap().is_empty());}
+        else {let mut updated=fresh_entry;updated.org_name="fresh update".into();e.admit_roster_batch(&fresh,&[updated],mode<2,&[],None,None).unwrap();assert_eq!(e.store.directory().unwrap()[0].org_name,"fresh update");}
         e.shutdown();
     }
     #[tokio::test]
