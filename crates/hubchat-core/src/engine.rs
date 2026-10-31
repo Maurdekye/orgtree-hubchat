@@ -229,6 +229,9 @@ pub struct Engine {
     /// Android push mode parks hub loops between foreground use and wake checks.
     suspended: tokio::sync::watch::Sender<bool>,
     files_paused: tokio::sync::watch::Sender<bool>,
+    /// A status was picked here: each hub's sync, parked or not, tells its
+    /// hub at once (`engine_status`).
+    status_wake: Notify,
 }
 
 struct SendWriter<'a> { writers:&'a Mutex<std::collections::HashSet<String>>, id:String }
@@ -270,6 +273,7 @@ impl Engine {
             composing: Default::default(),
             suspended: tokio::sync::watch::channel(false).0,
             files_paused: tokio::sync::watch::channel(false).0,
+            status_wake: Notify::new(),
             device: Mutex::new((
                 format!("hc-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]),
                 "Hubchat".into(),
@@ -1028,10 +1032,16 @@ impl Engine {
         while !stop.is_cancelled() {
             self.send_queued_deletes(client, url, features, unix_ms())
                 .await?;
+            // our status, when this hub is owed it (engine_status); a pick
+            // made while the sync below is parked brings it back here
+            let status_wake = self.status_wake.notified();
+            tokio::pin!(status_wake);
+            status_wake.as_mut().enable();
+            self.tell_status(client, url, features).await?;
             let first_page = cursor.is_none();
             self.mark_for(url, stop, |s| s.waiting_since_ms = Some(unix_ms()));
             let asked = unix_ms();
-            let r = match client
+            let sync = client
                 .sync(
                     &self.me,
                     &device_id,
@@ -1046,9 +1056,13 @@ impl Engine {
                         crate::hub::POLL_WAIT_SECS
                     },
                     typing_wanted.then(|| typing_seen.map(serde_json::Value::from).unwrap_or(serde_json::Value::Bool(true))),
-                )
-                .await
-            {
+                );
+            let r = tokio::select! {
+                r = sync => r,
+                // asked again once the hub is told
+                _ = &mut status_wake => continue,
+            };
+            let r = match r {
                 Ok(r) => r,
                 // registering again helps only once: a device signed out on
                 // this hub stays refused (no spinning against the hub)
@@ -1094,6 +1108,11 @@ impl Engine {
             }
             if r.reset {
                 self.store.forget_hub_messages(url)?;
+            }
+            // our status as the hub keeps it, before this answer's mail, so
+            // its notifications follow it (engine_status)
+            if let Some(s) = r.status.as_deref() {
+                self.hub_said_status(url, s, r.reset)?;
             }
             // where this device's copy of the hub's mail begins: older mail
             // comes page by page (load_older)

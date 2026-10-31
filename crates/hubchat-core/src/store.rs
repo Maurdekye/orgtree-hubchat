@@ -1620,6 +1620,16 @@ pub(crate) fn directory_refresh_key(url: &str) -> String {
     format!("sync.directory_refresh_due.{url}")
 }
 
+/// The status we picked that the hub is still to be told (engine_status).
+pub(crate) fn status_owed_key(url: &str) -> String {
+    format!("status.owed.{url}")
+}
+
+/// The hub's last word on our status (engine_status).
+pub(crate) fn status_said_key(url: &str) -> String {
+    format!("status.said.{url}")
+}
+
 /// Forget what a hub's sync kept under its URL; its rows go with the hub.
 /// A position kept after its directory rows were gone made the same URL,
 /// added again, resume there: the hub sent only what had changed since, so
@@ -1633,6 +1643,8 @@ fn forget_hub_sync(tx: &rusqlite::Transaction, url: &str) -> rusqlite::Result<()
         clock_key(url),
         picture_ack_key(url),
         directory_refresh_key(url),
+        status_owed_key(url),
+        status_said_key(url),
         store_hub_enabled::disabled_key(url),
     ] {
         tx.execute("DELETE FROM meta WHERE key=?", [key])?;

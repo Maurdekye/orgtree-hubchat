@@ -76,6 +76,10 @@ pub struct SyncResult {
     /// DND.
     #[serde(default)]
     pub dnd: Option<Vec<String>>,
+    /// The status we picked, as this hub keeps it (Mail hub 2.3.0, feature
+    /// `status`): in every answer; absent from a hub before it.
+    #[serde(default)]
+    pub status: Option<String>,
     #[serde(default)]
     pub more: bool,
     #[serde(default)]
@@ -275,6 +279,17 @@ impl HubClient {
         let body = serde_json::json!({ "device_id": device_id, "active": active });
         let _: serde_json::Value = self
             .post_json(me, "/api/devices/active", &body, Duration::from_secs(20))
+            .await?;
+        Ok(())
+        }).await
+    }
+
+    /// Our status (hub feature `status`, Mail hub 2.3.0): auto, online, busy
+    /// or dnd, kept by the hub until we pick again.
+    pub async fn set_status(&self, me: &Identity, status: &str) -> Result<()> {
+        self.session_work(async {
+        let _: serde_json::Value = self
+            .post_json(me, "/api/status", &serde_json::json!({ "status": status }), Duration::from_secs(20))
             .await?;
         Ok(())
         }).await
