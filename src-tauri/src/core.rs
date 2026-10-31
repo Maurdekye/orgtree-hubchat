@@ -241,10 +241,11 @@ fn failure_notice(
 }
 
 /// What notifications may do now: Settings › Notifications, unless our
-/// status is Do not disturb. RED: not yet.
-#[allow(dead_code)]
-fn notify_now(settings: NotifySettings, _dnd: bool) -> NotifySettings {
-    settings
+/// status is Do not disturb (user 2026-10-31 08:52Z): then nothing shows and
+/// nothing sounds, on any of our devices, for a message or a failed file.
+/// Mail, unread counts and badges go on; the settings themselves stay.
+fn notify_now(settings: NotifySettings, dnd: bool) -> NotifySettings {
+    if dnd { NotifySettings { enabled: false, sound: false, ..settings } } else { settings }
 }
 
 /// Public Android settings only. Push capabilities never cross the webview bridge.
@@ -267,13 +268,22 @@ impl Drop for BackgroundCheck {
     }
 }
 
-impl Host for ShellHost {
-    fn transfer_failed(&self, notice: &hubchat_core::store::TransferFailure) -> std::io::Result<()> {
+impl ShellHost {
+    /// Settings › Notifications as they apply now: off on Do not disturb
+    /// (our status, as the core keeps it).
+    fn notify_settings_now(&self) -> NotifySettings {
         let settings = NotifySettings {
             enabled: self.notify_on.load(Ordering::Relaxed),
             preview: self.notify_text.load(Ordering::Relaxed),
             sound: self.notify_sound.load(Ordering::Relaxed),
         };
+        notify_now(settings, hubchat_core::engine::chosen_status(&self.store) == "dnd")
+    }
+}
+
+impl Host for ShellHost {
+    fn transfer_failed(&self, notice: &hubchat_core::store::TransferFailure) -> std::io::Result<()> {
+        let settings = self.notify_settings_now();
         let name = self.store.display_name(&notice.peer).ok().flatten()
             .unwrap_or_else(|| notice.peer.clone());
         if let Some((title, body, sound)) = failure_notice(settings, &name, notice) {
@@ -288,10 +298,12 @@ impl Host for ShellHost {
         if let Event::Incoming { peer, quiet, .. } = &ev {
             let showing = self.foreground.load(Ordering::Relaxed)
                 && self.open_chat.lock().unwrap().as_deref() == Some(peer.as_str());
-            // `quiet`: another of our devices was in use when it came
-            if !showing && !quiet && self.notify_on.load(Ordering::Relaxed) {
-                if let Some(n) = hubchat_core::notification_reply::incoming_notice(&ev, &self.store, self.notify_text.load(Ordering::Relaxed)) {
-                    self.platform.notify_incoming(&n.owner, &n.title, &n.body, &n.peer, self.notify_sound.load(Ordering::Relaxed));
+            // `quiet`: another of our devices was in use when it came; on Do
+            // not disturb nothing shows or sounds
+            let now = self.notify_settings_now();
+            if !showing && !quiet && now.enabled {
+                if let Some(n) = hubchat_core::notification_reply::incoming_notice(&ev, &self.store, now.preview) {
+                    self.platform.notify_incoming(&n.owner, &n.title, &n.body, &n.peer, now.sound);
                 }
             }
         }

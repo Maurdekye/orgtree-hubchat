@@ -58,6 +58,9 @@ pub struct State {
     me: Option<Me>,
     recovery_saved: bool,
     read_receipts: bool,
+    /// Our status (hub feature `status`): auto, online, busy or dnd, the
+    /// same on all our devices.
+    status: String,
     notifications: core::NotifySettings,
     /// Android (design D6): stay connected (true) or check about every 15
     /// minutes (false); null on desktop.
@@ -95,6 +98,7 @@ pub fn hc_state() -> R<State> {
         }),
         recovery_saved: meta(c, "recovery.saved") == "yes",
         read_receipts: meta(c, "settings.read_receipts") != "off",
+        status: hubchat_core::engine::chosen_status(&c.store),
         notifications: c.notify_settings(),
         stay_connected: c.platform().stay_connected(),
         push: c.platform().push_state(),
@@ -305,6 +309,12 @@ pub fn hc_composing(peer: String, on: bool) -> R<()> {
 #[tauri::command]
 pub fn hc_set_device_name(name: String) -> R<String> {
     core::get()?.set_device_name(&name)
+}
+
+/// Your status, picked on your avatar: kept, and told to your hubs.
+#[tauri::command]
+pub fn hc_set_status(status: String) -> R<()> {
+    engine()?.set_status(&status).map_err(s)
 }
 
 #[tauri::command]
