@@ -71,6 +71,11 @@ pub struct SyncResult {
     /// with `online`, so `online` without it is a hub before busy.
     #[serde(default)]
     pub busy: Option<Vec<String>>,
+    /// The online addresses on Do not disturb now (Mail hub 2.3.0; in `busy`
+    /// too): it comes with `online`, so `online` without it is a hub before
+    /// DND.
+    #[serde(default)]
+    pub dnd: Option<Vec<String>>,
     #[serde(default)]
     pub more: bool,
     #[serde(default)]

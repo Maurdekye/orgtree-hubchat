@@ -181,6 +181,10 @@ pub struct RosterEntry {
     /// on all their devices for an hour. Hubs before 2.3.0 never say it.
     #[serde(default)]
     pub busy: bool,
+    /// On Do not disturb (Mail hub 2.3.0): an org whose outside mail is set
+    /// to Do not disturb, a part of busy. Hubs before it never say it.
+    #[serde(default)]
+    pub dnd: bool,
     #[serde(default)]
     pub last_seen: Option<String>,
     #[serde(default)]

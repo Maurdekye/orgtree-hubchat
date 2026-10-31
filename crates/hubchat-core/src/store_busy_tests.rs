@@ -113,7 +113,7 @@ fn admit(e: &Engine, client: &HubClient, first_page: bool, answer: serde_json::V
     v["name"] = "Hub A".into();
     v["cursor"] = "c".into();
     let r: crate::hub_v2::SyncResult = serde_json::from_value(v).unwrap();
-    e.admit_roster_batch(client, &r.roster, first_page && !r.roster.is_empty(), &r.roster_removed, r.online.as_deref(), r.busy.as_deref())
+    e.admit_roster_batch(client, &r.roster, first_page && !r.roster.is_empty(), &r.roster_removed, r.online.as_deref(), r.busy.as_deref(), r.dnd.as_deref())
         .unwrap();
 }
 
@@ -159,4 +159,124 @@ fn the_send_route_says_on_which_hub_they_are_busy() {
     let hubs = |peer: &str| e.send_route(peer).unwrap().hubs.into_iter().map(|h| (h.url, h.online, h.busy)).collect::<Vec<_>>();
     assert_eq!(hubs(PAT), [(A.to_string(), true, true), (B.to_string(), false, false)]);
     assert_eq!(hubs(ALICE), [(A.to_string(), true, false), (B.to_string(), true, false)]);
+}
+
+// Do not disturb (Mail hub 2.3.0; the docket's addition, user 2026-10-31
+// 08:51Z): an org whose outside mail is set to Do not disturb. A hub lists a
+// DND address in busy too. The directory says DND while every hub where the
+// address is online says so, so the most available presence any hub lists
+// wins (online over busy over DND); offline wins over DND (09:03Z, "Offline
+// for both").
+
+/// The schema version before Do not disturb (MIGRATIONS with busy).
+const BEFORE_DND: usize = 21;
+const DELTA: &str = "delta.7a8b9c";
+
+fn entry_dnd(slug: &str, online: bool, busy: bool, dnd: bool) -> RosterEntry {
+    serde_json::from_value(serde_json::json!({ "slug": slug, "kind": "org", "online": online, "busy": busy, "dnd": dnd })).unwrap()
+}
+
+/// (online, busy, dnd) as the directory lists the address.
+fn seen3(s: &Store, address: &str) -> (bool, bool, bool) {
+    let d = s.directory().unwrap();
+    let c = d.iter().find(|c| c.address == address).unwrap_or_else(|| panic!("{address} is not listed"));
+    (c.online, c.busy, c.dnd)
+}
+
+#[test]
+fn a_roster_row_keeps_dnd_and_the_most_available_hub_wins() {
+    let s = store();
+    s.set_roster(A, &[entry_dnd(DELTA, true, true, true), entry_dnd(ACME, true, true, false)]).unwrap();
+    assert_eq!(seen3(&s, DELTA), (true, true, true), "a roster row's dnd is kept (and busy, a part of it)");
+    assert_eq!(seen3(&s, ACME), (true, true, false));
+    // busy and not DND on another hub: busy wins over DND
+    s.set_roster(B, &[entry_dnd(DELTA, true, true, false)]).unwrap();
+    assert_eq!(seen3(&s, DELTA), (true, true, false), "busy on one hub wins over DND");
+    // online and free there: online wins
+    s.upsert_roster(B, &[entry_dnd(DELTA, true, false, false)]).unwrap();
+    assert_eq!(seen3(&s, DELTA), (true, false, false));
+    // offline there: DND, as on the hub where it is online
+    s.set_online(B, &[]).unwrap();
+    s.set_busy(B, &[]).unwrap();
+    s.set_dnd(B, &[]).unwrap();
+    assert_eq!(seen3(&s, DELTA), (true, true, true));
+    // offline everywhere: offline wins over DND
+    s.set_online(A, &[ACME.into()]).unwrap();
+    assert_eq!(seen3(&s, DELTA), (false, false, false), "offline wins over DND");
+}
+
+#[test]
+fn a_hubs_dnd_list_marks_exactly_these_there() {
+    let s = store();
+    s.set_roster(A, &[entry_dnd(DELTA, true, true, false), entry_dnd(ACME, true, true, false)]).unwrap();
+    s.set_dnd(A, &[DELTA.into()]).unwrap();
+    assert_eq!(seen3(&s, DELTA), (true, true, true));
+    assert_eq!(seen3(&s, ACME), (true, true, false));
+    s.set_dnd(A, &[ACME.into()]).unwrap();
+    assert_eq!(seen3(&s, DELTA), (true, true, false), "hub A no longer says so");
+    assert_eq!(seen3(&s, ACME), (true, true, true));
+}
+
+#[test]
+fn a_store_from_before_dnd_gains_it_and_keeps_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("hubchat.db");
+    {
+        let c = legacy_schema_fixture(&path, BEFORE_DND);
+        c.execute_batch(&format!(
+            "INSERT INTO hubs(url, added_at) VALUES('{A}', 't0');
+             INSERT INTO roster(address, hub, kind, online, busy) VALUES('{DELTA}', '{A}', 'org', 1, 1);"
+        ))
+        .unwrap();
+    }
+    let s = Store::open(&path).unwrap();
+    assert_eq!(seen3(&s, DELTA), (true, true, false), "nobody was on Do not disturb before");
+    s.set_dnd(A, &[DELTA.into()]).unwrap();
+    assert_eq!(seen3(&s, DELTA), (true, true, true));
+    drop(s);
+    // opened again: kept, like busy
+    let s = Store::open(&path).unwrap();
+    assert_eq!(seen3(&s, DELTA), (true, true, true));
+}
+
+#[test]
+fn a_sync_answer_says_who_is_dnd_and_a_hub_before_dnd_says_no_one() {
+    let s = Arc::new(store());
+    let me = Identity::generate("dnd-proof").unwrap();
+    s.set_meta("identity.address", &me.address()).unwrap();
+    let e = Engine::new(s.clone(), me, Profile::default(), Arc::new(SilentHost));
+    e.set_suspended(true);
+    let a = HubClient::new(HubAddress::parse(A).unwrap());
+    // the first page: the roster, each row with its dnd
+    admit(&e, &a, true, serde_json::json!({ "roster": [
+        { "slug": DELTA, "kind": "org", "online": true, "busy": true, "dnd": true },
+        { "slug": ACME, "kind": "org", "online": true, "busy": true }] }));
+    assert_eq!(seen3(&s, DELTA), (true, true, true));
+    assert_eq!(seen3(&s, ACME), (true, true, false));
+    // a later answer: who is online, which are busy, which of them on DND
+    admit(&e, &a, false, serde_json::json!({ "online": [DELTA, ACME], "busy": [DELTA, ACME], "dnd": [ACME] }));
+    assert_eq!(seen3(&s, DELTA), (true, true, false), "busy, no longer on DND");
+    assert_eq!(seen3(&s, ACME), (true, true, true));
+    // an answer without the sets changes neither
+    admit(&e, &a, false, serde_json::json!({}));
+    assert_eq!(seen3(&s, ACME), (true, true, true));
+    // a hub that knows busy but not DND sends online and busy alone: no one is on DND there
+    admit(&e, &a, false, serde_json::json!({ "online": [DELTA, ACME], "busy": [DELTA, ACME] }));
+    assert_eq!(seen3(&s, ACME), (true, true, false));
+    // offline wins over DND
+    admit(&e, &a, false, serde_json::json!({ "online": [DELTA], "busy": [DELTA, ACME], "dnd": [ACME] }));
+    assert_eq!(seen3(&s, ACME), (false, false, false));
+}
+
+#[test]
+fn the_send_route_says_on_which_hub_they_are_on_dnd() {
+    let s = Arc::new(store());
+    let me = Identity::generate("dnd-route-proof").unwrap();
+    s.set_meta("identity.address", &me.address()).unwrap();
+    let e = Engine::new(s.clone(), me, Profile::default(), Arc::new(SilentHost));
+    e.set_suspended(true);
+    s.set_roster(A, &[entry_dnd(DELTA, true, true, true)]).unwrap();
+    s.set_roster(B, &[entry_dnd(DELTA, true, true, false)]).unwrap();
+    let hubs = e.send_route(DELTA).unwrap().hubs.into_iter().map(|h| (h.url, h.online, h.busy, h.dnd)).collect::<Vec<_>>();
+    assert_eq!(hubs, [(A.to_string(), true, true, true), (B.to_string(), true, true, false)]);
 }

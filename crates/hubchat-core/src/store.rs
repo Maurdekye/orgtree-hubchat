@@ -407,6 +407,9 @@ pub struct Contact {
     pub online: bool,
     /// Online, and busy on every hub where they are online (Mail hub 2.3.0).
     pub busy: bool,
+    /// Online, and on Do not disturb on every hub where they are online (Mail
+    /// hub 2.3.0; a part of busy).
+    pub dnd: bool,
     pub last_seen: Option<String>,
     pub hubs: Vec<String>,
     pub picture: Option<crate::pictures::PictureMeta>,
@@ -595,7 +598,7 @@ impl Store {
                         }
                         c.hubs.push(hub);
                     }
-                    _ => out.push(Contact { address, kind, org_name, username, blurb, online, busy, last_seen, hubs: vec![hub], picture }),
+                    _ => out.push(Contact { address, kind, org_name, username, blurb, online, busy, dnd: false, last_seen, hubs: vec![hub], picture }),
                 }
             }
             Ok(out)
@@ -609,6 +612,12 @@ impl Store {
             let rows = st.query_map([address], |r| r.get(0))?;
             rows.collect()
         })
+    }
+
+    /// The hubs where `address` is online but on Do not disturb (the hub
+    /// picker). Red: none yet.
+    pub fn dnd_hubs(&self, _address: &str) -> Result<Vec<String>> {
+        Ok(Vec::new())
     }
 
     /// Hubs whose roster lists `address`, with whether it is online there:
@@ -1314,6 +1323,12 @@ impl Store {
         })
     }
 
+    /// Exactly these addresses are on Do not disturb on this hub now. Red:
+    /// not kept yet.
+    pub fn set_dnd(&self, _hub: &str, _dnd: &[String]) -> Result<()> {
+        Ok(())
+    }
+
     // ------------------------------------------------------ attachments
 
     pub fn set_attachment(
@@ -1822,6 +1837,7 @@ mod tests {
             blurb: String::new(),
             online,
             busy: false,
+            dnd: false,
             last_seen: None,
             kind: "chat".into(),
             picture: None,
