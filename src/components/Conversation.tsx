@@ -362,6 +362,8 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
   const routed = routeVia(route);
   const via = (routed && hubByUrl(hubs, routed)) || viaHub(c, hubs) || ph[0];
   const viaLabel = routed ? routeLabel(route, hubs) : via ? "via " + via.name : "";
+  const line = useRef<HTMLDivElement>(null);
+  const parts = useLineParts(line, peer + "|" + (routed || "") + "|" + (via?.name || ""));
 
   // ------------------------------------------------------------ timeline
   const rows: React.ReactNode[] = [];
@@ -521,12 +523,12 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
         <span className="conv-av" onClick={onContact} title="Contact info"><PeerAvatar address={peer} c={c} hubs={hubs} size={40} /></span>
         <div className="who" onClick={onContact} title="Contact info">
           <div className="n1"><span className="name">{name}</span>{c ? <KindChip kind={kind} /> : null}</div>
-          <div className="n2">
+          <div className="n2" ref={line}>
             <PresText c={c} hubs={hubs} />
-            <span className="sep" />
-            <span className="mono ell"><Addr a={peer} net /></span>
-            {routed ? <><span className="sep" /><HubChip peer={peer} route={route} who={name} /></>
-              : via ? <><span className="sep" /><span className="chip hubchip" title={"Messages go through hub " + via.name}>via {via.name}</span></> : null}
+            <span className={"sep" + gone(parts.addr)} />
+            <span className={"mono ell" + gone(parts.addr)}><Addr a={peer} net /></span>
+            {routed ? <><span className={"sep" + gone(parts.hub)} /><HubChip peer={peer} route={route} who={name} /></>
+              : via ? <><span className={"sep" + gone(parts.hub)} /><span className="chip hubchip" title={"Messages go through hub " + via.name}>via {via.name}</span></> : null}
           </div>
         </div>
         <button className="icon-btn" onClick={copyAddr} title="Copy address" aria-label="Copy address"><Icon name="copy" /></button>
@@ -557,6 +559,33 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
 
 /** Under the newest message while the peer is writing to us (hub feature
  *  `typing`): its name and three dots, announced politely. */
+/** The chat header's status line shows whole parts after the state: the hub chip (whole), then the address (at
+ *  least ADDR_MIN wide), each with its separator, or neither; a separator never ends the line (a trailing "•" beside
+ *  Contact info, coordinator 2026-10-31). A part that gives way stays measurable (`.n2-off`), so no width depends
+ *  on what is shown. */
+const ADDR_MIN = 40;
+const gone = (on: boolean) => (on ? "" : " n2-off");
+function useLineParts(line: React.RefObject<HTMLDivElement | null>, key: string) {
+  const [parts, setParts] = useState({ addr: true, hub: true });
+  useLayoutEffect(() => {
+    const el = line.current; if (!el) return;
+    const fit = () => {
+      const w = (sel: string) => el.querySelector<HTMLElement>(sel)?.offsetWidth ?? 0;
+      const sep = w(".sep") + 2 * (parseFloat(getComputedStyle(el).columnGap) || 0), chip = w(".hubchip");
+      let room = el.clientWidth - w(".ptext");
+      const hub = chip > 0 && room >= sep + chip; if (hub) room -= sep + chip;
+      const addr = room >= sep + ADDR_MIN;
+      setParts((p) => (p.addr === addr && p.hub === hub ? p : { addr, hub }));
+    };
+    fit();
+    if (!window.ResizeObserver) return;
+    const ro = new ResizeObserver(fit);
+    ro.observe(el); el.querySelectorAll(".ptext, .hubchip").forEach((e) => ro.observe(e));
+    return () => ro.disconnect();
+  }, [line, key]);
+  return parts;
+}
+
 function TypingRow({ name }: { name: string }) {
   return (
     <div className="typing-row" role="status" aria-live="polite" data-typing="1">

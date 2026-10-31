@@ -62,6 +62,9 @@
 .conv-head .n2 .ptext { display: block; flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .conv-head .n2 .ptext:not(.p-disconnected)::before { display: inline-block; margin-right: 6px; vertical-align: 1px; }
 .conv-head .n2 .ptext .ic { display: inline-block; vertical-align: -3px; margin-right: 6px; }
+/* A part of the status line that gives way (useLineParts): out of the line, still measured */
+.conv-head .n2 { position: relative; }
+.conv-head .n2 .n2-off, .conv-head .n2 .sep.n2-off + .hubchip { position: absolute; left: 0; top: 0; visibility: hidden; pointer-events: none; }
 .conv-head .sep { width: 3px; height: 3px; border-radius: 50%; background: var(--faint); flex: none; }
 .tl-wrap { flex: 1; min-height: 0; position: relative; }
 .timeline { position: absolute; inset: 0; padding: 6px 28px 18px; }
