@@ -215,6 +215,8 @@
 .sheet .mi .ic { width: 24px; height: 24px; color: var(--dim); }
 .sheet .mi .s { margin-left: auto; font-size: 13px; color: var(--faint); }
 .sheet .mi.bad, .sheet .mi.bad .ic { color: var(--bad); }
+.sheet .sep { height: 1px; background: var(--line-soft); margin: 6px 24px; }
+.appbar .me-status { margin-left: 10px; }
 .sheet .qrwrap { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 6px 20px 10px; text-align: center; }
 .sheet .qrwrap .qrbox { background: #fff; padding: 12px; border-radius: 16px; line-height: 0; }
 .dialog { position: absolute; left: 24px; right: 24px; top: 50%; transform: translateY(-50%); z-index: 41; background: var(--panel); border-radius: 26px; padding: 22px 22px 14px; animation: fadein .15s ease; }

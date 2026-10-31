@@ -27,6 +27,18 @@ export function routeLabel(r: SendRoute | null, hubs: HubStatus[]): string {
 /** There is a choice to make: two or more of my hubs list them. */
 export const hasChoice = (r: SendRoute | null) => !!r && r.hubs.length >= 2;
 
+/** One choice in a picker (the hub picker; your status): checked when in use, a presence dot or Automatic's icon,
+ *  its name and what it means. `cls` names the picker's rows. */
+export function ChoiceRow({ cls, sel, label, sub, run, dot }: { cls?: string; sel: boolean; label: string; sub: string; run: () => void; dot?: string }) {
+  return (
+    <button type="button" className={["mi hubopt", cls, sel ? "sel" : ""].filter(Boolean).join(" ")} role="menuitemradio" aria-checked={sel} onClick={run}>
+      <span className="ck">{sel ? <Icon name="check" /> : null}</span>
+      {dot ? <span className="hic"><span className={"hdot " + dot} /></span> : <Icon name="sync" />}
+      <span className="t"><b>{label}</b><small>{sub}</small></span>
+    </button>
+  );
+}
+
 type HubAt = "online" | "busy" | "dnd" | "offline" | "down";
 /** How "<who> is ... here" reads for each state. */
 const AT_WORD: Record<Exclude<HubAt, "down">, string> = { online: "online", busy: "busy", dnd: "on Do not disturb", offline: "offline" };
@@ -38,13 +50,8 @@ function Choices({ peer, route, who, onDone }: { peer: string; route: SendRoute;
     onDone();
     if (hub !== route.pinned) api.setSendHub(peer, hub).catch((e) => toast(errText(e)));
   };
-  const row = (key: string, sel: boolean, label: string, sub: string, run: () => void, dot?: HubAt) => (
-    <button key={key} type="button" className={"mi hubopt" + (sel ? " sel" : "")} role="menuitemradio" aria-checked={sel} onClick={run}>
-      <span className="ck">{sel ? <Icon name="check" /> : null}</span>
-      {dot ? <span className="hic"><span className={"hdot " + dot} /></span> : <Icon name="sync" />}
-      <span className="t"><b>{label}</b><small>{sub}</small></span>
-    </button>
-  );
+  const row = (key: string, sel: boolean, label: string, sub: string, run: () => void, dot?: HubAt) =>
+    <ChoiceRow key={key} sel={sel} label={label} sub={sub} run={run} dot={dot} />;
   return (
     <>
       {row("auto", !route.pinned, "Automatic",

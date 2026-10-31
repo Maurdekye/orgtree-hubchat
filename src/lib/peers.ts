@@ -1,6 +1,6 @@
 // Who someone is, how to reach them and what state they are in, computed from
 // the directory and the hub statuses the core reports.
-import type { Attachment, Contact, HubStatus, Message } from "../api";
+import type { Attachment, Contact, HubStatus, Message, MyStatus } from "../api";
 import { ago, bytes, ms } from "./format";
 import { isImage } from "./images";
 import { plain } from "./md";
@@ -52,6 +52,17 @@ export interface Presence { state: PresState; text: string; short: string }
  *  offline = I'm connected, they are not, which outranks DND ("Offline for
  *  both", user 2026-10-31); disconnected = none
  *  of their hubs is connected, so status is unknown. */
+/** Your status's words (Mail hub 2.3.0 feature `status`). */
+export const STATUS_WORD: Record<MyStatus, string> = { auto: "Automatic", online: "Online", busy: "Busy", dnd: "Do not disturb" };
+
+/** How others see you now, for your own avatar: your status (Automatic: online, as you're here), or offline while none
+ *  of your hubs is connected (offline wins, user 2026-10-31 09:03Z). */
+export function myPresence(status: MyStatus, hubs: HubStatus[]): { state: PresState; title: string } {
+  const on = hubs.some((h) => h.state === "connected");
+  const state: PresState = !on ? "offline" : status === "busy" ? "busy" : status === "dnd" ? "dnd" : "online";
+  return { state, title: "Your status: " + STATUS_WORD[status] + (on ? "" : " · offline: none of your hubs is connected") };
+}
+
 export function presence(c: Contact | undefined, hubs: HubStatus[]): Presence {
   if (!c) return { state: "disconnected", text: "Status unknown — not in your hubs' directories", short: "status unknown" };
   if (!viaHub(c, hubs)) {

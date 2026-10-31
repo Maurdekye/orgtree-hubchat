@@ -339,6 +339,9 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .hdot.dnd { background: var(--dnd); }
 .hdot.offline { border: 2px solid var(--faint); }
 .hdot.down { background: var(--bad); }
+/* your own avatar: it opens your status (StatusPicker), and wears the dot others see */
+.me-status { display: inline-flex; padding: 0; border: 0; background: transparent; border-radius: 50%; cursor: pointer; }
+.me-status:focus-visible { border-radius: 50%; }
 .chip.hubchip.pick { cursor: pointer; background: transparent; padding-right: 4px; }
 .chip.hubchip.pick:hover, .chip.hubchip.pick.on { color: var(--ink-strong); border-color: var(--faint); }
 .chip.hubchip.pinned { color: var(--accent-text); border-color: var(--accent-soft); background: var(--accent-soft); }

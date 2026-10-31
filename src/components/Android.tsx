@@ -34,6 +34,7 @@ import { closeMenu as closeContextMenu } from "../lib/ctxmenu";
 import { SettingsList, SettingsSection, TABS, type SetTab } from "./Settings";
 import { ImageViewer } from "./AttImage";
 import { AppVersion, Toasts } from "./ui";
+import { StatusButton } from "./StatusPicker";
 
 type Scr =
   | { s: "chats" } | { s: "conv"; p: string } | { s: "msginfo"; id: string; p: string } | { s: "info"; p: string }
@@ -69,6 +70,7 @@ function Chats({ go }: { go: (s: Scr) => void }) {
           <button className="icon-btn" onClick={() => { setSearching(false); setQ(""); }} aria-label="Close search"><Icon name="back" /></button>
           <label className="to-field" style={{ flex: 1, margin: "0 8px 0 0", height: 44 }}><input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search chats" autoComplete="off" /></label>
         </> : <>
+          <StatusButton size={32} onProfile={() => go({ s: "set", tab: "profile" })} />
           <div className="title" role="heading" aria-level={1}>Hubchat<AppVersion /></div>
           <button className="icon-btn" onClick={() => setSearching(true)} aria-label="Search"><Icon name="search" /></button>
           <button className="icon-btn" onClick={() => go({ s: "directory" })} aria-label="Directory"><Icon name="contacts" /></button>

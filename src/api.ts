@@ -104,10 +104,15 @@ export interface PushState {
   status: string;
 }
 
+/** Your status (Mail hub 2.3.0 feature `status`): your hubs keep it, so it is the same on all your devices. */
+export type MyStatus = "auto" | "online" | "busy" | "dnd";
+
 export interface State {
   me: Me | null;
   recovery_saved: boolean;
   read_receipts: boolean;
+  /** Your status, picked on your avatar (on Do not disturb nothing shows or sounds on any of your devices). */
+  status: MyStatus;
   notifications: NotifySettings;
   /** Android (design D6): stay connected (true) or check about every 15 minutes; null on desktop. */
   stay_connected: boolean | null;
@@ -318,6 +323,8 @@ export type HcEvent =
    *  to us. Shown while the last one came within a second; never a
    *  notification. */
   | { type: "typing"; peer: string }
+  /** Your status changed: picked here, or on another of your devices. */
+  | { type: "status" }
   | { type: "preparing"; message_id: string; peer: string; name: string; done: number; total: number }
   | { type: "transfer"; local_id: string; message_id: string; upload: boolean; done: number; total: number };
 
@@ -437,6 +444,7 @@ export const tauriApi = {
   picturePreview: (data: string) => invoke<{ data: string; width: number; height: number }>("hc_picture_preview", { data }),
   setPicture: (owner: string, data: string | null, crop?: PictureCrop) => invoke<PictureRecord>("hc_set_picture", { owner, data, crop }),
   setReadReceipts: (on: boolean) => invoke<void>("hc_set_read_receipts", { on }),
+  setStatus: (status: MyStatus) => invoke<void>("hc_set_status", { status }),
   setNotifications: (n: NotifySettings) => invoke<void>("hc_set_notifications", { enabled: n.enabled, preview: n.preview, sound: n.sound }),
   setStayConnected: (on: boolean) => invoke<void>("hc_set_stay_connected", { on }),
   setPush: (on: boolean, distributor: string) => invoke<void>("hc_set_push", { on, distributor }),

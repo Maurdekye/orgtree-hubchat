@@ -395,6 +395,7 @@ function onEvent(e: HcEvent) {
     case "directory": schedule("dir"); schedule("state"); break;
     case "attached": schedule("state"); schedule("chats"); schedule("dir"); schedule("transfers"); break;
     case "typing": noteTyping(e.peer); break;
+    case "status": schedule("state"); break;
     case "transfer":
       transfers.set(e.local_id, { done: e.done, total: e.total, upload: e.upload, message_id: e.message_id });
       tsubs.forEach((f) => f());

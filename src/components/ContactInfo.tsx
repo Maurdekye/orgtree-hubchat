@@ -18,12 +18,13 @@ import { ContactFile } from "./ContactFile";
 const ONLINE_NOTE = "“Online” means its Orgtree is connected to the hub — not that an agent is typing.";
 /** What busy means (Mail hub 2.3.0; user 2026-10-30), said while they are busy. */
 const BUSY_NOTE: Partial<Record<Kind, string>> = {
-  person: "“Busy” means Hubchat hasn't been in front on any of their devices for an hour.",
+  person: "“Busy” means they set themselves busy, or Hubchat hasn't been in front on any of their devices for an hour.",
   org: "“Busy” means it is connected, but none of the agents who answer its outside mail can start a turn right now.",
 };
 /** What Do not disturb means (Mail hub 2.3.0; user 2026-10-31), said while it is on: an org's outside mail on hold,
  *  as Orgtree's own setting warns ("kept but not read or delivered automatically"). */
 const DND_NOTE: Partial<Record<Kind, string>> = {
+  person: "“Do not disturb” means they've turned off notifications on all their devices: your messages still arrive, and they'll see them when they look.",
   org: "“Do not disturb” means its outside mail is on hold: your messages are kept, but no agent there sees them until one checks its inbox.",
 };
 const bare = (url: string) => url.replace(/^https?:\/\//, "");

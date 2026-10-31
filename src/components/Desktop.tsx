@@ -30,7 +30,8 @@ import { MessageView } from "./MessageView";
 import { NewChatInput, NewChatResults, useResolve } from "./NewChat";
 import { SettingsModal, type SetTab } from "./Settings";
 import { ImageViewer } from "./AttImage";
-import { Addr, Avatar, Modal, ModalHead, Toasts } from "./ui";
+import { Addr, Modal, ModalHead, Toasts } from "./ui";
+import { StatusButton } from "./StatusPicker";
 
 type Overlay = null | { k: "newchat"; q: string } | { k: "directory" } | { k: "settings"; tab: SetTab } | { k: "link"; tab: LinkTab; input?: string };
 /** The right-hand panel: the open chat's Contact info, or one message's info. */
@@ -231,7 +232,7 @@ export function Desktop() {
         {rail ? (
           <aside className="side rail">
             <button className="icon-btn" onClick={() => setRail(false)} title="Show the chat list" aria-label="Show the chat list"><Icon name="chevron_right" /></button>
-            <span className="rail-me" onClick={() => settings("profile")} title="Profile"><Avatar kind="me" name={me.name || me.id} size={32} /></span>
+            <span className="rail-me"><StatusButton size={32} onProfile={() => settings("profile")} /></span>
             <button className="icon-btn" onClick={() => setOv({ k: "newchat", q: "" })} title="New chat (F3, Ctrl+N)" aria-label="New chat"><Icon name={TASK_ICONS.newchat} /></button>
             <button className="icon-btn" onClick={() => setOv({ k: "directory" })} title="Directory (F2): everyone on your hubs" aria-label="Directory"><Icon name={TASK_ICONS.directory} /></button>
             <button className="icon-btn" onClick={() => settings("profile")} title="Settings (F1, Ctrl+,)" aria-label="Settings"><Icon name={TASK_ICONS.settings} /></button>
@@ -243,7 +244,7 @@ export function Desktop() {
         ) : (
         <aside className="side">
           <div className="side-head">
-            <span onClick={() => settings("profile")} title="Profile" style={{ cursor: "pointer", marginRight: 8 }}><Avatar kind="me" name={me.name || me.id} size={32} /></span>
+            <span style={{ marginRight: 8 }}><StatusButton size={32} onProfile={() => settings("profile")} /></span>
             <div className="side-title">Chats</div>
             <button className="icon-btn" onClick={() => setOv({ k: "newchat", q: "" })} title="New chat (F3, Ctrl+N)" aria-label="New chat"><Icon name={TASK_ICONS.newchat} /></button>
             <button className="icon-btn" onClick={() => setOv({ k: "directory" })} title="Directory (F2): everyone on your hubs" aria-label="Directory"><Icon name={TASK_ICONS.directory} /></button>

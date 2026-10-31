@@ -186,8 +186,8 @@ export function Toasts() {
   return <div className="toasts" role="status" aria-live="polite">{list.map((t) => <div className="toast" key={t.id}>{t.text}</div>)}</div>;
 }
 
-export function NoteCard({ icon, warn, children, style }: { icon: IconName; warn?: boolean; children: ReactNode; style?: CSSProperties }) {
-  return <div className={"note-card" + (warn ? " warn" : "")} style={style}><Icon name={icon} /><div>{children}</div></div>;
+export function NoteCard({ icon, warn, className, children, style }: { icon: IconName; warn?: boolean; className?: string; children: ReactNode; style?: CSSProperties }) {
+  return <div className={"note-card" + (warn ? " warn" : "") + (className ? " " + className : "")} style={style}><Icon name={icon} /><div>{children}</div></div>;
 }
 
 let version: string | null = null;

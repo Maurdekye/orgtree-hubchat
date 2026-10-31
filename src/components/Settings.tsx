@@ -21,6 +21,7 @@ import { HubHelpLink } from "./HubHelp";
 import { PictureEditor } from "./PictureEditor";
 import { GuideBody } from "./Guide";
 import { TransfersPanel } from "./Transfers";
+import { pickStatus } from "./StatusPicker";
 import { scanSetup } from "../lib/setup";
 import { Addr, Avatar, Confirm, NoteCard, QR, Switch, pressKeys, useDialogFocus, useNow, usePlatform } from "./ui";
 
@@ -461,6 +462,9 @@ function Notifications() {
   };
   return (
     <>
+      {/* your status on Do not disturb (user 2026-10-31 08:52Z): these settings stay, but nothing shows or sounds */}
+      {snap.state?.status === "dnd" ? <NoteCard icon="bell" className="dnd-note" style={platform === "desktop" ? { marginTop: 6 } : undefined}><b>Do not disturb is on.</b> Hubchat
+        shows no notifications and plays no sound on any of your devices. Messages still arrive. <button type="button" className="link" onClick={() => void pickStatus("auto")}>Turn it off</button></NoteCard> : null}
       <Sec first>
         <Card>
           <ToggleRow icon="bell" t1={platform === "android" ? "Notifications" : "Show notifications"} t2={platform === "android" ? "For chats that are not on screen." : "When a message arrives in a chat that is not on screen."} on={n.enabled} onChange={(v) => void set({ enabled: v })} label="Show notifications" />
