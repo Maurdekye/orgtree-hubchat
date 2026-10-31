@@ -40,14 +40,17 @@ export const peerHubs = (c: Contact | undefined, hubs: HubStatus[]) => (c ? hubs
 /** A connected hub that reaches them (the core sends through one of these). */
 export const viaHub = (c: Contact | undefined, hubs: HubStatus[]) => peerHubs(c, hubs).find((h) => h.state === "connected");
 
-export type PresState = "online" | "busy" | "offline" | "disconnected";
+export type PresState = "online" | "busy" | "dnd" | "offline" | "disconnected";
 export interface Presence { state: PresState; text: string; short: string }
 
 /** The definitions, per hub: online = I'm connected to a hub that holds
  *  them and they are connected; busy = online, but no one can answer now
  *  (Mail hub 2.3.0: an org none of whose org-inbox holders can start a turn,
  *  a person away from Hubchat on all their devices for an hour; user
- *  2026-10-30); offline = I'm connected, they are not; disconnected = none
+ *  2026-10-30); dnd = online, but on Do not disturb (Mail hub 2.3.0: an org
+ *  whose outside mail is set to it; user 2026-10-31), which outranks busy;
+ *  offline = I'm connected, they are not, which outranks DND ("Offline for
+ *  both", user 2026-10-31); disconnected = none
  *  of their hubs is connected, so status is unknown. */
 export function presence(c: Contact | undefined, hubs: HubStatus[]): Presence {
   if (!c) return { state: "disconnected", text: "Status unknown — not in your hubs' directories", short: "status unknown" };
@@ -55,6 +58,7 @@ export function presence(c: Contact | undefined, hubs: HubStatus[]): Presence {
     const names = peerHubs(c, hubs).map((h) => h.name);
     return { state: "disconnected", text: "Status unknown — no connection to " + (names.join(" or ") || "their hub"), short: "status unknown" };
   }
+  if (c.online && c.dnd) return { state: "dnd", text: "Do not disturb", short: "do not disturb" };
   if (c.online && c.busy) return { state: "busy", text: "Busy", short: "busy" };
   if (c.online) return { state: "online", text: "Online", short: "online" };
   const seen = ms(c.last_seen);

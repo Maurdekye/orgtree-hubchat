@@ -93,6 +93,11 @@
    2026-10-30): a switch is this one line. On every theme scope, so it follows
    that scope's --warn. */
 :root, .theme-dark, .theme-light { --busy: var(--warn); }
+/* Do not disturb presence (Mail hub 2.3.0): an org whose outside mail is set
+   to Do not disturb. One token, the danger red ("a red status icon", user
+   2026-10-31): a switch is this one line. On every theme scope, so it follows
+   that scope's --bad. */
+:root, .theme-dark, .theme-light { --dnd: var(--bad); }
 :root {
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
   --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;

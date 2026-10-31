@@ -133,6 +133,7 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .av.s72 .pres, .av.s96 .pres { width: 18px; height: 18px; right: 2px; bottom: 2px; box-shadow: 0 0 0 3px var(--ring, var(--side)); }
 .pres.p-online { background: var(--ok); }
 .pres.p-busy { background: var(--busy); }
+.pres.p-dnd { background: var(--dnd); }
 .pres.p-offline { background: var(--ring, var(--side)); border: 2px solid var(--faint); }
 .pres.p-disconnected { background: var(--ring, var(--side)); border: 2px solid var(--faint); overflow: hidden; }
 .pres.p-disconnected::after { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; background: var(--faint); transform: rotate(45deg); }
@@ -140,6 +141,7 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .ptext::before { content: ""; width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .ptext.p-online::before { background: var(--ok); }
 .ptext.p-busy::before { background: var(--busy); }
+.ptext.p-dnd::before { background: var(--dnd); }
 .ptext.p-offline::before { border: 1.5px solid var(--faint); width: 5px; height: 5px; }
 .ptext.p-disconnected::before { display: none; }
 .ptext.p-disconnected .ic { width: 15px; height: 15px; }
@@ -334,6 +336,7 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .hdot { width: 10px; height: 10px; border-radius: 50%; box-sizing: border-box; }
 .hdot.online { background: var(--ok); }
 .hdot.busy { background: var(--busy); }
+.hdot.dnd { background: var(--dnd); }
 .hdot.offline { border: 2px solid var(--faint); }
 .hdot.down { background: var(--bad); }
 .chip.hubchip.pick { cursor: pointer; background: transparent; padding-right: 4px; }
