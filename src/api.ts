@@ -23,6 +23,8 @@ export interface HubStatus {
   version?: string | null;
   /** The hub's clock minus ours, ms (hubs that report it). */
   clock_offset_ms?: number | null;
+  /** Whether the hub translates (Mail hub 2.4.0): off, ok, no_key or key_refused; null when it doesn't say. */
+  translation?: string | null;
 }
 
 /** What one step back through a chat's hub history did (lazy history). */
@@ -113,6 +115,9 @@ export interface State {
   read_receipts: boolean;
   /** Your status, picked on your avatar (on Do not disturb nothing shows or sounds on any of your devices). */
   status: MyStatus;
+  /** The language you read in (Settings › Profile; Mail hub 2.4.0 translation), "" for none: the same on all your
+   *  devices, and told to no one else. */
+  language: string;
   notifications: NotifySettings;
   /** Android (design D6): stay connected (true) or check about every 15 minutes; null on desktop. */
   stay_connected: boolean | null;
@@ -199,6 +204,17 @@ export interface Message {
   error: string | null;
   seen: boolean;
   attachments: Attachment[];
+  /** Its translation for us, the reader (Mail hub 2.4.0): absent when none was needed. */
+  translation?: Translation | null;
+}
+
+/** A message's translation for its reader, as the hub tells it: pending, translated (with its text and source
+ *  language), too_long, limit or failed. */
+export interface Translation {
+  lang: string;
+  status: "pending" | "translated" | "too_long" | "limit" | "failed";
+  source_lang?: string;
+  body?: string;
 }
 
 export interface ChatSummary {
@@ -445,6 +461,7 @@ export const tauriApi = {
   setPicture: (owner: string, data: string | null, crop?: PictureCrop) => invoke<PictureRecord>("hc_set_picture", { owner, data, crop }),
   setReadReceipts: (on: boolean) => invoke<void>("hc_set_read_receipts", { on }),
   setStatus: (status: MyStatus) => invoke<void>("hc_set_status", { status }),
+  setLanguage: (language: string) => invoke<void>("hc_set_language", { language }),
   setNotifications: (n: NotifySettings) => invoke<void>("hc_set_notifications", { enabled: n.enabled, preview: n.preview, sound: n.sound }),
   setStayConnected: (on: boolean) => invoke<void>("hc_set_stay_connected", { on }),
   setPush: (on: boolean, distributor: string) => invoke<void>("hc_set_push", { on, distributor }),

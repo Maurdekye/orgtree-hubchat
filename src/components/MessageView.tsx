@@ -18,6 +18,7 @@ import { mentionReach } from "../lib/mentions";
 import { attachmentMenu } from "../lib/attachmentActions";
 import { useTransfer } from "../lib/store";
 import { toast } from "../lib/toast";
+import { languageInEnglish, toggleOriginal, translatedText, untranslatedReason, useShowingOriginal } from "../lib/translation";
 import { AttImage } from "./AttImage";
 import { AttMedia } from "./AttMedia";
 import { useMentionMarks } from "./MentionMark";
@@ -106,7 +107,11 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
   const platform = usePlatform();
   const [open, setOpen] = useState(false);
   const [allQuotes, setAllQuotes] = useState(false);
-  const long = !!m.body && isLong(m.body);
+  // its translation for us (Mail hub 2.4.0): shown in place of the text, the original a click away
+  const original = useShowingOriginal(m.id);
+  const translated = translatedText(m);
+  const text = translated !== null && !original ? translated : m.body;
+  const long = !!text && isLong(text);
   const bubble = useRef<HTMLDivElement>(null);
   const marks = useMentionMarks(bubble);
 
@@ -205,23 +210,34 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
   const metaLast = !!qopts;
   const meta = metaHTML(m);
   let body = null;
-  if (m.body && long) {
+  if (text && long) {
     body = (
       <>
-        <div className={"mbody" + (open ? "" : " clamp")} dir="auto" dangerouslySetInnerHTML={{ __html: md(m.body) }} />
-        <button className="more" onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>{open ? "Show less" : "Show more · " + num(m.body.length) + " characters"}</button>
+        <div className={"mbody" + (open ? "" : " clamp")} dir="auto" dangerouslySetInnerHTML={{ __html: md(text) }} />
+        <button className="more" onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>{open ? "Show less" : "Show more · " + num(text.length) + " characters"}</button>
         {metaLast ? null : <div className="meta-line" dangerouslySetInnerHTML={{ __html: meta }} />}
       </>
     );
-  } else if (m.body && metaLast) {
-    body = <div className="mtext" dir="auto" dangerouslySetInnerHTML={{ __html: md(m.body) }} />;
-  } else if (m.body) {
-    let h = md(m.body);
+  } else if (text && metaLast) {
+    body = <div className="mtext" dir="auto" dangerouslySetInnerHTML={{ __html: md(text) }} />;
+  } else if (text) {
+    let h = md(text);
     h = /<\/p>$/.test(h) ? h.slice(0, -4) + meta + "</p>" : h + '<div class="meta-line">' + meta + "</div>";
     body = <div className="mtext" dir="auto" dangerouslySetInnerHTML={{ __html: h }} />;
   } else if (!metaLast) {
     body = <div className="meta-line" dangerouslySetInnerHTML={{ __html: meta }} />;
   }
+
+  // one small grey line under the text: which version shows, and the other a click away; or why it wasn't translated
+  const toggleLabel = original ? "Show translation" : "Show original";
+  const reason = untranslatedReason(m);
+  const trLine = translated !== null ? (
+    <div className="tr-line">
+      <span>{original ? "Original" : "Translated" + (m.translation?.source_lang ? " from " + languageInEnglish(m.translation.source_lang) : "")}</span>
+      {" · "}
+      <button type="button" className="tr-toggle" onClick={(e) => { e.stopPropagation(); toggleOriginal(m.id); }}>{toggleLabel}</button>
+    </div>
+  ) : reason ? <div className="tr-line"><span>{reason}</span></div> : null;
 
   const failed = m.state === "failed";
   // desktop right-click (user 2026-10-09 05:54Z): what was clicked first (a
@@ -252,7 +268,8 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
     items.push({ label: "Reply", icon: "reply", run: () => onReply(m) });
     if (onSelect) items.push({ label: selected ? "Unselect" : "Select", icon: "check_circle", run: () => onSelect(m) });
     if (sel) items.push({ label: "Copy selection", icon: "copy", run: () => void copyText(sel, "Copied") });
-    else if (m.body) items.push({ label: "Copy text", icon: "copy", run: () => void copyText(m.body, "Copied") });
+    else if (text) items.push({ label: "Copy text", icon: "copy", run: () => void copyText(text, "Copied") });
+    if (translated !== null) items.push({ label: toggleLabel, icon: "translate", run: () => toggleOriginal(m.id) });
     items.push({ label: "Message info", icon: "info", run: () => onInfo(m) });
     if (failed) items.push("sep", { label: "Retry", icon: "refresh", run: () => void api.retry(m.id).catch((er) => toast(errText(er))) }, { label: "Delete", icon: "delete", bad: true, run: () => onDelete(m) });
     openMenu(e.clientX, e.clientY, items);
@@ -267,6 +284,7 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
           {quote}
           {m.attachments.length ? <div className="atts">{m.attachments.map((a) => <AttCard key={a.local_id} a={a} m={m} />)}</div> : null}
           {body}
+          {trLine}
           {marks}
           {qopts}
           {qfoot}
@@ -276,7 +294,7 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
         {hover ? (
           <div className="msg-actions">
             <button className="icon-btn" title="Reply" onClick={() => onReply(m)}><Icon name="reply" /></button>
-            <button className="icon-btn" title="Copy text" onClick={() => copyText(m.body, "Copied")}><Icon name="copy" /></button>
+            <button className="icon-btn" title="Copy text" onClick={() => copyText(text, "Copied")}><Icon name="copy" /></button>
             <button className="icon-btn" title="Message info" onClick={() => onInfo(m)}><Icon name="info" /></button>
           </div>
         ) : null}

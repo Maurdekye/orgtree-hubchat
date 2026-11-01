@@ -4,6 +4,7 @@ import { FileBackgroundBanner } from "./Banners";
 // it are attached.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, type Message, type SetupState } from "../api";
+import { shownText } from "../lib/translation";
 import { Icon } from "../lib/icons";
 import { useFileDrop } from "../lib/drop";
 import { bytes, dayLabel, dayStart, MAX_FILES } from "../lib/format";
@@ -484,7 +485,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
             <div className="title">{sel.length} selected</div>
             <button className="icon-btn" onClick={replySel} aria-label="Reply"><Icon name="reply" /></button>
             {selMsg ? <>
-              <button className="icon-btn" onClick={() => { void copyText(selMsg.body, "Copied"); setSel([]); }} aria-label="Copy"><Icon name="copy" /></button>
+              <button className="icon-btn" onClick={() => { void copyText(shownText(selMsg), "Copied"); setSel([]); }} aria-label="Copy"><Icon name="copy" /></button>
               <button className="icon-btn" onClick={() => info(selMsg)} aria-label="Message info"><Icon name="info" /></button>
             </> : null}
           </div>

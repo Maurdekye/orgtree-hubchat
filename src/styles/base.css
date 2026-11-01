@@ -73,6 +73,10 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .input { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px; border-radius: var(--r-md); border: 1px solid var(--line); background: var(--input); color: var(--ink-strong); transition: border-color .12s, box-shadow .12s; }
 .input:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .input input { flex: 1; min-width: 0; border: 0; background: transparent; height: 100%; padding: 0; color: var(--ink-strong); }
+/* a choice in a field (Profile's Translate messages into): it fills the field, as its inputs do */
+.input select { flex: 1; min-width: 0; border: 0; background: transparent; height: 100%; padding: 0; color: var(--ink-strong); outline: none; cursor: pointer; }
+.input select option { background: var(--panel); color: var(--ink-strong); }
+.input:has(select:disabled) { opacity: .6; }
 .input input::placeholder, textarea::placeholder { color: var(--faint); }
 .input .pre { color: var(--faint); font-family: var(--mono); font-size: 13px; }
 .input .ic { width: 18px; height: 18px; color: var(--faint); }
@@ -310,6 +314,10 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .bubble .mbody.clamp { max-height: 15.5em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 65%, transparent); mask-image: linear-gradient(#000 65%, transparent); }
 .bubble .more { display: block; border: 0; background: none; padding: 4px 0 0; color: var(--accent-text); font: 600 13px var(--font); cursor: pointer; }
 .bubble .more:hover { text-decoration: underline; }
+/* translation between people (Mail hub 2.4.0): one small grey line under the text */
+.bubble .tr-line { padding: 3px 0 0; color: var(--dim); font: 12px var(--font); }
+.bubble .tr-toggle { border: 0; background: none; padding: 0; color: var(--accent-text); font: 600 12px var(--font); cursor: pointer; }
+.bubble .tr-toggle:hover { text-decoration: underline; }
 .modal:focus, .modal:focus-visible, .dialog:focus { outline: none; }
 /* read by screen readers only (a message's sender, the live announcements) */
 .sr { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }

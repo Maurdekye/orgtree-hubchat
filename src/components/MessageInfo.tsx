@@ -5,6 +5,27 @@ import { dayLabel, ms, timeSec } from "../lib/format";
 import { displayName, hubName, isAgent } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { usePlatform } from "./ui";
+import type { ReactNode } from "react";
+import { languageInEnglish, translatedText, untranslatedReason } from "../lib/translation";
+
+/** A message's translation for us (Mail hub 2.4.0): both versions, or why there is none. */
+function Translation({ m, kv, H }: { m: Message; kv: (k: string, v: string) => ReactNode; H: (p: { t: string }) => ReactNode }) {
+  const t = m.translation!;
+  const text = translatedText(m);
+  const into = languageInEnglish(t.lang);
+  return (
+    <>
+      <H t="Translation" />
+      {text !== null
+        ? <>
+            {kv("Translated", (t.source_lang ? "From " + languageInEnglish(t.source_lang) + " into " : "Into ") + into + ", by your hub")}
+            <div className="kv"><span className="k">Original</span><span className="v" dir="auto" style={{ whiteSpace: "pre-wrap" }}>{m.body}</span></div>
+            <div className="kv"><span className="k">Translation</span><span className="v" dir="auto" style={{ whiteSpace: "pre-wrap" }}>{text}</span></div>
+          </>
+        : kv("Translated", untranslatedReason(m) ?? (t.status === "pending" ? "Into " + into + ": waiting for your hub" : "No"))}
+    </>
+  );
+}
 
 export function MessageInfoBody({ m }: { m: Message }) {
   const snap = useSnap();
@@ -26,6 +47,7 @@ export function MessageInfoBody({ m }: { m: Message }) {
         {kv("Hub has it", when(m.received_at) || "—")}
         {kv("Read", when(m.read_at) || (m.seen ? "Yes (the time wasn't kept)" : "Not read yet"))}
         {kv("Hub", hub || "—")}
+        {m.translation ? <Translation m={m} kv={kv} H={H} /> : null}
       </div>
     );
   }

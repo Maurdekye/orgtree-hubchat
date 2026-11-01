@@ -13,6 +13,7 @@ import { refreshDirectory, refreshState, useSnap } from "../lib/store";
 import { setThemePref, useThemePref, type ThemePref } from "../lib/theme";
 import { setEnterKey, useEnterKey } from "../lib/enterKey";
 import { toast } from "../lib/toast";
+import { LANGUAGES, languageName, translationCaption } from "../lib/translation";
 import { ALLOW_TEXT, allowInstalls, checkForUpdate, installUpdate, setAutoChecks, useAutoChecks, useCheckState, useInstallStep, useUpdate } from "../lib/updates";
 import { formatCode, LinkDeviceModal, type LinkTab } from "./LinkDevice";
 import { copyWords, downloadWords } from "../lib/recovery";
@@ -67,7 +68,7 @@ function Card({ children }: { children: ReactNode }) {
 // --------------------------------------------------------------- sections
 /** Unsaved Profile edits, held by the settings modal so they survive a switch to another section (and back); closing
  *  Settings or Save ends them (symmetry audit ux08 S3). */
-export interface ProfileDraft { name: string; about: string }
+export interface ProfileDraft { name: string; about: string; language?: string }
 
 function Profile({ draft, onDraft }: { draft?: ProfileDraft | null; onDraft?: (d: ProfileDraft | null) => void }) {
   const snap = useSnap();
@@ -75,13 +76,23 @@ function Profile({ draft, onDraft }: { draft?: ProfileDraft | null; onDraft?: (d
   const me = snap.state!.me!;
   const [name, setNameLocal] = useState(draft?.name ?? me.name);
   const [about, setAboutLocal] = useState(draft?.about ?? me.about);
-  const setName = (v: string) => { setNameLocal(v); onDraft?.({ name: v, about }); };
-  const setAbout = (v: string) => { setAboutLocal(v); onDraft?.({ name, about: v }); };
+  // the language you read in (Mail hub 2.4.0 translation): yours on every device, told to your hubs, no one else
+  const mine = snap.state!.language ?? "";
+  const [language, setLanguageLocal] = useState(draft?.language ?? mine);
+  const setName = (v: string) => { setNameLocal(v); onDraft?.({ name: v, about, language }); };
+  const setAbout = (v: string) => { setAboutLocal(v); onDraft?.({ name, about: v, language }); };
+  const setLanguage = (v: string) => { setLanguageLocal(v); onDraft?.({ name, about, language: v }); };
+  const caption = translationCaption(snap.state!.hubs);
   const [busy, setBusy] = useState(false);
-  const dirty = name.trim() !== me.name || about.trim() !== me.about;
+  const profileDirty = name.trim() !== me.name || about.trim() !== me.about;
+  const dirty = profileDirty || language !== mine;
   const save = async () => {
     setBusy(true);
-    try { await api.setProfile(name.trim(), about.trim()); await refreshState(); onDraft?.(null); toast("Profile saved"); }
+    try {
+      if (profileDirty) await api.setProfile(name.trim(), about.trim());
+      if (language !== mine) await api.setLanguage(language);
+      await refreshState(); onDraft?.(null); toast("Profile saved");
+    }
     catch (e) { toast("Couldn't save: " + errText(e)); }
     finally { setBusy(false); }
   };
@@ -110,6 +121,15 @@ function Profile({ draft, onDraft }: { draft?: ProfileDraft | null; onDraft?: (d
           <label htmlFor="pf-about">About</label>
           <label className="input"><input id="pf-about" value={about} maxLength={200} placeholder="One line about you" onChange={(e) => setAbout(e.target.value)} /></label>
           <div className="help">Everyone on your hubs can see this. {about.length}/200</div>
+        </div>
+        <div className="field">
+          <label htmlFor="pf-lang">Translate messages into</label>
+          <label className="input"><select id="pf-lang" value={language} disabled={caption.disabled && !language} onChange={(e) => setLanguage(e.target.value)}>
+            <option value="">Off</option>
+            {language && !LANGUAGES.some(([t]) => t === language) ? <option value={language}>{languageName(language)}</option> : null}
+            {LANGUAGES.map(([t, n]) => <option key={t} value={t} lang={t}>{n}</option>)}
+          </select></label>
+          <div className="help">{caption.text}</div>
         </div>
         <div className={platform === "android" ? "pad" : ""} style={{ marginBottom: 16 }}>
           <button className={"btn primary" + (platform === "android" ? " block" : "")} disabled={!dirty || busy} onClick={save}>{busy ? "Saving…" : "Save"}</button>

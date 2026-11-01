@@ -83,6 +83,7 @@ const st: State = {
   recovery_saved: false,
   read_receipts: true,
   status: "auto",
+  language: "",
   notifications: { enabled: true, preview: true, sound: false },
   stay_connected: new URLSearchParams(location.search).get("platform") === "android" ? true : null,
   file_background_hint: null,
@@ -690,6 +691,7 @@ export const mockApi: Api = {
   setPicture: async () => { throw new Error("Image processing requires the native app"); },
   setReadReceipts: async (on) => { st.read_receipts = on; },
   setStatus: async (status) => { st.status = status; },
+  setLanguage: async (language) => { await sleep(150); st.language = language; },
   setNotifications: async (n) => { st.notifications = { ...n }; },
   setStayConnected: async (on) => { await sleep(300); st.stay_connected = on; },
   setPush: async (on, distributor) => {

@@ -5,6 +5,7 @@ import { ago, bytes, ms } from "./format";
 import { isImage } from "./images";
 import { plain } from "./md";
 import type { IconName } from "./icons";
+import { translatedText } from "./translation";
 
 export type Kind = "org" | "chat" | "person";
 export const kindOf = (c: Contact | undefined): Kind => (c?.kind === "org" || c?.kind === "chat" ? c.kind : "person");
@@ -98,7 +99,8 @@ export const msgTime = (m: Message) => (m.outgoing ? ms(m.created_at) : ms(m.rec
 /** One-line preview, attachment names included. */
 export function preview(m: Message | undefined | null): string {
   if (!m) return "";
-  const t = plain(m.body);
+  // the reader's own translation when there is one (design: reply quotes show it)
+  const t = plain(translatedText(m) ?? m.body);
   // an image goes by "Photo" (design)
   const names = m.attachments.map((a) => (isImage(a.name) ? "Photo" : a.name)).join(", ");
   if (!t) return names;
