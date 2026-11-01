@@ -36,6 +36,30 @@ fn seen(s: &Store, address: &str) -> (bool, bool) {
     (c.online, c.busy)
 }
 
+/// A person's language (Mail hub 2.4.0 puts it on their roster entry; user
+/// 2026-11-01 16:13Z: shown when looking at their profile) reaches the
+/// directory from a full roster and from a sync's roster changes; the first
+/// hub that lists one gives it; none when they chose none.
+#[test]
+fn a_persons_language_reaches_the_directory() {
+    let s = store();
+    let with = |slug: &str, language: Option<&str>| -> RosterEntry {
+        serde_json::from_value(serde_json::json!({ "slug": slug, "kind": "person", "online": true, "language": language })).unwrap()
+    };
+    let language = |s: &Store, address: &str| -> serde_json::Value {
+        let d = s.directory().unwrap();
+        let c = d.iter().find(|c| c.address == address).unwrap();
+        serde_json::to_value(c).unwrap().get("language").cloned().unwrap_or(serde_json::Value::Null)
+    };
+    s.set_roster(A, &[with(PAT, Some("he")), with(ALICE, None)]).unwrap();
+    assert_eq!(language(&s, PAT), serde_json::json!("he"));
+    assert_eq!(language(&s, ALICE), serde_json::Value::Null, "none chosen: none shown");
+    s.upsert_roster(A, &[with(PAT, Some("fr"))]).unwrap();
+    assert_eq!(language(&s, PAT), serde_json::json!("fr"), "a sync's change replaces it");
+    s.set_roster(B, &[with(ALICE, Some("de"))]).unwrap();
+    assert_eq!(language(&s, ALICE), serde_json::json!("de"), "the hub that lists one");
+}
+
 #[test]
 fn a_roster_row_keeps_busy_and_online_on_one_hub_wins() {
     let s = store();

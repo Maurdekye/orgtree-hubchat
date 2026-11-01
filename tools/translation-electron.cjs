@@ -11,12 +11,15 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 // What each view does: fixture steps and captures (green only). The menu and Message info are desktop's.
 const views={
  'desktop/translation':[['step','chat'],['shot','desktop-tr-chat'],['step','original'],['shot','desktop-tr-original'],['step','translation'],
+  ['step','contact'],['shot','desktop-tr-contact'],['step','contact-close'],
   ['step','menu'],['step','info'],['shot','desktop-tr-info'],['step','info-close'],['step','profile'],['shot','desktop-tr-profile'],['step','pick'],
   ['step','hub-off'],['step','no-hub'],['shot','desktop-tr-profile-no-hub'],['step','no-hub-end']],
  'android/translation':[['step','chat'],['shot','android-tr-chat'],['step','original'],['shot','android-tr-original'],['step','translation'],
+  ['step','contact'],['shot','android-tr-contact'],['step','contact-close'],
   ['step','profile'],['shot','android-tr-profile'],['step','pick'],['step','hub-off'],['step','no-hub'],['shot','android-tr-profile-no-hub'],['step','no-hub-end']],
 };
 const common=["the chat list shows the last message's translation",
+ "Contact info shows the language they read in, in its own name",
  "a translated message shows its translation, with one grey line: Translated from Hebrew · Show original",
  "a message that wasn't translated says why, and shows its original",
  "no line when none was needed, while it is on its way, or on our own message (its own text shows)",
@@ -32,9 +35,9 @@ const desktopOnly=["desktop menu: Show original right after Copy text",
  "the menu's Show original shows the original, and the menu then offers Show translation",
  "Message info shows both versions and the languages"];
 const allChecks={'desktop/translation':[...common,...desktopOnly,...profile],'android/translation':[...common,...profile]};
-// The source before translation passes only the check that no line shows where none is due
-const quiet="no line when none was needed, while it is on its way, or on our own message (its own text shows)";
-const expectedRed={'desktop/translation':allChecks['desktop/translation'].filter(n=>n!==quiet),'android/translation':allChecks['android/translation'].filter(n=>n!==quiet)};
+// Red (round 2, user 2026-11-01 16:13Z): the source before a person's language reached Contact info fails only that check
+const lang="Contact info shows the language they read in, in its own name";
+const expectedRed={'desktop/translation':[lang],'android/translation':[lang]};
 app.whenReady().then(async()=>{
  const s=session.defaultSession;
  s.setPermissionRequestHandler((_w,_p,cb)=>cb(false));s.setPermissionCheckHandler(()=>false);

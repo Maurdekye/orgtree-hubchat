@@ -41,7 +41,7 @@ async function run() {
       features: translate ? ["v2", "status", "translate"] : ["v2", "status"], translation: translate ? (hubsMode === "off" ? "off" : "ok") : null });
   };
   const directory: Contact[] = [
-    { address: DANI, kind: "person", org_name: "", username: "Dani", blurb: "", online: true, busy: false, dnd: false, last_seen: null, hubs: [A], picture: null } as Contact,
+    { address: DANI, kind: "person", org_name: "", username: "Dani", blurb: "", online: true, busy: false, dnd: false, last_seen: null, hubs: [A], picture: null, language: "he" } as Contact,
   ];
   let n = 0;
   const message = (id: string, body: string, extra: Partial<Message> = {}): Message => ({ id, peer: DANI, outgoing: false, hub: A, body, kind: null, reply_to: null,
@@ -145,6 +145,21 @@ async function run() {
       const t = { text: text("t-hi"), line: line("t-hi") };
       check("Show translation: back to the translation", t.text === "Hi, how are you?" && t.line === "Translated from Hebrew · Show original", t);
       return t;
+    },
+    // Contact info: the language they read in, in its own name (user 2026-11-01 16:13Z), as Orgtree's hover says it
+    "contact": async () => {
+      (document.querySelector(platform === "desktop" ? '[aria-label="Contact info"]' : ".appbar .who") as HTMLElement | null)?.click();
+      const sec = () => [...document.querySelectorAll<HTMLElement>(".info-sec, .sec-h")].find((s) => (s.matches(".sec-h") ? s : s.querySelector("h4"))?.textContent === "Language");
+      await until(() => !!sec(), 3000); await settle();
+      const s = sec();
+      const value = s ? (s.matches(".sec-h") ? s.nextElementSibling?.textContent : s.querySelector("div")?.textContent) ?? null : null;
+      check("Contact info shows the language they read in, in its own name", value?.trim() === "עברית", value);
+      return value;
+    },
+    "contact-close": async () => {
+      if (platform === "desktop") document.querySelector<HTMLElement>('[aria-label="Contact info"]')?.click();
+      else document.querySelector<HTMLElement>('.appbar [aria-label="Back"]')?.click();
+      await settle(); return true;
     },
     "menu": async () => {
       await openCtx("t-hi");
