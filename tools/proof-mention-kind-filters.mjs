@@ -272,4 +272,3 @@ process.exit(
     ? JSON.stringify(failed) === JSON.stringify(expected) ? 0 : 1
     : checks.every((c) => c.ok) ? 0 : 1,
 );
-
