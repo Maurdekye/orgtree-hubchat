@@ -12,6 +12,7 @@ import { copyText } from "../lib/native";
 import { displayName, hubCls, hubStatusText, kindInfo, kindOf, peerHubs, presence, splitAddr, viaHub, type Kind } from "../lib/peers";
 import { useMessages, useSnap } from "../lib/store";
 import { toast } from "../lib/toast";
+import { languageName } from "../lib/translation";
 import { Addr, KindChip, PeerAvatar, PresText, useNow, usePlatform } from "./ui";
 import { ContactFile } from "./ContactFile";
 
@@ -57,6 +58,8 @@ export function ContactInfo({ peer, onClose, onShowMessage }: { peer: string; on
   const files = msgs.flatMap((m) => m.attachments.map((a) => ({ a, m })));
   const tag = splitAddr(peer)[1];
   const blurb = (c?.blurb || "").trim();
+  // the language they read in, in its own name (user 2026-11-01 16:13Z), as Orgtree's hover says it
+  const language = c?.language ? languageName(c.language) : null;
   const copy = () => void copyText("@net:" + peer, "Address copied");
   // The Files section says what state it is in (symmetry audit ux07 S4, like Transfers history): still reading, why
   // a read failed with Retry (files already read stay), and "No files yet" only after a read that answered.
@@ -96,6 +99,7 @@ export function ContactInfo({ peer, onClose, onShowMessage }: { peer: string; on
             </div>
           </div>
           {blurb ? <><div className="sec-h">About</div><div className="li"><Icon name="info" /><div className="t"><div className="t1" style={{ fontSize: 15, overflowWrap: "anywhere" }}>{blurb}</div></div></div></> : null}
+          {language ? <><div className="sec-h">Language</div><div className="li"><Icon name="translate" /><div className="t"><div className="t1" style={{ fontSize: 15 }}>{language}</div></div></div></> : null}
           {c ? <><div className="sec-h">What this is</div><div className="li"><Icon name={k.icon} /><div className="t"><div className="t2" style={{ fontSize: 14, color: "var(--ink)" }}>{k.what}{kind === "org" ? " " + ONLINE_NOTE : ""}{stateNote ? " " + stateNote : ""}</div></div></div></> : null}
           <div className="sec-h">Reachable through</div>
           {ph.length ? ph.map((h) => (
@@ -128,6 +132,7 @@ export function ContactInfo({ peer, onClose, onShowMessage }: { peer: string; on
           {tag ? <div className="help" style={{ marginTop: 6 }}>The last part, <span className="mono">{tag}</span>, comes from their key. Two people can share an id; the tag tells them apart.</div> : null}
         </div>
         {blurb ? <div className="info-sec"><h4 aria-level={2}>About</h4><div style={{ fontSize: 13, overflowWrap: "anywhere" }}>{blurb}</div></div> : null}
+        {language ? <div className="info-sec"><h4 aria-level={2}>Language</h4><div style={{ fontSize: 13 }}>{language}</div></div> : null}
         {c ? (
           <div className="info-sec">
             <h4 aria-level={2}>What this is</h4>

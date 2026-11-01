@@ -242,6 +242,8 @@ export interface Contact {
   last_seen: string | null;
   hubs: string[];
   picture?: PictureMeta | null;
+  /** The language a person reads in (Mail hub 2.4.0), when they chose one. */
+  language?: string | null;
 }
 
 /** Where a chat's messages go (the hub picker, hc_send_route). */

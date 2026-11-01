@@ -205,6 +205,10 @@ pub struct RosterEntry {
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub picture: Option<crate::pictures::PictureMeta>,
+    /// The language a person reads in (Mail hub 2.4.0 puts it on a person's
+    /// roster entry, user 2026-11-01 16:13Z); none for others.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

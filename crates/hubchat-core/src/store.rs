@@ -310,6 +310,9 @@ END;
     // a received message's translation for us, as the hub last told it (JSON,
     // hub_v2::Translation as shown)
     r#"ALTER TABLE messages ADD COLUMN translation TEXT;"#,
+    // 24: the language a person reads in, as each hub's roster says it (Mail
+    // hub 2.4.0; shown in Contact info)
+    r#"ALTER TABLE roster ADD COLUMN language TEXT;"#,
 ];
 
 pub struct Store {
@@ -422,6 +425,9 @@ pub struct Contact {
     pub last_seen: Option<String>,
     pub hubs: Vec<String>,
     pub picture: Option<crate::pictures::PictureMeta>,
+    /// The language a person reads in, from the first hub that lists one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 fn db(e: rusqlite::Error) -> Error {
@@ -559,10 +565,10 @@ impl Store {
             tx.execute("DELETE FROM roster WHERE hub=?", [hub])?;
             {
                 let mut st = tx.prepare(
-                    "INSERT INTO roster(address, hub, kind, org_name, username, blurb, online, busy, dnd, last_seen) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO roster(address, hub, kind, org_name, username, blurb, online, busy, dnd, last_seen, language) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 )?;
                 for e in entries {
-                    st.execute(params![e.slug, hub, e.kind, e.org_name, e.username, e.blurb, e.online, e.busy, e.dnd, e.last_seen])?;
+                    st.execute(params![e.slug, hub, e.kind, e.org_name, e.username, e.blurb, e.online, e.busy, e.dnd, e.last_seen, e.language])?;
                     store_pictures::roster_owner(&tx,hub,e)?;
                 }
             }
@@ -578,7 +584,7 @@ impl Store {
     pub fn directory(&self) -> Result<Vec<Contact>> {
         self.with(|c| {
             let mut st = c.prepare(
-                "SELECT r.address, r.kind, r.org_name, r.username, r.blurb, r.online, r.busy, r.dnd, r.last_seen, r.hub FROM roster r ORDER BY r.address, r.hub",
+                "SELECT r.address, r.kind, r.org_name, r.username, r.blurb, r.online, r.busy, r.dnd, r.last_seen, r.hub, r.language FROM roster r ORDER BY r.address, r.hub",
             )?;
             let mut out: Vec<Contact> = Vec::new();
             let rows = st.query_map([], |r| {
@@ -593,10 +599,12 @@ impl Store {
                     r.get::<_, bool>(7)?,
                     r.get::<_, Option<String>>(8)?,
                     r.get::<_, String>(9)?,
+                    r.get::<_, Option<String>>(10)?,
                 ))
             })?;
             for row in rows {
-                let (address, kind, org_name, username, blurb, online, busy, dnd, last_seen, hub) = row?;
+                let (address, kind, org_name, username, blurb, online, busy, dnd, last_seen, hub, language) = row?;
+                let language = language.filter(|l| !l.is_empty());
                 let busy = online && busy;
                 let dnd = online && dnd;
                 let picture=if matches!(kind.as_str(),"person"|"org") { store_pictures::visible_meta(c,&address)? } else {None};
@@ -611,8 +619,11 @@ impl Store {
                             c.last_seen = last_seen;
                         }
                         c.hubs.push(hub);
+                        if c.language.is_none() {
+                            c.language = language;
+                        }
                     }
-                    _ => out.push(Contact { address, kind, org_name, username, blurb, online, busy, dnd, last_seen, hubs: vec![hub], picture }),
+                    _ => out.push(Contact { address, kind, org_name, username, blurb, online, busy, dnd, last_seen, hubs: vec![hub], picture, language }),
                 }
             }
             Ok(out)
@@ -1293,13 +1304,13 @@ impl Store {
             let tx = c.transaction()?;
             {
                 let mut st = tx.prepare(
-                    "INSERT INTO roster(address, hub, kind, org_name, username, blurb, online, busy, dnd, last_seen) VALUES(?,?,?,?,?,?,?,?,?,?)
+                    "INSERT INTO roster(address, hub, kind, org_name, username, blurb, online, busy, dnd, last_seen, language) VALUES(?,?,?,?,?,?,?,?,?,?,?)
                      ON CONFLICT(address, hub) DO UPDATE SET kind=excluded.kind, org_name=excluded.org_name,
                        username=excluded.username, blurb=excluded.blurb, online=excluded.online, busy=excluded.busy,
-                       dnd=excluded.dnd, last_seen=excluded.last_seen",
+                       dnd=excluded.dnd, last_seen=excluded.last_seen, language=excluded.language",
                 )?;
                 for e in entries {
-                    st.execute(params![e.slug, hub, e.kind, e.org_name, e.username, e.blurb, e.online, e.busy, e.dnd, e.last_seen])?;
+                    st.execute(params![e.slug, hub, e.kind, e.org_name, e.username, e.blurb, e.online, e.busy, e.dnd, e.last_seen, e.language])?;
                     store_pictures::roster_owner(&tx,hub,e)?;
                 }
             }
@@ -1908,6 +1919,7 @@ mod tests {
             last_seen: None,
             kind: "chat".into(),
             picture: None,
+            language: None,
         };
         s.set_roster("http://a:7370", &[e(false)]).unwrap();
         s.set_roster("http://b:7370", &[e(true)]).unwrap();
