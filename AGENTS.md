@@ -1,5 +1,18 @@
 # Hubchat development invariants
 
+- 2026-11-01: Translation between people (Mail hub 2.4.0, feature
+  `translate`): the language we read in is kept like our status
+  (`engine_translation.rs`: `language.mine`, `language.owed/said.<url>`, in
+  `forget_hub_sync`; told by `POST /api/profile {language}` only to a hub
+  with the feature). A message's `translation` is untrusted
+  (`hub_v2::Translation::checked`), stored as shown (store migration 23,
+  its own UPDATE only when told, so an older-schema writer and an answer
+  without it are untouched) and never shown on our own messages. New mail
+  with a pending translation is notified when it comes or 4 s after the hub
+  received it. The bubble's `tr-line` sits outside md()'s HTML; Copy copies
+  `shownText`. [decided: user 2026-11-01 12:15Z answers, 12:16Z "Build it";
+  verified: engine_translation.rs, store.rs, MessageView.tsx, Settings.tsx;
+  docs/translation.md]
 - 2026-10-31: Invisible (hub feature `invisible`, schema 12) is a fifth
   status: offline to everyone else (the hub's job), the offline dot on your
   own avatar (`myPresence`), and it mutes nothing (the shell mutes on `dnd`

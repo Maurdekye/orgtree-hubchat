@@ -12,6 +12,11 @@ Windows and Android, and there are first prototype builds for macOS and Linux.
 - See who is online, busy, on Do not disturb or offline: busy means connected,
   but no one can answer right now; Do not disturb, an org that has put its
   outside mail on hold ([busy presence](docs/busy-presence.md)).
+- Read people who write in another language in yours: pick it in Settings ›
+  Profile, and a hub that translates (mail hub 2.4.0, set up by its owner)
+  sends you each message translated, with the original a click away
+  ([translation](docs/translation.md)). Message text then leaves the hub to be
+  translated by Anthropic's Claude.
 - Pictures show in the chat, videos and audio play there
   ([inline media](docs/inline-media.md)), and you can send files of any size
   up to the hub's limit.
@@ -209,6 +214,9 @@ The hub's own README has the full instructions:
 
 The hub's operator can read the messages that pass through it, and everyone on
 a hub is listed in its directory. Only use hubs run by people you trust.
+If you pick a language to read in and the hub translates, the text of messages
+to you is sent to Anthropic to be translated; only your hubs know your
+language.
 Anyone who has your recovery words can read your messages and send as you, so
 keep them private.
 
