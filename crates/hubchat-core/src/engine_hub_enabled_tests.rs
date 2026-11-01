@@ -27,7 +27,7 @@ fn attach(e: &Engine, url: &str) -> (HubClient, CancelFlag) {
         client: client.clone(), stop: stop.clone(), retry_now: Arc::new(Notify::new()), kick: Arc::new(Notify::new()),
         status: HubStatus { url: url.into(), name: "scratch".into(), state: HubState::Connected,
             error: None, retry_at_ms: None, max_attachment_bytes: 1_000_000, features: vec![],
-            version: None, answered_ms: None, waiting_since_ms: None, clock_offset_ms: None },
+            version: None, answered_ms: None, waiting_since_ms: None, translation: None, clock_offset_ms: None },
     });
     (client, stop)
 }

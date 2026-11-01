@@ -25,6 +25,55 @@ pub struct SyncedMessage {
     pub read_at: Option<String>,
     #[serde(default)]
     pub body_bytes: Option<u64>,
+    /// Its translation for us, its reader (Mail hub 2.4.0, feature
+    /// `translate`): only in our own sync and history, and only when we read
+    /// in a language. Untrusted: one that fails its checks is left out.
+    #[serde(default, deserialize_with = "checked_translation")]
+    pub translation: Option<Translation>,
+}
+
+/// A message's translation for its reader, as the hub tells it
+/// (hub docs/v2-additions.md, Translation between people): `status` is
+/// pending, translated (with `body` and `source_lang`), too_long, limit or
+/// failed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Translation {
+    pub lang: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_lang: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+}
+
+/// The outcomes a hub tells.
+pub const TRANSLATION_STATUSES: [&str; 5] = ["pending", "translated", "too_long", "limit", "failed"];
+
+impl Translation {
+    /// What passes the checks of a received `translation`, if anything.
+    pub fn checked(_v: &serde_json::Value) -> Option<Self> {
+        None
+    }
+}
+
+fn checked_translation<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<Translation>, D::Error> {
+    let v = serde_json::Value::deserialize(d)?;
+    Ok(Translation::checked(&v))
+}
+
+/// A language tag as the hub takes one (BCP 47: `en`, `he`, `pt-BR`).
+pub fn is_language_tag(_s: &str) -> bool {
+    false
+}
+
+/// A field that may be null: absent is None, null Some(None), a string
+/// Some(Some(..)); anything else is taken as absent.
+fn present_text<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<Option<String>>, D::Error> {
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Null => Some(None),
+        serde_json::Value::String(s) => Some(Some(s)),
+        _ => None,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +129,10 @@ pub struct SyncResult {
     /// `status`): in every answer; absent from a hub before it.
     #[serde(default)]
     pub status: Option<String>,
+    /// The language we read in, as this hub keeps it (Mail hub 2.4.0,
+    /// feature `translate`): null for none; absent from a hub before it.
+    #[serde(default, deserialize_with = "present_text")]
+    pub language: Option<Option<String>>,
     #[serde(default)]
     pub more: bool,
     #[serde(default)]
@@ -290,6 +343,17 @@ impl HubClient {
         self.session_work(async {
         let _: serde_json::Value = self
             .post_json(me, "/api/status", &serde_json::json!({ "status": status }), Duration::from_secs(20))
+            .await?;
+        Ok(())
+        }).await
+    }
+
+    /// The language we read in (Mail hub 2.4.0, feature `translate`): the
+    /// profile call with the language alone, "" for none.
+    pub async fn set_language(&self, me: &Identity, language: &str) -> Result<()> {
+        self.session_work(async {
+        let _: serde_json::Value = self
+            .post_json(me, "/api/profile", &serde_json::json!({ "language": language }), Duration::from_secs(20))
             .await?;
         Ok(())
         }).await

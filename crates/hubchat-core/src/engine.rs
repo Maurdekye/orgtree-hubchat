@@ -186,6 +186,9 @@ pub struct HubStatus {
     /// The hub's clock minus ours, in ms (hubs that report `now`): its
     /// received times are its own clock.
     pub clock_offset_ms: Option<i64>,
+    /// Whether the hub translates (Mail hub 2.4.0): off, ok, no_key or
+    /// key_refused; None when it doesn't say (no feature, or its door).
+    pub translation: Option<String>,
 }
 
 struct HubRuntime {
@@ -731,7 +734,7 @@ impl Engine {
             v.retain(|s| s.url != h.url);
             v.push(HubStatus { url: h.url, name: h.name, state: HubState::Disabled, error: None,
                 retry_at_ms: None, max_attachment_bytes: h.max_attachment_bytes.unwrap_or(crate::hub::LEGACY_MAX_ATTACHMENT_BYTES),
-                features: Vec::new(), version: None, answered_ms: None, waiting_since_ms: None, clock_offset_ms: None });
+                features: Vec::new(), version: None, answered_ms: None, waiting_since_ms: None, translation: None, clock_offset_ms: None });
         }
         v.sort_by(|a, b| a.url.cmp(&b.url));
         v
@@ -754,7 +757,7 @@ impl Engine {
                 version: None,
                 answered_ms: None,
                 waiting_since_ms: None,
-                clock_offset_ms: self
+                translation: None, clock_offset_ms: self
                     .store
                     .meta(&clock_key(&addr.to_string()))
                     .ok()
@@ -886,6 +889,7 @@ impl Engine {
             s.max_attachment_bytes = max;
             s.features = health.features.clone();
             s.version = health.version.clone();
+            s.translation = health.translation_state();
         });
         self.queue_changed.notify_one();
         // Optional image requests run concurrently and are dropped with this
@@ -1038,6 +1042,8 @@ impl Engine {
             tokio::pin!(status_wake);
             status_wake.as_mut().enable();
             self.tell_status(client, url, features).await?;
+            // and the language we read in (engine_translation)
+            self.tell_language(client, url, features).await?;
             let first_page = cursor.is_none();
             self.mark_for(url, stop, |s| s.waiting_since_ms = Some(unix_ms()));
             let asked = unix_ms();
@@ -1114,6 +1120,9 @@ impl Engine {
             if let Some(s) = r.status.as_deref() {
                 self.hub_said_status(url, s, r.reset)?;
             }
+            if let Some(l) = &r.language {
+                self.hub_said_language(url, l.as_deref(), r.reset)?;
+            }
             // where this device's copy of the hub's mail begins: older mail
             // comes page by page (load_older)
             if first_page && r.start.as_deref() == Some("now") {
@@ -1167,9 +1176,10 @@ impl Engine {
                             to_deliver.push((m.env.id.clone(), "delivered", t.clone()));
                         }
                         if fresh && !catching_up {
-                            // markdown syntax is for the chat; a notification gets plain words
-                            let preview = crate::text::plain_preview(&m.env.body, 140);
-                            self.host.event(self.incoming_event(m.env.from.clone(), m.env.id.clone(), preview, !r.active.is_empty()));
+                            // now, or once its translation came (engine_translation)
+                            self.notice_incoming(url, m, !r.active.is_empty());
+                        } else if m.translation.as_ref().is_some_and(|t| t.status != "pending") {
+                            self.translation_came();
                         }
                         peers.insert(if incoming {
                             m.env.from.clone()
@@ -2598,6 +2608,14 @@ mod engine_typing;
 #[path = "engine_status.rs"]
 mod engine_status;
 pub use engine_status::{chosen_status, STATUSES};
+
+#[path = "engine_translation.rs"]
+mod engine_translation;
+pub use engine_translation::chosen_language;
+
+#[cfg(test)]
+#[path = "engine_translation_tests.rs"]
+mod translation_tests;
 
 #[cfg(test)]
 #[path = "engine_status_tests.rs"]

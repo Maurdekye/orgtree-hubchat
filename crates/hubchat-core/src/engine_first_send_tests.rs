@@ -152,7 +152,7 @@ fn connect(engine: &Engine, start: u64) {
                 version: None,
                 answered_ms: None,
                 waiting_since_ms: None,
-                clock_offset_ms: Some(0),
+                translation: None, clock_offset_ms: Some(0),
             },
             retry_now: Arc::new(Notify::new()),
             kick: Arc::new(Notify::new()),

@@ -151,7 +151,7 @@ mod tests {
             client:client.clone(),stop,retry_now:Arc::new(Notify::new()),kick:Arc::new(Notify::new()),
             status:HubStatus {url,name:"picture-proof".into(),state:HubState::Connected,error:None,retry_at_ms:None,
                 max_attachment_bytes:1_000_000,features:vec!["profile_pictures".into()],version:None,
-                answered_ms:None,waiting_since_ms:None,clock_offset_ms:None},
+                answered_ms:None,waiting_since_ms:None,translation: None,clock_offset_ms:None},
         });
         client
     }

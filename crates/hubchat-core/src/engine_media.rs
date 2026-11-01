@@ -135,7 +135,7 @@ mod tests {
                     version: None,
                     answered_ms: None,
                     waiting_since_ms: None,
-                    clock_offset_ms: None,
+                    translation: None, clock_offset_ms: None,
                 },
                 retry_now: Arc::new(Notify::new()),
                 kick: Arc::new(Notify::new()),

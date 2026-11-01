@@ -129,6 +129,10 @@ pub struct Health {
     /// relay-only door listens. Absent when no door runs.
     #[serde(default)]
     pub door: Option<DoorAt>,
+    /// Mail hub 2.4.0 (feature "translate"), on the main port only: whether
+    /// it translates (`state`: off, ok, no_key, key_refused) and its spend.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translation: Option<serde_json::Value>,
 }
 
 /// Where a hub's relay-only door listens: `bind` is an IP address, and
@@ -146,6 +150,12 @@ pub struct DoorAt {
 impl Health {
     pub fn supports(&self, feature: &str) -> bool {
         self.features.iter().any(|f| f == feature)
+    }
+
+    /// Whether this hub translates (off, ok, no_key, key_refused); None from
+    /// a hub without the feature, or through its door (which doesn't say).
+    pub fn translation_state(&self) -> Option<String> {
+        None
     }
 
     pub fn max_attachment_bytes(&self) -> u64 {

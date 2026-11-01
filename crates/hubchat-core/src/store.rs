@@ -373,6 +373,8 @@ pub struct Message {
     /// Question cards and multi-reply: its replies, options and picks.
     #[serde(flatten)]
     pub qa: crate::questions::Meta,
+    /// Its translation for us (Mail hub 2.4.0): what the hub last told.
+    pub translation: Option<crate::hub_v2::Translation>,
 }
 
 /// How far back one hub has loaded one chat (lazy history).
@@ -1439,6 +1441,7 @@ impl Store {
                         seen: r.get(15)?,
                         attachments: Vec::new(),
                         qa: crate::questions::Meta::load(r.get::<_, Option<String>>(16)?.as_deref()),
+                        translation: None,
                     })
                 })?
                 .collect::<rusqlite::Result<_>>()?;
@@ -1630,6 +1633,17 @@ pub(crate) fn status_said_key(url: &str) -> String {
     format!("status.said.{url}")
 }
 
+/// The language we read in that the hub is still to be told
+/// (engine_translation).
+pub(crate) fn language_owed_key(url: &str) -> String {
+    format!("language.owed.{url}")
+}
+
+/// The hub's last word on the language we read in (engine_translation).
+pub(crate) fn language_said_key(url: &str) -> String {
+    format!("language.said.{url}")
+}
+
 /// Forget what a hub's sync kept under its URL; its rows go with the hub.
 /// A position kept after its directory rows were gone made the same URL,
 /// added again, resume there: the hub sent only what had changed since, so
@@ -1645,6 +1659,8 @@ fn forget_hub_sync(tx: &rusqlite::Transaction, url: &str) -> rusqlite::Result<()
         directory_refresh_key(url),
         status_owed_key(url),
         status_said_key(url),
+        language_owed_key(url),
+        language_said_key(url),
         store_hub_enabled::disabled_key(url),
     ] {
         tx.execute("DELETE FROM meta WHERE key=?", [key])?;
@@ -1896,6 +1912,7 @@ mod tests {
             delivered_at: None,
             read_at: None,
             body_bytes: None,
+            translation: None,
         }
     }
 
