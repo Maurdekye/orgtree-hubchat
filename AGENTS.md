@@ -1,5 +1,15 @@
 # Hubchat development invariants
 
+- 2026-11-01: Mention kind filters: `@org:` / `@person:` / `@chat:` in the
+  composer (any case, desktop and Android) narrow the `@` hint list to
+  addresses of that kind (`activeMentionToken`'s `kind`,
+  `filterMentionContacts`' `kindFilter`, both by `kindOf`, so no kind counts
+  as person as it shows everywhere; roster kinds come stored from the hub).
+  Filter words only: a pick still inserts `@net:<address>` and nothing new
+  is sent; `@net:` and plain `@` list every kind. Hubchat only — Orgtree's
+  `@org:` keeps its inter-org meaning. [decided: user 2026-11-01 20:19Z,
+  20:22Z; verified: mentions.ts, Composer.tsx;
+  docs/mention-kind-filters.md; tools/proof-mention-kind-filters.mjs]
 - 2026-11-01: Translation between people (Mail hub 2.4.0, feature
   `translate`): the language we read in is kept like our status
   (`engine_translation.rs`: `language.mine`, `language.owed/said.<url>`, in
