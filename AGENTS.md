@@ -10,7 +10,10 @@
   without it are untouched) and never shown on our own messages. New mail
   with a pending translation is notified when it comes or 4 s after the hub
   received it. The bubble's `tr-line` sits outside md()'s HTML; Copy copies
-  `shownText`. [decided: user 2026-11-01 12:15Z answers, 12:16Z "Build it";
+  `shownText`. A person's `language` on a roster entry (Mail hub 2.4.0, user
+  16:13Z) is kept per hub (store migration 24) and shown in Contact info's
+  Language row (`languageName`, own name; symmetric with Orgtree's network
+  hover). [decided: user 2026-11-01 12:15Z answers, 12:16Z "Build it";
   verified: engine_translation.rs, store.rs, MessageView.tsx, Settings.tsx;
   docs/translation.md]
 - 2026-10-31: Invisible (hub feature `invisible`, schema 12) is a fifth

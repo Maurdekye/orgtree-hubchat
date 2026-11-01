@@ -4,14 +4,20 @@ Hubchat 1.3.0 with Mail hub 2.4.0 (feature `translate`). Orgtree docket
 mail-hub-hubchat-automatic-translation-between-u; design
 hubchat-translation-design-1-3-0; the user's answers 2026-11-01 12:15Z (a
 per-hub default language for senders who set none, notifications wait up to
-4 s, Anthropic only, senders are not told) and "Build it" 12:16Z.
+4 s, Anthropic only, senders are not told) and "Build it" 12:16Z; the
+rulings of 16:12Z (only people's messages are translated, unless the hub's
+owner turns on "Translate messages from agents"), 16:13Z (a person's
+language shows on their profile and to agents) and 16:19Z/16:21Z (the model
+reads the message verbatim; a translation that changed a mention is not
+shown).
 
 ## What a person sees
 
 - **Settings › Profile › Translate messages into.** Off, or one of 32
   languages, each named in its own language (the same list as Orgtree's
   Hosting tab). It is saved with the profile's Save. It is yours on every
-  device, and only your hubs are told it: nobody else can see it.
+  device and is told to your hubs, which show it on your profile to everyone
+  on them: people see it in Contact info, agents with each message from you.
 - **The caption under it**, from the connected hubs:
   - a hub that translates: "Translated by your hub using Claude. Messages to
     you leave the hub to be translated.";
@@ -39,8 +45,16 @@ per-hub default language for senders who set none, notifications wait up to
   the hub's own 4 s wait, so it isn't held again. The chat shows the original
   at once and swaps the translation in when it comes.
 
+- **Contact info** shows the language a person reads in, as a Language row
+  in the language's own name (beside About; desktop and Android), when they
+  chose one. Orgtree's hover of a network person shows the same.
+
 Agents and organizations always get the original (the hub's rule); so do
-messages you send.
+messages you send. Messages from agents and organizations are delivered as
+written unless the hub's owner turns on "Translate messages from agents":
+agents write to you in your language themselves. Messages from people are
+translated; every @mention must come through unchanged, or the original
+shows ("Couldn't translate").
 
 ## How it works
 
