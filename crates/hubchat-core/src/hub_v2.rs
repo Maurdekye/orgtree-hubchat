@@ -50,20 +50,64 @@ pub struct Translation {
 pub const TRANSLATION_STATUSES: [&str; 5] = ["pending", "translated", "too_long", "limit", "failed"];
 
 impl Translation {
-    /// What passes the checks of a received `translation`, if anything.
-    pub fn checked(_v: &serde_json::Value) -> Option<Self> {
-        None
+    /// What passes the checks of a received `translation`, if anything: a
+    /// known outcome in a language tag; a translated one with its text (at
+    /// most TRANSLATION_MAX bytes) and a source language that is a tag.
+    pub fn checked(v: &serde_json::Value) -> Option<Self> {
+        let t: Translation = serde_json::from_value(v.clone()).ok()?;
+        if !is_language_tag(&t.lang) || !TRANSLATION_STATUSES.contains(&t.status.as_str()) {
+            return None;
+        }
+        if t.source_lang.as_deref().is_some_and(|s| !is_language_tag(s)) {
+            return None;
+        }
+        if t.status == "translated" {
+            let body = t.body.as_deref()?;
+            if body.is_empty() || body.len() > TRANSLATION_MAX {
+                return None;
+            }
+            Some(t)
+        } else {
+            // only a translated one has text
+            Some(Translation { body: None, ..t })
+        }
+    }
+
+    /// As Hubchat shows it beside the message: a reply's one-line quote off,
+    /// as from the original (`questions::shown`). A message whose plain-text
+    /// part stands for a card keeps no translation: that part can't be found
+    /// in the translated text, so it is shown untranslated.
+    pub fn as_shown(&self, reply_to: Option<&str>, card_text: bool) -> Option<Self> {
+        let Some(body) = self.body.as_deref() else { return Some(self.clone()) };
+        if card_text {
+            return None;
+        }
+        let body = if reply_to.is_some() { crate::engine::strip_quote(body) } else { body };
+        Some(Translation { body: Some(body.to_owned()), ..self.clone() })
     }
 }
+
+/// The longest translation taken (bytes): the hub translates bodies of up
+/// to 10,000 characters.
+pub const TRANSLATION_MAX: usize = 200_000;
 
 fn checked_translation<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Option<Translation>, D::Error> {
     let v = serde_json::Value::deserialize(d)?;
     Ok(Translation::checked(&v))
 }
 
-/// A language tag as the hub takes one (BCP 47: `en`, `he`, `pt-BR`).
-pub fn is_language_tag(_s: &str) -> bool {
-    false
+/// A language tag as the hub takes one (BCP 47: `en`, `he`, `pt-BR`): a 2-3
+/// letter language, then subtags of 2-8 letters or digits, at most 35
+/// characters.
+pub fn is_language_tag(s: &str) -> bool {
+    if s.len() > 35 {
+        return false;
+    }
+    let mut parts = s.split('-');
+    let lang = parts.next().unwrap_or("");
+    (2..=3).contains(&lang.len())
+        && lang.bytes().all(|b| b.is_ascii_alphabetic())
+        && parts.all(|p| (2..=8).contains(&p.len()) && p.bytes().all(|b| b.is_ascii_alphanumeric()))
 }
 
 /// A field that may be null: absent is None, null Some(None), a string

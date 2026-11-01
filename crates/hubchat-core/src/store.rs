@@ -306,6 +306,10 @@ END;
     // 22: Do not disturb (Mail hub 2.3.0): an org on that hub whose outside
     // mail is set to Do not disturb (a part of busy)
     r#"ALTER TABLE roster ADD COLUMN dnd INTEGER NOT NULL DEFAULT 0;"#,
+    // 23: translation between people (Mail hub 2.4.0, feature `translate`):
+    // a received message's translation for us, as the hub last told it (JSON,
+    // hub_v2::Translation as shown)
+    r#"ALTER TABLE messages ADD COLUMN translation TEXT;"#,
 ];
 
 pub struct Store {
@@ -951,6 +955,12 @@ impl Store {
             env.from.as_str()
         };
         let (body, qa) = crate::questions::incoming(&env.body, env.kind.as_deref(), env.reply_to.as_deref(), env.meta.as_ref());
+        // its translation for us, as shown beside it; none told: the last one kept
+        let translation = m
+            .translation
+            .as_ref()
+            .and_then(|t| t.as_shown(env.reply_to.as_deref(), qa.fallback.is_some()))
+            .and_then(|t| serde_json::to_string(&t).ok());
         let hub_state = if !outgoing {
             "received"
         } else if m.read_at.is_some() {
@@ -1038,6 +1048,10 @@ impl Store {
                         ],
                     )?;
                 }
+            }
+            // its translation, when the hub told one (an answer without it keeps the last)
+            if let Some(t) = &translation {
+                tx.execute("UPDATE messages SET translation=? WHERE id=?", params![t, env.id])?;
             }
             if m.body_bytes.is_some() {
                 // Keep a completion marker so receipt updates never redownload
@@ -1416,7 +1430,7 @@ impl Store {
         self.with(|c| {
             let sql = format!(
                 "SELECT m.id, m.peer, m.outgoing, m.hub, m.body, m.kind, m.reply_to, m.sent_at, m.received_at, m.created_at,
-                        m.state, m.fetched_at, m.delivered_at, m.read_at, m.error, m.seen, m.meta
+                        m.state, m.fetched_at, m.delivered_at, m.read_at, m.error, m.seen, m.meta, m.translation
                  FROM messages m WHERE {cond}"
             );
             let mut st = c.prepare(&sql)?;
@@ -1441,7 +1455,10 @@ impl Store {
                         seen: r.get(15)?,
                         attachments: Vec::new(),
                         qa: crate::questions::Meta::load(r.get::<_, Option<String>>(16)?.as_deref()),
-                        translation: None,
+                        translation: r
+                            .get::<_, Option<String>>(17)?
+                            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                            .and_then(|v| crate::hub_v2::Translation::checked(&v)),
                     })
                 })?
                 .collect::<rusqlite::Result<_>>()?;

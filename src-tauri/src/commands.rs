@@ -61,6 +61,9 @@ pub struct State {
     /// Our status (hub feature `status`): auto, online, busy or dnd, the
     /// same on all our devices.
     status: String,
+    /// The language we read in (Mail hub 2.4.0 translation), "" for none:
+    /// the same on all our devices.
+    language: String,
     notifications: core::NotifySettings,
     /// Android (design D6): stay connected (true) or check about every 15
     /// minutes (false); null on desktop.
@@ -99,6 +102,7 @@ pub fn hc_state() -> R<State> {
         recovery_saved: meta(c, "recovery.saved") == "yes",
         read_receipts: meta(c, "settings.read_receipts") != "off",
         status: hubchat_core::engine::chosen_status(&c.store),
+        language: hubchat_core::engine::chosen_language(&c.store),
         notifications: c.notify_settings(),
         stay_connected: c.platform().stay_connected(),
         push: c.platform().push_state(),
@@ -315,6 +319,13 @@ pub fn hc_set_device_name(name: String) -> R<String> {
 #[tauri::command]
 pub fn hc_set_status(status: String) -> R<()> {
     engine()?.set_status(&status).map_err(s)
+}
+
+/// The language you read in (Settings › Profile), "" for none: kept, and
+/// told to your hubs that translate.
+#[tauri::command]
+pub fn hc_set_language(language: String) -> R<()> {
+    engine()?.set_language(language.trim()).map_err(s)
 }
 
 #[tauri::command]

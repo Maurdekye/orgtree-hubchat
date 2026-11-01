@@ -155,7 +155,11 @@ impl Health {
     /// Whether this hub translates (off, ok, no_key, key_refused); None from
     /// a hub without the feature, or through its door (which doesn't say).
     pub fn translation_state(&self) -> Option<String> {
-        None
+        if !self.supports("translate") {
+            return None;
+        }
+        let state = self.translation.as_ref()?.get("state")?.as_str()?;
+        ["off", "ok", "no_key", "key_refused"].contains(&state).then(|| state.to_owned())
     }
 
     pub fn max_attachment_bytes(&self) -> u64 {

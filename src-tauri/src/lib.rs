@@ -469,6 +469,7 @@ pub fn run() {
             commands::hc_set_picture,
             commands::hc_set_read_receipts,
             commands::hc_set_status,
+            commands::hc_set_language,
             commands::hc_set_device_name,
             commands::hc_set_active,
             commands::hc_composing,

@@ -235,6 +235,10 @@ pub struct Engine {
     /// A status was picked here: each hub's sync, parked or not, tells its
     /// hub at once (`engine_status`).
     status_wake: Notify,
+    /// New mail whose notification waits for its translation, and what
+    /// wakes the wait (engine_translation).
+    held: Mutex<Vec<engine_translation::Held>>,
+    translation_wake: Notify,
 }
 
 struct SendWriter<'a> { writers:&'a Mutex<std::collections::HashSet<String>>, id:String }
@@ -277,6 +281,8 @@ impl Engine {
             suspended: tokio::sync::watch::channel(false).0,
             files_paused: tokio::sync::watch::channel(false).0,
             status_wake: Notify::new(),
+            held: Mutex::new(Vec::new()),
+            translation_wake: Notify::new(),
             device: Mutex::new((
                 format!("hc-{}", &uuid::Uuid::new_v4().simple().to_string()[..12]),
                 "Hubchat".into(),
@@ -306,6 +312,9 @@ impl Engine {
         crate::diag::spawn_engine(async move { me.sender_loop().await });
         let me = self.clone();
         crate::diag::spawn_engine(async move { me.body_loop().await });
+        // notifications that wait for their translation (engine_translation)
+        let me = self.clone();
+        tokio::spawn(async move { me.held_loop().await });
         // in use: say so again before the hub's 90 s run out
         let me = self.clone();
         tokio::spawn(async move {
