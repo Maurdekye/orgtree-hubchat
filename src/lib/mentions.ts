@@ -4,10 +4,15 @@
 // readable as plain text on older Hubchat and Orgtree clients while rendering
 // as a clickable chat-opening link in both Hubchat (`a.addr.mention`) and
 // Orgtree (`HubContactChip`).
+// `@org:`, `@person:` and `@chat:` are filter words only (docket
+// hubchat-mention-list-org-person-and-chat-prefix-f, user 2026-11-01): they
+// narrow the hint list to addresses of that kind, like Orgtree's `@net:` /
+// `@org:` prefix filters, and are never inserted or sent — a pick still
+// inserts the contact's normal `@net:<address>`.
 import { api, type ChatSummary, type Contact, type HubStatus, type Message } from "../api";
 import { useEffect, useMemo, useState } from "react";
 import { ms } from "./format";
-import { displayName, kindOf, msgTime, notOnYourHubs, peerHubs, presence } from "./peers";
+import { displayName, kindOf, msgTime, notOnYourHubs, peerHubs, presence, type Kind } from "./peers";
 import { getSnap, type Snap } from "./store";
 
 const LINK_WAITING = "Waiting to be linked to a Hubchat identity";
@@ -21,7 +26,11 @@ export const MENU_STEP = 20;
 export interface MentionToken {
   start: number;
   end: number;
+  /** Text after any prefix, lowercased: the word filter within `kind`. */
   query: string;
+  /** The `@org:` / `@person:` / `@chat:` kind filter, or null for every kind
+   *  (plain `@` and `@net:`). A filter word only; never inserted or sent. */
+  kind: Kind | null;
 }
 
 /** Replace fenced code blocks and inline code spans with spaces so mentions inside code are ignored. */
@@ -297,7 +306,9 @@ export function mentionContacts(snap: Snap = getSnap()): Contact[] {
   return out;
 }
 
-/** Detect an active `@` mention token ending at `caret`. Bare words without `@` never trigger. */
+/** Detect an active `@` mention token ending at `caret`. Bare words without `@` never trigger.
+ *  An `org:` / `person:` / `chat:` prefix (any case) sets the token's kind filter;
+ *  `net:` and no prefix mean every kind. Text after the prefix is the word query. */
 export function activeMentionToken(text: string, caret: number): MentionToken | null {
   const pos = Math.max(0, Math.min(caret, text.length));
   const before = text.slice(0, pos);
@@ -305,12 +316,17 @@ export function activeMentionToken(text: string, caret: number): MentionToken | 
   if (at < 0) return null;
   if (at > 0 && /[0-9A-Za-z._%+-]/.test(before[at - 1]!)) return null;
   const raw = before.slice(at + 1);
-  const m = /^(?:(?:net|org):)?([A-Za-z0-9._-]*)$/i.exec(raw);
+  const m = /^(?:(net|org|person|chat):)?([A-Za-z0-9._-]*)$/i.exec(raw);
   if (!m) return null;
-  return { start: at, end: pos, query: m[1]!.toLowerCase() };
+  const prefix = m[1]?.toLowerCase();
+  const kind: Kind | null = prefix === "org" || prefix === "person" || prefix === "chat" ? prefix : null;
+  return { start: at, end: pos, query: m[2]!.toLowerCase(), kind };
 }
 
 /** Filter and rank contacts for the `@` hint list (best match at index 0; caller reverses for bottom-up display):
+ *  - Kind filtering: `kindFilter` (from an `@org:` / `@person:` / `@chat:` token, or the
+ *    same prefix at the start of `query`) keeps only contacts of that kind, by the same
+ *    `kindOf` every other surface shows; `net:` and no prefix keep every kind.
  *  - Word-substring filtering on `/[-_./\s]+/` (typing narrows and never reorders).
  *  - Bucket 1 (`inTranscript`): contacts mentioned in the open chat (`recency`), newest first (`b.seq - a.seq`).
  *  - Bucket 2 (`rest`): remaining contacts ordered by `max(lastChatted, lastMentionedByMe)` descending,
@@ -322,8 +338,15 @@ export function filterMentionContacts(
   query: string,
   recency?: ReadonlyMap<string, number>,
   mentioned?: ReadonlyMap<string, number>,
+  kindFilter?: Kind | null,
 ): Contact[] {
-  const q = query.trim().toLowerCase().replace(/^(?:net|org):/, "");
+  let q = query.trim().toLowerCase();
+  let kindWanted: Kind | null = kindFilter ?? null;
+  const pm = /^(net|org|person|chat):/.exec(q);
+  if (pm) {
+    if (kindFilter === undefined && pm[1] !== "net") kindWanted = pm[1] as Kind;
+    q = q.slice(pm[0].length);
+  }
   const words = q.split(/[-_./\s]+/).filter(Boolean);
 
   const chatAt = new Map<string, number>();
@@ -344,6 +367,8 @@ export function filterMentionContacts(
   const rest: { c: Contact; at: number; name: string; kind: string; addr: string }[] = [];
 
   for (const c of contacts) {
+    const kind = kindOf(c);
+    if (kindWanted && kind !== kindWanted) continue;
     const addr = c.address.toLowerCase();
     const name = displayName(c, c.address).toLowerCase();
     const org = (c.org_name || "").toLowerCase();
@@ -352,7 +377,6 @@ export function filterMentionContacts(
     if (words.length > 0 && !words.every((w) => name.includes(w) || addr.includes(w) || org.includes(w) || user.includes(w) || blurb.includes(w))) {
       continue;
     }
-    const kind = kindOf(c);
     const seq = recency?.get(addr);
     if (seq !== undefined) {
       inTranscript.push({ c, seq, name, kind, addr });
@@ -380,9 +404,11 @@ export function filterMentionContacts(
   return [...inTranscript.map((x) => x.c), ...rest.map((x) => x.c)];
 }
 
-/** Canonical wire token inserted when completing a contact mention. */
+/** Canonical wire token inserted when completing a contact mention.
+ *  A kind filter word (`org:` / `person:` / `chat:`) on a string form is
+ *  stripped like `net:`: filter words are never inserted or sent. */
 export function mentionWireToken(contact: Contact | string): string {
-  const addr = (typeof contact === "string" ? contact : contact.address).trim().replace(/^@?(?:net|org):/i, "");
+  const addr = (typeof contact === "string" ? contact : contact.address).trim().replace(/^@?(?:net|org|person|chat):/i, "");
   return "@net:" + addr;
 }
 

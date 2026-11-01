@@ -224,7 +224,7 @@ export function Composer({ peer, c, hubs, msgs, replies, picked, cardState, pos,
     if (el) setCaret(el.selectionStart ?? textRef.current.length);
   };
   const mentionTok = sending ? null : activeMentionToken(text, caret);
-  const mentionKey = mentionTok ? `${mentionTok.start}:${mentionTok.query}` : null;
+  const mentionKey = mentionTok ? `${mentionTok.start}:${mentionTok.kind ?? ""}:${mentionTok.query}` : null;
   const canShowMention = !sending && mentionTok !== null && dismissedAt !== mentionKey;
   const contacts = useMemo(
     () => mentionContacts(snap),
@@ -256,7 +256,7 @@ export function Composer({ peer, c, hubs, msgs, replies, picked, cardState, pos,
   const rankedMentions = useMemo(
     () =>
       canShowMention && mentionTok
-        ? filterMentionContacts(contacts, hubs, snap.chats, mentionTok.query, activeRecency, mentioned)
+        ? filterMentionContacts(contacts, hubs, snap.chats, mentionTok.query, activeRecency, mentioned, mentionTok.kind)
         : [],
     [canShowMention, mentionTok, contacts, hubs, snap.chats, activeRecency, mentioned],
   );
@@ -388,7 +388,7 @@ export function Composer({ peer, c, hubs, msgs, replies, picked, cardState, pos,
     const res = completeMentionText(text, mentionTok, contact);
     change(res.text);
     setCaret(res.caret);
-    setDismissedAt(`${mentionTok.start}:${mentionTok.query}`);
+    setDismissedAt(`${mentionTok.start}:${mentionTok.kind ?? ""}:${mentionTok.query}`);
     queueMicrotask(() => {
       const el = ta.current;
       if (el) {
