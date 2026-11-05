@@ -1,0 +1,1 @@
+Narrow the @ mention list to one kind of address: type @org:, @person: or @chat: to see only orgs and their agents, only people, or only AI chat sessions. Picking one still inserts the usual address.
