@@ -1,0 +1,1 @@
+Sending is faster: your message shows in the chat at once, a failed send keeps Retry and Discard, and long chats no longer slow sending down.
