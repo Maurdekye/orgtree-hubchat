@@ -317,6 +317,8 @@ END;
 
 pub struct Store {
     con: Mutex<Connection>,
+    /// attachment statements run by `messages_where` (the send-scale tests count them)
+    pub(crate) attach_queries: std::sync::atomic::AtomicUsize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -451,6 +453,7 @@ impl Store {
         migrate(&mut con).map_err(db)?;
         Ok(Self {
             con: Mutex::new(con),
+            attach_queries: Default::default(),
         })
     }
 
@@ -1478,6 +1481,7 @@ impl Store {
                  WHERE a.message_id=? ORDER BY a.position",
             )?;
             for m in &mut msgs {
+                self.attach_queries.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 m.attachments = st
                     .query_map([&m.id], |r| {
                         Ok(Attachment {
@@ -1575,6 +1579,10 @@ fn attachment_ids(tx: &rusqlite::Transaction, cond: &str, arg: &str) -> rusqlite
 #[cfg(test)]
 #[path = "store_busy_tests.rs"]
 mod busy_tests;
+
+#[cfg(test)]
+#[path = "store_send_scale_tests.rs"]
+mod send_scale_tests;
 
 #[cfg(test)]
 fn legacy_schema_fixture(path: &Path, version: usize) -> Connection {
