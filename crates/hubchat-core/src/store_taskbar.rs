@@ -90,7 +90,7 @@ mod tests {
     fn taskbar_upgrade_backfills_existing_read_questions_and_answers() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("fixture.sqlite3");
-        let s = Store {con:std::sync::Mutex::new(legacy_schema_fixture(&path,18))};
+        let s = Store {con:std::sync::Mutex::new(legacy_schema_fixture(&path,18)),attach_queries:Default::default()};
         s.add_hub(HUB, "2026-10-19T00:00:00.000Z").unwrap();
         add(&s, "answered", false, PEER, serde_json::json!({"kind":"question"}));
         add(&s, "answer", true, PEER, serde_json::json!({"reply_to":"answered"}));
