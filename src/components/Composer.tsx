@@ -20,7 +20,7 @@ import {
 } from "../lib/mentions";
 import { foldAt } from "../lib/replies";
 import { cardOf, type CardKnown } from "../lib/questions";
-import { noteDraft, usePreparation, getPreparation, submitOutgoing, clearPreparation, getSnap, useSnap, usePendingRestore, takeRestore } from "../lib/store";
+import { noteDraft, usePreparation, getPreparation, submitOutgoing, clearPreparation, getSnap, useSnap, usePendingRestore, takeRestore, holdsDraft } from "../lib/store";
 import { setReplies } from "../lib/answers";
 import { KindGlyph, PeerAvatar, usePlatform } from "./ui";
 import { refreshKey, useRestoredRefreshState, useRefreshState } from "../lib/refresh";
@@ -182,7 +182,7 @@ export function Composer({ peer, c, hubs, msgs, replies, picked, cardState, pos,
       const draft = saved.retainedDraft ?? saved.message;
       setText(draft.body); setAtts(draft.attachments ?? []);
     }
-    else api.draft(peer).then((d) => { if (live && d && !getPreparation(peer)) { setText(d); noteDraft(peer, d); } }, () => {});
+    else api.draft(peer).then((d) => { if (live && d && !getPreparation(peer) && !holdsDraft(peer, d)) { setText(d); noteDraft(peer, d); } }, () => {});
     return () => {
       live = false;
       // leaving the chat ends its typing

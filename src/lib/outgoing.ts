@@ -38,6 +38,11 @@ export class Outgoing {
   rows(peer: string): readonly Local[] {
     return this.byPeer.get(peer) ?? NONE;
   }
+  /** Is `body` the text of a message this chat still holds locally? Its saved recovery draft (written before the send) is then not
+   *  to be restored into the box on a chat return: the message is already sent or held, and the next send would append to it. */
+  holdsBody(peer: string, body: string): boolean {
+    return this.rows(peer).some((r) => r.msg.body === body);
+  }
   isLocal(id: string): boolean {
     for (const rows of this.byPeer.values()) if (rows.some((r) => r.msg.id === id)) return true;
     return false;

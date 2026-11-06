@@ -354,6 +354,8 @@ const subscribeLocal = (f: () => void) => { localSubs.add(f); return () => { loc
 export const submitOutgoing = (m: NewOutgoing) => outgoing.submit(m);
 export const retryLocal = (id: string) => outgoing.retry(id);
 export const isLocalId = (id: string) => outgoing.isLocal(id);
+/** The recovery draft `d` of `peer` is the text of a send this session still holds: leave the box as the user left it (empty). */
+export const holdsDraft = (peer: string, d: string) => outgoing.holdsBody(peer, d);
 // A discarded message waits here for its chat's composer, which takes it only if it is empty.
 const restores = new Map<string, NewOutgoing>();
 const restoreSubs = new Set<() => void>();
