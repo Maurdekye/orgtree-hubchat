@@ -150,3 +150,21 @@ test("OB9 the UI is told before any core call; the draft is saved before the sen
   assert.equal(gates.length, 1);
   assert.equal(toMessage(o.rows("p.abc")[0]).created_at, "2026-11-06T16:00:00Z");
 });
+
+test("OB10 while a local row holds a message, the recovery draft that is that same text is not restored on chat return; other text still is", async () => {
+  const { o, gates } = rig();
+  o.submit(out("m12", { body: "pending text" }));
+  assert.equal(o.holdsBody("p.abc", "pending text"), true, "the saved recovery draft is the sent text: it must not refill the box");
+  assert.equal(o.holdsBody("p.abc", "something new typed since"), false, "a newer draft is restored as before");
+  assert.equal(o.holdsBody("q.def", "pending text"), false, "per chat");
+  await tick(); await tick();
+  gates[0].resolve(); await tick(); await tick();
+  assert.equal(o.holdsBody("p.abc", "pending text"), true, "still held after the core has it, until a read returns it");
+  o.settle("p.abc", ["m12"]);
+  assert.equal(o.holdsBody("p.abc", "pending text"), false, "the row is gone: the draft was cleared with it");
+  o.submit(out("m13", { body: "again" })); await tick(); await tick();
+  gates[1].reject(new Error("x")); await tick(); await tick();
+  assert.equal(o.holdsBody("p.abc", "again"), true, "a failed row still holds it (Discard restores it deliberately)");
+  o.discard("m13");
+  assert.equal(o.holdsBody("p.abc", "again"), false);
+});
