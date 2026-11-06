@@ -30,4 +30,3 @@ export function readPlan(ask: { windowed: boolean; forceFull: boolean }, loaded:
 export function focusGained(was: boolean, now: boolean): boolean {
   return !was && now;
 }
-
