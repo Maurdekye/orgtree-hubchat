@@ -58,7 +58,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
   const refreshId = refreshKey("timeline", snap.state?.me?.address ?? "", peer);
   const refreshed = useRestoredRefreshState<{count:number;top:number;pinned:boolean}>(refreshId);
   const restoreScroll = useRef(refreshed);
-  const { msgs, loaded, reload, more, loadingOlder, loadOlder, unreachable, retryOlder } = useMessages(peer, refreshed?.count || undefined);
+  const { msgs, loaded, reload, refresh, more, loadingOlder, loadOlder, unreachable, retryOlder } = useMessages(peer, refreshed?.count || undefined);
   // what the next message answers: the messages it replies to and the
   // options picked on question cards, kept per chat across restarts
   const pending = useDraftAnswers(peer);
@@ -471,7 +471,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
   const conv = useRef<HTMLElement>(null);
   const dragging = useFileDrop(conv, platform === "desktop" && !off, (paths) => comp.current?.addFiles(paths));
   const composer = <Composer ref={comp} peer={peer} c={c} hubs={hubs} msgs={msgs} replies={replies} picked={picked} cardState={cardState} pos={pos} onRemoveReply={(id) => removeReply(peer, id)} onUnpick={(id) => unpick(peer, [id])} onCancelReply={() => setReplies(peer, [])}
-    onSent={(m) => { sentDraftAnswers(peer, m); pinned.current = true; reload(); }} off={off} />;
+    onSent={(m) => { sentDraftAnswers(peer, m); pinned.current = true; refresh(); }} off={off} />;
   const jumpBtn = <button className={"jump" + (far ? "" : " hide")} onClick={toBottom} title="Jump to the newest message" aria-label="Jump to the newest message"><Icon name="arrow_down" /></button>;
   const copyAddr = () => copyText("@net:" + peer, "Address copied");
 

@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { forgetDraftAnswers } from "./answers";
 import { api, type ChatSummary, type Contact, type HcEvent, type Message, type NewOutgoing, type OlderPage, type SendRoute, type State, type TransferView } from "../api";
 import { errText } from "./native";
-import { earlier, mergeWindow, WINDOW } from "./chatwindow";
+import { earlier, focusGained, mergeWindow, readPlan, WINDOW } from "./chatwindow";
 
 export interface Snap {
   ready: boolean;
@@ -126,7 +126,7 @@ export function useMessages(peer: string | null, page = PAGE) {
     let live = true;
     const d = cur.current;
     const oldest = d.peer === peer && d.msgs.length ? d.msgs[0] : null;
-    const win = windowed.current && !forceFull.current && d.peer === peer && d.msgs.length > WINDOW;
+    const win = d.peer === peer && readPlan({ windowed: windowed.current, forceFull: forceFull.current }, d.msgs.length) === "window";
     windowed.current = forceFull.current = false;
     (win ? api.chat(peer, { limit: WINDOW }) : oldest ? api.chat(peer, { from: oldest, limit: 5000 }) : api.chat(peer, { limit: page })).then((msgs) => {
       if (!live) return;
@@ -145,6 +145,20 @@ export function useMessages(peer: string | null, page = PAGE) {
     return () => { live = false; };
   }, [peer, tick, page]);
   useEffect(() => (peer ? onChatChange(peer, () => { windowed.current = true; setTick((t) => t + 1); }) : undefined), [peer]);
+  // Gaining focus (window or app) re-reads the open chat in full, once per gain.
+  useEffect(() => {
+    if (!peer) return;
+    const active = () => document.hasFocus() && document.visibilityState === "visible";
+    let was = active();
+    const f = () => {
+      const now = active();
+      if (focusGained(was, now)) { forceFull.current = true; setTick((t) => t + 1); }
+      was = now;
+    };
+    window.addEventListener("focus", f); window.addEventListener("blur", f);
+    document.addEventListener("visibilitychange", f);
+    return () => { window.removeEventListener("focus", f); window.removeEventListener("blur", f); document.removeEventListener("visibilitychange", f); };
+  }, [peer]);
   /** The next older page (before `from`, else before the oldest shown);
    *  resolves to its messages (none: the start). Past what this device
    *  holds, it asks the hubs for their next older page (lazy history). */
@@ -183,7 +197,10 @@ export function useMessages(peer: string | null, page = PAGE) {
     loaded: same && data.loaded,
     /** Why the last read failed ("" when it did not). */
     error: same ? data.error : "",
+    /** After a delete: the whole loaded range is read again. */
     reload: () => { forceFull.current = true; setTick((t) => t + 1); },
+    /** After a send: the newest rows only (the new message is at the tail). */
+    refresh: () => { windowed.current = true; setTick((t) => t + 1); },
     /** Older messages exist beyond what is shown. */
     more: same && data.more,
     /** Hubs whose older messages aren't loaded because they can't be reached. */

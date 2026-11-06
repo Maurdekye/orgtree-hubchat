@@ -20,14 +20,14 @@ export function mergeWindow(prev: Message[], fresh: Message[], limit: number = W
 
 /** What a re-read of an open chat is: the newest WINDOW rows merged, or the
  *  whole loaded range. `windowed`: asked for by a chat change or a send;
- *  `forceFull`: asked for by a delete (`reload()`), which wins. Skeleton. */
-export function readPlan(_ask: { windowed: boolean; forceFull: boolean }, _loaded: number): "window" | "full" {
-  return "full";
+ *  `forceFull`: asked for by a delete (`reload()`), which wins. */
+export function readPlan(ask: { windowed: boolean; forceFull: boolean }, loaded: number): "window" | "full" {
+  return ask.windowed && !ask.forceFull && loaded > WINDOW ? "window" : "full";
 }
 
 /** The open chat takes a full read when the window or app gains focus, once
- *  per gain: not while it stays focused, not on a repeated event. Skeleton. */
-export function focusGained(_was: boolean, _now: boolean): boolean {
-  return false;
+ *  per gain: not while it stays focused, not on a repeated event. */
+export function focusGained(was: boolean, now: boolean): boolean {
+  return !was && now;
 }
 
