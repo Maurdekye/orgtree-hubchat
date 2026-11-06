@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { forgetDraftAnswers } from "./answers";
 import { api, type ChatSummary, type Contact, type HcEvent, type Message, type NewOutgoing, type OlderPage, type SendRoute, type State, type TransferView } from "../api";
 import { errText } from "./native";
+import { earlier, mergeWindow, WINDOW } from "./chatwindow";
 
 export interface Snap {
   ready: boolean;
@@ -96,8 +97,6 @@ export function useSendRoute(peer: string): SendRoute | null {
 
 /** History comes a page at a time (lazy history, user 23:46Z). */
 export const PAGE = 50;
-/** `a` comes before `b` in a chat (by time, then id, as the core pages). */
-const earlier = (a: Message, b: Message) => a.created_at < b.created_at || (a.created_at === b.created_at && a.id < b.id);
 
 interface Paged { peer: string | null; msgs: Message[]; loaded: boolean; more: boolean; unreachable: string[]; error: string }
 // Before a chat's messages load, every render must hand out the SAME empty
@@ -118,14 +117,21 @@ export function useMessages(peer: string | null, page = PAGE) {
   const cur = useRef(data);
   cur.current = data;
   const busy = useRef(false);
+  // A chat change re-reads only the newest WINDOW rows once more are loaded;
+  // opening the chat, `reload()` and a page change re-read the whole range.
+  const windowed = useRef(false);
+  const forceFull = useRef(false);
   useEffect(() => {
     if (!peer) return;
     let live = true;
     const d = cur.current;
     const oldest = d.peer === peer && d.msgs.length ? d.msgs[0] : null;
-    (oldest ? api.chat(peer, { from: oldest, limit: 5000 }) : api.chat(peer, { limit: page })).then((msgs) => {
+    const win = windowed.current && !forceFull.current && d.peer === peer && d.msgs.length > WINDOW;
+    windowed.current = forceFull.current = false;
+    (win ? api.chat(peer, { limit: WINDOW }) : oldest ? api.chat(peer, { from: oldest, limit: 5000 }) : api.chat(peer, { limit: page })).then((msgs) => {
       if (!live) return;
       setData((prev) => {
+        if (win && prev.peer === peer) return { ...prev, msgs: mergeWindow(prev.msgs, msgs), loaded: true, error: "" };
         // fewer than a page: the hubs may still hold older ones (lazy history)
         if (!oldest || prev.peer !== peer) return { peer, msgs, loaded: true, more: true, unreachable: [], error: "" };
         // an older page that arrived meanwhile stays
@@ -138,7 +144,7 @@ export function useMessages(peer: string | null, page = PAGE) {
     });
     return () => { live = false; };
   }, [peer, tick, page]);
-  useEffect(() => (peer ? onChatChange(peer, () => setTick((t) => t + 1)) : undefined), [peer]);
+  useEffect(() => (peer ? onChatChange(peer, () => { windowed.current = true; setTick((t) => t + 1); }) : undefined), [peer]);
   /** The next older page (before `from`, else before the oldest shown);
    *  resolves to its messages (none: the start). Past what this device
    *  holds, it asks the hubs for their next older page (lazy history). */
@@ -177,7 +183,7 @@ export function useMessages(peer: string | null, page = PAGE) {
     loaded: same && data.loaded,
     /** Why the last read failed ("" when it did not). */
     error: same ? data.error : "",
-    reload: () => setTick((t) => t + 1),
+    reload: () => { forceFull.current = true; setTick((t) => t + 1); },
     /** Older messages exist beyond what is shown. */
     more: same && data.more,
     /** Hubs whose older messages aren't loaded because they can't be reached. */

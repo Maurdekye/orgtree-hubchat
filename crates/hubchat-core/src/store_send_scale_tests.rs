@@ -61,3 +61,19 @@ fn reading_the_newest_window_is_flat_in_history() {
         assert!(*q <= 1, "n={n}: {rows} rows read took {q} attachment statements: {counts:?}");
     }
 }
+
+#[test]
+fn batched_attachments_stay_with_their_message_in_order() {
+    let s = Store::open_in_memory().unwrap();
+    fill(&s, 3, 1);
+    let att = |n: &str| NewAttachment { name: n.into(), bytes: 1, source: format!("/x/{n}") };
+    let m = |id: &str, names: &[&str]| NewOutgoing { id: id.into(), peer: "p0.abcdef".into(), body: "b".into(), kind: None, reply_to: None, attachments: names.iter().map(|n| att(n)).collect() };
+    s.queue_outgoing(&m("a1", &["one", "two", "three"]), "2026-11-06T12:00:00Z").unwrap();
+    s.queue_outgoing(&m("a2", &["solo"]), "2026-11-06T12:00:01Z").unwrap();
+    s.queue_outgoing(&m("a3", &[]), "2026-11-06T12:00:02Z").unwrap();
+    let rows = s.chat("p0.abcdef", None, None, 50).unwrap();
+    let names = |id: &str| rows.iter().find(|r| r.id == id).unwrap().attachments.iter().map(|a| a.name.clone()).collect::<Vec<_>>();
+    assert_eq!(names("a1"), ["one", "two", "three"]);
+    assert_eq!(names("a2"), ["solo"]);
+    assert!(names("a3").is_empty() && names("m0").is_empty());
+}

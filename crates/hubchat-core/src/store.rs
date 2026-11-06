@@ -1476,34 +1476,45 @@ impl Store {
                     })
                 })?
                 .collect::<rusqlite::Result<_>>()?;
-            let mut st = c.prepare(
-                "SELECT a.local_id, a.hub_id, a.hub, a.name, a.bytes, a.source, a.local_path, a.state, a.error, a.source_sha256, a.staged_path, j.state, j.confirmed, j.retry_at, j.error, a.upload_confirmed, j.restarted FROM attachments a LEFT JOIN download_jobs j ON j.local_id=a.local_id
-                 WHERE a.message_id=? ORDER BY a.position",
-            )?;
-            for m in &mut msgs {
+            // one statement per 500 rows, not one per row
+            for chunk in msgs.chunks_mut(500) {
                 self.attach_queries.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                m.attachments = st
-                    .query_map([&m.id], |r| {
-                        Ok(Attachment {
-                            upload_confirmed: r.get(15)?,
-                            download: match r.get::<_, Option<String>>(11)? {
-                                Some(state) => Some(DownloadStatus {restarted:r.get(16)?,state, confirmed:r.get(12)?, retry_at:r.get(13)?, error:r.get(14)?}),
+                let marks = vec!["?"; chunk.len()].join(",");
+                let mut st = c.prepare(&format!(
+                    "SELECT a.message_id, a.local_id, a.hub_id, a.hub, a.name, a.bytes, a.source, a.local_path, a.state, a.error, a.source_sha256, a.staged_path, j.state, j.confirmed, j.retry_at, j.error, a.upload_confirmed, j.restarted FROM attachments a LEFT JOIN download_jobs j ON j.local_id=a.local_id
+                     WHERE a.message_id IN ({marks}) ORDER BY a.position"
+                ))?;
+                let mut by: std::collections::HashMap<String, Vec<Attachment>> = std::collections::HashMap::new();
+                let rows = st.query_map(rusqlite::params_from_iter(chunk.iter().map(|m| m.id.as_str())), |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        Attachment {
+                            upload_confirmed: r.get(16)?,
+                            download: match r.get::<_, Option<String>>(12)? {
+                                Some(state) => Some(DownloadStatus {restarted:r.get(17)?,state, confirmed:r.get(13)?, retry_at:r.get(14)?, error:r.get(15)?}),
                                 None => None,
                             },
-                            local_id: r.get(0)?,
-                            hub_id: r.get(1)?,
-                            hub: r.get(2)?,
-                            name: r.get(3)?,
-                            bytes: r.get::<_, i64>(4)? as u64,
-                            source: r.get(5)?,
-                            local_path: r.get(6)?,
-                            state: r.get(7)?,
-                            error: r.get(8)?,
-                            source_sha256: r.get(9)?,
-                            staged_path: r.get(10)?,
-                        })
-                    })?
-                    .collect::<rusqlite::Result<_>>()?;
+                            local_id: r.get(1)?,
+                            hub_id: r.get(2)?,
+                            hub: r.get(3)?,
+                            name: r.get(4)?,
+                            bytes: r.get::<_, i64>(5)? as u64,
+                            source: r.get(6)?,
+                            local_path: r.get(7)?,
+                            state: r.get(8)?,
+                            error: r.get(9)?,
+                            source_sha256: r.get(10)?,
+                            staged_path: r.get(11)?,
+                        },
+                    ))
+                })?;
+                for row in rows {
+                    let (id, att) = row?;
+                    by.entry(id).or_default().push(att);
+                }
+                for m in chunk.iter_mut() {
+                    m.attachments = by.remove(&m.id).unwrap_or_default();
+                }
             }
             Ok(msgs)
         })
