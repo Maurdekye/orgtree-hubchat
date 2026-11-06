@@ -7,6 +7,7 @@ import { forgetDraftAnswers } from "./answers";
 import { api, type ChatSummary, type Contact, type HcEvent, type Message, type NewOutgoing, type OlderPage, type SendRoute, type State, type TransferView } from "../api";
 import { errText } from "./native";
 import { earlier, focusGained, mergeWindow, readPlan, WINDOW } from "./chatwindow";
+import { Outgoing, withLocal } from "./outgoing";
 
 export interface Snap {
   ready: boolean;
@@ -114,6 +115,7 @@ export function useMessages(peer: string | null, page = PAGE) {
   const [data, setData] = useState<Paged>({ peer: null, msgs: [], loaded: false, more: false, unreachable: [], error: "" });
   const [tick, setTick] = useState(0);
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const locals = useSyncExternalStore(subscribeLocal, () => outgoing.rows(peer ?? ""));
   const cur = useRef(data);
   cur.current = data;
   const busy = useRef(false);
@@ -192,8 +194,11 @@ export function useMessages(peer: string | null, page = PAGE) {
     }
   }, [peer, page]);
   const same = data.peer === peer;
+  // a read that returns a just-sent message drops its local row (the stored one is drawn in its place)
+  useEffect(() => { if (peer && same) outgoing.settle(peer, data.msgs.map((m) => m.id)); }, [peer, same, data.msgs, locals]);
+  const shown = withLocal(same ? data.msgs : NO_MESSAGES, locals);
   return {
-    msgs: same ? data.msgs : NO_MESSAGES,
+    msgs: shown,
     loaded: same && data.loaded,
     /** Why the last read failed ("" when it did not). */
     error: same ? data.error : "",
@@ -335,6 +340,36 @@ export async function prepareSend(message: NewOutgoing, retainedDraft?: Preparat
   preparationChanged();
 }
 
+// ------------------------------------------------------- just-sent bubbles
+// Enter shows the bubble at once from a local row (lib/outgoing.ts); the core calls run after it, and the stored row replaces it.
+const localSubs = new Set<() => void>();
+const outgoing = new Outgoing({
+  saveDraft: (peer, body) => api.setDraft(peer, body),
+  send: (m) => api.send(m),
+  sentOk: async (m) => { noteDraft(m.peer, ""); await api.setDraft(m.peer, "").catch(() => {}); void refreshChats(); },
+  now: () => new Date().toISOString(),
+  changed: () => localSubs.forEach((f) => f()),
+});
+const subscribeLocal = (f: () => void) => { localSubs.add(f); return () => { localSubs.delete(f); }; };
+export const submitOutgoing = (m: NewOutgoing) => outgoing.submit(m);
+export const retryLocal = (id: string) => outgoing.retry(id);
+export const isLocalId = (id: string) => outgoing.isLocal(id);
+// A discarded message waits here for its chat's composer, which takes it only if it is empty.
+const restores = new Map<string, NewOutgoing>();
+const restoreSubs = new Set<() => void>();
+const subscribeRestore = (f: () => void) => { restoreSubs.add(f); return () => { restoreSubs.delete(f); }; };
+export function discardLocal(id: string) {
+  const m = outgoing.discard(id);
+  if (!m) return;
+  restores.set(m.peer, m); restoreSubs.forEach((f) => f());
+}
+export const usePendingRestore = (peer: string) => useSyncExternalStore(subscribeRestore, () => restores.get(peer) ?? null);
+export function takeRestore(peer: string): NewOutgoing | null {
+  const m = restores.get(peer) ?? null;
+  if (m) { restores.delete(peer); restoreSubs.forEach((f) => f()); }
+  return m;
+}
+
 // ------------------------------------------------------------------- misc
 export function setOnboarding(on: boolean) { set({ onboarding: on }); }
 
@@ -343,6 +378,7 @@ export function setOnboarding(on: boolean) { set({ onboarding: on }); }
 export async function reloadAfterSwitch(): Promise<void> {
   generation += 1;
   preparations.clear(); preparationChanged();
+  outgoing.clear(); restores.clear(); restoreSubs.forEach((f) => f());
   forgetDraftAnswers();
   transfers.clear(); tsubs.forEach((f) => f());
   active.clear(); activeChanged();

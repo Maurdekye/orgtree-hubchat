@@ -20,7 +20,8 @@ import {
 } from "../lib/mentions";
 import { foldAt } from "../lib/replies";
 import { cardOf, type CardKnown } from "../lib/questions";
-import { noteDraft, usePreparation, getPreparation, prepareSend, clearPreparation, getSnap, useSnap } from "../lib/store";
+import { noteDraft, usePreparation, getPreparation, submitOutgoing, clearPreparation, getSnap, useSnap, usePendingRestore, takeRestore } from "../lib/store";
+import { setReplies } from "../lib/answers";
 import { KindGlyph, PeerAvatar, usePlatform } from "./ui";
 import { refreshKey, useRestoredRefreshState, useRefreshState } from "../lib/refresh";
 import { sendsOnEnter, useEnterKey } from "../lib/enterKey";
@@ -463,13 +464,31 @@ export function Composer({ peer, c, hubs, msgs, replies, picked, cardState, pos,
     for (const p of picked) if (!all.some((r) => r.id === p.card.id)) all.push(p.card);
     all.sort((a, b) => (pos.get(a.id) ?? -1) - (pos.get(b.id) ?? -1) || msgTime(a) - msgTime(b));
     const ids = all.map((r) => r.id), prev = preparation?.retainedDraft ? undefined : preparation?.message;
-    await prepareSend({
+    const message: NewOutgoing = {
       id: newId(), peer, body: text.trim(), attachments: atts,
       reply_to: ids[0] ?? prev?.reply_to ?? null,
       replies: ids.length > 1 ? ids : ids.length ? undefined : prev?.replies,
       answers: picked.length ? picked.map((p) => ({ question: p.card.id, picked: p.labels })) : ids.length ? undefined : prev?.answers,
-    });
+    };
+    // The bubble shows and the box empties at once; the draft save, the send and the draft clear run after, unwaited.
+    setText(""); setCaret(0); setSelection({ key: null, index: -1, pick: null }); setShownState({ key: null, count: MENU_STEP }); setDismissedAt(null);
+    setAtts([]); setErr(null);
+    noteDraft(peer, "");
+    submitOutgoing(message);
+    onSent(message);
+    ta.current?.focus();
   };
+  // A discarded message that failed comes back here: into an EMPTY box only (text, attachments, reply target)
+  const restore = usePendingRestore(peer);
+  useEffect(() => {
+    if (!restore) return;
+    takeRestore(peer);
+    if (textRef.current.trim() !== "" || attsRef.current.length > 0) return;
+    setText(restore.body); setCaret(restore.body.length); setAtts(restore.attachments ?? []); noteDraft(peer, restore.body);
+    const ids = restore.replies ?? (restore.reply_to ? [restore.reply_to] : []);
+    if (ids.length) setReplies(peer, ids);
+    ta.current?.focus();
+  }, [restore, peer]);
 
   const one = replies.length === 1 ? replies[0] : null;
   const who = one ? (one.outgoing ? "yourself" : displayName(c, peer)) : "";

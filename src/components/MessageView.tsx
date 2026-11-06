@@ -16,7 +16,7 @@ import { playable } from "../lib/media";
 import { openMenu, selectionIn, type MenuEntry } from "../lib/ctxmenu";
 import { mentionReach } from "../lib/mentions";
 import { attachmentMenu } from "../lib/attachmentActions";
-import { useTransfer } from "../lib/store";
+import { discardLocal, isLocalId, retryLocal, useTransfer } from "../lib/store";
 import { toast } from "../lib/toast";
 import { languageInEnglish, toggleOriginal, translatedText, untranslatedReason, useShowingOriginal } from "../lib/translation";
 import { AttImage } from "./AttImage";
@@ -45,7 +45,7 @@ function FileCard({ a, m }: { a: Attachment; m: Message }) {
   const platform = usePlatform();
   const prog = useTransfer(a.local_id);
   const v = attView(a, m, prog && (a.state === "uploading" || a.state === "downloading") ? prog : undefined);
-  const remove = m.outgoing && m.state === "failed" && !a.download;
+  const remove = m.outgoing && m.state === "failed" && !a.download && !isLocalId(m.id);
   const download = () => api.download(m.id, a.local_id).catch((e) => toast("Download failed: " + errText(e)));
   const click = () => {
     if (v.download || v.retry === "download") void download();
@@ -240,6 +240,8 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
   ) : reason ? <div className="tr-line"><span>{reason}</span></div> : null;
 
   const failed = m.state === "failed";
+  // a just-sent message the core has not stored yet: its Retry and Discard are the store's, not the core's
+  const local = isLocalId(m.id);
   // desktop right-click (user 2026-10-09 05:54Z): what was clicked first (a
   // link, an address, a picture or a file), then the message's own actions,
   // as its hover bar and failed line offer them
@@ -271,7 +273,7 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
     else if (text) items.push({ label: "Copy text", icon: "copy", run: () => void copyText(text, "Copied") });
     if (translated !== null) items.push({ label: toggleLabel, icon: "translate", run: () => toggleOriginal(m.id) });
     items.push({ label: "Message info", icon: "info", run: () => onInfo(m) });
-    if (failed) items.push("sep", { label: "Retry", icon: "refresh", run: () => void api.retry(m.id).catch((er) => toast(errText(er))) }, { label: "Delete", icon: "delete", bad: true, run: () => onDelete(m) });
+    if (failed) items.push("sep", { label: "Retry", icon: "refresh", run: () => (local ? retryLocal(m.id) : void api.retry(m.id).catch((er) => toast(errText(er)))) }, local ? { label: "Discard", icon: "delete", bad: true, run: () => discardLocal(m.id) } : { label: "Delete", icon: "delete", bad: true, run: () => onDelete(m) });
     openMenu(e.clientX, e.clientY, items);
   };
   return (
@@ -303,8 +305,8 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
         <div className="failed-line">
           <Icon name="error" />
           <span>Not sent{m.error ? ": " + m.error : ""}.</span>
-          <button className="link" onClick={() => api.retry(m.id).catch((e) => toast(errText(e)))}>Retry</button>
-          <button className="link" onClick={() => onDelete(m)}>Delete</button>
+          <button className="link" onClick={() => (local ? retryLocal(m.id) : void api.retry(m.id).catch((e) => toast(errText(e))))}>Retry</button>
+          <button className="link" onClick={() => (local ? discardLocal(m.id) : onDelete(m))}>{local ? "Discard" : "Delete"}</button>
         </div>
       ) : null}
     </div>
