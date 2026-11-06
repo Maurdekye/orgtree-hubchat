@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mergeWindow } from "../src/lib/chatwindow.ts";
+import { mergeWindow, readPlan, focusGained, WINDOW } from "../src/lib/chatwindow.ts";
 import type { Message } from "../src/api";
 
 const msg = (i: number, state = "sent"): Message =>
@@ -33,4 +33,20 @@ test("a row deleted inside the window disappears; older rows stay", () => {
 test("fewer rows than the limit are the whole chat", () => {
   const out = mergeWindow(range(1, 3), range(1, 2), 4);
   assert.deepEqual(out.map((m) => m.id), ["m001", "m002"]);
+});
+
+test("a send or chat change re-reads the window, flat from 50 to 20k loaded; delete re-reads the range", () => {
+  for (const loaded of [50, 2_000, 20_000]) {
+    const expected = loaded > WINDOW ? "window" : "full";
+    assert.equal(readPlan({ windowed: true, forceFull: false }, loaded), expected, `loaded ${loaded}`);
+    assert.equal(readPlan({ windowed: true, forceFull: true }, loaded), "full");
+    assert.equal(readPlan({ windowed: false, forceFull: false }, loaded), "full");
+  }
+});
+
+test("focus gain reads once per gain", () => {
+  assert.equal(focusGained(false, true), true);
+  assert.equal(focusGained(true, true), false);
+  assert.equal(focusGained(true, false), false);
+  assert.equal(focusGained(false, false), false);
 });
