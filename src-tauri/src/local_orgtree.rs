@@ -29,6 +29,7 @@ pub struct Uninstall {
     pub display_name: String,
     pub display_icon: String,
     pub install_location: String,
+    pub display_version: String,
 }
 
 /// The listing's name in Orgtree's data root.
@@ -161,7 +162,8 @@ fn uninstall_entries() -> Vec<Uninstall> {
             let display_name = value("DisplayName");
             if is_orgtree(&display_name) {
                 entries.push(Uninstall { display_name, display_icon: value("DisplayIcon"),
-                                         install_location: value("InstallLocation") });
+                                         install_location: value("InstallLocation"),
+                                         display_version: value("DisplayVersion") });
             }
         }
     }
@@ -199,6 +201,12 @@ pub fn open(roaming: &Path, slug: &str) -> Result<(), String> {
     }
     started
 }
+
+// RED STUBS (orgtree:// links, Orgtree docs/rust-engine/orgtree-links.md)
+pub fn orgtree_version(_entries: &[Uninstall], _exists: impl Fn(&Path) -> bool) -> Option<String> { None }
+pub fn takes_links(_version: &str) -> bool { false }
+pub fn link_url(_org: &str, _token: Option<&str>) -> Option<String> { None }
+pub fn link_for(_listing: &[LocalOrg], _takes: bool, _org: &str, _token: Option<&str>) -> Result<String, String> { Err("stub".into()) }
 
 #[cfg(test)]
 mod tests {
@@ -253,7 +261,7 @@ mod tests {
     }
 
     fn entry(name: &str, icon: &str, location: &str) -> Uninstall {
-        Uninstall { display_name: name.into(), display_icon: icon.into(), install_location: location.into() }
+        Uninstall { display_name: name.into(), display_icon: icon.into(), install_location: location.into(), ..Default::default() }
     }
 
     #[test]
@@ -315,5 +323,72 @@ mod tests {
         assert_eq!(argv, r#"["--orgtree-taskbar=org:alpha-works"]"#);
         assert!(launch(&exe, "not a slug").is_err(), "an invalid slug starts nothing");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // orgtree:// links (user 2026-11-08, Orgtree docs/rust-engine/orgtree-links.md)
+
+    #[test]
+    fn orgtree_takes_links_from_4_5_9_prereleases_included() {
+        for v in ["4.5.9", "4.5.9-alpha.1", "4.5.10", "4.6.0", "5.0.0", "10.0.0-rc.1"] {
+            assert!(takes_links(v), "{v}");
+        }
+        for v in ["4.5.8", "4.5.8-alpha.9", "4.4.12", "3.9.9", "", "4.5", "x.y.z", "4.5.9.1x", " 4.5.9"] {
+            assert!(!takes_links(v), "{v}");
+        }
+    }
+
+    #[test]
+    fn the_version_is_the_registered_orgtrees_own() {
+        let exe = PathBuf::from(r"C:\Program Files\Orgtree\Orgtree.exe");
+        let there = |p: &Path| p == exe;
+        let mut now = entry("Orgtree 4.5.9-alpha.1", r"C:\Program Files\Orgtree\Orgtree.exe,0", "");
+        now.display_version = "4.5.9-alpha.1".into();
+        let mut gone = entry("Orgtree 4.6.0", r"D:\Old\Orgtree.exe,0", "");
+        gone.display_version = "4.6.0".into();
+        assert_eq!(orgtree_version(&[gone, now.clone()], there).as_deref(), Some("4.5.9-alpha.1"));
+        // electron-builder's entry name carries it too, when DisplayVersion is missing
+        let mut named = now.clone();
+        named.display_version = String::new();
+        assert_eq!(orgtree_version(&[named], there).as_deref(), Some("4.5.9-alpha.1"));
+        assert_eq!(orgtree_version(&[entry("Orgtree", "", r"C:\Program Files\Orgtree")], there), None);
+        assert_eq!(orgtree_version(&[], there), None);
+    }
+
+    #[test]
+    fn links_mirror_orgtrees_contract_exactly() {
+        for (token, url) in [
+            ("@item:alpha/fix-login", "orgtree://item/alpha/fix-login"),
+            ("@doc:alpha/d1a2", "orgtree://doc/alpha/d1a2"),
+            ("@app:alpha/caption-app", "orgtree://app/alpha/caption-app"),
+            ("@panel:alpha/p12", "orgtree://panel/alpha/p12"),
+            ("@agent:alpha/luna-reserve", "orgtree://agent/alpha/luna-reserve"),
+            ("@agent:alpha/codex-checklist@4", "orgtree://agent/alpha/codex-checklist@4"),
+            ("@project:alpha/web", "orgtree://project/alpha/web"),
+            ("@mail:alpha/user/ab12", "orgtree://mail/alpha/user/ab12"),
+            ("@mail:alpha/org/ab12", "orgtree://mail/alpha/org/ab12"),
+            ("@mail:alpha/node/luna@4/ab12", "orgtree://mail/alpha/node/luna@4/ab12"),
+        ] {
+            assert_eq!(link_url("alpha", Some(token)).as_deref(), Some(url), "{token}");
+        }
+        assert_eq!(link_url("alpha", None).as_deref(), Some("orgtree://org/alpha"));
+        for (org, token) in [
+            ("alpha", Some("@item:beta/x")), ("alpha", Some("@item:alpha/x/y")), ("alpha", Some("@item:Alpha/x")),
+            ("alpha", Some("@item:alpha/x@4")), ("alpha", Some("@agent:alpha/x@b")), ("alpha", Some("@mail:alpha/box/x")),
+            ("alpha", Some("@mail:alpha/node/x")), ("alpha", Some("@note:alpha/x")), ("alpha", Some("@item:alpha/x\" --inspect")),
+            ("alpha", Some(" @item:alpha/x")), ("alpha", Some("@item:alpha/")), ("alpha", Some("")), ("alpha", Some("item:alpha/x")),
+            ("Alpha", None), ("al pha", None), ("-alpha", None), ("", None), ("alpha\" --inspect", None),
+        ] {
+            assert_eq!(link_url(org, token), None, "{org:?} {token:?}");
+        }
+    }
+
+    #[test]
+    fn a_link_opens_only_an_org_of_this_pc_in_an_orgtree_that_takes_links() {
+        let listing = parse(LISTING.as_bytes());
+        assert_eq!(link_for(&listing, true, "alpha-works", Some("@item:alpha-works/x")).as_deref(), Ok("orgtree://item/alpha-works/x"));
+        assert_eq!(link_for(&listing, true, "alpha-works", None).as_deref(), Ok("orgtree://org/alpha-works"));
+        assert!(link_for(&listing, true, "beta", Some("@item:beta/x")).is_err(), "not an org of this PC");
+        assert!(link_for(&listing, false, "alpha-works", None).is_err(), "an Orgtree before 4.5.9");
+        assert!(link_for(&listing, true, "alpha-works", Some("@item:gamma/x")).is_err(), "the token names another org");
     }
 }
