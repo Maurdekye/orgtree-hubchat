@@ -1067,6 +1067,8 @@ export const mockApi: Api = {
   localOrgtreeOrgs: async () => (st.platform === "android" || params.get("orgtree") === "none" ? []
     : [{ slug: "orgtree", name: "Orgtree", address: "orgtree.alex.7c41d2" }]),
   openOrgtreeOrg: async (slug) => { toast("[Opens " + slug + " in Orgtree]"); },
+  orgtreeLinks: async () => st.platform !== "android" && params.get("orgtree") !== "none",
+  openOrgtreeLink: async (org, token) => { toast("[Opens " + (token ?? org) + " in Orgtree]"); },
   vpnActive: async () => (st.platform !== "android" ? null : (window as unknown as { __hcVpn?: boolean }).__hcVpn ?? params.get("vpn") !== "off"),
   setupStart: async (input, name) => {
     const l = parseSetupLink(input).link;

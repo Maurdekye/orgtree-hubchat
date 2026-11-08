@@ -202,11 +202,103 @@ pub fn open(roaming: &Path, slug: &str) -> Result<(), String> {
     started
 }
 
-// RED STUBS (orgtree:// links, Orgtree docs/rust-engine/orgtree-links.md)
-pub fn orgtree_version(_entries: &[Uninstall], _exists: impl Fn(&Path) -> bool) -> Option<String> { None }
-pub fn takes_links(_version: &str) -> bool { false }
-pub fn link_url(_org: &str, _token: Option<&str>) -> Option<String> { None }
-pub fn link_for(_listing: &[LocalOrg], _takes: bool, _org: &str, _token: Option<&str>) -> Result<String, String> { Err("stub".into()) }
+// ---------------------------------------------------------------- orgtree:// links
+//
+// Hubchat draws Orgtree's mentions as chips (user 2026-11-08, docket
+// hubchat-render-orgtree-mentions-as-chips-linking). A chip of an org this PC
+// runs opens its target through an orgtree:// link, the mirror of the
+// hubchat:// links Orgtree opens (user 2026-11-08 mb3e5b66f1e00). The contract
+// is Orgtree's docs/rust-engine/orgtree-links.md: one exact shape per kind,
+// whose path is the canonical token. The link is built here from checked
+// parts, never passed through as text, and handed to the system opener.
+
+/// The registered Orgtree's version: its Uninstall entry's DisplayVersion,
+/// else the version in its name ("Orgtree <version>"), for the same entry
+/// `orgtree_exe` picks.
+pub fn orgtree_version(entries: &[Uninstall], exists: impl Fn(&Path) -> bool) -> Option<String> {
+    let exe = orgtree_exe(entries, &exists)?;
+    let entry = entries.iter().filter(|e| is_orgtree(&e.display_name)).find(|e| program(e).as_deref() == Some(exe.as_path()))?;
+    let version = entry.display_version.trim();
+    if !version.is_empty() {
+        return Some(version.to_string());
+    }
+    entry.display_name.trim().strip_prefix("Orgtree ").map(str::to_string)
+}
+
+/// Orgtree 4.5.9 is the first that takes orgtree:// links; its prereleases
+/// (4.5.9-alpha.N) do too.
+pub fn takes_links(version: &str) -> bool {
+    let core = version.split(['-', '+']).next().unwrap_or("");
+    let Ok(parts) = core.split('.').map(str::parse::<u64>).collect::<Result<Vec<_>, _>>() else { return false };
+    parts.len() == 3 && (parts[0], parts[1], parts[2]) >= (4, 5, 9)
+}
+
+fn seg(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// A node id: a segment, perhaps with `@<generation>` (Orgtree's grammar).
+fn node(s: &str) -> bool {
+    match s.split_once('@') {
+        Some((name, generation)) => seg(name) && !generation.is_empty() && generation.bytes().all(|b| b.is_ascii_digit()),
+        None => seg(s),
+    }
+}
+
+/// The orgtree:// link for one canonical token of `org`, or for the org
+/// alone; None for anything that is not exactly one documented shape.
+pub fn link_url(org: &str, token: Option<&str>) -> Option<String> {
+    if !valid_slug(org) {
+        return None;
+    }
+    let Some(token) = token else { return Some(format!("orgtree://org/{org}")) };
+    let (kind, path) = token.strip_prefix('@')?.split_once(':')?;
+    let parts: Vec<&str> = path.split('/').collect();
+    if parts.first() != Some(&org) {
+        return None;
+    }
+    let shaped = match (kind, &parts[1..]) {
+        ("item" | "doc" | "app" | "panel", [id]) => seg(id),
+        ("agent" | "project", [name]) => node(name),
+        ("mail", [mailbox, id]) => (*mailbox == "user" || *mailbox == "org") && seg(id),
+        ("mail", ["node", name, id]) => node(name) && seg(id),
+        _ => false,
+    };
+    shaped.then(|| format!("orgtree://{kind}/{path}"))
+}
+
+/// The link to open, when this PC's Orgtree takes links and hosts the org.
+pub fn link_for(listing: &[LocalOrg], takes: bool, org: &str, token: Option<&str>) -> Result<String, String> {
+    if !takes {
+        return Err("This PC's Orgtree can't open links yet".into());
+    }
+    if !listing.iter().any(|o| o.slug == org) {
+        return Err("That org isn't on this PC's Orgtree".into());
+    }
+    link_url(org, token).ok_or_else(|| "That isn't an Orgtree link".to_string())
+}
+
+/// orgtree:// is registered for this user (Orgtree claims it at start).
+/// Without it Windows would offer to look for an app instead of opening one.
+fn scheme_registered() -> bool {
+    use winreg::enums::HKEY_CLASSES_ROOT;
+    use winreg::RegKey;
+    RegKey::predef(HKEY_CLASSES_ROOT)
+        .open_subkey(r"orgtree\shell\open\command")
+        .and_then(|k| k.get_value::<String, _>(""))
+        .is_ok_and(|command| !command.trim().is_empty())
+}
+
+/// This PC's Orgtree opens orgtree:// links: installed, 4.5.9 or later, and
+/// the scheme registered.
+pub fn links_supported() -> bool {
+    orgtree_version(&uninstall_entries(), Path::is_file).is_some_and(|v| takes_links(&v)) && scheme_registered()
+}
+
+/// The link for a chip, checked against this PC now.
+pub fn link_here(roaming: &Path, org: &str, token: Option<&str>) -> Result<String, String> {
+    link_for(&listing(roaming), links_supported(), org, token)
+}
 
 #[cfg(test)]
 mod tests {

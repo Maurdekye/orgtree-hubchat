@@ -14,6 +14,8 @@ export interface MenuItem {
   icon: IconName;
   run: () => void;
   disabled?: boolean;
+  /** Its tooltip: why a disabled entry can't run. */
+  title?: string;
   /** Shown in red (destructive). */
   bad?: boolean;
 }

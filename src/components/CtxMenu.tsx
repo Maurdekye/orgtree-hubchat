@@ -74,7 +74,7 @@ export function CtxMenu() {
       {m.items.map((e, i) => (e === "sep"
         ? <div className="sep" role="separator" key={i} />
         : <button key={i} type="button" role="menuitem" tabIndex={-1} className={"mi" + (e.bad ? " bad" : "") + (i === active ? " on" : "")}
-            aria-disabled={e.disabled || undefined} disabled={e.disabled}
+            aria-disabled={e.disabled || undefined} disabled={e.disabled} title={e.title}
             onMouseDown={(ev) => ev.preventDefault()} onMouseEnter={() => setActive(e.disabled ? -1 : i)}
             onClick={() => { if (!e.disabled) { closeMenu(); e.run(); } }}>
             <Icon name={e.icon} />{e.label}

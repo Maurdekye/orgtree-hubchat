@@ -1,7 +1,7 @@
 // One message: question tag, reply quotes, file cards, markdown body with the
 // time and ticks, a question card's options, the failed line, and
 // (desktop) the hover actions.
-import { memo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { memo, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { api, type Attachment, type Message } from "../api";
 import { Icon, iconHTML } from "../lib/icons";
 import { fullWhen, isLong, num, time } from "../lib/format";
@@ -15,6 +15,8 @@ import { previewable } from "../lib/images";
 import { playable } from "../lib/media";
 import { openMenu, selectionIn, type MenuEntry } from "../lib/ctxmenu";
 import { mentionReach } from "../lib/mentions";
+import { useLocalOrgtree } from "../lib/localOrgtree";
+import { chipOpen, orefContext, orgMenuEntry } from "../lib/orgtreeRefs";
 import { attachmentMenu } from "../lib/attachmentActions";
 import { discardLocal, isLocalId, retryLocal, useTransfer } from "../lib/store";
 import { toast } from "../lib/toast";
@@ -114,6 +116,18 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
   const long = !!text && isLong(text);
   const bubble = useRef<HTMLDivElement>(null);
   const marks = useMentionMarks(bubble);
+  // Orgtree mention chips (lib/orgtreeRefs.ts): this message's org, and whether
+  // this PC's Orgtree can open what they name (user 2026-11-08)
+  const desktop = platform === "desktop";
+  const localOrgtree = useLocalOrgtree(desktop);
+  const oref = useMemo(() => orefContext({ peer: m.peer, peerKind, peerName, outgoing: m.outgoing, desktop,
+    links: localOrgtree.links, orgs: localOrgtree.orgs }), [m.peer, peerKind, peerName, m.outgoing, desktop, localOrgtree]);
+  // a chip opens its target in Orgtree, navigation only; elsewhere a tap says where it opens
+  const openChip = (chip: HTMLElement) => {
+    const go = chipOpen(chip.dataset.oref, oref);
+    if (go) void api.openOrgtreeLink(go.org, go.token).catch((e) => toast(errText(e)));
+    else if (platform === "android") toast(chip.title);
+  };
 
   // a mention opens its chat; one that none of my hubs lists opens nothing
   // (user 2026-10-29): its tooltip says why, and on Android a tap says it
@@ -129,6 +143,8 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
     if (copy) { const pre = copy.closest(".code")?.querySelector("pre"); if (pre) void copyText(pre.innerText, "Code copied"); e.stopPropagation(); return; }
     const link = t.closest("a.md-a") as HTMLElement | null;
     if (link) { e.preventDefault(); void openLink(link.dataset.href || ""); return; }
+    const chip = t.closest("a.oref") as HTMLElement | null;
+    if (chip) { e.preventDefault(); openChip(chip); return; }
     const addr = t.closest("a.addr") as HTMLElement | null;
     if (addr) { e.preventDefault(); openMention(addr.dataset.slug || ""); return; }
     // desktop: Ctrl+click adds the message to the selection (multi-reply)
@@ -140,6 +156,7 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
     if (e.key !== "Enter" && e.key !== " ") return;
     const t = e.target as HTMLElement;
     if (t.matches("a.md-a")) { e.preventDefault(); void openLink(t.dataset.href || ""); }
+    else if (t.matches("a.oref")) { e.preventDefault(); openChip(t); }
     else if (t.matches("a.addr")) { e.preventDefault(); openMention(t.dataset.slug || ""); }
   };
 
@@ -213,15 +230,15 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
   if (text && long) {
     body = (
       <>
-        <div className={"mbody" + (open ? "" : " clamp")} dir="auto" dangerouslySetInnerHTML={{ __html: md(text) }} />
+        <div className={"mbody" + (open ? "" : " clamp")} dir="auto" dangerouslySetInnerHTML={{ __html: md(text, oref) }} />
         <button className="more" onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>{open ? "Show less" : "Show more · " + num(text.length) + " characters"}</button>
         {metaLast ? null : <div className="meta-line" dangerouslySetInnerHTML={{ __html: meta }} />}
       </>
     );
   } else if (text && metaLast) {
-    body = <div className="mtext" dir="auto" dangerouslySetInnerHTML={{ __html: md(text) }} />;
+    body = <div className="mtext" dir="auto" dangerouslySetInnerHTML={{ __html: md(text, oref) }} />;
   } else if (text) {
-    let h = md(text);
+    let h = md(text, oref);
     h = /<\/p>$/.test(h) ? h.slice(0, -4) + meta + "</p>" : h + '<div class="meta-line">' + meta + "</div>";
     body = <div className="mtext" dir="auto" dangerouslySetInnerHTML={{ __html: h }} />;
   } else if (!metaLast) {
@@ -252,10 +269,17 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
     const items: MenuEntry[] = [];
     const link = t.closest("a.md-a") as HTMLElement | null;
     const addr = t.closest("a.addr") as HTMLElement | null;
+    const chip = t.closest("a.oref") as HTMLElement | null;
     const att = t.closest("[data-att]") as HTMLElement | null;
     if (link) {
       const href = link.dataset.href || "";
       items.push({ label: "Open link", icon: "open_in_new", run: () => void openLink(href) }, { label: "Copy link", icon: "link", run: () => void copyText(href, "Link copied") }, "sep");
+    } else if (chip) {
+      // an Orgtree chip: just its org, in Orgtree (user 2026-11-08 mb6a4bdb7c944)
+      const entry = orgMenuEntry(chip.dataset.oref, oref);
+      const org = entry.org;
+      items.push({ label: entry.label, icon: "open_in_new", disabled: !org, title: entry.title || undefined,
+        run: () => { if (org) void api.openOrgtreeLink(org, null).catch((er) => toast(errText(er))); } }, "sep");
     } else if (addr) {
       const slug = addr.dataset.slug || "";
       // the contact block (Open chat, Contact info, Copy address); an address no hub of mine lists has no chat to open, so

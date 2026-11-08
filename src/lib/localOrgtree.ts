@@ -8,6 +8,9 @@ import { api, type LocalOrgtreeOrg } from "../api";
 
 const FRESH_MS = 60_000;
 let orgs: LocalOrgtreeOrg[] = [];
+// it opens orgtree:// links (Orgtree 4.5.9 or later): Orgtree mention chips may open
+let links = false;
+let snapshot: { orgs: LocalOrgtreeOrg[]; links: boolean } = { orgs, links };
 let checked = 0;
 let reading = false;
 const subs = new Set<() => void>();
@@ -16,8 +19,10 @@ const emit = () => subs.forEach((f) => f());
 function refresh(): void {
   if (reading || Date.now() - checked < FRESH_MS) return;
   reading = true;
-  api.localOrgtreeOrgs().then((next) => { orgs = next; }, () => { orgs = []; })
-    .finally(() => { checked = Date.now(); reading = false; emit(); });
+  Promise.all([
+    api.localOrgtreeOrgs().then((next) => { orgs = next; }, () => { orgs = []; }),
+    api.orgtreeLinks().then((next) => { links = next === true; }, () => { links = false; }),
+  ]).finally(() => { checked = Date.now(); reading = false; snapshot = { orgs, links }; emit(); });
 }
 
 /** The org the Orgtree install on this PC hosts at this address, if any. */
@@ -32,8 +37,23 @@ export function useLocalOrgtreeOrg(address: string, enabled: boolean): LocalOrgt
   return enabled ? list.find((o) => o.address === address) : undefined;
 }
 
+/** This PC's Orgtree: the orgs it hosts and whether it opens orgtree:// links
+ *  (Orgtree mention chips, lib/orgtreeRefs.ts). Nothing while disabled. */
+export function useLocalOrgtree(enabled: boolean): { orgs: LocalOrgtreeOrg[]; links: boolean } {
+  useEffect(() => {
+    if (!enabled) return;
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [enabled]);
+  const now = useSyncExternalStore((f) => { subs.add(f); return () => { subs.delete(f); }; }, () => snapshot);
+  return enabled ? now : NONE;
+}
+const NONE = { orgs: [] as LocalOrgtreeOrg[], links: false };
+
 /** Orgtree couldn't be started on it: a plain badge until the next check. */
 export function forgetLocalOrgtreeOrg(slug: string): void {
   orgs = orgs.filter((o) => o.slug !== slug);
+  snapshot = { orgs, links };
   emit();
 }

@@ -1050,6 +1050,46 @@ pub fn hc_open_orgtree_org(app: tauri::AppHandle, slug: String) -> R<()> {
     }
 }
 
+/// This PC's Orgtree opens orgtree:// links (4.5.9 or later, scheme
+/// registered): Orgtree mention chips may open (Orgtree's
+/// docs/rust-engine/orgtree-links.md). Never on a phone.
+#[tauri::command]
+pub fn hc_orgtree_links() -> R<bool> {
+    #[cfg(windows)]
+    {
+        Ok(crate::local_orgtree::links_supported())
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(false)
+    }
+}
+
+/// Open an Orgtree mention's target (`token`) or just its org (`token`
+/// absent) in this PC's Orgtree through an orgtree:// link. Navigation only:
+/// the link is built natively from checked parts, for an org this PC hosts.
+#[tauri::command]
+pub fn hc_open_orgtree_link(app: tauri::AppHandle, org: String, token: Option<String>) -> R<()> {
+    #[cfg(windows)]
+    {
+        use tauri::Manager;
+        use tauri_plugin_opener::OpenerExt;
+        let roaming = app.path().data_dir().map_err(|_| "Orgtree isn't on this PC".to_string())?;
+        let url = crate::local_orgtree::link_here(&roaming, &org, token.as_deref())?;
+        let opened = app.opener().open_url(url, None::<&str>).map_err(|_| "Orgtree could not be opened".to_string());
+        match &opened {
+            Ok(()) => tracing::info!("opened an orgtree:// link"),
+            Err(_) => tracing::warn!("an orgtree:// link could not be opened"),
+        }
+        opened
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (app, org, token);
+        Err("Orgtree isn't on this device".into())
+    }
+}
+
 /// Whether this device's traffic goes through a VPN now (Android); None
 /// where it can't be told.
 #[tauri::command]

@@ -13,6 +13,27 @@
 import { Marked, type MarkedToken, type Token, type Tokens } from "marked";
 import DOMPurify from "dompurify";
 import { resolveMentionTarget } from "./mentions";
+import { chipHtml, nextOref, nodeChip, nodeNameAtStart, NO_OREF_CONTEXT, orefAtStart, parseOref, tokenChip, type OrefContext } from "./orgtreeRefs";
+
+// The message being rendered: what its Orgtree mention chips may do (lib/orgtreeRefs.ts).
+// Set for one synchronous parse by md(), and back to "nothing opens" after it.
+let orefCtx: OrefContext = NO_OREF_CONTEXT;
+
+/** Where the next bare `@name` that could be an Orgtree node starts: only in a message
+ *  that has an org, and never a contact's name, which stays the contact's mention. */
+const NODE_SCAN_RE = /(?:^|[^0-9A-Za-z._%+@:/-])@[a-z0-9]/g;
+function nextNodeName(s: string): number | undefined {
+  if (!orefCtx.nodes) return undefined;
+  NODE_SCAN_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = NODE_SCAN_RE.exec(s)) !== null) {
+    const at = m.index + m[0].length - 2;
+    const name = nodeNameAtStart(s.slice(at));
+    if (name && !resolveMentionTarget("@" + name)) return at;
+    NODE_SCAN_RE.lastIndex = at + 1;
+  }
+  return undefined;
+}
 
 const ESC: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 export const esc = (s: unknown) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ESC[c]);
@@ -62,6 +83,17 @@ const marked = new Marked({
     html: () => undefined,
   },
   extensions: [{
+    // An Orgtree mention token (`@item:org/slug` and its kin): a chip, before the
+    // contact mentions so `@app:…` never reads as a contact named "app".
+    name: "oref",
+    level: "inline",
+    start: (s: string) => nextOref(s),
+    tokenizer(src: string) {
+      const ref = orefAtStart(src);
+      return ref ? { type: "oref", raw: ref.token, html: chipHtml(tokenChip(ref, orefCtx)) } : undefined;
+    },
+    renderer: (t: Tokens.Generic) => String(t.html),
+  }, {
     name: "addr",
     level: "inline",
     start: (s: string) => {
@@ -88,6 +120,19 @@ const marked = new Marked({
     },
     renderer: (t: Tokens.Generic) =>
       '<a class="addr mention" data-slug="' + esc(t.slug) + '" title="' + esc(t.title || t.label || ("@net:" + t.slug)) + '" tabindex="0" role="link">' + esc(t.label || ("@net:" + t.slug)) + "</a>",
+  }, {
+    // A bare `@name` that is no contact, in a message with an org: that org's agent or
+    // project, as one generic chip (user 2026-11-08 m0dc5cb44bd7f, m7c183781895c Q1/Q3).
+    name: "onode",
+    level: "inline",
+    start: (s: string) => nextNodeName(s),
+    tokenizer(src: string) {
+      const name = orefCtx.nodes ? nodeNameAtStart(src) : null;
+      if (!name || resolveMentionTarget("@" + name)) return undefined;
+      const chip = nodeChip(name, orefCtx);
+      return chip ? { type: "onode", raw: "@" + name, html: chipHtml(chip) } : undefined;
+    },
+    renderer: (t: Tokens.Generic) => String(t.html),
   }],
   renderer: {
     html: ({ text, block }) => {
@@ -119,7 +164,7 @@ const PURIFY = {
     "ul", "ol", "li", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6",
     "table", "thead", "tbody", "tr", "th", "td", "svg", "path",
   ],
-  ALLOWED_ATTR: ["class", "title", "data-href", "data-slug", "data-act", "start", "viewBox", "d", "aria-hidden", "tabindex", "role", "dir"],
+  ALLOWED_ATTR: ["class", "title", "data-href", "data-slug", "data-oref", "data-act", "start", "viewBox", "d", "aria-hidden", "tabindex", "role", "dir"],
   ALLOW_DATA_ATTR: false,
   ALLOW_ARIA_ATTR: false,
   ALLOW_UNKNOWN_PROTOCOLS: false,
@@ -129,8 +174,12 @@ DOMPurify.addHook("afterSanitizeAttributes", (n) => {
   if (n.hasAttribute("data-href") && !safeUrl(n.getAttribute("data-href"))) n.removeAttribute("data-href");
   if (n.nodeName === "A" && n.classList.contains("md-a") && !n.hasAttribute("data-href")) n.removeAttribute("class");
   if (n.hasAttribute("data-act") && n.getAttribute("data-act") !== "copy-code") n.removeAttribute("data-act");
+  // an Orgtree chip's token: only on a chip, and only one the grammar reads
+  if (n.hasAttribute("data-oref") && !(n.nodeName === "A" && n.classList.contains("oref") && parseOref(n.getAttribute("data-oref") || "")))
+    n.removeAttribute("data-oref");
   // keyboard reach for links and addresses (they carry no href): only tabindex 0 and role link, only on them
-  const linky = n.nodeName === "A" && (n.hasAttribute("data-href") || n.hasAttribute("data-slug"));
+  const linky = n.nodeName === "A" && (n.hasAttribute("data-href") || n.hasAttribute("data-slug")
+    || (n.classList.contains("oref") && n.classList.contains("on") && n.hasAttribute("data-oref")));
   if (n.hasAttribute("tabindex") && !(linky && n.getAttribute("tabindex") === "0")) n.removeAttribute("tabindex");
   if (n.hasAttribute("role") && !(linky && n.getAttribute("role") === "link")) n.removeAttribute("role");
   // each block takes its own direction (Arabic, Hebrew), without mirroring the layout
@@ -141,9 +190,15 @@ DOMPurify.addHook("afterSanitizeAttributes", (n) => {
 /** The second wall, on its own: only the allow-listed tags and attributes survive. */
 export const clean = (html: string): string => DOMPurify.sanitize(html, PURIFY) as unknown as string;
 
-/** Markdown to HTML that is safe for dangerouslySetInnerHTML. */
-export function md(src: string): string {
-  return clean((marked.parse(String(src || "").replace(/\r\n?/g, "\n"), { async: false }) as string).trim());
+/** Markdown to HTML that is safe for dangerouslySetInnerHTML. `oref`: what this message's
+ *  Orgtree mention chips may do (lib/orgtreeRefs.ts orefContext); without it they only show. */
+export function md(src: string, oref: OrefContext = NO_OREF_CONTEXT): string {
+  orefCtx = oref;
+  try {
+    return clean((marked.parse(String(src || "").replace(/\r\n?/g, "\n"), { async: false }) as string).trim());
+  } finally {
+    orefCtx = NO_OREF_CONTEXT;
+  }
 }
 
 /** Bundled guide only: preserve local section links without widening the

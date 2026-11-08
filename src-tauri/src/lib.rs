@@ -552,6 +552,8 @@ pub fn run() {
             commands::hc_open_app,
             commands::hc_local_orgtree_orgs,
             commands::hc_open_orgtree_org,
+            commands::hc_orgtree_links,
+            commands::hc_open_orgtree_link,
             commands::hc_vpn_active,
             commands::hc_setup_start,
             commands::hc_setup_status,

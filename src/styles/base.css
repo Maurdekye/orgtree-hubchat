@@ -427,3 +427,12 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .bubble a.addr.mention.named { position: relative; }
 .bubble a.addr.mention.named .mtok { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .mname::before { content: attr(data-name); }
+/* Orgtree mentions as chips (lib/orgtreeRefs.ts): Orgtree's mark, then the target's own id; the
+   token's prefix stays in the text, visually hidden, so a copy is the original. One that opens
+   here (desktop, this PC's org) is a link like a contact mention; any other is muted, with a hint. */
+.bubble a.oref { position: relative; font-weight: 600; color: var(--dim); text-decoration: none; cursor: default; }
+.msg.out .bubble a.oref { color: var(--out-dim); }
+.bubble a.oref.on { color: var(--accent-text); text-decoration: underline; text-decoration-color: rgba(217, 119, 87, .45); cursor: pointer; }
+.msg.out .bubble a.oref.on { color: inherit; }
+.bubble a.oref .omark { width: 1.05em; height: 1.05em; vertical-align: -.17em; margin-right: .2em; fill: currentColor; }
+.bubble a.oref .otok { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

@@ -596,6 +596,11 @@ export const tauriApi = {
   localOrgtreeOrgs: () => invoke<LocalOrgtreeOrg[]>("hc_local_orgtree_orgs"),
   /** Start (or bring forward) the registered Orgtree on one of them; rejects when it can't. */
   openOrgtreeOrg: (slug: string) => invoke<void>("hc_open_orgtree_org", { slug }),
+  /** Windows: this PC's Orgtree opens orgtree:// links (4.5.9 or later): Orgtree mention chips may open. */
+  orgtreeLinks: () => invoke<boolean>("hc_orgtree_links"),
+  /** Open an Orgtree mention's target (`token`), or just its org (`token` null), in this PC's Orgtree
+   *  through an orgtree:// link (Orgtree's docs/rust-engine/orgtree-links.md); rejects when it can't. */
+  openOrgtreeLink: (org: string, token: string | null) => invoke<void>("hc_open_orgtree_link", { org, token }),
   /** Android: whether this device's traffic goes through a VPN now; null where it can't be told. */
   vpnActive: () => invoke<boolean | null>("hc_vpn_active"),
   /** Join the setup link's hub and send its org the code; returns the chat to open. */
