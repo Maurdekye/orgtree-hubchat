@@ -56,7 +56,7 @@ export function MessageInfoBody({ m }: { m: Message }) {
     { label: "Sent: hub " + (hub || "") + " has it", at: m.received_at || (m.state === "sent" ? m.sent_at : null), note: "Hub clock: orders the conversation" },
     // Later receipts prove a fetch, but do not supply its timestamp (user 2026-10-18).
     { label: "Fetched by " + who, at: m.fetched_at, implied: !!(ms(m.delivered_at) || ms(m.read_at)), note: agent ? "Its Orgtree pulled it from the hub" : "One of their devices pulled it" },
-    { label: "Delivered", at: m.delivered_at, note: agent ? "In its org inbox" : "On their device" },
+    { label: "Delivered", at: m.delivered_at, note: agent ? "In its org mailbox" : "On their device" },
     { label: "Read", at: m.read_at, note: agent ? "An agent or a person opened it" : "They opened the chat" },
   ];
   return (

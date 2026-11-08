@@ -26,7 +26,7 @@ const BUSY_NOTE: Partial<Record<Kind, string>> = {
  *  as Orgtree's own setting warns ("kept but not read or delivered automatically"). */
 const DND_NOTE: Partial<Record<Kind, string>> = {
   person: "“Do not disturb” means they've turned off notifications on all their devices: your messages still arrive, and they'll see them when they look.",
-  org: "“Do not disturb” means its outside mail is on hold: your messages are kept, but no agent there sees them until one checks its inbox.",
+  org: "“Do not disturb” means its outside mail is on hold: your messages are kept, but no agent there sees them until one checks its mailbox.",
 };
 const bare = (url: string) => url.replace(/^https?:\/\//, "");
 
