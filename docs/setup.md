@@ -12,7 +12,7 @@ The recommended setup for a team of developers is for **every developer to insta
 
 Each developer uses their own Hubchat identity, and each organization has its own Orgtree identity. Joining the same hub does not merge them or automatically grant ownership of an organization. Do not share recovery words or identity secrets with colleagues. To add your own phone or another PC, use **Settings > Devices > Link a device** (section 6).
 
-Compose human hub mail in Hubchat, and manage or message your own agents in Orgtree. A connection to the hub does not override the organization's mail policy. On the current Orgtree development branch, disabling the org inbox blocks external mail and the org inbox is a viewer; those changes may not be in your installed release.
+Compose human hub mail in Hubchat, and manage or message your own agents in Orgtree. A connection to the hub does not override the organization's mail policy. On the current Orgtree development branch, disabling the org mailbox blocks external mail and the org mailbox is a viewer; those changes may not be in your installed release.
 
 Keep the shared standalone mailhub reachable only by the intended company members: anyone who can reach it can register, and the operator can read the mail it stores. The built-in mailhub remains an option for individuals and small teams; there is no numerical cutoff or required migration. Independent Claude Code or Codex sessions can optionally join through [hubtool](https://github.com/Maurdekye/orgtree-mailhub#connect-an-agent-session), a separate workflow that is not required for these two applications.
 

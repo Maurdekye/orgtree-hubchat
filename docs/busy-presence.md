@@ -10,7 +10,7 @@ Hubchat 1.2.7 shows it with Mail hub 2.3.0 and Orgtree 4.5.3, as Orgtree does.
 
 An address a hub lists online can be **busy** instead: connected, but no one can answer it right now.
 
-- An **org** is busy while none of the agents who answer its outside mail (its org-inbox holders) can start a turn:
+- An **org** is busy while none of the agents who answer its outside mail (its org-mailbox holders) can start a turn:
   there are none, or every one is halted, frozen or retired, or the org's Stop all is latched. Its Orgtree tells the
   hub; it is online again within a few seconds of one holder being able to run.
 - A **person** is busy once Hubchat hasn't been in front on any of their devices for an hour: "in front" is Hubchat's
@@ -47,11 +47,11 @@ Privacy says you show as busy after the hour.
 
 User request 2026-10-31 08:51Z (same docket): "when an org's outside operations are set to do not disturb, it should
 show a red status icon in hubchat / elsewhere"; offline wins over it, "Offline for both" (09:03Z). An org whose
-outside mail is set to Do not disturb in Orgtree (Org settings > Connections > External org inbox) shows **Do not
+outside mail is set to Do not disturb in Orgtree (Org settings > Connections > External org mailbox) shows **Do not
 disturb**: the presence dot filled red through one token (`--dnd` is `var(--bad)` on every theme scope,
 `src/styles/tokens.css`) and the words Do not disturb wherever presence shows (Android's app bar line: "do not
 disturb"). The hub picker says "<name> is on Do not disturb here"; Contact info says its outside mail is on hold (kept,
-but no agent there sees it until one checks its inbox); the Directory gives it its own section, **Do not disturb**,
+but no agent there sees it until one checks its mailbox); the Directory gives it its own section, **Do not disturb**,
 after Busy now. It outranks busy, and offline outranks it.
 
 - The hub (Mail hub 2.3.0, feature `dnd`): an org says it with `POST /api/presence {busy, dnd}`. Roster rows carry
