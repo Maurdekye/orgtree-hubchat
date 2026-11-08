@@ -1,5 +1,24 @@
 # Hubchat development invariants
 
+- 2026-11-08: Orgtree mentions are chips (`@item:`, `@doc:`, `@app:`, `@panel:`,
+  `@mail:`, `@agent:`/`@project:`, and a bare `@name` that is no contact in a
+  conversation with an org; never `@user`). They come from md()'s `oref`/`onode`
+  extensions, built by the pure `orgtreeRefs.ts`, whose grammar is pinned to
+  Orgtree's fixture. Unlike mention marks they ARE md() markup: the allow-list
+  gains only `data-oref`, kept on `a.oref` when the grammar reads it. A chip opens
+  (desktop only) when the message's org (sender, or the org I sent it to) is in
+  `local-orgs.json` BY ADDRESS and the token's org is a listed slug. My messages
+  to people count; theirs never do. The registered Orgtree must be >= 4.5.9-0
+  with `HKCR\orgtree` present. A click re-decides from the token and calls
+  `hc_open_orgtree_link`, which builds the orgtree:// link natively (Orgtree's
+  `docs/rust-engine/orgtree-links.md`). Right-click: "Open <org> in Orgtree"
+  (org only), disabled with "Opens in Orgtree on the PC that runs <org>".
+  Phone: display-only, a tap toasts that hint. [decided: user 2026-11-08
+  m601d7df721da, mb3e5b66f1e00, mb6a4bdb7c944, m7c183781895c via the Orgtree
+  coordinator; verified: orgtreeRefs.ts, md.ts, MessageView.tsx,
+  local_orgtree.rs, commands.rs; docs/orgtree-mention-chips.md;
+  tools/orgtree-chips.test.ts, tools/proof-orgtree-chips.mjs]
+
 - 2026-11-06: Send cost is flat in history (user 2026-11-06 12:09Z-12:10Z "close to a full second from hubchat"). A chat change re-reads only the newest `WINDOW` (200) rows once more than that are loaded, merged by id (`src/lib/chatwindow.ts` `mergeWindow`, `readPlan`); a send (`refresh()`) does the same; opening the chat, a focus gain (once per gain), a delete (`reload()`) and a page change re-read the whole loaded range. Accepted: a late receipt on a row older than 200 shows on reopen. `Store::messages_where` reads attachments in one statement per 500 rows (`attach_queries` counts them; `store_send_scale_tests.rs`, `tools/chat-window.test.ts`). `chats()` stays O(history) in SQL (7 ms at 20k rows on a PC) and is already coalesced in `schedule`. [decided: coordinator-opus 2026-11-06 12:39Z; verified: store.ts useMessages, store.rs]
 
 - 2026-11-01: Mention kind filters: `@org:` / `@person:` / `@chat:` in the

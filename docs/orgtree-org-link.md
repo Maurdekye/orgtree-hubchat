@@ -7,6 +7,10 @@ that org up". The design (a listing file, an exact address match, a registered
 install and Orgtree's own taskbar argument) was approved by the Orgtree
 coordinator the same day.
 
+Orgtree mentions in messages open in Orgtree the same way, through the same
+native module (`local_orgtree.rs`) and an `orgtree://` link: see
+[orgtree-mention-chips](orgtree-mention-chips.md).
+
 ## What the user sees
 
 On desktop, Contact info's **Orgtree org** badge of an org that the Orgtree
