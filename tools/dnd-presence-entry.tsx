@@ -23,7 +23,7 @@ const until = async (f: () => boolean, ms: number) => { const t = performance.no
 
 const A = "wss://hub-a.invalid", B = "wss://hub-b.invalid";
 const ME = "scratch.abcdef", DELTA = "delta.7a8b9c", ACME = "acme.4d5e6f", ALICE = "alice.111111", BETA = "beta.222222", OLLIE = "ollie.333333";
-const DND_NOTE = "“Do not disturb” means its outside mail is on hold: your messages are kept, but no agent there sees them until one checks its inbox.";
+const DND_NOTE = "“Do not disturb” means its outside mail is on hold: your messages are kept, but no agent there sees them until one checks its mailbox.";
 const ONLINE_NOTE = "“Online” means its Orgtree is connected to the hub — not that an agent is typing.";
 const NL = String.fromCharCode(10);
 

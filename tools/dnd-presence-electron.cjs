@@ -13,13 +13,11 @@ const views={
  'desktop/presence':[['step','list'],['shot','desktop-list'],['step','header'],['shot','desktop-header'],['step','picker'],['shot','desktop-picker'],['step','picker-close'],['step','mention'],['step','info-org'],['shot','desktop-info-org'],['step','directory'],['shot','desktop-directory']],
  'android/presence':[['step','list'],['shot','android-list'],['step','header'],['shot','android-header'],['step','picker'],['shot','android-picker'],['step','picker-close'],['step','mention'],['step','info-org'],['shot','android-info-org'],['step','directory'],['shot','android-directory']],
 };
-// What the source before Do not disturb fails, view by view (and nothing else): every Do not disturb check (before it,
-// an org on Do not disturb is busy, which the hub also says); online, busy and offline pass as they were
-const dndChecks=['the chat list: an org on Do not disturb wears the red dot, titled Do not disturb',"the open chat's header says Do not disturb, dot and words",
- 'the hub picker: the hub where it is on Do not disturb says so, dot and words','a mention of an org on Do not disturb: its hover leads with Do not disturb',
- 'Contact info of an org on Do not disturb: the red dot and the words Do not disturb','Contact info of an org on Do not disturb says what it means, after what online means',
- 'the Directory: Online now, then Busy now, then Do not disturb, then the people seen lately','the Directory: the row on Do not disturb wears the red dot and says do not disturb'];
-const expectedRed={'desktop/presence':dndChecks,'android/presence':dndChecks};
+// What the source before the org mailbox wording fails, view by view (and nothing else): only the note on what an
+// org's Do not disturb means, which now says "until one checks its mailbox" (user 2026-11-08 m3bf156994edc: "org
+// inbox" is "org mailbox"); every other check passes as it was
+const mailboxChecks=['Contact info of an org on Do not disturb says what it means, after what online means'];
+const expectedRed={'desktop/presence':mailboxChecks,'android/presence':mailboxChecks};
 app.whenReady().then(async()=>{
  const s=session.defaultSession;
  s.setPermissionRequestHandler((_w,_p,cb)=>cb(false));s.setPermissionCheckHandler(()=>false);

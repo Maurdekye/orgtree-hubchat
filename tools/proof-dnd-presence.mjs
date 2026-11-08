@@ -1,7 +1,8 @@
 // Focused mounted desktop/Android check of Do not disturb presence (tools/dnd-presence-entry.tsx, driven by
 // tools/dnd-presence-electron.cjs): synthetic contacts and chats; no real data, media or network.
 // Run inside a kernel Job with HUBCHAT_JOB_CONTAINED=1 and a new output folder under C:/orgtree-build
-// (HUBCHAT_RENDERER_OUT). HUBCHAT_PROOF_PHASE=red expects exactly the failures of the source before Do not disturb.
+// (HUBCHAT_RENDERER_OUT). HUBCHAT_PROOF_PHASE=red expects exactly the failures `expectedRed` names in
+// tools/dnd-presence-electron.cjs: those of the source before the latest change the proof pins.
 //   node tools/proof-dnd-presence.mjs [repo]   (default: the current folder)
 import fs from 'node:fs';import path from 'node:path';import{createRequire}from'node:module';import{spawnSync}from'node:child_process';
 const repo=path.resolve(process.argv[2]||process.cwd()),out=path.resolve(process.env.HUBCHAT_RENDERER_OUT||'');
