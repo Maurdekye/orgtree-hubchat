@@ -1,0 +1,1 @@
+Orgtree mentions show as chips, and on a PC that runs that org a click opens the item in Orgtree 4.5.9 or later. Hubchat also says "org mailbox" now.
