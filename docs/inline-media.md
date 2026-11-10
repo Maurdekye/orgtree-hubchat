@@ -14,8 +14,9 @@ day.
   fullscreen button fills the screen; Escape (desktop) or Back (Android)
   leaves, and Escape does nothing else: the chat, a prepared reply or an open
   panel stay.
-- **Audio** (MP3, WAV, Ogg, M4A, AAC, FLAC): a **Play audio** button; a click
-  shows its native control row, playing. Nothing is fetched before the click.
+- **Audio** (MP3, WAV, Ogg, M4A, AAC, FLAC): its player is shown on render, like
+  a video's (user 2026-11-10; this replaces the **Play audio** button), with its
+  native control row, paused. Only its own controls play it.
 - Scrolled away, the window hidden, or the chat changed, a player lets go of
   its file and comes back paused. It never plays on its own.
 - The file row stays below the player: Download, Open, Show in folder and
