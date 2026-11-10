@@ -11,8 +11,8 @@ import {boot} from './symmetry-s4-harness.mjs';
 const {mod, h, act, checks, settle, render, document, window} = await boot('copy-mention-entry.tsx');
 const {api, store, MessageView, Conversation, ChatRows, RailRows, ContactRow, ConvMenu, CtxMenu, closeMenu, PlatformCtx, ToastProbe} = mod;
 for (const k of ['getComputedStyle', 'MutationObserver']) Object.defineProperty(globalThis, k, {value: k === 'getComputedStyle' ? window[k].bind(window) : window[k], configurable: true});
-globalThis.requestAnimationFrame = f => setTimeout(f, 0);
-globalThis.cancelAnimationFrame = clearTimeout;
+Object.defineProperty(globalThis, 'requestAnimationFrame', {value: f => setTimeout(f, 0), configurable: true, writable: true});
+Object.defineProperty(globalThis, 'cancelAnimationFrame', {value: clearTimeout, configurable: true, writable: true});
 window.HTMLElement.prototype.scrollIntoView = function () {};
 
 // the recording clipboard stub

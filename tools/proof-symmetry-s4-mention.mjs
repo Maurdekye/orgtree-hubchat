@@ -19,7 +19,7 @@ const link = document.querySelector('a.addr');
 check('the address in the message is a link', !!link);
 await rightClick(link);
 const got = labels();
-check('right-click on an address leads with Open chat, Contact info, Copy mention', JSON.stringify(got.slice(0, 3)) === '["Open chat","Contact info","Copy address"]');
+check('right-click on an address leads with Open chat, Contact info, Copy mention', JSON.stringify(got.slice(0, 3)) === '["Open chat","Contact info","Copy mention"]');
 check('the message actions follow the contact block', got.includes('Reply') && got.indexOf('Reply') > 2);
 await click([...document.querySelectorAll('[role="menuitem"]')].find(e => e.textContent.trim() === 'Contact info'));
 check('Contact info opens that address\'s contact, not the open chat\'s', JSON.stringify(infos) === '["maya.e71f2b"]' && opened.length === 0);
@@ -43,5 +43,5 @@ check('a mention some hub of mine lists keeps the whole contact block', JSON.str
 m.body = 'Ask @net:ghost.aaaaaa about it';
 await render(h(PlatformCtx.Provider, {value: 'desktop'}, h(CtxMenu), h(MessageView, {m: {...m, id: 'm2'}, first: true, peerName: 'Casey', peerKind: 'person', quoted: undefined, hover: false, onReply: noop, onInfo: noop, onDelete: noop, onJump: noop, onOpenAddr: a => opened.push(a), onContactInfo: a => infos.push(a)})));
 await rightClick(document.querySelector('a.addr'));
-check('an address no hub lists offers only Copy mention, no Open chat or Contact info', labels()[0] === 'Copy address' && !labels().includes('Open chat') && !labels().includes('Contact info'));
+check('an address no hub lists offers only Copy mention, no Open chat or Contact info', labels()[0] === 'Copy mention' && !labels().includes('Open chat') && !labels().includes('Contact info'));
 await finish('Mounted desktop MessageView address menu and the chat menu with synthetic API; no native or pixel acceptance');
