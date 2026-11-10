@@ -18,7 +18,7 @@ const manifest=JSON.parse(fs.readFileSync(path.join(out,'media','manifest.json')
 const views={
  'desktop/video':[['step','video-load'],['shot','desktop-video-paused','vid'],['click','video'],['step','video-playing'],['shot','desktop-video-playing','vid'],['fullscreen'],['step','video-fullscreen'],['shot','desktop-video-fullscreen'],['key','Escape'],['step','video-escaped'],['shot','desktop-video-escaped','vid']],
  'desktop/stop':[['step','video-load'],['click','video'],['step','stop-scroll'],['click','video'],['step','stop-hidden'],['click','video'],['step','stop-chat']],
- 'desktop/audio':[['step','audio-load'],['shot','desktop-audio-waiting','aud'],['click','play-audio'],['step','audio-playing'],['shot','desktop-audio-playing','aud'],['step','audio-chat']],
+ 'desktop/audio':[['step','audio-load'],['shot','desktop-audio-open','aud'],['click','play-audio'],['step','audio-playing'],['shot','desktop-audio-playing','aud'],['step','audio-chat']],
  'desktop/limits':[['step','limits'],['shot','desktop-limits']],
  'android/video':[['step','video-load'],['shot','android-video-paused'],['click','video'],['step','video-playing'],['shot','android-video-playing']],
  'android/audio':[['step','audio-load'],['click','play-audio'],['step','audio-playing'],['shot','android-audio-playing']],
@@ -28,10 +28,10 @@ const mediaChecks=['a received video shows its player on load: native controls, 
 const expectedRed={
  'desktop/video':[...mediaChecks,'a click on it plays it','it fills the screen',"and keeps playing there (the card's offscreen release leaves a fullscreen player alone)"],
  'desktop/stop':[...mediaChecks,'scrolled away, a playing video lets go of its file',"scrolled back, it shows its first frame again, paused: it never plays on its own",'hidden (the window minimised or in the tray), a playing video lets go','shown again, it is paused at its first frame','another chat opened, the playing video is gone and let go','back in the chat, the video is paused at its first frame'],
- 'desktop/audio':['received audio shows Play audio, and no player yet','its file row stays below, with Download','Play audio shows its native control row and plays it','another chat opened, the audio stops','back in the chat, it waits for Play audio again'],
+ 'desktop/audio':['received audio shows its player on load like a video: visible native controls, preload metadata, no Play audio button','the audio player read only the start of its file on load, like a video','a click on its play control plays it','another chat opened, the audio stops','back in the chat, its player is open again, paused: it never plays on its own'],
  'desktop/limits':["past 256 MiB a video has no player, Orgtree's note, and its file row",'a WebM video shows its first frame too','a broken video says so, and keeps its file row',"a format this platform can't play says so, and keeps its file row"],
  'android/video':[...mediaChecks,'a click on it plays it'],
- 'android/audio':['received audio shows Play audio, and no player yet','its file row stays below, with Download','Play audio shows its native control row and plays it'],
+ 'android/audio':['received audio shows its player on load like a video: visible native controls, preload metadata, no Play audio button','the audio player read only the start of its file on load, like a video','a click on its play control plays it'],
 };
 let log=[];
 function answer(req){
@@ -72,7 +72,7 @@ app.whenReady().then(async()=>{
      r.actions.push({step:arg,state:await js(`window.mediaFixture.step(${JSON.stringify(arg)})`)});
      if(arg==='video-load'){const got=served('vid'),bytes=got.reduce((n,e)=>n+e.read,0);
       hcheck('the player read the start of the video, and only part of it, before Play',got.length>0&&got[0].start===0&&bytes>0&&bytes<manifest.vid.bytes,{bytes,total:manifest.vid.bytes,requests:got.map(e=>[e.range,e.read])});}
-     if(arg==='audio-load')hcheck('nothing of the audio is read before Play audio',served('aud').length===0,served('aud'));
+     if(arg==='audio-load')hcheck('the audio player read only the start of its file on load, like a video',served('aud').length>0&&served('aud')[0].start===0,served('aud'));
     }else if(act==='click')await click(arg);
     else if(act==='key'){win.webContents.sendInputEvent({type:'keyDown',keyCode:arg});win.webContents.sendInputEvent({type:'keyUp',keyCode:arg});r.actions.push({key:arg});}
     else if(act==='fullscreen'){

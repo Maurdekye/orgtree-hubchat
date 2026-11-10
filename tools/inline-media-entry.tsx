@@ -1,6 +1,6 @@
 // Mounted App, synthetic API only: inline video and audio (Hubchat 1.2.7; user 2026-10-30 14:24Z and 14:33Z, docket
 // hubchat-inline-video-player-for-video-attachment), as Orgtree's media card plays them. A received video shows its
-// player and first frame on load, paused, and only its own controls play it; audio waits for Play audio. Scrolled
+// player and first frame on load, paused, and only its own controls play it; audio opens on render the same way (user 2026-11-10). Scrolled
 // away, hidden or gone with its chat, a player lets go and comes back paused. Past 256 MiB, unplayable or broken,
 // the file row stays with Orgtree's note. The media come from tools/inline-media-electron.cjs's stand-in for the
 // hcmedia scheme (a 206 streamed as the player reads it, as the hub answers); the driver does the clicks and keys
@@ -174,13 +174,15 @@ async function run() {
       centre(cardOf("aud") ?? bubble("And the notes"));
       await sleep(600);
       const a = audioOf("aud");
-      check("received audio shows Play audio, and no player yet", shown(playButton("aud")) && playButton("aud")!.textContent === "Play audio" && !!a && !shown(a) && !a.getAttribute("src"), { button: playButton("aud")?.outerHTML, audio: state(a) });
+      check("received audio shows its player on load like a video: visible native controls, preload metadata, no Play audio button", shown(a) && a!.controls && a!.preload === "metadata" && !playButton("aud"), { button: playButton("aud")?.outerHTML, audio: state(a) });
+      await sleep(1500);
+      check("the audio doesn't play on its own", !!a && a.paused && a.currentTime === 0 && !played.has("aud"), state(a));
       check("its file row stays below, with Download", !!rowOf("aud") && !!cardOf("aud")?.contains(rowOf("aud")) && /Download/.test(rowOf("aud")!.textContent || ""), rowOf("aud")?.outerHTML.slice(0, 300));
       return state(a);
     },
     "audio-playing": async () => {
       const a = audioOf("aud");
-      check("Play audio shows its native control row and plays it", await playing(a) && shown(a) && a!.controls && !shown(playButton("aud")), state(a));
+      check("a click on its play control plays it", await playing(a) && shown(a) && a!.controls && !playButton("aud"), state(a));
       return state(a);
     },
     "audio-chat": async () => {
@@ -190,7 +192,7 @@ async function run() {
       check("another chat opened, the audio stops", was && !!held && held.paused && !held.getAttribute("src"), state(held));
       await open("Pat");
       centre(cardOf("aud")); await sleep(600);
-      check("back in the chat, it waits for Play audio again", shown(playButton("aud")) && !shown(audioOf("aud")), { button: !!playButton("aud"), audio: state(audioOf("aud")) });
+      check("back in the chat, its player is open again, paused: it never plays on its own", shown(audioOf("aud")) && audioOf("aud")!.paused && audioOf("aud")!.currentTime === 0 && !playButton("aud"), { button: !!playButton("aud"), audio: state(audioOf("aud")) });
       return null;
     },
     // limits: the ceiling, a format this platform can't play, a broken file, and Download
@@ -202,7 +204,7 @@ async function run() {
       check("a WebM video shows its first frame too", await firstFrame(videoOf("webm")), state(videoOf("webm")));
       await until(() => !!note("bad"), 6000);
       check("a broken video says so, and keeps its file row", note("bad") === UNAVAILABLE && !shown(videoOf("bad")) && !!rowOf("bad"), { note: note("bad"), video: state(videoOf("bad")) });
-      playButton("flac")?.click(); await sleep(300);
+      await until(() => !!note("flac"), 3000);
       check("a format this platform can't play says so, and keeps its file row", note("flac") === NOT_SUPPORTED && !!rowOf("flac") && !audioOf("flac")?.getAttribute("src"), { note: note("flac"), audio: state(audioOf("flac")) });
       rowOf("huge")?.click(); await sleep(200);
       check("a file row's Download still downloads", calls.includes("download:huge"), calls);
@@ -210,10 +212,11 @@ async function run() {
     },
   };
   const target = (what: string) => {
-    const e = what === "video" ? videoOf("vid") : what === "play-audio" ? playButton("aud") : null;
+    const e = what === "video" ? videoOf("vid") : what === "play-audio" ? audioOf("aud") : null;
     if (!e) return null;
     const r = e.getBoundingClientRect();
-    return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+    // an audio player's play control is at the left end of its control row; a video toggles on a click at its centre
+    return what === "play-audio" ? { x: Math.round(r.x + 24), y: Math.round(r.y + r.height / 2) } : { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
   };
   window.mediaFixture = { checks, calls, platform, target, step: async (name) => { const f = steps[name]; if (!f) throw Error("no step " + name); return f(); } };
 }
