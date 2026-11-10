@@ -25,7 +25,11 @@ const SCENES = {
     { scene: 'transfers-error', shots: [{ name: 'transfers-page-error', expect: [/could not be read/, /Retry/, /Received from Maya Lin/, /Load more/] }, { name: 'transfers-after-retry', act: 'retry', expect: [/older-1/, /older-2/] }] },
     { scene: 'settings', shots: [{ name: 'settings-tabs-focus', act: 'focusTab', expect: [/Privacy/, /Send read receipts/], fact: OFF }, { name: 'settings-toggled-on', act: 'toggle', expect: [/Send read receipts/], fact: ON }] },
     { scene: 'composer', shots: [{ name: 'composer-default', expect: [/Enter\s*send/, /Shift\+Enter\s*new line/] }, { name: 'composer-pasted-pdf', act: 'paste', expect: [/report\.pdf/] }, { name: 'composer-newline-mode', act: 'setNewline', expect: [/Ctrl\+Enter\s*send/, /Enter\s*new line/] }] },
-    { scene: 'mention', shots: [{ name: 'mention-menu', act: 'menu', expect: [/Open chat/, /Contact info/, /Copy mention/] }] },
+    { scene: 'mention', shots: [{ name: 'mention-menu', act: 'menu', expect: [/Open chat/, /Contact info/, /Copy mention/, /Reply/] }] },
+    { scene: 'cm-chatrow', shots: [{ name: 'cm-chatrow-menu', act: 'menu', expect: [/Open/, /Contact info/, /Copy mention/, /Close DM/] }] },
+    { scene: 'cm-directory', shots: [{ name: 'cm-directory-menu', act: 'menu', expect: [/Message/, /Contact info/, /Copy mention/] }] },
+    { scene: 'cm-header', shots: [{ name: 'cm-header-menu', act: 'menu', expect: [/Contact info/, /Copy mention/, /Close DM/] }] },
+    { scene: 'cm-chips', shots: [{ name: 'cm-chip-open-menu', act: 'chipOpen', expect: [/Open ticket in Orgtree/, /Open Alpha Works in Orgtree/, /Copy mention/] }, { name: 'cm-chip-off-menu', act: 'chipOff', expect: [/Open beta in Orgtree/, /Copy mention/] }] },
   ],
   android: [
     { scene: 'newchat', shots: [{ name: 'newchat-rows', expect: [/Design · Android/, /office/, /lab/] }] },
@@ -35,6 +39,9 @@ const SCENES = {
     { scene: 'transfers', shots: [{ name: 'transfers-history', expect: [/Received from Maya Lin/, /Sent to Maya Lin/] }] },
     { scene: 'transfers-error', shots: [{ name: 'transfers-page-error', expect: [/could not be read/, /Retry/, /Load more/] }, { name: 'transfers-after-retry', act: 'retry', expect: [/older-1/] }] },
     { scene: 'settings', shots: [{ name: 'privacy-off', expect: [/Send read receipts/], fact: OFF }, { name: 'privacy-on', act: 'toggle', expect: [/Send read receipts/], fact: ON }] },
+    { scene: 'cm-convmenu', shots: [{ name: 'cm-convmenu-sheet', expect: [/Contact info/, /Copy mention/, /Close DM/] }] },
+    { scene: 'cm-mention-sheet', shots: [{ name: 'cm-mention-sheet', act: 'menu', expect: [/Open chat/, /Contact info/, /Copy mention/] }] },
+    { scene: 'cm-chip-sheet', shots: [{ name: 'cm-chip-sheet', act: 'menu', expect: [/Copy mention/] }] },
   ],
 };
 

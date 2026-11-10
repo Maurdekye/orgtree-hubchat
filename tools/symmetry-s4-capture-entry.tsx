@@ -11,6 +11,10 @@ import { ContactInfo } from "../src/components/ContactInfo";
 import { TransfersPanel } from "../src/components/Transfers";
 import { SettingsModal, SettingsSection, type SetTab } from "../src/components/Settings";
 import { Conversation } from "../src/components/Conversation";
+import { ChatRows } from "../src/components/ChatList";
+import { ContactRow } from "../src/components/Directory";
+import { ConvMenu } from "../src/components/Android";
+import { closeMenu } from "../src/lib/ctxmenu";
 
 declare global { interface Window { scene?: Record<string, () => Promise<void> | void>; sceneReady?: boolean; sceneError?: string; sceneFacts?: Record<string, unknown> } }
 const q = new URLSearchParams(location.search);
@@ -107,6 +111,44 @@ async function main() {
       Object.defineProperty(e, "clipboardData", { value: { types: ["Files"], files: [f], getData: () => "" } });
       ta.dispatchEvent(e); await settle(30);
     };
+  } else if (scene.startsWith("cm-")) {
+    // Copy mention menus (docket hubchat-copy-mention-context-menu-entry); the clipboard is never touched (the driver stubs it)
+    const ORG = "acme.4f2a9c";
+    const org = { address: ORG, kind: "org", org_name: "Alpha Works", username: "", blurb: "Runs the alpha lab", online: true, last_seen: null, hubs: [A] };
+    const fire = (el: Element | null, x = 200, y = 130) => { el!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: x, clientY: y })); };
+    const stage = (...kids: unknown[]) => h("div", { id: "stage", style: platform === "desktop" ? { width: 900, height: "100vh", display: "flex", flexDirection: "column" } : { height: "100vh", display: "flex", flexDirection: "column" } }, ...(kids as never[]));
+    const chat = (peer: string, body: string) => ({ chats: async () => [{ peer, last: null, unread: 0 }], chat: async () => [msg("m1", peer, body)] });
+    const links = { localOrgtreeOrgs: async () => (platform === "desktop" ? [{ slug: "alpha", name: "Alpha Works", address: ORG }] : []), orgtreeLinks: async () => platform === "desktop", openOrgtreeLink: async () => {} };
+    if (scene === "cm-chatrow") {
+      await seed({ directory: async () => [maya, pat, kim, org] });
+      root.render(wrap(stage(h(ChatRows, { rows: [{ peer: maya.address, last: null, unread: 0 }], selected: null, onOpen: noop, onInfo: noop, onCloseDm: noop } as never))));
+      window.scene.menu = async () => { fire(document.querySelector(".crow")); await settle(); };
+    } else if (scene === "cm-directory") {
+      await seed({ directory: async () => [maya, pat, kim, org] });
+      root.render(wrap(stage(h(ContactRow, { c: org as never, hubs: hubs as never, onOpen: noop, onInfo: noop }))));
+      window.scene.menu = async () => { fire(document.querySelector(".nc-row")); await settle(); };
+    } else if (scene === "cm-header") {
+      await seed({ ...chat(maya.address, "Hi") });
+      root.render(wrap(stage(h(Conversation, { peer: maya.address, onBack: noop, onInfo: noop, onOpenAddr: noop, onContactInfo: noop, onContact: noop, onCloseDm: noop }))));
+      window.scene.menu = async () => { fire(document.querySelector(".conv-head .who"), 120, 70); await settle(); };
+    } else if (scene === "cm-chips") {
+      await seed({ directory: async () => [maya, org], ...links, ...chat(ORG, "See @item:alpha/fix-login and @doc:beta/plan today.") });
+      root.render(wrap(stage(h(Conversation, { peer: ORG, onBack: noop, onInfo: noop, onOpenAddr: noop, onContactInfo: noop, onContact: noop }))));
+      const chipMenu = async (text: string) => { closeMenu(); await settle(); fire([...document.querySelectorAll("a.oref")].find((a) => a.textContent === text) ?? null, 260, 150); await settle(); };
+      window.scene.chipOpen = () => chipMenu("@item:alpha/fix-login");
+      window.scene.chipOff = () => chipMenu("@doc:beta/plan");
+    } else if (scene === "cm-convmenu") {
+      await seed({ directory: async () => [maya] });
+      root.render(wrap(h(ConvMenu, { peer: maya.address, onContact: noop, onClose: noop, onCloseDm: noop })));
+    } else if (scene === "cm-mention-sheet") {
+      await seed({ directory: async () => [maya, org], ...links, ...chat(ORG, "Ask @net:" + maya.address + " about it.") });
+      root.render(wrap(stage(h(Conversation, { peer: ORG, onBack: noop, onInfo: noop, onOpenAddr: noop, onContactInfo: noop, onContact: noop }))));
+      window.scene.menu = async () => { fire(document.querySelector("a.addr"), 150, 300); await settle(); };
+    } else if (scene === "cm-chip-sheet") {
+      await seed({ directory: async () => [maya, org], ...links, ...chat(ORG, "See @item:alpha/fix-login today.") });
+      root.render(wrap(stage(h(Conversation, { peer: ORG, onBack: noop, onInfo: noop, onOpenAddr: noop, onContactInfo: noop, onContact: noop }))));
+      window.scene.menu = async () => { fire(document.querySelector("a.oref"), 150, 300); await settle(); };
+    }
   } else if (scene === "mention") {
     const peer = "casey.abcdef";
     await seed({ chats: async () => [{ peer, last: null, unread: 0 }], chat: async () => [msg("m1", peer, "Ask @net:" + maya.address + " about the Android build.")] });
