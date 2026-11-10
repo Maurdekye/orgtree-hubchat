@@ -19,18 +19,17 @@ const views={
  'desktop/video':[['step','video-load'],['shot','desktop-video-paused','vid'],['click','video'],['step','video-playing'],['shot','desktop-video-playing','vid'],['fullscreen'],['step','video-fullscreen'],['shot','desktop-video-fullscreen'],['key','Escape'],['step','video-escaped'],['shot','desktop-video-escaped','vid']],
  'desktop/stop':[['step','video-load'],['click','video'],['step','stop-scroll'],['click','video'],['step','stop-hidden'],['click','video'],['step','stop-chat']],
  'desktop/audio':[['step','audio-load'],['shot','desktop-audio-open','aud'],['click','play-audio'],['step','audio-playing'],['shot','desktop-audio-playing','aud'],['step','audio-chat']],
- 'desktop/limits':[['step','limits'],['shot','desktop-limits']],
+ 'desktop/limits':["a format this platform can't play says so, and keeps its file row"],
  'android/video':[['step','video-load'],['shot','android-video-paused'],['click','video'],['step','video-playing'],['shot','android-video-playing']],
  'android/audio':[['step','audio-load'],['click','play-audio'],['step','audio-playing'],['shot','android-audio-playing']],
 };
-const mediaChecks=['a received video shows its player on load: native controls, preload metadata','its first frame shows, paused, at the start',"it doesn't play on its own",'its file row stays below, with Download','the player read the start of the video, and only part of it, before Play'];
-// What the source before the players fails, view by view (and nothing else).
+// What the source before the audio change (video already opens on render) fails, view by view (and nothing else).
 const expectedRed={
- 'desktop/video':[...mediaChecks,'a click on it plays it','it fills the screen',"and keeps playing there (the card's offscreen release leaves a fullscreen player alone)"],
- 'desktop/stop':[...mediaChecks,'scrolled away, a playing video lets go of its file',"scrolled back, it shows its first frame again, paused: it never plays on its own",'hidden (the window minimised or in the tray), a playing video lets go','shown again, it is paused at its first frame','another chat opened, the playing video is gone and let go','back in the chat, the video is paused at its first frame'],
+ 'desktop/video':[],
+ 'desktop/stop':[],
  'desktop/audio':['received audio shows its player on load like a video: visible native controls, preload metadata, no Play audio button','the audio player read only the start of its file on load, like a video','a click on its play control plays it','another chat opened, the audio stops','back in the chat, its player is open again, paused: it never plays on its own'],
- 'desktop/limits':["past 256 MiB a video has no player, Orgtree's note, and its file row",'a WebM video shows its first frame too','a broken video says so, and keeps its file row',"a format this platform can't play says so, and keeps its file row"],
- 'android/video':[...mediaChecks,'a click on it plays it'],
+ 'desktop/limits':["a format this platform can't play says so, and keeps its file row"],
+ 'android/video':[],
  'android/audio':['received audio shows its player on load like a video: visible native controls, preload metadata, no Play audio button','the audio player read only the start of its file on load, like a video','a click on its play control plays it'],
 };
 let log=[];
