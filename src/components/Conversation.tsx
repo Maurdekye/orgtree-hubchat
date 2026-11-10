@@ -9,6 +9,8 @@ import { Icon } from "../lib/icons";
 import { useFileDrop } from "../lib/drop";
 import { bytes, dayLabel, dayStart, MAX_FILES } from "../lib/format";
 import { copyText, errText } from "../lib/native";
+import { openMenu } from "../lib/ctxmenu";
+import { mentionWireToken } from "../lib/mentions";
 import { displayName, hubByUrl, hubName, hubStatusText, kindInfo, kindOf, limitFor, msgTime, notOnYourHubs, peerHubs, presence, preview, viaHub } from "../lib/peers";
 import { scanSetup } from "../lib/setup";
 import { refreshChats, useMessages, useSendRoute, useSnap, useTyping } from "../lib/store";
@@ -474,6 +476,15 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
     onSent={(m) => { sentDraftAnswers(peer, m); pinned.current = true; refresh(); }} off={off} />;
   const jumpBtn = <button className={"jump" + (far ? "" : " hide")} onClick={toBottom} title="Jump to the newest message" aria-label="Jump to the newest message"><Icon name="arrow_down" /></button>;
   const copyAddr = () => copyText("@net:" + peer, "Address copied");
+  // desktop right-click on the header's avatar or name (user 2026-11-10): what a click does, Copy mention, Close DM
+  const headMenu = (e: { preventDefault(): void; clientX: number; clientY: number }) => {
+    e.preventDefault();
+    openMenu(e.clientX, e.clientY, [
+      ...(onContact ? [{ label: "Contact info", icon: "info" as const, run: onContact }] : []),
+      { label: "Copy mention", icon: "copy" as const, run: () => void copyText(mentionWireToken(peer), "Mention copied") },
+      ...(onCloseDm ? [{ label: "Close DM", icon: "close" as const, run: onCloseDm }] : []),
+    ]);
+  };
 
   if (platform === "android") {
     const selMsg = sel.length === 1 ? byId.get(sel[0]) : undefined;
@@ -521,8 +532,8 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
   return (
     <section className="conv" role="main" ref={conv} onKeyDown={keys}>
       <div className="conv-head">
-        <span className="conv-av" onClick={onContact} title="Contact info"><PeerAvatar address={peer} c={c} hubs={hubs} size={40} /></span>
-        <div className="who" onClick={onContact} title="Contact info">
+        <span className="conv-av" onClick={onContact} onContextMenu={headMenu} title="Contact info"><PeerAvatar address={peer} c={c} hubs={hubs} size={40} /></span>
+        <div className="who" onClick={onContact} onContextMenu={headMenu} title="Contact info">
           <div className="n1"><span className="name">{name}</span>{c ? <KindChip kind={kind} /> : null}</div>
           <div className="n2" ref={line}>
             <PresText c={c} hubs={hubs} />

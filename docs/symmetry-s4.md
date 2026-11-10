@@ -9,8 +9,8 @@ contradicted; nothing was parked.
 
 | Audit | Behaviour | Code |
 | --- | --- | --- |
-| #10 ux02 S4 | Right-clicking an address in a message offers Open chat, **Contact info** and Copy address: the one contact block (`contactEntries`) the chat list, Directory and New chat share. Desktop passes `contactInfo` (that chat, panel open) down through `Conversation`. | `ChatList.tsx`, `MessageView.tsx`, `Conversation.tsx`, `Desktop.tsx` |
-| #12/#13 ux05 S3/S4 | A contact in New chat (Recent and matching rows) is the Directory's `ContactRow`: about line, one chip per hub (a hub that is not connected is dashed), presence, and on desktop the chat menu (Message, Contact info, Copy address). | `Directory.tsx` (`ContactRow`), `NewChat.tsx`, `Desktop.tsx` |
+| #10 ux02 S4 | Right-clicking an address in a message offers Open chat, **Contact info** and Copy mention (was Copy address): the one contact block (`contactEntries`) the chat list, Directory and New chat share. Desktop passes `contactInfo` (that chat, panel open) down through `Conversation`. | `ChatList.tsx`, `MessageView.tsx`, `Conversation.tsx`, `Desktop.tsx` |
+| #12/#13 ux05 S3/S4 | A contact in New chat (Recent and matching rows) is the Directory's `ContactRow`: about line, one chip per hub (a hub that is not connected is dashed), presence, and on desktop the chat menu (Message, Contact info, Copy mention). | `Directory.tsx` (`ContactRow`), `NewChat.tsx`, `Desktop.tsx` |
 | #14 ux05 S5 | A finished transfer says `Sent to <name>` / `Received from <name>` like an unfinished one; the name is a link-style button that opens that chat. View and Redownload stay independent. | `Transfers.tsx` |
 | #15 ux05 S7 (Hubchat side) | The next history page loads when the end of the list comes within 240 px (an `IntersectionObserver` on `.xhistory-end`), one page at a time; `Load more` stays as the manual path; nothing loads by itself while an error stands. Orgtree's transfer history does the same (S2, @app-net-opus). | `Transfers.tsx` |
 | #45 ux07 S5 | Retry repeats only the failed request: a later page's cursor, or the first read; rows already loaded stay. | `Transfers.tsx` |
@@ -23,7 +23,7 @@ contradicted; nothing was parked.
 
 ## Decisions made, to flag
 
-- **Order, labels:** Open chat / Message, Contact info, Copy address in every contact menu; `on` / `off` lowercase as Orgtree prints them; `Load more`, `Retry`, `Loading…` as Orgtree's gallery and Hubchat's transfer history already say.
+- **Order, labels:** Open chat / Message, Contact info, Copy mention in every contact menu; `on` / `off` lowercase as Orgtree prints them; `Load more`, `Retry`, `Loading…` as Orgtree's gallery and Hubchat's transfer history already say.
 - **Paste size:** 64 MiB is this batch's choice (`MAX_PASTED_BYTES`); the picker and drop hand over a path and have no such limit.
 - **Hub enable switch:** not converted (its row has other actions: Retry now).
 - **Profile edits on Android:** unchanged. A phone leaves Profile by going back to the list, there is no section switch.

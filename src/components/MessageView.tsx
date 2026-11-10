@@ -8,15 +8,15 @@ import { fullWhen, isLong, num, time } from "../lib/format";
 import { esc, md } from "../lib/md";
 import { copyText, errText, openAttachment, openFile, openLink } from "../lib/native";
 import { attView, msgTime, preview, tickInfo, type Kind } from "../lib/peers";
-import { contactEntries } from "./ChatList";
+import { contactEntries, copyMentionEntry } from "./ChatList";
 import { foldAt, replyIds } from "../lib/replies";
 import { cardOf, type AnswerNote, type CardState } from "../lib/questions";
 import { previewable } from "../lib/images";
 import { playable } from "../lib/media";
 import { openMenu, selectionIn, type MenuEntry } from "../lib/ctxmenu";
-import { mentionReach } from "../lib/mentions";
+import { mentionReach, mentionWireToken } from "../lib/mentions";
 import { useLocalOrgtree } from "../lib/localOrgtree";
-import { chipOpen, orefContext, orgMenuEntry } from "../lib/orgtreeRefs";
+import { chipMention, chipOpen, chipOpenLabel, orefContext, orgMenuEntry } from "../lib/orgtreeRefs";
 import { attachmentMenu } from "../lib/attachmentActions";
 import { discardLocal, isLocalId, retryLocal, useTransfer } from "../lib/store";
 import { toast } from "../lib/toast";
@@ -103,9 +103,11 @@ interface Props extends MsgHandlers {
   selected?: boolean;
   /** Desktop: the keyboard's highlight (Shift+Tab walks it, R replies). */
   highlighted?: boolean;
+  /** False in a Message info preview, where nothing can be opened: a mention's menu is only Copy mention. */
+  mentionOpen?: boolean;
 }
 
-export const MessageView = memo(function MessageView({ m, first, peerName, peerKind, quoted, quotes, card, picks, notes, hover, selected, highlighted, onReply, onSelect, onPick, onInfo, onDelete, onJump, onOpenAddr, onContactInfo }: Props) {
+export const MessageView = memo(function MessageView({ m, first, peerName, peerKind, quoted, quotes, card, picks, notes, hover, selected, highlighted, mentionOpen = true, onReply, onSelect, onPick, onInfo, onDelete, onJump, onOpenAddr, onContactInfo }: Props) {
   const platform = usePlatform();
   const [open, setOpen] = useState(false);
   const [allQuotes, setAllQuotes] = useState(false);
@@ -262,7 +264,39 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
   // desktop right-click (user 2026-10-09 05:54Z): what was clicked first (a
   // link, an address, a picture or a file), then the message's own actions,
   // as its hover bar and failed line offer them
+  // what a mention in the text offers (user 2026-11-10): what a left-click does first, then Copy mention. A contact
+  // mention copies the resolved @net: address, a chip its token as written (a bare name of an org not on this PC, its text)
+  const addrBlock = (addr: HTMLElement): MenuEntry[] => {
+    const slug = addr.dataset.slug || "";
+    // an address no hub of mine lists has no chat to open, so nothing to lead with
+    if (!mentionOpen || mentionReach(slug).state === "off") return [copyMentionEntry(mentionWireToken(slug))];
+    return contactEntries(slug, onOpenAddr, onContactInfo, "Open chat");
+  };
+  const chipBlock = (chip: HTMLElement): MenuEntry[] => {
+    const token = chip.dataset.oref;
+    const copy = copyMentionEntry(chipMention(token, chip.textContent || ""));
+    if (!mentionOpen || platform !== "desktop") return [copy];
+    // the same entry a left-click is, only where it can run; the org entry is user ruling 2026-11-08 mb6a4bdb7c944
+    const go = chipOpen(token, oref);
+    const entry = orgMenuEntry(token, oref);
+    const org = entry.org;
+    return [
+      ...(go ? [{ label: "Open " + chipOpenLabel(token) + " in Orgtree", icon: "open_in_new" as const,
+        run: () => void api.openOrgtreeLink(go.org, go.token).catch((er) => toast(errText(er))) }] : []),
+      { label: entry.label, icon: "open_in_new", disabled: !org, title: entry.title || undefined,
+        run: () => { if (org) void api.openOrgtreeLink(org, null).catch((er) => toast(errText(er))); } },
+      copy,
+    ];
+  };
   const menu = (e: MouseEvent<HTMLDivElement>) => {
+    if (platform === "android") {
+      // a long-press on a mention (and only there; any other target is left alone) opens its sheet
+      const mention = (e.target as HTMLElement).closest("a.addr, a.oref") as HTMLElement | null;
+      if (!mention) return;
+      e.preventDefault(); e.stopPropagation();
+      openMenu(e.clientX, e.clientY, mention.matches("a.addr") ? addrBlock(mention) : chipBlock(mention));
+      return;
+    }
     if (platform !== "desktop") return;
     e.preventDefault();
     const t = e.target as HTMLElement;
@@ -275,17 +309,9 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
       const href = link.dataset.href || "";
       items.push({ label: "Open link", icon: "open_in_new", run: () => void openLink(href) }, { label: "Copy link", icon: "link", run: () => void copyText(href, "Link copied") }, "sep");
     } else if (chip) {
-      // an Orgtree chip: just its org, in Orgtree (user 2026-11-08 mb6a4bdb7c944)
-      const entry = orgMenuEntry(chip.dataset.oref, oref);
-      const org = entry.org;
-      items.push({ label: entry.label, icon: "open_in_new", disabled: !org, title: entry.title || undefined,
-        run: () => { if (org) void api.openOrgtreeLink(org, null).catch((er) => toast(errText(er))); } }, "sep");
+      items.push(...chipBlock(chip), "sep");
     } else if (addr) {
-      const slug = addr.dataset.slug || "";
-      // the contact block (Open chat, Contact info, Copy address); an address no hub of mine lists has no chat to open, so
-      // it keeps only Copy address (inline mentions, user 2026-10-29), and Contact info would open that same chat
-      const block = contactEntries(slug, onOpenAddr, onContactInfo, "Open chat");
-      items.push(...(mentionReach(slug).state !== "off" ? block : block.filter((x) => x !== "sep" && x.label === "Copy address")), "sep");
+      items.push(...addrBlock(addr), "sep");
     } else if (att) {
       const a = m.attachments.find((x) => x.local_id === att.dataset.att);
       if (a) items.push(...attachmentMenu(m, a, platform), "sep");

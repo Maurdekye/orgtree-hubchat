@@ -38,7 +38,7 @@ In every message, received or sent, on desktop and Android:
   and the tooltip "<name> isn't on any of the mail hubs you're connected to."
   (the composer's own sentence; the name is the address when no directory
   knows them). A click opens nothing; on Android a tap shows the same sentence
-  as a message. The right-click menu offers Copy address, not Open chat.
+  as a message. The right-click menu offers Copy mention, not Open chat.
 - Before any hub's directory has arrived, mentions carry no mark and open as
   before (the composer blocks nothing then either).
 - A mention inside code, an address typed without `@` and an `@word` that

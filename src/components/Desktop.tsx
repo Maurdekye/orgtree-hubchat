@@ -63,7 +63,7 @@ function InfoPanel({ id, peer, onClose }: { id: string; peer: string; onClose: (
       <div className="info-head"><span>Message info</span><button className="icon-btn" onClick={onClose} title="Close" aria-label="Close"><Icon name="close" /></button></div>
       <div className="info-body scroll">
         {m ? <>
-          <div className="mi-preview"><MessageView m={m} first peerName="" peerKind="person" quoted={undefined} hover={false} onReply={noop} onInfo={noop} onDelete={noop} onJump={noop} onOpenAddr={noop} /></div>
+          <div className="mi-preview"><MessageView m={m} first peerName="" peerKind="person" quoted={undefined} hover={false} mentionOpen={false} onReply={noop} onInfo={noop} onDelete={noop} onJump={noop} onOpenAddr={noop} /></div>
           <MessageInfoBody m={m} />
         </> : <div className="list-empty">This message is no longer on this device.</div>}
       </div>

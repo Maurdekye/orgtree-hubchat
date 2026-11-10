@@ -195,6 +195,17 @@ export function chipHtml(c: OrefChip): string {
     + '<span class="otok">' + esc(c.hidden) + "</span>" + esc(c.id) + "</a>";
 }
 
+/** What a chip's mention copies: its token as written, or (a bare name of an org not on this PC has no token) its text. */
+export function chipMention(token: string | undefined, text: string): string {
+  return token && parseOref(token) ? token : text.trim();
+}
+
+/** The kind word of a chip's left-click entry ("Open ticket in Orgtree"). */
+export function chipOpenLabel(token: string | undefined): string {
+  const ref = token ? parseOref(token) : null;
+  return (ref ? KIND_WORD[ref.kind] : KIND_WORD.node).toLowerCase();
+}
+
 /** The right-click entry: "Open <org> in Orgtree", the org only (user
  *  2026-11-08 mb6a4bdb7c944), disabled with the hint when it cannot open.
  *  `token` is the chip's data-oref; a bare name of an org not on this PC has

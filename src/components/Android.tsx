@@ -29,6 +29,7 @@ import { JoinFlow } from "./JoinLink";
 import { LinkDevice, type LinkTab } from "./LinkDevice";
 import { endJoin, routeLink, startJoin, useJoin, type JoinReq } from "../lib/join";
 import { copyText, errText } from "../lib/native";
+import { mentionWireToken } from "../lib/mentions";
 import { toast } from "../lib/toast";
 import { closeMenu as closeContextMenu } from "../lib/ctxmenu";
 import { SettingsList, SettingsSection, TABS, type SetTab } from "./Settings";
@@ -114,7 +115,7 @@ function MsgInfoScreen({ id, peer, back }: { id: string; peer: string; back: () 
       <div className="appbar flat"><button className="icon-btn" onClick={back} aria-label="Back"><Icon name="back" /></button><div className="title">Message info</div></div>
       <div className="scr-body">
         {m ? <>
-          <div style={{ padding: "14px 12px 4px" }}><MessageView m={m} first peerName={displayName(c, peer)} peerKind={kindOf(c)} quoted={undefined} hover={false} onReply={noop} onInfo={noop} onDelete={noop} onJump={noop} onOpenAddr={noop} /></div>
+          <div style={{ padding: "14px 12px 4px" }}><MessageView m={m} first peerName={displayName(c, peer)} peerKind={kindOf(c)} quoted={undefined} hover={false} mentionOpen={false} onReply={noop} onInfo={noop} onDelete={noop} onJump={noop} onOpenAddr={noop} /></div>
           <MessageInfoBody m={m} />
         </> : <div className="empty">This message is no longer on this device.</div>}
       </div>
@@ -135,7 +136,7 @@ export function ConvMenu({ peer, onContact, onClose, onCloseDm }: { peer: string
         <div className="grip" />
         <button className="mi" role="menuitem" onClick={onContact}><Icon name="info" />Contact info</button>
         {hasChoice(route) ? <button className="mi" role="menuitem" onClick={() => setHubSheet(true)}><Icon name="dns" />Send through…<span className="s">{routeLabel(route, snap.state?.hubs || []).replace(/^via /, "")}</span></button> : null}
-        <button className="mi" role="menuitem" onClick={() => { onClose(); void copyText("@net:" + peer, "Address copied"); }}><Icon name="copy" />Copy address</button>
+        <button className="mi" role="menuitem" onClick={() => { onClose(); void copyText(mentionWireToken(peer), "Mention copied"); }}><Icon name="copy" />Copy mention</button>
         <button className="mi" role="menuitem" onClick={onCloseDm}><Icon name="close" />Close DM</button>
       </div>
     </>

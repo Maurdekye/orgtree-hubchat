@@ -5,8 +5,9 @@ import { Icon, Logo } from "../lib/icons";
 import { shortWhen } from "../lib/format";
 import { displayName, isAgent, kindOf, msgTime, preview } from "../lib/peers";
 import { useSnap, useTypingPeers } from "../lib/store";
-import { openMenu, type MenuEntry } from "../lib/ctxmenu";
+import { openMenu, type MenuEntry, type MenuItem } from "../lib/ctxmenu";
 import { copyText } from "../lib/native";
+import { mentionWireToken } from "../lib/mentions";
 import { Addr, KindGlyph, PeerAvatar, Tick, pressKeys, usePlatform } from "./ui";
 
 export type ChatFilter = "all" | "agents" | "people";
@@ -29,13 +30,19 @@ export function useFilteredChats(filter: ChatFilter, q: string, open: string | n
   return { rows, counts, total: snap.chats.length };
 }
 
-/** The contact block of every desktop menu on a contact: open its chat, its Contact info, copy its address. The chat
- *  list, the Directory, New chat and an address in a message all offer this one block (symmetry audit ux02 S4). */
+/** The "Copy mention" entry of every menu: copies exactly `mention`. */
+export function copyMentionEntry(mention: string): MenuItem {
+  return { label: "Copy mention", icon: "copy", run: () => void copyText(mention, "Mention copied") };
+}
+
+/** The contact block of every desktop menu on a contact: open its chat (what a left-click does), its Contact info, copy
+ *  its mention (`@net:<address>`, the composer's own token). The chat list, the Directory, New chat and an address in a
+ *  message all offer this one block (symmetry audit ux02 S4; "Copy address" became "Copy mention", USER 2026-11-10). */
 export function contactEntries(peer: string, onOpen: (peer: string) => void, onInfo?: (peer: string) => void, open = "Open"): MenuEntry[] {
   return [
     { label: open, icon: "forum", run: () => onOpen(peer) },
     ...(onInfo ? [{ label: "Contact info", icon: "info" as const, run: () => onInfo(peer) }] : []),
-    { label: "Copy address", icon: "copy", run: () => void copyText("@net:" + peer, "Address copied") },
+    copyMentionEntry(mentionWireToken(peer)),
   ];
 }
 
