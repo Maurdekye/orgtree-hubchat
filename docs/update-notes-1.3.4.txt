@@ -1,0 +1,1 @@
+Copy mention is in every contact and mention menu, and audio attachments show their player right away, like video.
