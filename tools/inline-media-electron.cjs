@@ -19,7 +19,7 @@ const views={
  'desktop/video':[['step','video-load'],['shot','desktop-video-paused','vid'],['click','video'],['step','video-playing'],['shot','desktop-video-playing','vid'],['fullscreen'],['step','video-fullscreen'],['shot','desktop-video-fullscreen'],['key','Escape'],['step','video-escaped'],['shot','desktop-video-escaped','vid']],
  'desktop/stop':[['step','video-load'],['click','video'],['step','stop-scroll'],['click','video'],['step','stop-hidden'],['click','video'],['step','stop-chat']],
  'desktop/audio':[['step','audio-load'],['shot','desktop-audio-open','aud'],['click','play-audio'],['step','audio-playing'],['shot','desktop-audio-playing','aud'],['step','audio-chat']],
- 'desktop/limits':["a format this platform can't play says so, and keeps its file row"],
+ 'desktop/limits':[['step','limits'],['shot','desktop-limits']],
  'android/video':[['step','video-load'],['shot','android-video-paused'],['click','video'],['step','video-playing'],['shot','android-video-playing']],
  'android/audio':[['step','audio-load'],['click','play-audio'],['step','audio-playing'],['shot','android-audio-playing']],
 };
