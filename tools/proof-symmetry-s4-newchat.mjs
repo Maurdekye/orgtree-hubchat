@@ -42,7 +42,7 @@ for (const platform of ['desktop', 'android']) {
   if (platform === 'desktop') {
     await render(results(platform, 'maya', match));
     await rightClick(rowOf(document, 'Maya'));
-    c('right-click offers Message, Contact info and Copy address', JSON.stringify(menuLabels()) === '["Message","Contact info","Copy address"]');
+    c('right-click offers Message, Contact info and Copy mention', JSON.stringify(menuLabels()) === '["Message","Contact info","Copy address"]');
     await click([...document.querySelectorAll('[role="menuitem"]')].find(e => e.textContent.trim() === 'Contact info'));
     c('Contact info opens that contact', JSON.stringify(infos) === '["maya.e71f2b"]');
     // the Recent rows of an empty search are the same row with the same menu
@@ -50,7 +50,7 @@ for (const platform of ['desktop', 'android']) {
     const rec = rowOf(document, 'Maya');
     c('a Recent row has the same about text and chips', /Design · Android/.test(rec?.textContent || '') && rec?.querySelectorAll('.hubchip').length === 2);
     await rightClick(rec);
-    c('a Recent row has the same menu', JSON.stringify(menuLabels()) === '["Message","Contact info","Copy address"]');
+    c('a Recent row has the same menu', JSON.stringify(menuLabels()) === '["Message","Contact info","Copy mention"]');
   } else {
     await render(results(platform, 'maya', match));
     await rightClick(rowOf(document, 'Maya'));

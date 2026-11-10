@@ -16,7 +16,7 @@ app.on('window-all-closed', () => {});
 const OFF = ["document.querySelector('.set-state')?.textContent", 'off'], ON = ["document.querySelector('.set-state')?.textContent", 'on'];
 const SCENES = {
   desktop: [
-    { scene: 'newchat', shots: [{ name: 'newchat-rows', expect: [/Design · Android/, /office/, /lab/] }, { name: 'newchat-menu', act: 'menu', expect: [/Message/, /Contact info/, /Copy address/] }] },
+    { scene: 'newchat', shots: [{ name: 'newchat-rows', expect: [/Design · Android/, /office/, /lab/] }, { name: 'newchat-menu', act: 'menu', expect: [/Message/, /Contact info/, /Copy mention/] }] },
     { scene: 'files-loading', shots: [{ name: 'files-loading', act: 'scrollFiles', expect: [/Loading files/] }] },
     { scene: 'files-error', shots: [{ name: 'files-error', act: 'scrollFiles', expect: [/disk is busy/, /Retry/] }] },
     { scene: 'files-none', shots: [{ name: 'files-none', act: 'scrollFiles', expect: [/No files yet/] }] },
@@ -25,7 +25,7 @@ const SCENES = {
     { scene: 'transfers-error', shots: [{ name: 'transfers-page-error', expect: [/could not be read/, /Retry/, /Received from Maya Lin/, /Load more/] }, { name: 'transfers-after-retry', act: 'retry', expect: [/older-1/, /older-2/] }] },
     { scene: 'settings', shots: [{ name: 'settings-tabs-focus', act: 'focusTab', expect: [/Privacy/, /Send read receipts/], fact: OFF }, { name: 'settings-toggled-on', act: 'toggle', expect: [/Send read receipts/], fact: ON }] },
     { scene: 'composer', shots: [{ name: 'composer-default', expect: [/Enter\s*send/, /Shift\+Enter\s*new line/] }, { name: 'composer-pasted-pdf', act: 'paste', expect: [/report\.pdf/] }, { name: 'composer-newline-mode', act: 'setNewline', expect: [/Ctrl\+Enter\s*send/, /Enter\s*new line/] }] },
-    { scene: 'mention', shots: [{ name: 'mention-menu', act: 'menu', expect: [/Open chat/, /Contact info/, /Copy address/] }] },
+    { scene: 'mention', shots: [{ name: 'mention-menu', act: 'menu', expect: [/Open chat/, /Contact info/, /Copy mention/] }] },
   ],
   android: [
     { scene: 'newchat', shots: [{ name: 'newchat-rows', expect: [/Design · Android/, /office/, /lab/] }] },

@@ -123,7 +123,7 @@ function MsgInfoScreen({ id, peer, back }: { id: string; peer: string; back: () 
 }
 
 /** The conversation's ⋮ menu: a bottom sheet (the prototype's conv-menu). */
-function ConvMenu({ peer, onContact, onClose, onCloseDm }: { peer: string; onContact: () => void; onClose: () => void; onCloseDm: () => void }) {
+export function ConvMenu({ peer, onContact, onClose, onCloseDm }: { peer: string; onContact: () => void; onClose: () => void; onCloseDm: () => void }) {
   const snap = useSnap();
   const route = useSendRoute(peer);
   const [hubSheet, setHubSheet] = useState(false);

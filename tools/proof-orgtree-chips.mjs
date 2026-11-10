@@ -109,8 +109,8 @@ const menuButtons = () => [...document.querySelectorAll('.pop.ctx button.mi')];
   if (node) await d.act(() => node.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })));
   check('D9 Enter on an opening chip opens it', JSON.stringify(d.opened.at(-1)) === JSON.stringify(['alpha', '@agent:alpha/luna-reserve']));
   let menu = item ? await menuAt(item, d.act) : null;
-  const first = menuButtons()[0];
-  check('D10 the right-click menu opens just the org', menu && first && first.textContent.endsWith('Open Alpha Works in Orgtree') && !first.disabled);
+  const first = menuButtons()[1];
+  check('D10 the right-click menu's second entry opens just the org (the first opens the ticket)', menu && first && first.textContent.endsWith('Open Alpha Works in Orgtree') && !first.disabled && menuButtons()[0]?.textContent.endsWith('Open ticket in Orgtree'));
   const before = d.opened.length;
   if (first) await d.act(() => first.click());
   check('D11 the menu entry opens the org, not the item', d.opened.length === before + 1 && JSON.stringify(d.opened.at(-1)) === JSON.stringify(['alpha', null]));
@@ -143,8 +143,9 @@ const menuButtons = () => [...document.querySelectorAll('.pop.ctx button.mi')];
   check('A1 on a phone a chip never opens, and a tap shows the hint',
     item && !item.classList.contains('on') && a.opened.length === 0 && document.getElementById('toasts')?.textContent === 'Opens in Orgtree on the PC that runs alpha');
   const target = item ?? bubble(a.host, 'o1');
-  const menu = target ? await menuAt(target, a.act) : null;
-  check('A2 a phone has no right-click menu', !menu);
+  if (target) await a.act(() => target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 5, clientY: 5 })));
+  const sheet = [...document.querySelectorAll('.sheet [role="menuitem"]')].map(e => e.textContent.trim());
+  check('A2 a phone's long-press sheet offers only Copy mention', JSON.stringify(sheet) === JSON.stringify(['Copy mention']));
   await a.done();
 }
 fs.writeFileSync(process.env.HUBCHAT_RENDERER_EVIDENCE, JSON.stringify({ checks }, null, 2));

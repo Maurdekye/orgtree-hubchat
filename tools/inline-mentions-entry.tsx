@@ -144,14 +144,14 @@ async function run() {
     if (header() !== "Pat") { await openPat(); await settled(2); }
     await rightClick(anchor(ALICE));
     const accessibleMenu = menuItems(); await closeMenu();
-    check("right-click on an accessible mention offers Open chat and Copy address", accessibleMenu.includes("Open chat") && accessibleMenu.includes("Copy address"), accessibleMenu);
+    check("right-click on an accessible mention offers Open chat and Copy mention", accessibleMenu.includes("Open chat") && accessibleMenu.includes("Copy mention"), accessibleMenu);
     await click(anchor(ACME));
     check("clicking an accessible mention opens its chat", calls.includes("open:" + ACME) && header() === "Acme Org", { calls, header: header() });
     await openPat(); await settled(2);
     // left open for the capture
     await rightClick(anchor(GHOST));
     const offMenu = menuItems();
-    check("right-click on an inaccessible mention offers Copy address, not Open chat", offMenu.includes("Copy address") && !offMenu.includes("Open chat"), offMenu);
+    check("right-click on an inaccessible mention offers Copy mention, not Open chat", offMenu.includes("Copy mention") && !offMenu.includes("Open chat"), offMenu);
   } else if (view === "live" && platform === "desktop") {
     const before = anchor(GHOST);
     hubs = [hub(A, "Hub A", "connected"), hub(B, "Hub B", "connected")];
