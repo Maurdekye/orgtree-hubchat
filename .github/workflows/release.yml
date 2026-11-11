@@ -1,6 +1,7 @@
 # Hubchat release: one pushed tag in, one DRAFT GitHub release out. Never publishes.
 #
-#   build   every platform from the tag (build-*.yml); builds only ever hold throwaway keys
+#   build   every platform from the tag (build-*.yml), and Hubchat Web (build-web.yml: the
+#           web app's files and its container image); builds only ever hold throwaway keys
 #   sign    the real keys, in the protected `release` environment, in a job that runs no
 #           project code: apksigner for the APK, the Tauri updater key for every updater file
 #   stage   latest.json (merged from the platforms' updater fragments) and SHA256SUMS.txt
@@ -89,12 +90,20 @@ jobs:
     with:
       ref: ${{ needs.resolve.outputs.sha }}
 
+  # Hubchat Web: the web app's files and its image (no updater entry, nothing to sign).
+  # Its artifact is named hubchat-web, so the sign jobs carry it along untouched.
+  web:
+    needs: resolve
+    uses: ./.github/workflows/build-web.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+
   # The only job that ever sees a real key. It runs for pushed tags alone (the `release`
   # environment admits only v* tags) and executes no project code: it installs
   # the pinned Tauri CLI with --ignore-scripts and runs apksigner from the Android SDK.
   sign:
     if: needs.resolve.outputs.mode == 'release'
-    needs: [resolve, windows, macos, linux, android]
+    needs: [resolve, windows, macos, linux, android, web]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: release
@@ -134,7 +143,7 @@ jobs:
   # The same signing code with throwaway keys, so every test run exercises it.
   sign-test:
     if: needs.resolve.outputs.mode == 'test'
-    needs: [resolve, windows, macos, linux, android]
+    needs: [resolve, windows, macos, linux, android, web]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -189,7 +198,7 @@ jobs:
         with:
           name: signed
           path: dist
-      - name: latest.json and SHA256SUMS.txt
+      - name: latest.json, the Hubchat Web files and SHA256SUMS.txt
         env:
           MODE: ${{ needs.resolve.outputs.mode }}
           VERSION: ${{ needs.resolve.outputs.version }}

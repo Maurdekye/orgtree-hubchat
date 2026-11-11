@@ -3,6 +3,7 @@
 // - latest.json names this version, and each platform entry points at an asset of
 //   this release whose .sig is exactly the entry's signature and binds this version;
 // - Hubchat-android.apk is the versioned APK byte for byte;
+// - the Hubchat Web files are there and are the ones build-info-web.json records;
 // - GitHub's "latest" release is this one (installed apps read latest/download/latest.json).
 //   TAG=v<x.y.z> GITHUB_REPOSITORY=owner/repo GH_TOKEN=... node verify-published.mjs
 import crypto from 'node:crypto'
@@ -29,7 +30,8 @@ for (const asset of release.assets) {
   check(bytes[asset.name].length === asset.size, `${asset.name}: ${asset.size} bytes`)
 }
 const sha256 = name => crypto.createHash('sha256').update(bytes[name]).digest('hex')
-for (const name of ['latest.json', 'SHA256SUMS.txt', `Hubchat_${version}_arm64.apk`, 'Hubchat-android.apk']) {
+const webFiles = [`hubchat-web-${version}-static.tar.gz`, `hubchat-web-${version}-docker-amd64.tar.gz`]
+for (const name of ['latest.json', 'SHA256SUMS.txt', `Hubchat_${version}_arm64.apk`, 'Hubchat-android.apk', 'build-info-web.json', ...webFiles]) {
   check(name in bytes, `asset ${name} is present`)
 }
 if ('SHA256SUMS.txt' in bytes) {
@@ -41,6 +43,11 @@ if ('SHA256SUMS.txt' in bytes) {
 }
 if (`Hubchat_${version}_arm64.apk` in bytes && 'Hubchat-android.apk' in bytes) {
   check(sha256(`Hubchat_${version}_arm64.apk`) === sha256('Hubchat-android.apk'), 'Hubchat-android.apk is the versioned APK')
+}
+if ('build-info-web.json' in bytes) {
+  const info = JSON.parse(bytes['build-info-web.json'].toString('utf8'))
+  check(info.version === version, `build-info-web.json is for ${info.version}`)
+  for (const name of webFiles.filter(n => n in bytes)) check(info.files?.[name] === sha256(name), `${name} is the file build-info-web.json records`)
 }
 if ('latest.json' in bytes) {
   const latest = JSON.parse(bytes['latest.json'].toString('utf8'))

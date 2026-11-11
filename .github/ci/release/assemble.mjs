@@ -3,11 +3,14 @@
 //   latest.json    the updater feed: version, notes, pub_date, and one platform
 //                  entry per updater-*.json fragment ({"<key>": {asset, signature}})
 //   SHA256SUMS.txt "<sha256>  <file>" for every other file, sorted, LF
+// It refuses a release without its Hubchat Web files (the static archive, the
+// image and build-info-web.json, which must record exactly those two).
 // The fragments are consumed. Run from the checked-out release source:
 //   MODE=release|test VERSION=<x.y.z> node assemble.mjs <dist>
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import { problems as webProblems } from '../web/build-info.mjs'
 
 const dist = process.argv[2]
 const { MODE: mode, VERSION: version, GITHUB_REPOSITORY: repo = 'Maurdekye/orgtree-hubchat' } = process.env
@@ -39,6 +42,10 @@ for (const required of ['windows-x86_64']) if (!platforms[required]) fail(`lates
 const apk = `Hubchat_${version}_arm64.apk`
 if (!fs.existsSync(file(apk)) || !fs.existsSync(file('Hubchat-android.apk'))) fail(`missing ${apk} or Hubchat-android.apk`)
 if (sha256(apk) !== sha256('Hubchat-android.apk')) fail('Hubchat-android.apk differs from ' + apk)
+
+// Hubchat Web ships with every release (docs/ci-release.md, "Hubchat Web").
+const web = webProblems(dist, version)
+if (web.length) fail('Hubchat Web: ' + web.join('; '))
 
 const latest = { version, notes, pub_date: new Date().toISOString().replace(/\.\d+Z$/, 'Z'), platforms }
 fs.writeFileSync(file('latest.json'), JSON.stringify(latest, null, 2) + '\n')

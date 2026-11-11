@@ -1,0 +1,104 @@
+# When a release is published, its Hubchat Web image goes to the registry
+# (docs/ci-release.md, "Hubchat Web"):
+#   - the release's own hubchat-web-<v>-docker-amd64.tar.gz is downloaded and
+#     checked against SHA256SUMS.txt and build-info-web.json: what is pushed
+#     is the file the release carries, never a rebuild;
+#   - it is pushed as ghcr.io/<owner>/hubchat-web:<v>, and :latest for a
+#     stable release only, with the run's own token;
+#   - then each tag is pulled back and the program inside must be the one
+#     build-info-web.json records.
+# Nothing runs for a draft. Re-run or backfill a published release:
+#   gh workflow run publish-web-image.yml -R Maurdekye/orgtree-hubchat -f tag=v1.4.0
+# GitHub creates the package private at its first push; its owner makes it
+# public once (Package settings, Change visibility).
+name: publish-web-image
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published tag whose Hubchat Web image to push, e.g. v1.4.0
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-web-image-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write     # ghcr.io/<owner>/hubchat-web
+    env:
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/ci
+          persist-credentials: false
+
+      - name: The release and its Hubchat Web files
+        id: r
+        run: |
+          json="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,assets)"
+          [ "$(jq -r .isDraft <<<"$json")" = false ] || { echo "::error::$TAG is a draft: publish it first"; exit 1; }
+          version="${TAG#v}"
+          image="hubchat-web-$version-docker-amd64.tar.gz"
+          if ! jq -r '.assets[].name' <<<"$json" | grep -qx "$image"; then
+            # releases before Hubchat Web have none: nothing to push
+            echo "::notice::$TAG carries no $image: nothing to push"
+            echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          mkdir dist
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -D dist \
+            -p "$image" -p "hubchat-web-$version-static.tar.gz" -p build-info-web.json -p SHA256SUMS.txt
+          ( cd dist && grep -E "  (hubchat-web-.*|build-info-web[.]json)\$" SHA256SUMS.txt > ours.txt \
+              && [ "$(wc -l < ours.txt)" = 3 ] && sha256sum -c ours.txt ) \
+            || { echo "::error::the Hubchat Web files are not the ones SHA256SUMS.txt lists"; exit 1; }
+          node .github/ci/web/build-info.mjs --check dist "$version"
+          { echo "version=$version"; echo "file=dist/$image"; echo "prerelease=$(jq -r .isPrerelease <<<"$json")"; } >> "$GITHUB_OUTPUT"
+
+      - name: Load it; the program inside is the recorded one
+        if: steps.r.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.r.outputs.version }}
+          FILE: ${{ steps.r.outputs.file }}
+        run: |
+          docker load -i "$FILE"
+          bash .github/ci/web/program-of.sh "hubchat-web:$VERSION" dist/build-info-web.json
+
+      - name: Push to GHCR (<v>, and latest for a stable release)
+        if: steps.r.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.r.outputs.version }}
+          PRERELEASE: ${{ steps.r.outputs.prerelease }}
+        run: |
+          remote="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/hubchat-web"
+          tags=("$VERSION")
+          # latest follows stable releases only
+          [ "$PRERELEASE" = true ] || tags+=(latest)
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for t in "${tags[@]}"; do
+            docker tag "hubchat-web:$VERSION" "$remote:$t"
+            docker push "$remote:$t"
+          done
+          # read them back: what the registry now serves is the release's program
+          for t in "${tags[@]}"; do
+            docker rmi "$remote:$t" >/dev/null
+            docker pull "$remote:$t"
+            bash .github/ci/web/program-of.sh "$remote:$t" dist/build-info-web.json
+          done
+          docker logout ghcr.io
+          {
+            echo "### Hubchat Web $VERSION pushed"
+            for t in "${tags[@]}"; do echo "- \`$remote:$t\`"; done
+          } >> "$GITHUB_STEP_SUMMARY"

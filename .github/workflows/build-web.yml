@@ -1,0 +1,115 @@
+# Hubchat Web: the web app, the server program with the app inside it, and
+# its container image (docs/hubchat-web-server.md; docs/ci-release.md,
+# "Hubchat Web"). Called by release.yml; a push to ci-test/hubchat-web runs
+# it alone. It holds no key and pushes nothing: the image goes to the
+# registry only when a release is published (publish-web-image.yml).
+#
+# Out, as the artifact `hubchat-web`:
+#   hubchat-web-<v>-static.tar.gz        the web app's files
+#   hubchat-web-<v>-docker-amd64.tar.gz  the image, for `docker load`
+#   build-info-web.json                  what they are, by SHA-256
+name: build-web
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+  push:
+    branches: ['ci-test/hubchat-web']
+
+permissions:
+  contents: read
+
+env:
+  # the toolchain of the other release builds
+  RUST_TOOLCHAIN: nightly-2025-12-12
+  NODE_VERSION: 24.12.0
+  NPM_VERSION: 11.6.2
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      # SQLite is C: the browser build needs a clang that makes wasm32 objects
+      - name: apt build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang llvm jq curl
+          clang --version | head -n1
+
+      - name: Rust ${{ env.RUST_TOOLCHAIN }} with wasm32-unknown-unknown
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update --target wasm32-unknown-unknown
+          rustup default "$RUST_TOOLCHAIN"
+          rustc -Vv
+          cargo -V
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: npm ${{ env.NPM_VERSION }}
+        run: |
+          npm install -g "npm@$NPM_VERSION"
+          node -v
+          npm -v
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.cargo/bin/wasm-bindgen
+            target
+          key: hubchat-web-cargo-ubuntu-24.04-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            hubchat-web-cargo-ubuntu-24.04-${{ env.RUST_TOOLCHAIN }}-
+
+      - name: npm ci
+        run: npm ci
+
+      # The command that post-processes the build must be exactly the version
+      # Cargo.lock pins for the wasm-bindgen crate (tools/web-build.mjs checks).
+      - name: wasm-bindgen CLI, the locked version
+        run: |
+          want="$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/version = |"/, ""); print; exit }' Cargo.lock)"
+          [ -n "$want" ] || { echo "::error::Cargo.lock pins no wasm-bindgen"; exit 1; }
+          have="$(wasm-bindgen --version 2>/dev/null | awk '{print $2}' || true)"
+          [ "$have" = "$want" ] || cargo install wasm-bindgen-cli --version "$want" --locked --force
+          wasm-bindgen --version
+
+      - name: The server's own tests (with the stand-in page)
+        run: cargo test --locked -p hubchat-web-server
+
+      - name: The web app (core to WebAssembly, the page, the size budget)
+        env:
+          CC_wasm32_unknown_unknown: clang
+          AR_wasm32_unknown_unknown: llvm-ar
+        run: node tools/web-build.mjs
+
+      - name: The static archive, the server, the image; smoke both
+        id: pack
+        run: |
+          v="$(jq -r .version src-tauri/tauri.conf.json)"
+          out="$RUNNER_TEMP/hubchat-web"
+          bash .github/ci/web/package.sh dist-web "$v" "$(git rev-parse HEAD)" "$out"
+          ls -la "$out"
+          echo "dir=$out" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hubchat-web
+          path: ${{ steps.pack.outputs.dir }}/*
+          if-no-files-found: error
+          retention-days: 14
