@@ -5,7 +5,21 @@ const ATTENTION_SQL: &str = "SELECT EXISTS(SELECT 1 FROM messages WHERE outgoing
     OR EXISTS(SELECT 1 FROM history_marks WHERE old_unread>0)
     OR EXISTS(SELECT 1 FROM taskbar_questions WHERE pending=1)";
 
+/// One incoming question card still waiting for an answer (the Jump List's "Needs attention" entries).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PendingQuestion {
+    pub id: String,
+    pub peer: String,
+    pub body: String,
+}
+
 impl Store {
+    /// The pending questions of every chat the dot counts (closed DMs too), newest first, at most `limit`: the
+    /// taskbar rule itself, read from `taskbar_questions`.
+    pub fn pending_questions(&self, _limit: usize) -> Result<Vec<PendingQuestion>> {
+        Ok(vec![])
+    }
+
     /// What the taskbar dot says: (unread messages including history-only unread, unanswered incoming questions).
     pub fn taskbar_counts(&self) -> Result<(u64, u64)> {
         self.with(|c| {
@@ -63,6 +77,24 @@ mod tests {
         assert_eq!(by(&s, "kim.abcdef"), Some(0), "a later outgoing message settles it, the same rule as the dot");
         assert_eq!(s.taskbar_attention().unwrap(), true, "the rule itself is unchanged: unread still lights it");
         assert_eq!(s.taskbar_counts().unwrap().1, 0);
+    }
+    #[test]
+    fn pending_questions_list_what_the_dot_counts_newest_first_and_follow_settlement() {
+        let s = store();
+        assert!(s.pending_questions(10).unwrap().is_empty());
+        add(&s, "q1", false, PEER, serde_json::json!({"kind":"question","body":"first?","received_at":"2026-10-19T00:01:00.000Z"}));
+        add(&s, "q2", false, "kim.abcdef", serde_json::json!({"kind":"question","body":"second?","received_at":"2026-10-19T00:02:00.000Z"}));
+        add(&s, "note", false, PEER, serde_json::json!({"body":"not a question","received_at":"2026-10-19T00:03:00.000Z"}));
+        add(&s, "mine", true, "lee.abcdef", serde_json::json!({"kind":"question","received_at":"2026-10-19T00:04:00.000Z"}));
+        let ids = |s: &Store, n: usize| s.pending_questions(n).unwrap().into_iter().map(|q| q.id).collect::<Vec<_>>();
+        assert_eq!(ids(&s, 10), ["q2", "q1"], "newest first; no ordinary or outgoing messages");
+        assert_eq!(s.pending_questions(10).unwrap()[0], PendingQuestion { id: "q2".into(), peer: "kim.abcdef".into(), body: "second?".into() });
+        assert_eq!(ids(&s, 1), ["q2"], "the limit");
+        assert_eq!(ids(&s, 10).len() as u64, s.taskbar_counts().unwrap().1, "the same set the dot counts");
+        s.close_dm(PEER).unwrap();
+        assert_eq!(ids(&s, 10), ["q2", "q1"], "a closed chat still lights the dot, so it is still listed");
+        add(&s, "ans", true, PEER, serde_json::json!({"reply_to":"q1","received_at":"2026-10-19T00:05:00.000Z"}));
+        assert_eq!(ids(&s, 10), ["q2"], "settled: gone");
     }
     #[test]
     fn taskbar_unread_includes_closed_and_history_only_chats_and_clears() {

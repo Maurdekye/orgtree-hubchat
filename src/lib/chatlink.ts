@@ -30,3 +30,9 @@ export function shortcutView(link: string): "settings" | "directory" | "newchat"
     return view === "settings" || view === "directory" || view === "newchat" ? view : null;
   } catch { return null; }
 }
+
+/** The question card a chat link points at (`q`), for the taskbar Jump List's "Needs attention" entries; null when
+ *  there is none or it is not a plausible message id. STUB for the red commit. */
+export function chatLinkQuestion(_link: string): string | null {
+  return null;
+}
