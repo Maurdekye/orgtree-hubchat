@@ -16,7 +16,7 @@ import { baseName, errText, pickKeyFile, scanQr, suggestedHubs } from "../lib/na
 import { getSnap, refreshAll, refreshState, setOnboarding, useSnap } from "../lib/store";
 import { splitAddr } from "../lib/peers";
 import { toast } from "../lib/toast";
-import { HubAdder } from "./HubAdder";
+import { HubAdder, type Suggested } from "./HubAdder";
 import { HubReview, useHubReview } from "./HubReview";
 import { chatLinkTarget } from "../lib/chatlink";
 import { usePendingLink } from "../lib/visibility";
@@ -372,20 +372,37 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
   const [address, setAddress] = useState("");
   const [added, setAdded] = useState<{ url: string; name: string }[]>([]);
   const [more, setMore] = useState(false);
-  /** A hub that answers where this page is served from (Hubchat Web): offered, never added unasked. */
-  const [nearby, setNearby] = useState<Probe | null>(null);
+  /** The hubs suggested to someone who just made an identity (Hubchat Web, spec R6.2a): offered,
+   *  never added unasked. Hubs the server lists show whatever their check finds; with none listed,
+   *  only a hub that answers where the page is served from shows. */
+  const [nearby, setNearby] = useState<Suggested[]>([]);
+  const probed = async (address: string): Promise<Probe> => {
+    const p = await api.probeHub(address).catch((e): Probe => ({ result: "invalid", error: errText(e) }));
+    return p.result === "connected" ? { ...p, discovered: true } : p;
+  };
   useEffect(() => {
     if (step !== "hub" || flow !== "new") return;
     let live = true;
     void (async () => {
-      for (const a of await suggestedHubs()) {
-        const p = await api.probeHub(a).catch(() => null);
+      const { listed, addresses } = await suggestedHubs();
+      const seen = new Set<string>();
+      for (const address of addresses) {
+        const p = await probed(address);
         if (!live) return;
-        if (p?.result === "connected") { setNearby({ ...p, discovered: true }); return; }
+        if (p.result === "invalid" || seen.has(p.url)) continue;
+        if (!listed && p.result !== "connected") continue;
+        seen.add(p.url);
+        setNearby((l) => [...l.filter((x) => x.address !== address), { address, p }]);
+        // the page's own address: one hub is the answer
+        if (!listed) return;
       }
     })();
     return () => { live = false; };
   }, [step, flow]);
+  const recheck = (address: string) => {
+    setNearby((l) => l.map((x) => (x.address === address ? { address, p: null } : x)));
+    void probed(address).then((p) => setNearby((l) => l.map((x) => (x.address === address ? { address, p } : x))));
+  };
   const [words, setWords] = useState<string[]>([]);
   const [restore, setRestore] = useState("");
   const [readingWords, setReadingWords] = useState(false);
@@ -585,7 +602,9 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
           </div>
         ) : null}
         {!added.length || more
-          ? <HubAdder existing={existing} autoFocus found={added.length ? null : nearby} onAdded={(url, n) => { setAdded((l) => [...l, { url, name: n }]); setMore(false); }} onCancel={added.length ? () => setMore(false) : undefined} />
+          ? <HubAdder existing={existing} autoFocus found={nearby} onRecheck={recheck}
+              // other suggested hubs stay in view after one is added
+              onAdded={(url, n) => { setAdded((l) => [...l, { url, name: n }]); setMore(nearby.some((x) => x.p?.result !== "invalid" && x.p?.url !== url && !existing.includes(x.p?.url ?? ""))); }} onCancel={added.length ? () => setMore(false) : undefined} />
           : <>
               <div style={{ margin: "-4px 0 14px", ...pad(platform) }}><button className="link" onClick={() => setMore(true)}>+ Add another hub</button></div>
               <NoteCard icon="privacy"><b>The hub can read your messages.</b> The hub's operator can read messages that pass through it; everyone on a hub is listed in its directory.</NoteCard>

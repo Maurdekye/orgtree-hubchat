@@ -12,6 +12,7 @@ const NOT_ON_WEB = "This isn't available in Hubchat Web yet.";
 
 /** What only a page can do for Hubchat Web: the camera, the browser's file chooser and its downloads.
  *  src/web fills it in at start (webApi.ts); nothing here imports from src/web. */
+export interface SuggestedHubs { listed: boolean; addresses: string[] }
 export interface WebNative {
   /** Scan one QR code with the camera. Null: the user closed it. */
   scanQr(): Promise<string | null>;
@@ -19,8 +20,9 @@ export interface WebNative {
   pickKeyFile(): Promise<string | null>;
   /** What stands for "where to save the key file" in `api.keyFileExport`: the browser decides where. */
   saveKeyFileTo(): Promise<string | null>;
-  /** Hub addresses worth offering for the first hub: the server's own, the likeliest first. */
-  suggestedHubs(): Promise<string[]>;
+  /** Hub addresses to offer for the first hub (spec R6.2a). `listed`: the server named them, so each
+   *  is shown whatever its check finds; else they are guesses, shown only when a hub answers. */
+  suggestedHubs(): Promise<SuggestedHubs>;
   /** A newer build of the web app waiting to load (`install` reloads into it). Null: none. */
   newerBuild(): Promise<{ version: string; install: () => Promise<void> } | null>;
 }
@@ -28,8 +30,9 @@ let webNative: WebNative | null = null;
 export function installWebNative(w: WebNative): void { webNative = w; }
 /** Hub addresses to offer someone adding their first hub. The apps have none: only Hubchat Web is
  *  served from somewhere a hub may run too. */
-export async function suggestedHubs(): Promise<string[]> {
-  return isWeb && webNative ? webNative.suggestedHubs().catch(() => []) : [];
+export async function suggestedHubs(): Promise<SuggestedHubs> {
+  const none: SuggestedHubs = { listed: false, addresses: [] };
+  return isWeb && webNative ? webNative.suggestedHubs().catch(() => none) : none;
 }
 /** Hubchat Web's update: a newer build the server has, fetched and waiting. */
 export async function webUpdate(): Promise<{ version: string; install: () => Promise<void> } | null> {

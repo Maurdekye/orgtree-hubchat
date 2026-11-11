@@ -17,9 +17,14 @@ import { NoteCard, usePlatform, useWeb } from "./ui";
 
 type Phase = { k: "idle" } | { k: "checking"; input: string } | { k: "result"; p: Probe } | { k: "adding" } | { k: "error"; msg: string };
 
+/** A hub suggested to the person (Hubchat Web, spec R6.2a): its address and what its check found
+ *  (null: being checked). */
+export interface Suggested { address: string; p: Probe | null }
+
 /** `initial`: an address to start from (a scanned link's hub this device couldn't reach).
- *  `found`: a hub already checked and reachable, offered until the user types an address. */
-export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel, initial, found }: { found?: Probe | null; onAdded?: (url: string, name: string) => void; onPick?: (url: string, name: string) => void; existing: string[]; autoFocus?: boolean; onCancel?: () => void; initial?: string }) {
+ *  `found`: hubs already checked, each offered as the card its check gives, until the user types an
+ *  address; `onRecheck`: check one of them again. */
+export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel, initial, found, onRecheck }: { found?: Suggested[]; onRecheck?: (address: string) => void; onAdded?: (url: string, name: string) => void; onPick?: (url: string, name: string) => void; existing: string[]; autoFocus?: boolean; onCancel?: () => void; initial?: string }) {
   const platform = usePlatform();
   // Hubchat Web: a page may only call https (spec R2.2)
   const web = useWeb();
@@ -31,11 +36,6 @@ export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel, initi
   // the card's link opens the help and brings it into view
   useEffect(() => { if (helpAsk) helpRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }); }, [helpAsk]);
   const showHelp = () => { setHelp(true); setHelpAsk((n) => n + 1); };
-
-  // a suggestion never replaces what the user is doing
-  useEffect(() => {
-    if (found) setPh((p) => (p.k === "idle" ? { k: "result", p: found } : p));
-  }, [found]);
 
   const check = async () => {
     const input = value.trim(); if (!input) return;
@@ -58,13 +58,14 @@ export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel, initi
   if (ph.k === "checking") card = <div className="probe-card busy"><span className="spin" /><div>Reaching <span className="mono">{ph.input}</span>…</div></div>;
   if (ph.k === "adding") card = <div className="probe-card busy"><span className="spin" /><div>Adding the hub…</div></div>;
   if (ph.k === "error") card = <div className="probe-card bad"><Icon name="error" /><div><b>Couldn't add that hub</b>{ph.msg}</div></div>;
-  if (ph.k === "result") {
-    const p = ph.p;
+  /** What a check found, as a card. `retry`: check that address again. */
+  const resultCard = (p: Probe, retry: () => void, key?: string) => {
+    let card = null;
     const dupe = p.result !== "invalid" && existing.includes(p.url);
-    if (dupe) card = <div className="probe-card bad"><Icon name="error" /><div><b>Already added</b>You already use <span className="mono">{p.url}</span>.</div></div>;
+    if (dupe) card = <div key={key} className="probe-card bad"><Icon name="error" /><div><b>Already added</b>You already use <span className="mono">{p.url}</span>.</div></div>;
     else if (p.result === "connected") {
       card = (
-        <div className="probe-card ok"><Icon name="check_circle" />
+        <div className="probe-card ok" key={key}><Icon name="check_circle" />
           <div><b>{p.discovered ? <>Found {p.name} {foundWhere(p.url)}</> : <>Connected to {p.name}</>}</b><span className="mono">{p.url}</span> · hub version {hubVersion(p)} · files up to {bytes(p.max_attachment_bytes)} per message
             <div className="acts">{onPick
               ? <button className="btn primary" onClick={() => onPick(p.url, p.name)}><Icon name="check" />Use {p.name}</button>
@@ -74,26 +75,35 @@ export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel, initi
       );
     } else if (p.result === "unreachable") {
       card = (
-        <div className="probe-card bad"><Icon name="error" />
-          <div><b>Can't reach that hub</b>{p.error}.{onPick ? " Linking needs a hub this device can reach." : ""} Check the address, that the hub is running, and that this device is on its network. <button type="button" className="link hubhelp-open" onClick={showHelp}>How to run and reach a hub</button>
-            <div className="acts"><button className="btn" onClick={check}><Icon name="refresh" />Try again</button>{onPick ? null : <button className="btn ghost" onClick={() => add(p.url.replace(/^https?:\/\//, ""))}>Add anyway and keep trying</button>}</div>
+        <div className="probe-card bad" key={key}><Icon name="error" />
+          <div><b>Can't reach that hub</b>{key ? <><span className="mono">{p.url}</span> can't be reached right now: </> : null}{p.error}.{onPick ? " Linking needs a hub this device can reach." : ""} Check the address, that the hub is running, and that this device is on its network. <button type="button" className="link hubhelp-open" onClick={showHelp}>How to run and reach a hub</button>
+            <div className="acts"><button className="btn" onClick={retry}><Icon name="refresh" />Try again</button>{onPick ? null : <button className="btn ghost" onClick={() => add(p.url.replace(/^https?:\/\//, ""), key ? p.url : undefined)}>Add anyway and keep trying</button>}</div>
           </div>
         </div>
       );
     } else if (p.result === "not_allowed") {
       card = (
-        <div className="probe-card bad"><Icon name="error" />
+        <div className="probe-card bad" key={key}><Icon name="error" />
           <div><b>This hub doesn't allow this web app yet</b>Something answers at <span className="mono">{p.url}</span>, but it doesn't let this web app in. If it is your hub, its owner needs to add <span className="mono">{p.origin}</span> to the hub's web app addresses.
-            <div className="acts"><button className="btn" onClick={() => void copyText(p.origin, "Address copied")}><Icon name="copy" />Copy address</button><button className="btn" onClick={check}><Icon name="refresh" />Try again</button></div>
+            <div className="acts"><button className="btn" onClick={() => void copyText(p.origin, "Address copied")}><Icon name="copy" />Copy address</button><button className="btn" onClick={retry}><Icon name="refresh" />Try again</button></div>
           </div>
         </div>
       );
     } else if (p.result === "not_a_hub") {
-      card = <div className="probe-card bad"><Icon name="error" /><div><b>Not an Orgtree mail hub</b>Something answered at <span className="mono">{p.url}</span>, but it isn't a hub: {p.error}</div></div>;
+      card = <div className="probe-card bad" key={key}><Icon name="error" /><div><b>Not an Orgtree mail hub</b>Something answered at <span className="mono">{p.url}</span>, but it isn't a hub: {p.error}</div></div>;
     } else {
-      card = <div className="probe-card bad"><Icon name="error" /><div><b>Check the address</b>{p.error}</div></div>;
+      card = <div className="probe-card bad" key={key}><Icon name="error" /><div><b>Check the address</b>{p.error}</div></div>;
     }
-  }
+    return card;
+  };
+  if (ph.k === "result") card = resultCard(ph.p, check);
+  // suggestions show while the person has typed nothing; one already added is not offered again
+  const offered = ph.k === "idle" && !value.trim()
+    ? (found ?? []).filter((f) => !f.p || (f.p.result !== "invalid" && !existing.includes(f.p.url)))
+    : [];
+  const suggestions = offered.map((f) => f.p
+    ? resultCard(f.p, () => onRecheck?.(f.address), "s:" + f.address)
+    : <div className="probe-card busy" key={"s:" + f.address}><span className="spin" /><div>Reaching <span className="mono">{f.address}</span>…</div></div>);
 
   const busy = ph.k === "checking" || ph.k === "adding";
   const checkBtn = <button className={"btn" + (platform === "android" ? " block" : "")} onClick={check} disabled={!value.trim() || busy}><Icon name="link" />Check</button>;
@@ -115,6 +125,7 @@ export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel, initi
           ? <div className="help">Hubchat Web reaches a hub only over HTTPS: enter its <span className="mono">https://</span> address.</div>
           : <div className="help">No <span className="mono">http://</span>? Hubchat adds it. No port? Hubchat tries the hub's usual ports.</div>}
       </div>
+      {suggestions}
       {card}
       {platform === "android" ? <div className="pad" style={{ marginBottom: 8 }}>{checkBtn}</div> : null}
       <HubHelp ref={helpRef} open={help} onToggle={setHelp} />
