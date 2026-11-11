@@ -59,3 +59,25 @@ a synthetic native-pixel preview, not an Explorer/taskbar or installed-app
 screenshot. Live shell placement, Explorer restart recovery, device behavior
 and final packaged acceptance belong to the publishing review/build; no app
 build/install/live send is part of the author phase.
+
+## Showing why the dot is on (1.3.7, USER 2026-11-11 18:09Z "A: show where")
+
+The rule above is unchanged. A pending incoming question lit the dot with no
+other sign in the app, so the dot now explains itself:
+
+- `Store::taskbar_counts()` returns (unread incl. history-only unread, pending
+  questions) from the same tables as `taskbar_attention`; no second projection.
+  `ChatSummary.needs_answer` / `first_question` are the per-chat pending count
+  and the oldest pending card, read from `taskbar_questions` for open chats.
+- The chat list row (and the collapsed rail button) of such a chat has a bold
+  name and a "?" badge ("N question(s) need your answer"). Clicking the row
+  opens the chat, scrolls to the oldest pending card and highlights it, through
+  the existing `showMessage` jump (desktop and Android).
+- The taskbar button's hover text (the window title) reads
+  "Hubchat - N question(s) await your answer - M unread", or "Hubchat" when
+  neither applies (`taskbar::hint`, set with the overlay from `tray_recent`).
+
+Not in this change: a menu listing of pending questions (a follow-up job).
+Verification: `store_taskbar::tests::taskbar_counts_and_chat_needs_answer_follow_the_taskbar_rule`
+and `taskbar::tests::the_hover_text_says_why_the_dot_is_on`. The row marker,
+click-to-card navigation and hover text on a real taskbar are not tested.
