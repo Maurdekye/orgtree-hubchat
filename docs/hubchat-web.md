@@ -17,10 +17,10 @@ yet is listed under [Not there yet](#not-there-yet).
   (Settings, Link a device), with this device's camera. A signed-in browser
   can link another device the same way. The key QR code and the
   passphrase-locked key file work too.
-- A suggested first hub: when someone makes a new identity, the Add hub
-  step offers a hub the server names or one that answers at the page's own
-  address. It is added only when they tap **Add**. See
-  [The suggested hub](#the-suggested-hub).
+- Suggested hubs: when someone makes a new identity, the Add hub step
+  offers the hubs the server lists, or with none listed a hub that answers
+  at the page's own address. The server can switch this off. A hub is added
+  only when they tap **Add**. See [The suggested hub](#the-suggested-hub).
 - Adding hubs, the chat list, text messages both ways with Markdown,
   replies, receipts, typing, presence, drafts, deleting, the directory,
   Settings.
@@ -176,16 +176,44 @@ after Vite); the cache is named after the hash.
 
 ## The suggested hub
 
-When someone makes a new identity, the Add hub step
-(`src/web/suggest.ts`) checks, in this order: each address in
-`default_hubs` of the server's `/config.json`, the page's own address
-(a hub behind the same reverse proxy), and `https://` plus the page's host.
-The first that answers as a hub is shown as "Found <hub>" with an **Add**
-button. Nothing is added without that tap, and typing an address replaces
-the suggestion. The development server sets `default_hubs` with
-`npm run serve:web -- --default-hubs https://hub.example`; the container
-will set it from `HUBCHAT_WEB_DEFAULT_HUBS`. A hub on the same machine but
-another port is found only when it is named there.
+Someone who has just made a new identity and has no hub yet is offered hubs
+at "Add your hub". The server decides which, in `/config.json`
+(`src/web/suggest.ts` reads it; the cards are the Add hub step's own):
+
+| The server says | The page offers |
+|---|---|
+| `"hub_suggestions": false` | nothing, and it checks no address. This wins over a list. |
+| `"suggested_hubs": [...]` (not empty) | exactly those hubs, in that order, each as its own card. The server's own address is not added to the list. |
+| neither | the address the page is served from, then `https://` plus its host; a card only if a hub answers there, otherwise nothing |
+
+- Every address is checked the way a typed address is (the hub must allow
+  this web app's origin). A hub that answers shows as "Found <hub>" with
+  **Add <hub>**.
+- A LISTED hub that does not answer is shown too, with the card a typed
+  check gives and its address: "<address> can't be reached right now", with
+  **Try again** and **Add anyway and keep trying**; or "This hub doesn't
+  allow this web app yet" with the address its owner must add. A plain Add
+  never adds a hub that did not answer.
+- Nothing is added without a tap. Typing an address takes the suggestions
+  away; after one hub is added the others stay offered.
+- People who bring an identity back (words, a link, a key file) are offered
+  nothing: their hubs come with it.
+- A listed entry is `https://host[:port]`, or a bare `host[:port]`, taken as
+  https. At most 8 are offered. A server with no `/config.json` counts as
+  "neither".
+
+The container will set the two from `HUBCHAT_WEB_SUGGEST_HUBS` (a
+comma-separated list) and `HUBCHAT_WEB_HUB_SUGGESTIONS` (`true` by default;
+`false` switches suggesting off). Until it exists the development server
+takes them as flags:
+
+```
+npm run serve:web -- --suggest-hubs https://hub.example,other.example
+npm run serve:web -- --hub-suggestions false
+```
+
+A hub on the same machine as the page but on another port is offered only
+when it is listed: a page cannot guess ports.
 
 ## Building
 
@@ -253,7 +281,8 @@ the hub as `https://pc.example.ts.net:8443`.
   It checks the install screen on an iPhone's user agent, the start from
   the Home Screen and the keyboard handling (with a stand-in for the
   phone's visual viewport), onboarding, the hub refusal message, the
-  suggested hub, the recovery words download, a message both ways with a
+  suggested hubs (one that answers, one listed that does not, none with
+  suggestions switched off), the recovery words download, a message both ways with a
   scripted peer, receipts, Settings, a second browser that links by
   scanning the first one's QR code (its camera replaced by a picture of
   that code), a reload, the app's files kept by the service worker, a
