@@ -47,7 +47,7 @@ impl Drop for Prepared {
 pub(crate) async fn prepare_task(host: std::sync::Arc<dyn Host>, message: NewOutgoing) -> Result<Prepared> {
     crate::rt::task::spawn_blocking(move || prepare(host.as_ref(), message))
         .await
-        .map_err(|e| Error::Invalid(format!("file preparation stopped: {e}")))?
+        .map_err(|e| Error::Invalid(format!("File preparation stopped ({e}); retry the message.")))?
         .map_err(explain_error)
 }
 #[cfg(target_arch = "wasm32")]
