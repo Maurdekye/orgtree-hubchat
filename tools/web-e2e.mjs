@@ -85,15 +85,23 @@ const WATCH = `window.__csp = []; window.__shown = null;
 // app's own scanner and decoder.
 const CAMERA = `window.__qr = null;
   if (navigator.mediaDevices) navigator.mediaDevices.getUserMedia = async () => {
-    const c = document.createElement('canvas'); c.width = 640; c.height = 480;
+    // as a phone sees a monitor (the first real try, user 2026-11-11): a 1080p portrait frame, the
+    // code a quarter of its width on a dark window, turned a little, out of focus
+    const c = document.createElement('canvas'); c.width = 1080; c.height = 1920;
     const g = c.getContext('2d');
     let img = null, n = 0;
     const draw = () => {
       if (!img && window.__qr) { const i = new Image(); i.onload = () => { img = i; }; i.src = window.__qr; }
-      g.fillStyle = '#7d828b'; g.fillRect(0, 0, 640, 480);
-      if (img) { g.fillStyle = '#fff'; g.fillRect(150, 70, 340, 340); g.drawImage(img, 170, 90, 300, 300); }
+      g.filter = 'none'; g.setTransform(1, 0, 0, 1, 0, 0);
+      g.fillStyle = '#2b2e36'; g.fillRect(0, 0, 1080, 1920);
+      if (img) {
+        g.filter = 'blur(2px)';
+        g.translate(540, 900); g.rotate(4 * Math.PI / 180);
+        g.fillStyle = '#e4e6ea'; g.fillRect(-150, -150, 300, 300); g.drawImage(img, -125, -125, 250, 250);
+        g.filter = 'none'; g.setTransform(1, 0, 0, 1, 0, 0);
+      }
       // something moves, so the stream keeps giving frames
-      g.fillStyle = (n++ % 2) ? '#7d828b' : '#7e838c'; g.fillRect(0, 0, 4, 4);
+      g.fillStyle = (n++ % 2) ? '#2b2e36' : '#2c2f37'; g.fillRect(0, 0, 4, 4);
     };
     draw(); setInterval(draw, 100);
     window.__cameraOpened = (window.__cameraOpened || 0) + 1;
