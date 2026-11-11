@@ -202,15 +202,19 @@ at "Add your hub". The server decides which, in `/config.json`
   https. At most 8 are offered. A server with no `/config.json` counts as
   "neither".
 
-The container will set the two from `HUBCHAT_WEB_SUGGEST_HUBS` (a
-comma-separated list) and `HUBCHAT_WEB_HUB_SUGGESTIONS` (`true` by default;
-`false` switches suggesting off). Until it exists the development server
-takes them as flags:
+The server sets the two from `HUBCHAT_WEB_SUGGEST_HUBS` (a comma-separated
+list) and `HUBCHAT_WEB_HUB_SUGGESTIONS` (`true` by default; `false`
+switches suggesting off): `docs/hubchat-web-server.md`. The development
+server takes them as flags:
 
 ```
 npm run serve:web -- --suggest-hubs https://hub.example,other.example
 npm run serve:web -- --hub-suggestions false
 ```
+
+`/config.json` also carries `name`, the label the server's operator gave
+it (`HUBCHAT_WEB_NAME`, `--name` on the development server): the welcome
+screen shows it under the title (`serverName()` in `src/web/suggest.ts`).
 
 A hub on the same machine as the page but on another port is offered only
 when it is listed: a page cannot guess ports.
@@ -241,12 +245,17 @@ fails. The page lands in `dist-web/`.
 
 ## Running it
 
+The real server is the program `hubchat-web` (`crates/hubchat-web-server`),
+with the built page inside it, and its container image: how to run it, its
+settings and what it answers are in `docs/hubchat-web-server.md`. For
+development:
+
 ```
 npm run serve:web
 ```
 
 serves `dist-web/` on `http://127.0.0.1:8787` with the Content Security
-Policy the real server will send. A browser treats `http://localhost` as
+Policy the real server sends (a test of the server keeps the two equal). A browser treats `http://localhost` as
 secure, so this works on the same machine with a hub on that machine.
 
 ### Trying it on a phone
@@ -296,6 +305,14 @@ the hub as `https://pc.example.ts.net:8443`.
   by ones that refuse, before any page loads; it prints what it measured
   (`receipt: clipboard ...`) and stops if a browser is not guarded.
 
+The server has its own tests: `cargo test -p hubchat-web-server` (settings,
+every answer, and the built program asked over real sockets, HTTPS
+included), `.github/ci/web/smoke.sh` (the program or the image), and
+`tools/web-e2e.mjs --server <the hubchat-web program>`, which at its end
+opens the app from the program itself: it starts, shows the server's name,
+keeps its camera and nothing else (Permissions-Policy), and registers its
+service worker, with no policy violation.
+
 ## Not there yet
 
 These answer "This isn't available in Hubchat Web yet." or are hidden:
@@ -309,8 +326,7 @@ These answer "This isn't available in Hubchat Web yet." or are hidden:
   runs by itself.
 - "Update the Hubchat Web server", for a database written by a newer build
   than the one served (spec, Version skew).
-- The container and its server. `tools/web-serve.mjs` is a development
-  server.
+- The release workflow that builds and publishes the server's image.
 
 ## Not checked on a real device
 
