@@ -14,6 +14,10 @@ pub mod link;
 pub mod media;
 pub mod recovery;
 pub mod rt;
+#[cfg(target_arch = "wasm32")]
+pub mod rt_fs_web;
+#[cfg(target_arch = "wasm32")]
+mod rt_opfs;
 pub mod setup;
 pub mod store;
 #[cfg(not(target_arch = "wasm32"))]

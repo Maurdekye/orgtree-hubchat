@@ -142,7 +142,7 @@ impl Engine {
         // Platform file/provider I/O runs after the bounded DB read releases
         // its connection. The shell calls this on its blocking pool.
         for row in &mut page.rows {
-            row.available = row.source.as_deref().is_some_and(|p| self.host.open_source(p).is_ok());
+            row.available = row.source.as_deref().is_some_and(|p| crate::engine::source_available(self.host.as_ref(), p));
         }
         Ok(page)
     }
@@ -152,7 +152,7 @@ impl Engine {
         let a=m.attachments.iter().find(|a| a.local_id==local_id).ok_or_else(|| Error::Invalid("no such attachment".into()))?;
         let source=if m.outgoing {a.source.as_ref().or(a.local_path.as_ref())} else {a.local_path.as_ref()};
         let source=source.ok_or_else(|| Error::Invalid("Local file is missing or no longer available.".into()))?;
-        self.host.open_source(source).map_err(|_| Error::Invalid("Local file is missing or no longer available.".into()))?;
+        if !crate::engine::source_available(self.host.as_ref(), source) { return Err(Error::Invalid("Local file is missing or no longer available.".into())); }
         Ok((source.clone(),a.name.clone()))
     }
     /// Platform export (e.g. Android MediaStore) must move both durable pointers.
@@ -196,7 +196,7 @@ impl Engine {
         if let Some(previous) = self.store.download_job(local_id)? {
             if previous.state == "done" && !writers.contains_key(local_id) && fresh_copy {
                 self.store.fresh_download_copy(local_id, &part.to_string_lossy(), &dest.to_string_lossy(), &format!("-{}",uuid::Uuid::new_v4().simple()))?;
-            } else if previous.state == "done" && !writers.contains_key(local_id) && self.host.open_source(&previous.destination).is_err() {
+            } else if previous.state == "done" && !writers.contains_key(local_id) && !crate::engine::source_available(self.host.as_ref(), &previous.destination) {
                 self.store.restart_missing_download(local_id)?;
             }
         }
@@ -272,7 +272,7 @@ impl Engine {
                     return Err(Error::Cancelled);
                 }
                 if previous.state == "done" {
-                    if self.host.open_source(&previous.destination).is_ok() {
+                    if crate::engine::source_available(self.host.as_ref(), &previous.destination) {
                         return Ok(previous.destination.into());
                     }
                     self.store.restart_missing_download(local_id)?;

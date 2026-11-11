@@ -661,10 +661,15 @@ impl HubClient {
         self.session_work(async {
         let stop = cancel.clone();
         stop.run(async move {
+            #[cfg(not(target_arch = "wasm32"))]
             let std_file = file.into_std().await;
             let mut tries = 0;
             loop {
+                #[cfg(not(target_arch = "wasm32"))]
                 let f = crate::rt::fs::File::from_std(std_file.try_clone()?);
+                // a browser's file is not std's: the same open file, again
+                #[cfg(target_arch = "wasm32")]
+                let f = file.try_clone().await?;
                 match self
                     .resume_once(
                         me,

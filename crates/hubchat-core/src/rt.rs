@@ -37,6 +37,36 @@ mod native {
 
     pub mod fs {
         pub use tokio::fs::*;
+
+        /// What `metadata` answers (a browser has its own, with the same questions).
+        pub type Metadata = std::fs::Metadata;
+
+        // What the core asks without waiting. Here they are the std calls
+        // it always made; in a browser they are answered from an index.
+
+        /// What is at `path`, not following a link (`symlink_metadata`).
+        pub fn metadata_now(path: impl AsRef<std::path::Path>) -> std::io::Result<Metadata> {
+            std::fs::symlink_metadata(path)
+        }
+        pub fn exists_now(path: impl AsRef<std::path::Path>) -> bool {
+            path.as_ref().exists()
+        }
+        /// One entry of a directory.
+        pub struct Entry {
+            pub path: std::path::PathBuf,
+            pub name: String,
+            pub metadata: Metadata,
+        }
+        /// The entries directly inside a directory. A name that is not
+        /// UTF-8 is given as std's lossy text.
+        pub fn read_dir_now(path: impl AsRef<std::path::Path>) -> std::io::Result<Vec<Entry>> {
+            let mut all = Vec::new();
+            for entry in std::fs::read_dir(path)? {
+                let entry = entry?;
+                all.push(Entry { path: entry.path(), name: entry.file_name().to_string_lossy().into_owned(), metadata: entry.metadata()? });
+            }
+            Ok(all)
+        }
     }
 }
 
@@ -360,146 +390,11 @@ mod web {
         }
     }
 
-    /// Files. A browser page has no file system of this kind: every call
-    /// compiles and answers `ErrorKind::Unsupported` (what `std::fs` itself
-    /// says on this target), so file work fails cleanly instead of pretending.
-    pub mod fs {
-        use super::*;
-        use std::io::{self, Read, Seek, SeekFrom, Write};
-        use std::path::Path;
-        use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
-
-        pub struct File(std::fs::File);
-
-        impl File {
-            pub async fn open(path: impl AsRef<Path>) -> io::Result<File> {
-                std::fs::File::open(path).map(File)
-            }
-            pub async fn create(path: impl AsRef<Path>) -> io::Result<File> {
-                std::fs::File::create(path).map(File)
-            }
-            pub fn from_std(file: std::fs::File) -> File {
-                File(file)
-            }
-            pub async fn into_std(self) -> std::fs::File {
-                self.0
-            }
-            pub async fn metadata(&self) -> io::Result<std::fs::Metadata> {
-                self.0.metadata()
-            }
-            pub async fn set_len(&self, size: u64) -> io::Result<()> {
-                self.0.set_len(size)
-            }
-            pub async fn sync_all(&self) -> io::Result<()> {
-                self.0.sync_all()
-            }
-            pub async fn sync_data(&self) -> io::Result<()> {
-                self.0.sync_data()
-            }
-            pub async fn try_clone(&self) -> io::Result<File> {
-                self.0.try_clone().map(File)
-            }
-        }
-
-        impl AsyncRead for File {
-            fn poll_read(mut self: Pin<&mut Self>, _cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
-                let n = self.0.read(buf.initialize_unfilled())?;
-                buf.advance(n);
-                Poll::Ready(Ok(()))
-            }
-        }
-
-        impl AsyncWrite for File {
-            fn poll_write(mut self: Pin<&mut Self>, _cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
-                Poll::Ready(self.0.write(buf))
-            }
-            fn poll_flush(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-                Poll::Ready(self.0.flush())
-            }
-            fn poll_shutdown(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-                Poll::Ready(self.0.flush())
-            }
-        }
-
-        impl AsyncSeek for File {
-            fn start_seek(mut self: Pin<&mut Self>, position: SeekFrom) -> io::Result<()> {
-                self.0.seek(position).map(|_| ())
-            }
-            fn poll_complete(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<u64>> {
-                Poll::Ready(self.0.stream_position())
-            }
-        }
-
-        #[derive(Clone, Debug)]
-        pub struct OpenOptions(std::fs::OpenOptions);
-
-        impl Default for OpenOptions {
-            fn default() -> Self {
-                Self::new()
-            }
-        }
-
-        impl OpenOptions {
-            pub fn new() -> Self {
-                Self(std::fs::OpenOptions::new())
-            }
-            pub fn read(&mut self, on: bool) -> &mut Self {
-                self.0.read(on);
-                self
-            }
-            pub fn write(&mut self, on: bool) -> &mut Self {
-                self.0.write(on);
-                self
-            }
-            pub fn append(&mut self, on: bool) -> &mut Self {
-                self.0.append(on);
-                self
-            }
-            pub fn truncate(&mut self, on: bool) -> &mut Self {
-                self.0.truncate(on);
-                self
-            }
-            pub fn create(&mut self, on: bool) -> &mut Self {
-                self.0.create(on);
-                self
-            }
-            pub fn create_new(&mut self, on: bool) -> &mut Self {
-                self.0.create_new(on);
-                self
-            }
-            pub async fn open(&self, path: impl AsRef<Path>) -> io::Result<File> {
-                self.0.open(path).map(File)
-            }
-        }
-
-        pub async fn remove_file(path: impl AsRef<Path>) -> io::Result<()> {
-            std::fs::remove_file(path)
-        }
-        pub async fn remove_dir(path: impl AsRef<Path>) -> io::Result<()> {
-            std::fs::remove_dir(path)
-        }
-        pub async fn rename(from: impl AsRef<Path>, to: impl AsRef<Path>) -> io::Result<()> {
-            std::fs::rename(from, to)
-        }
-        pub async fn hard_link(original: impl AsRef<Path>, link: impl AsRef<Path>) -> io::Result<()> {
-            std::fs::hard_link(original, link)
-        }
-        pub async fn create_dir_all(path: impl AsRef<Path>) -> io::Result<()> {
-            std::fs::create_dir_all(path)
-        }
-        pub async fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> io::Result<()> {
-            std::fs::write(path, contents)
-        }
-        pub async fn read(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
-            std::fs::read(path)
-        }
-        pub async fn metadata(path: impl AsRef<Path>) -> io::Result<std::fs::Metadata> {
-            std::fs::metadata(path)
-        }
-        pub async fn symlink_metadata(path: impl AsRef<Path>) -> io::Result<std::fs::Metadata> {
-            std::fs::symlink_metadata(path)
-        }
-    }
+    /// Files: Hubchat Web's own, in the origin's private file system
+    /// (`rt_fs_web.rs`, over `webfs` and `rt_opfs`). The web shell awaits
+    /// `fs::init` before it starts the core; before that, and in a browser
+    /// without such storage, every call answers `ErrorKind::Unsupported`.
+    pub use crate::rt_fs_web as fs;
 }
 
 #[cfg(target_arch = "wasm32")]

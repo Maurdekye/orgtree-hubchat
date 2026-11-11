@@ -1756,8 +1756,8 @@ impl Engine {
                 self.fail(&m.peer, id, why)?;
                 return Ok(true);
             };
-            let file = match self.host.open_source(source) {
-                Ok(f) => crate::rt::fs::File::from_std(f),
+            let file = match open_source_file(self.host.as_ref(), source).await {
+                Ok(f) => f,
                 Err(e) => {
                     self.store.set_attachment(
                         &a.local_id,
@@ -2451,6 +2451,29 @@ fn pick_hub(
 
 /// `name`, or `name (2)`, `name (3)`... so a download never overwrites.
 /// The name is reduced to its last path component first.
+/// An attachment's source, opened for the upload. The apps ask their host (a
+/// path, or on Android a content:// URI).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) async fn open_source_file(host: &dyn Host, source: &str) -> std::io::Result<crate::rt::fs::File> {
+    host.open_source(source).map(crate::rt::fs::File::from_std)
+}
+/// In a browser a source is one of Hubchat Web's own files (the copy made when
+/// the file was picked): there is no `std::fs::File` to ask a host for.
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn open_source_file(_host: &dyn Host, source: &str) -> std::io::Result<crate::rt::fs::File> {
+    crate::rt::fs::File::open(source).await
+}
+
+/// Whether a source can still be read (the apps: the host can open it).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn source_available(host: &dyn Host, source: &str) -> bool {
+    host.open_source(source).is_ok()
+}
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn source_available(_host: &dyn Host, source: &str) -> bool {
+    crate::rt::fs::metadata_now(source).is_ok_and(|m| m.is_file())
+}
+
 fn unique_path(dir: &std::path::Path, name: &str) -> PathBuf {
     let base = std::path::Path::new(name)
         .file_name()
@@ -2458,7 +2481,7 @@ fn unique_path(dir: &std::path::Path, name: &str) -> PathBuf {
         .filter(|s| !s.is_empty() && s != "." && s != "..")
         .unwrap_or_else(|| "file".into());
     let first = dir.join(&base);
-    if !first.exists() {
+    if !crate::rt::fs::exists_now(&first) {
         return first;
     }
     let (stem, ext) = match base.rsplit_once('.') {
@@ -2467,7 +2490,7 @@ fn unique_path(dir: &std::path::Path, name: &str) -> PathBuf {
     };
     (2..)
         .map(|i| dir.join(format!("{stem} ({i}){ext}")))
-        .find(|p| !p.exists())
+        .find(|p| !crate::rt::fs::exists_now(p))
         .expect("unbounded")
 }
 
