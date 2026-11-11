@@ -1,0 +1,14 @@
+[package]
+name = "hubchat-web"
+description = "Hubchat Web's shell: the core in a browser worker (wasm32-unknown-unknown)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+hubchat-core = { path = "../hubchat-core" }
+serde_json = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }

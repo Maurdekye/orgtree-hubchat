@@ -1937,6 +1937,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hubchat-web"
+version = "1.3.6"
+dependencies = [
+ "hubchat-core",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "humantime"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
