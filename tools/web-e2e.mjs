@@ -70,8 +70,9 @@ const started = [];
 const browsers = [];
 
 const served = [];
-// the server names the test hub, as a container's HUBCHAT_WEB_DEFAULT_HUBS would
-const webConfig = { name: 'Hubchat Web', default_hubs: [] };
+// what the server says about suggesting hubs, as a container's HUBCHAT_WEB_SUGGEST_HUBS and
+// HUBCHAT_WEB_HUB_SUGGESTIONS would (spec R6.2a); the test changes it as it goes
+const webConfig = { name: 'Hubchat Web', suggested_hubs: [], hub_suggestions: true };
 // a copy of the built page is served, so the test can put a newer build there (section 9b)
 const site = join(run, 'site');
 cpSync(dist, site, { recursive: true });
@@ -224,6 +225,23 @@ async function main() {
   check('with the keyboard up the phone layout takes the part still visible, and gives it back after',
     !full.up && up.up && up.top === 0 && up.height === 480 && up.pad === '0px' && panned.top === 60 && panned.height === 480 && !down.up && down.top === full.top && down.height === full.height,
     JSON.stringify({ full, up, panned, down }));
+  // the server lists a hub but switches suggestions off: a new identity is offered nothing, and nothing is probed
+  // (a probe of this dead address would be logged by the browser and fail the next check)
+  webConfig.suggested_hubs = ['http://127.0.0.1:9'];
+  webConfig.hub_suggestions = false;
+  await t.clickText('.fork-opt', 'Create a new identity');
+  await t.b.type('#ob-id', 'off', 200); await t.b.type('#ob-name', 'No Suggestions', 200);
+  await t.clickText('.ob-foot button', 'Continue', 1500);
+  await t.waitFor(`/off\\.[0-9a-f]{6}/.test(document.body.innerText)`, 15000);
+  from = served.length;
+  await t.clickText('.ob-foot button', 'Continue', 600);
+  await t.waitFor(`!!document.querySelector('#hub-in')`, 10000);
+  await sleep(2500);
+  check('with suggestions switched off by the server, a new identity is offered no hub',
+    await t.b.eval(`!!document.querySelector('#hub-in') && !document.querySelector('.probe-card')`) && served.slice(from).some((x) => x.path === '/config.json'),
+    await t.b.eval(`(document.querySelector('.probe-card') || {}).innerText || 'no card'`) + ' :: asked for ' + served.slice(from).map((x) => x.path).join(' '));
+  webConfig.suggested_hubs = [];
+  webConfig.hub_suggestions = true;
   check('the Home Screen start has no script error', t.b.errors.length === 0, t.b.errors.join(' | '));
   await t.close();
 
@@ -245,7 +263,7 @@ async function main() {
 
   const hubPort = await freePort();
   const HUB = `http://127.0.0.1:${hubPort}`;
-  webConfig.default_hubs.push(HUB);
+  webConfig.suggested_hubs.push(HUB);
   // nothing of this machine's own hub settings reaches the test hub
   const hubEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(HUB_|MAILHUB_|HUBCHAT_)/i.test(k)));
   const hubLog = openSync(join(run, 'hub.log'), 'w');
@@ -261,6 +279,8 @@ async function main() {
   await new Promise((r) => stranger.listen(0, '127.0.0.1', r));
   started.push(['stranger', { kill: () => stranger.close() }, null]);
   const STRANGER = `http://127.0.0.1:${stranger.address().port}`, NOBODY = `http://127.0.0.1:${await freePort()}`;
+  // the server lists two hubs: the test hub, and one that is not running
+  webConfig.suggested_hubs.push(NOBODY);
 
   // --------------------------------------------------------------- the browser
   t = await open();
@@ -294,15 +314,20 @@ async function main() {
   const address = await (async () => { for (let i = 0; i < 40; i++) { const m = /e2e\.[0-9a-f]{6}/.exec(await b.eval('document.body.innerText')); if (m) return m[0]; await sleep(250); } return null; })();
   check('an identity is made in the browser', !!address, String(address));
   await shot('web-02-address.png');
+  // the browser itself logs each refused request: that noise is expected in the hub step, and only there
+  const quiet = b.errors.length;
   await clickText('.ob-foot button', 'Continue', 600);
 
   // ------------------------------------------------------- 5. add the hub
-  // the browser itself logs each refused request: that noise is expected here, and only here
-  const quiet = b.errors.length;
   check('the hub the server names is offered, and not added until asked',
     await waitFor(`!!document.querySelector('.probe-card.ok') && document.querySelector('.probe-card.ok').innerText.includes('Found e2ehub') && [...document.querySelectorAll('.probe-card.ok button')].some((x) => x.innerText.includes('Add e2ehub')) && !document.querySelector('.hublist-ob')`, 15000),
     await b.eval(`(document.querySelector('.probe-card')||{}).innerText || document.body.innerText.slice(0, 300)`));
+  check('a listed hub that does not answer is shown as unreachable, with the typed check\'s own card and buttons',
+    await waitFor(`(() => { const c = [...document.querySelectorAll('.probe-card.bad')].find((x) => x.innerText.includes("Can't reach that hub")); return !!c && c.innerText.includes(${JSON.stringify(NOBODY)} + " can't be reached right now") && [...c.querySelectorAll('button')].some((x) => x.innerText.includes('Try again')) && [...c.querySelectorAll('button')].some((x) => x.innerText.includes('Add anyway and keep trying')) && document.querySelectorAll('.probe-card').length === 2; })()`, 40000),
+    await b.eval(`[...document.querySelectorAll('.probe-card')].map((x) => x.innerText.split('\\n')[0]).join(' | ')`));
   await shot('web-02b-suggested.png');
+  await fill('#hub-in', 'x');
+  check('typing an address takes the suggestions away', await waitFor(`!document.querySelector('.probe-card')`, 5000), await b.eval(`document.querySelectorAll('.probe-card').length + ' cards'`));
   await fill('#hub-in', STRANGER);
   await clickText('button', 'Check', 500);
   check("a server that doesn't let the page in is told apart from one that isn't there, with the address its owner must add",
