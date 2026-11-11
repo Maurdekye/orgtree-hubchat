@@ -16,7 +16,7 @@ import { refreshKey, refreshView, useRestoredRefreshState, useRefreshState } fro
 import { useNavigationIntent } from "../lib/navigationIntent";
 import { IDLE_STOPS_READING, useActive, useForeground, useLastChat, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
 import { isSetupLink, startSetup, useSetupChat } from "../lib/setup";
-import { chatLinkTarget, shortcutView } from "../lib/chatlink";
+import { chatLinkQuestion, chatLinkTarget, shortcutView } from "../lib/chatlink";
 import { startUpdateChecks } from "../lib/updates";
 import { HubBanner, KeyRestoredBanner, RecoveryBanner, UpdateBanner } from "./Banners";
 import { ChatRows, EmptyChats, RailRows, useFilteredChats, type ChatFilter } from "./ChatList";
@@ -142,7 +142,7 @@ export function Desktop() {
     if (to !== null) {
       if (!to) toast("That chat link doesn't name an address.");
       else if (to === snap.state?.me?.address) settings("profile");
-      else open(to);
+      else { open(to); const q = chatLinkQuestion(input); if (q) setFileJump({ peer: to, id: q }); }
       return;
     }
     const current = intent.begin();

@@ -71,7 +71,7 @@ struct FetchQueue { pending: VecDeque<(String, String)>, known: HashSet<(String,
 
 #[derive(Default)]
 struct Pictures {
-    last: Mutex<Option<(String, Vec<PictureStamp>)>>,
+    last: Mutex<Option<(String, Vec<PictureStamp>, Vec<(String, String, String)>)>>,
     fetch: Mutex<FetchQueue>,
     fetching: AtomicBool,
 }
@@ -83,16 +83,28 @@ pub fn chat_link(owner: &str, peer: &str) -> String {
 }
 
 /// A chat link that also names the question card to show (`q`); Jump List "Needs attention" entries use it.
-/// STUB for the red commit.
-pub fn question_link(owner: &str, peer: &str, _id: &str) -> String { chat_link(owner, peer) }
+pub fn question_link(owner: &str, peer: &str, id: &str) -> String {
+    let mut url = url::Url::parse(&chat_link(owner, peer)).expect("constant URL");
+    url.query_pairs_mut().append_pair("q", id);
+    url.into()
+}
 
 /// "<chat name> asks: <the question, one line, at most 60 characters>" (mirrors Orgtree's "<org>: <who> asks").
-/// STUB for the red commit.
-pub fn attention_title(name: &str, _body: &str) -> String { name.to_owned() }
+pub fn attention_title(name: &str, body: &str) -> String {
+    let one: String = body.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let one = one.split_whitespace().collect::<Vec<_>>().join(" ");
+    let cut = if one.chars().count() > 60 { format!("{}\u{2026}", one.chars().take(59).collect::<String>()) } else { one };
+    let name: String = name.chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    let title = if cut.is_empty() { format!("{name} asks") } else { format!("{name} asks: {cut}") };
+    title.chars().take(200).collect()
+}
 
-/// The "Needs attention" group: one entry per pending question. STUB for the red commit.
-unsafe fn attention_collection(_exe: &str, _entries: &[ContactLink]) -> Result<IObjectArray> {
+/// The "Needs attention" group: one entry per pending question.
+unsafe fn attention_collection(exe: &str, entries: &[ContactLink]) -> Result<IObjectArray> {
     let c: IObjectCollection = unsafe { CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)? };
+    for entry in entries {
+        unsafe { c.AddObject(&link(exe, &entry.name, &entry.target, entry.icon.as_deref())?)?; }
+    }
     c.cast()
 }
 
@@ -137,7 +149,11 @@ fn arguments(link: &IShellLinkW) -> Result<String> {
     Ok(String::from_utf16_lossy(&args[..args.iter().position(|&c|c==0).unwrap_or(args.len())]))
 }
 
-fn publish(app: &AppHandle, owner: &str, rows: &[ShortcutContact], pictures: &[PictureStamp], c: &crate::core::Core) -> Result<()> {
+/// (question id, chat address, title) of each pending question, newest first (Windows shows a limited number).
+type Asking = Vec<(String, String, String)>;
+const ASKING_MAX: usize = 10;
+
+fn publish(app: &AppHandle, owner: &str, rows: &[ShortcutContact], pictures: &[PictureStamp], asking: &Asking, c: &crate::core::Core) -> Result<()> {
     let Ok(exe) = std::env::current_exe() else { return Ok(()); };
     // Shell state belongs to this build's AppUserModelID, including .test builds.
     unsafe {
@@ -173,7 +189,12 @@ fn publish(app: &AppHandle, owner: &str, rows: &[ShortcutContact], pictures: &[P
                 icons
             }).unwrap_or_default();
             let (recent, tasks) = collections(&exe, &contacts, &icons)?;
-            if recent.GetCount()? > 0 { list.AppendCategory(&HSTRING::from("Recent"), &recent)?; }
+            // like Orgtree: pending questions, when there are any, take the category above Tasks
+            let waiting: Vec<ContactLink> = asking.iter().map(|(id, peer, title)| ContactLink { name: title.clone(), target: question_link(owner, peer, id), icon: None })
+                .filter(|e| !removed_args.contains(&format!("\"{}\"", e.target))).collect();
+            let attention = attention_collection(&exe, &waiting)?;
+            if attention.GetCount()? > 0 { list.AppendCategory(&HSTRING::from("Needs attention"), &attention)?; }
+            else if recent.GetCount()? > 0 { list.AppendCategory(&HSTRING::from("Recent"), &recent)?; }
             list.AddUserTasks(&tasks)?;
             list.CommitList()
         })();
@@ -210,11 +231,21 @@ pub fn changed(app: &AppHandle) {
             };
             let pictures = if owner.is_empty() { Ok(vec![]) } else { c.tray_with_identity(Some(&owner), |_|read()) };
             let Ok(pictures) = pictures else { return; };
-            let key = (owner.clone(), pictures.clone());
+            let asking: Asking = if owner.is_empty() { vec![] } else {
+                c.tray_with_identity(Some(&owner), |_| {
+                    let directory = c.store.directory().map_err(|e|e.to_string())?;
+                    Ok(c.store.pending_questions(ASKING_MAX).map_err(|e|e.to_string())?.into_iter().map(|q| {
+                        let name = directory.iter().find(|d|d.address == q.peer).map(|d| if !d.org_name.is_empty() { d.org_name.clone() } else if !d.username.is_empty() { d.username.clone() } else { d.address.clone() })
+                            .unwrap_or_else(|| q.peer.clone());
+                        (q.id, q.peer, attention_title(&name, &q.body))
+                    }).collect())
+                }).unwrap_or_default()
+            };
+            let key = (owner.clone(), pictures.clone(), asking.clone());
             if state.last.lock().unwrap().as_ref() != Some(&key) { c.invalidate_shortcuts(); }
             let result = c.with_shortcuts(true, None, |current, rows| {
                 if current != owner { return Err("Identity changed".into()); }
-                publish(&handle, current, &rows, &pictures, c).map_err(|_|"Jump List unavailable".to_owned())
+                publish(&handle, current, &rows, &pictures, &asking, c).map_err(|_|"Jump List unavailable".to_owned())
             });
             if result.is_ok() { *state.last.lock().unwrap() = Some(key); }
             // Retrieval runs outside the UI/identity guard and uses the engine's

@@ -32,7 +32,12 @@ export function shortcutView(link: string): "settings" | "directory" | "newchat"
 }
 
 /** The question card a chat link points at (`q`), for the taskbar Jump List's "Needs attention" entries; null when
- *  there is none or it is not a plausible message id. STUB for the red commit. */
-export function chatLinkQuestion(_link: string): string | null {
-  return null;
+ *  there is none or it is not a plausible message id. */
+export function chatLinkQuestion(link: string): string | null {
+  const t = link.trim();
+  if (!/^hubchat:\/\/chat(\/|\?|#|$)/i.test(t)) return null;
+  try {
+    const q = new URL(t).searchParams.get("q");
+    return q && q.length <= 200 && /^[A-Za-z0-9._:-]+$/.test(q) ? q : null;
+  } catch { return null; }
 }

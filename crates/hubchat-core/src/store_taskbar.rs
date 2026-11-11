@@ -16,8 +16,15 @@ pub struct PendingQuestion {
 impl Store {
     /// The pending questions of every chat the dot counts (closed DMs too), newest first, at most `limit`: the
     /// taskbar rule itself, read from `taskbar_questions`.
-    pub fn pending_questions(&self, _limit: usize) -> Result<Vec<PendingQuestion>> {
-        Ok(vec![])
+    pub fn pending_questions(&self, limit: usize) -> Result<Vec<PendingQuestion>> {
+        self.with(|c| {
+            let mut st = c.prepare(
+                "SELECT m.id, m.peer, m.body FROM taskbar_questions t JOIN messages m ON m.id=t.id
+                  WHERE t.pending=1 ORDER BY m.created_at DESC, m.id DESC LIMIT ?",
+            )?;
+            let rows = st.query_map([limit as i64], |r| Ok(PendingQuestion { id: r.get(0)?, peer: r.get(1)?, body: r.get(2)? }))?;
+            rows.collect()
+        })
     }
 
     /// What the taskbar dot says: (unread messages including history-only unread, unanswered incoming questions).

@@ -323,3 +323,24 @@ Measured author results on source `08236ef` (base `b6fb18b`):
 
 No APK, installed-shell or device actions were performed. Installed Jump List
 and Android Canvas/launcher appearance remain the alpha.8 runtime smoke check.
+
+## "Needs attention" group (Windows, 1.3.7; USER 2026-11-11 18:50Z, after Orgtree's taskbar list)
+
+When an incoming question card waits for an answer (the taskbar dot's rule,
+[taskbar attention](taskbar-attention.md); closed DMs included), the taskbar
+Jump List gets a custom **Needs attention** category above Tasks, one entry per
+pending question, newest first, at most ten. As in Orgtree's list it takes the
+place of **Recent** while it has entries, and returns to Recent when the
+questions are settled. An entry reads "<chat name> asks: <the question, one line,
+at most 60 characters>" (the chat name follows the chat list's rule).
+Clicking it launches the same executable with
+`hubchat://chat?to=<address>&owner=<identity>&q=<message id>`; the running
+window opens the chat, scrolls to the card and highlights it (the same jump
+as the chat row marker). The identity guard of Recent entries applies. The
+list refreshes when the set of pending questions changes (it is part of the
+projection key). Android is unchanged (no Jump List).
+
+Proof: `store_taskbar::tests::pending_questions_list_what_the_dot_counts_newest_first_and_follow_settlement`,
+`jumplist::tests::a_question_entry_*` and `the_attention_group_*`,
+`node --test tools/chatlink-question.test.ts`. Not tested: the shell showing the
+group (it needs Explorer's real taskbar), and the click-to-card in a running app.
