@@ -44,8 +44,10 @@ export function webServer(dist, served = [], config = null) {
     head['content-type'] = TYPES[extname(file).toLowerCase()] || 'application/octet-stream';
     let body = readFileSync(file);
     if (/\.(html|js|css|wasm|json|svg|webmanifest)$/.test(file) && /\bgzip\b/.test(req.headers['accept-encoding'] || '')) {
-      if (!packed.has(file)) packed.set(file, gzipSync(body, { level: 9 }));
-      body = packed.get(file);
+      // by the file as it is now: a page rebuilt while the server runs is served new
+      const key = file + '|' + raw + '|' + statSync(file).mtimeMs;
+      if (!packed.has(key)) packed.set(key, gzipSync(body, { level: 9 }));
+      body = packed.get(key);
       head['content-encoding'] = 'gzip';
       head.vary = 'Accept-Encoding';
     }

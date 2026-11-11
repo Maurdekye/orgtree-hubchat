@@ -26,7 +26,7 @@
 // that, for a machine with no signed-in user to disturb). It stops only the
 // processes it started, by their own handles.
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { createServer as tcpServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -34,6 +34,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launch } from './cdp.mjs';
 import { webServer } from './web-static.mjs';
+import { writeServiceWorker } from './web-sw.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const flag = (name) => process.argv.includes('--' + name);
@@ -71,7 +72,10 @@ const browsers = [];
 const served = [];
 // the server names the test hub, as a container's HUBCHAT_WEB_DEFAULT_HUBS would
 const webConfig = { name: 'Hubchat Web', default_hubs: [] };
-const web = webServer(dist, served, webConfig);
+// a copy of the built page is served, so the test can put a newer build there (section 9b)
+const site = join(run, 'site');
+cpSync(dist, site, { recursive: true });
+const web = webServer(site, served, webConfig);
 
 const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1';
 // before any of the page's own script: note policy violations, and when the app first shows
@@ -440,6 +444,41 @@ async function main() {
   const again = served.slice(from).filter((s) => s.status === 200);
   console.log(`measured: a return visit shows the chats after ${await b.eval('window.__shown')} ms; ${again.length} files asked for again, ${again.reduce((n, s) => n + s.sent, 0)} B`);
   await shot('web-12-reloaded.png');
+
+  // ------------- 9b. the app's files are kept: it opens with the server gone, and offers a newer build
+  check("a service worker keeps the app's files",
+    await waitFor(`Promise.all([navigator.serviceWorker.getRegistration(), caches.keys()]).then(([r, k]) => !!r && !!r.active && !r.waiting && !!navigator.serviceWorker.controller && k.length === 1 && k[0].startsWith('hubchat-web-'))`, 30000),
+    await b.eval(`caches.keys().then((k) => k.join(' '))`));
+  check("it holds only this server's files, the page and the core among them",
+    await b.eval(`caches.keys().then((n) => caches.open(n[0])).then((c) => c.keys()).then((k) => k.every((r) => new URL(r.url).origin === location.origin) && k.some((r) => r.url.endsWith('/index.html')) && k.some((r) => r.url.endsWith('.wasm')))`),
+    await b.eval(`caches.keys().then((n) => caches.open(n[0])).then((c) => c.keys()).then((k) => k.map((r) => new URL(r.url).pathname).join(' '))`));
+  // the server goes away
+  const port = web.address().port;
+  await new Promise((r) => { web.close(() => r()); web.closeAllConnections(); });
+  await b.nav(origin + '/', 0);
+  check('with the server gone, Hubchat still opens and shows its chats', await waitFor(kept('document'), 60000), await b.eval(`document.body.innerText.slice(0, 300)`));
+  check('and no update is offered', await b.eval(`!document.querySelector('.banner.upd')`));
+  await shot('web-21-offline.png');
+  // the server comes back with a newer build: one changed file, and its service worker
+  const page = join(site, 'index.html');
+  writeFileSync(page, readFileSync(page, 'utf8').replace('<head>', '<head><meta name="e2e-build" content="2">'));
+  const newer = writeServiceWorker(site, '9.9.9');
+  await new Promise((r) => web.listen(port, '127.0.0.1', r));
+  await b.nav(origin + '/', 0);
+  check('the old build keeps running until asked', await waitFor(kept('document'), 60000) && await b.eval(`!document.querySelector('meta[name=e2e-build]')`));
+  // the phone layout shows it on the chat list, as the Android app does
+  if (phone) await b.click('button[aria-label="Back"]', 600);
+  check('the update banner says a new version is ready',
+    await waitFor(`!!document.querySelector('.banner.upd') && document.querySelector('.banner.upd').innerText.includes('A new version of Hubchat is ready.') && [...document.querySelectorAll('.banner.upd button')].some((x) => x.innerText.trim() === 'Update')`, 60000),
+    await b.eval(`navigator.serviceWorker.getRegistration().then((r) => ((document.querySelector('.banner.upd') || {}).innerText || 'no banner') + ' :: worker ' + JSON.stringify({ installing: r && r.installing && r.installing.state, waiting: r && r.waiting && r.waiting.state, active: r && r.active && r.active.state, controlled: !!navigator.serviceWorker.controller }))`));
+  await shot('web-22-update.png');
+  await b.eval(`[...document.querySelectorAll('.banner.upd button')].find((x) => x.innerText.trim() === 'Update').click()`);
+  check('Update reloads into the new build, with the identity and the chat still here',
+    await waitFor(`!!document.querySelector('meta[name=e2e-build]') && !document.querySelector('.banner.upd') && ${kept('document')}`, 60000),
+    await b.eval(`document.body.innerText.slice(0, 200)`));
+  check('only the new build is kept',
+    await waitFor(`caches.keys().then((k) => k.length === 1 && k[0] === 'hubchat-web-${newer.build}')`, 20000), await b.eval(`caches.keys().then((k) => k.join(' '))`));
+  await shot('web-23-updated.png');
 
   // --------------------------------------------- 10. one tab at a time
   await b.eval(`void window.open(location.href, 'hcw2')`, { gesture: true });
