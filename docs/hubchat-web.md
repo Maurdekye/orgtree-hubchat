@@ -24,6 +24,11 @@ yet is listed under [Not there yet](#not-there-yet).
 - Adding hubs, the chat list, text messages both ways with Markdown,
   replies, receipts, typing, presence, drafts, deleting, the directory,
   Settings.
+- Files and pictures: the paperclip opens the browser's file chooser, and a
+  pasted picture attaches too. Pictures show in the chat. A received file
+  downloads into the browser's own storage; **Open** then hands it to the
+  browser (the share sheet on an iPhone, a download elsewhere). See
+  [Files](#files).
 - Saving the recovery words: Copy, or Download (the share sheet on an
   iPhone). On the web the words must be saved before the chat list opens.
 - Opening without a network: the app's files are kept in the browser, so
@@ -196,6 +201,51 @@ Tests: `store::tests::a_store_from_a_newer_build_is_refused_and_left_alone`
 itself has not been produced in a browser: the test has no way to put a
 newer database into the browser's private file system.
 
+## Files
+
+The apps name a file by its path and read it with the system's file calls.
+A page has neither, so Hubchat Web keeps its own files in the origin's
+private file system, in a directory `hubchat-files` beside the database's,
+and the core works on those exactly as it works on a disk.
+
+- **The file layer.** In a browser `rt::fs` is `rt_fs_web.rs`: the names of
+  `tokio::fs` the core uses, over `webfs.rs` (what a path means, an index
+  of what exists, one handle shared by every open of a file; tested
+  natively against a backend in memory) on `rt_opfs.rs` (the browser calls:
+  synchronous access handles in the core's worker). A browser opens a file
+  only by waiting, so what the core asks without waiting (`exists_now`,
+  `metadata_now`, `read_dir_now`) is answered from the index; natively
+  those are the std calls the core always made. The web shell awaits
+  `rt::fs::init` before it starts the core. A browser that refuses the
+  directory still chats: file work then fails with a sentence.
+- **Where blocking code stood.** `staging.rs` (the private copy of each
+  attachment before it is queued) has a twin for the browser,
+  `staging_web.rs`; callers use `prepare_task`, `collect_task` and
+  `sweep_task`, which run the blocking work on the blocking pool natively.
+  std's clock panics in a page: ages are taken with `rt::system_now`.
+- **Uploads.** A page cannot send a request body piece by piece.
+  `hub::stream_body` gathers one request's pieces in memory: 8 MiB at a
+  time for a resumable upload (a hub that advertises `uploads`), at most
+  64 MiB for a hub that takes a file only whole.
+- **What the page and the core pass.** JSON carries no file, so the worker
+  has a second entry, `raw` (`wasm.rs`, `{ t: "raw" }` in `wire.ts`):
+  `hc_web_put` copies a chosen `File` into `picked/<id>/<name>` and answers
+  that path, which is the attachment's `source` from then on;
+  `hc_file_preview` and `hc_attachment_preview` answer a picture's bytes;
+  `hc_web_file` answers the browser's own `File` for a stored attachment
+  (a view of the stored bytes, not a copy), which `save.ts` hands to the
+  share sheet or a download. `webApi.ts` maps the apps' commands onto
+  these, so the components call `pickFiles()`, `api.savePasted()` and
+  `openAttachment()` as they do in the apps.
+- **The folders** (`crates/hubchat-web/src/files.rs`): `picked/` (chosen
+  files, kept 7 days so a sent file can still be opened and shown),
+  `outbox/` (the core's copies on their way out), `downloads/` (saved
+  files), `previews/<message>/<attachment>` (pictures fetched to be
+  shown). The start removes the previews of messages that are gone and
+  chosen files past their time.
+
+There is no "Show in folder" on the web: a browser has no folder to show.
+
 ## The suggested hub
 
 Someone who has just made a new identity and has no hub yet is offered hubs
@@ -339,8 +389,11 @@ service worker, with no policy violation.
 
 These answer "This isn't available in Hubchat Web yet." or are hidden:
 
-- Files: attaching, receiving, pictures, video and audio; the profile
-  picture.
+- Playing video and audio in the chat (they attach, send and download as
+  files), dropping a file onto the chat, and Paste from the right-click
+  menu for a picture.
+- A screen to see or free what the browser stores for Hubchat: downloaded
+  files stay until the site's data is cleared.
 - The hub stream: Hubchat Web long-polls every hub (`stream_web.rs`) until
   it has a carrier over the browser's WebSocket.
 - Notifications (Web Push).
@@ -356,4 +409,8 @@ keyboard handling (`src/web/viewport.ts`), the safe areas around the notch
 and home bar, and start time on a phone. Firefox and Safari on a desktop
 have not been run either. No real camera has scanned a code: the browser
 test feeds the scanner a picture. The key file and the key QR code are
-covered by the shell's tests only, not in a browser.
+covered by the shell's tests only, not in a browser. Files have run only in
+Chromium: the private file system's synchronous handles and moving a file
+there have not been run in Safari. The file chooser itself is replaced in
+the browser test; a real one, the share sheet and a pasted picture have not
+been tried. The profile picture has not been tried on the web.

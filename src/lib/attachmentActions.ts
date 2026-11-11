@@ -1,5 +1,5 @@
 // Shared by chat attachments and Contact info's file list.
-import { api, type Attachment, type Message } from "../api";
+import { api, isWeb, type Attachment, type Message } from "../api";
 import type { MenuEntry } from "./ctxmenu";
 import { openImage, previewable } from "./images";
 import { errText, openAttachment } from "./native";
@@ -20,7 +20,7 @@ export function attachmentMenu(m: Message, a: Attachment, platform: "desktop" | 
   if (v.retry === "send") out.push({ label: "Retry upload", icon: "refresh", run: () => run(api.retry(m.id)) });
   if (localAttachment(m, a)) {
     out.push({ label: "Open", icon: "open_in_new", run: () => run(openAttachment(m.id, a.local_id, false)) });
-    if (platform === "desktop") out.push({ label: "Show in folder", icon: "folder", run: () => run(openAttachment(m.id, a.local_id, true)) });
+    if (platform === "desktop" && !isWeb) out.push({ label: "Show in folder", icon: "folder", run: () => run(openAttachment(m.id, a.local_id, true)) });
   }
   if (v.cancel) out.push({ label: m.outgoing && !a.download ? "Cancel upload" : "Cancel download", icon: "close", run: () => run(api.cancelTransfer(a.local_id)) });
   if (m.outgoing && m.state === "failed" && !a.download) out.push({ label: "Remove file", icon: "close", run: () => run(api.removeAttachment(m.id, a.local_id)) });

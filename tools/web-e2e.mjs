@@ -7,7 +7,10 @@
 //   identity -> a server that refuses the page says so -> add the hub ->
 //   save the recovery words -> a scripted peer writes -> the message shows
 //   -> reply from the composer -> the peer gets it and receipts it -> the
-//   tick climbs to read -> Settings open -> a reload keeps the identity and
+//   tick climbs to read -> a second peer sends a picture, which shows ->
+//   a picture and a file larger than one upload piece are attached, sent,
+//   and reach the peer byte for byte -> a file the peer sends is saved in
+//   the browser and handed to its downloads -> Settings open -> a reload keeps the identity and
 //   the chat -> a second tab is told Hubchat is open elsewhere, takes over,
 //   and the first tab is told the same.
 //
@@ -28,6 +31,8 @@
 // that, for a machine with no signed-in user to disturb). It stops only the
 // processes it started, by their own handles.
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { crc32, deflateSync } from 'node:zlib';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { createServer as tcpServer } from 'node:net';
@@ -379,7 +384,6 @@ async function main() {
   await shot('web-07-incoming.png');
   await clickText('.crow', 'Test Peer', 1200);
   check('its text shows, Markdown and all', await waitFor(`[...document.querySelectorAll('.msg.in')].some((m) => m.querySelector('strong')?.innerText === 'peer')`, 10000));
-  check('no paperclip: the web app sends no files yet', await b.eval(`!document.querySelector('button[aria-label="Attach files"]') && !!document.querySelector('.comp-box textarea')`));
   await b.type('.comp-box textarea', 'reply from the web', 200);
   await b.click('button[aria-label="Send"]', 800);
   check('the reply shows in the chat', await waitFor(`[...document.querySelectorAll('.msg.out')].some((m) => m.innerText.includes('reply from the web'))`, 10000));
@@ -389,6 +393,76 @@ async function main() {
   check("the peer's message was receipted", ['delivered', 'read'].includes(p.our_receipt), String(p.our_receipt));
   check('the reply tick climbs to read', await waitFor(`(() => { const m = [...document.querySelectorAll('.msg.out')].pop(); return !!m && /read/.test(m.querySelector('.tick')?.className || ''); })()`, 30000), await b.eval(`[...document.querySelectorAll('.msg.out')].pop()?.querySelector('.tick')?.className`));
   await shot('web-08-conversation.png');
+
+  // ------------------------------------------------- 7b. files and pictures
+  {
+    const sha = (data) => createHash('sha256').update(data).digest('hex');
+    // a real picture, 16 x 16
+    const png = (() => {
+      const w = 16, h = 16, rows = Buffer.alloc((w * 3 + 1) * h);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) rows.set([40 + x * 12, 90 + y * 9, 200], y * (w * 3 + 1) + 1 + x * 3);
+      const chunk = (type, data) => { const td = Buffer.concat([Buffer.from(type), data]), n = Buffer.alloc(4), c = Buffer.alloc(4); n.writeUInt32BE(data.length); c.writeUInt32BE(crc32(td)); return Buffer.concat([n, td, c]); };
+      const head = Buffer.alloc(13); head.writeUInt32BE(w, 0); head.writeUInt32BE(h, 4); head.set([8, 2, 0, 0, 0], 8);
+      return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', head), chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0))]);
+    })();
+    // larger than one piece of a resumable upload (8 MiB): bytes any side can make again
+    const BIG = 9 * 1024 * 1024 + 4321;
+    const big = Buffer.alloc(BIG); for (let i = 0; i < BIG; i++) big[i] = (i * 31 + (i >> 11)) & 255;
+    const report = Buffer.alloc(300 * 1024 + 7); for (let i = 0; i < report.length; i++) report[i] = (i * 7 + 3) & 255;
+    writeFileSync(join(run, 'sky.png'), png);
+    writeFileSync(join(run, 'report.pdf'), report);
+    const pat = (...args) => { const r = spawnSync(process.execPath, [join(here, 'peer2.mjs'), HUB, ...args], { encoding: 'utf8', env: { ...hubEnv, PEER_STATE: join(run, 'pat.json') }, timeout: 120000 }); try { return JSON.parse(r.stdout.trim().split('\n').pop()); } catch { return { failed: (r.stderr || r.stdout || '').slice(0, 300) }; } };
+
+    // a peer sends a picture
+    const sentPicture = pat('send', address, 'a picture for you', join(run, 'sky.png'));
+    if (phone) await b.click('button[aria-label="Back"]', 700);
+    check('a second peer writes, with a picture', !!sentPicture.sent && await waitFor(`[...document.querySelectorAll('.crow')].some((r) => r.innerText.includes('Pat Peer'))`, 30000), JSON.stringify(sentPicture));
+    await clickText('.crow', 'Pat Peer', 1200);
+    check('the picture shows in the chat', await waitFor(`(() => { const i = document.querySelector('.msg.in .att-img img'); return !!i && i.complete && i.naturalWidth === 16; })()`, 30000),
+      await b.eval(`document.querySelector('.msg.in .atts')?.innerText || 'no attachment'`));
+
+    // attach a picture and a large file: the browser's file chooser is the one thing replaced
+    // (a test opens no real one); what the app does with the files it gives is the app's own
+    await b.eval(`(() => {
+      const png = Uint8Array.from(atob(${JSON.stringify(png.toString('base64'))}), (c) => c.charCodeAt(0));
+      const big = new Uint8Array(${BIG}); for (let i = 0; i < big.length; i++) big[i] = (i * 31 + (i >> 11)) & 255;
+      const files = [new File([png], 'sky.png', { type: 'image/png' }), new File([big], 'backup.bin')];
+      const click = HTMLInputElement.prototype.click;
+      HTMLInputElement.prototype.click = function () {
+        if (this.type !== 'file') return click.call(this);
+        const dt = new DataTransfer(); for (const f of files) dt.items.add(f);
+        this.files = dt.files; this.dispatchEvent(new Event('change'));
+      };
+    })()`);
+    await b.click('button[aria-label="Attach files"]', 500);
+    check('the chosen files wait in the composer, the picture as itself',
+      await waitFor(`(() => { const r = document.querySelector('.attrow'); return !!r && r.children.length === 2 && r.innerText.includes('backup.bin') && [...r.querySelectorAll('img')].some((i) => i.complete && i.naturalWidth === 16); })()`, 30000),
+      await b.eval(`(document.querySelector('.attrow')?.innerText || 'no row') + ' / ' + (document.querySelector('.comp-err')?.innerText || '')`));
+    await shot('web-08b-attached.png');
+    await b.click('button[aria-label="Send"]', 800);
+    check('the message shows with its picture and its file',
+      await waitFor(`(() => { const m = [...document.querySelectorAll('.msg.out')].pop(); const i = m?.querySelector('.att-img img'); return !!i && i.complete && i.naturalWidth === 16 && !!m.querySelector('.att-file'); })()`, 30000),
+      await b.eval(`[...document.querySelectorAll('.msg.out')].pop()?.innerText || document.querySelector('.comp-err')?.innerText || 'no message'`));
+    const got = pat('recv', address, '90');
+    const by = Object.fromEntries((got.received || []).map((f) => [f.name, f]));
+    check('the peer receives both files, byte for byte (the large one went up in pieces)',
+      by['sky.png']?.sha256 === sha(png) && by['backup.bin']?.sha256 === sha(big) && by['backup.bin']?.bytes === BIG, JSON.stringify(got).slice(0, 400));
+    check('the sent file is no longer on its way', await waitFor(`(() => { const f = [...document.querySelectorAll('.msg.out')].pop()?.querySelector('.att-file'); return !!f && f.classList.contains('local'); })()`, 30000),
+      await b.eval(`[...document.querySelectorAll('.msg.out')].pop()?.querySelector('.att-file')?.className + ' ' + [...document.querySelectorAll('.msg.out')].pop()?.querySelector('.att-s')?.innerText`));
+
+    // a file from the peer: saved in this browser, then handed to its downloads
+    const sentFile = pat('send', address, 'the report', join(run, 'report.pdf'));
+    const mine = `[...document.querySelectorAll('.msg.in .att-file')].find((f) => f.innerText.includes('report.pdf'))`;
+    check('a file from the peer shows as a file', !!sentFile.sent && await waitFor(`!!${mine}`, 30000), JSON.stringify(sentFile));
+    await b.eval(`${mine}.click()`);
+    check('it downloads into this browser', await waitFor(`${mine}?.classList.contains('got')`, 40000), await b.eval(`${mine}?.className + ' ' + ${mine}?.innerText`));
+    await b.eval(`${mine}.click()`);
+    const savedReport = join(downloads, 'report.pdf');
+    for (let i = 0; i < 40 && !existsSync(savedReport); i++) await sleep(250);
+    check('Open hands the browser the same bytes', existsSync(savedReport) && sha(readFileSync(savedReport)) === sha(report), existsSync(savedReport) ? 'the bytes differ' : 'no report.pdf in ' + downloads);
+    check('a browser has no folder to show a file in', await b.eval(`!document.body.innerText.includes('Show in folder')`));
+    await shot('web-08c-files.png');
+  }
 
   // ------------------------------------------------------------ 8. Settings
   if (phone) {

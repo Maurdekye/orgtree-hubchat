@@ -2,7 +2,7 @@
 // time and ticks, a question card's options, the failed line, and
 // (desktop) the hover actions.
 import { memo, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
-import { api, type Attachment, type Message } from "../api";
+import { api, isWeb, type Attachment, type Message } from "../api";
 import { Icon, iconHTML } from "../lib/icons";
 import { fullWhen, isLong, num, time } from "../lib/format";
 import { esc, md } from "../lib/md";
@@ -63,7 +63,7 @@ function FileCard({ a, m }: { a: Attachment; m: Message }) {
         <span className="att-s">{v.sub}{v.retry ? " · Retry" : ""}</span>
         {remove ? <button className="link" onClick={(e) => { e.stopPropagation(); api.removeAttachment(m.id,a.local_id).catch(err=>toast(errText(err))); }}>Remove file</button> : null}
         {v.bar != null ? <span className="att-bar"><i style={{ width: v.bar + "%" }} /></span> : null}
-        {v.open && a.local_path && platform === "desktop" ? <button className="link" style={{ fontSize: 12, alignSelf: "flex-start", marginTop: 2 }} onClick={(e) => { e.stopPropagation(); openAttachment(m.id, a.local_id, true).catch((err) => toast(errText(err))); }}>Show in folder</button> : null}
+        {v.open && a.local_path && platform === "desktop" && !isWeb ? <button className="link" style={{ fontSize: 12, alignSelf: "flex-start", marginTop: 2 }} onClick={(e) => { e.stopPropagation(); openAttachment(m.id, a.local_id, true).catch((err) => toast(errText(err))); }}>Show in folder</button> : null}
       </span>
       {v.download ? <span className="att-dl"><Icon name="download" /></span> : null}
       {v.cancel ? <button className="att-x" title={m.outgoing && !a.download ? "Cancel upload" : "Cancel download"} onClick={(e) => { e.stopPropagation(); api.cancelTransfer(a.local_id).catch(e => toast(errText(e))); }}><Icon name="close" /></button> : null}

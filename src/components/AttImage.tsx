@@ -4,7 +4,7 @@
 // it). Without a preview (too big, gone from the hub, none fetched) the
 // file card shows instead.
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type WheelEvent as ReactWheelEvent } from "react";
-import { api, type Attachment, type Message } from "../api";
+import { api, isWeb, type Attachment, type Message } from "../api";
 import { bytes } from "../lib/format";
 import { Icon } from "../lib/icons";
 import { closeImage, openImage, usePreview, useShownImage } from "../lib/images";
@@ -151,7 +151,7 @@ function Viewer({ m, a }: { m: Message; a: Attachment }) {
   const actions = m.outgoing && a.source && !current.download
     ? (fromHere ? <button className="link" onClick={() => openFile(fromHere).catch((e) => toast(errText(e)))}>Open</button> : null)
     : saved
-      ? <><button className="link" onClick={() => open(false)}>Open</button>{platform === "desktop" ? <button className="link" onClick={() => open(true)}>Show in folder</button> : null}</>
+      ? <><button className="link" onClick={() => open(false)}>Open</button>{platform === "desktop" && !isWeb ? <button className="link" onClick={() => open(true)}>Show in folder</button> : null}</>
       : saving
         ? <span className="iv-progress" role="status">{view.sub}</span>
         : <button className="link" onClick={download}>{view.retry ? "Retry download" : "Download"}</button>;

@@ -5,6 +5,8 @@
 // must not write into the checkout.
 //   node peer2.mjs <hub> whoami
 //   node peer2.mjs <hub> send <to-address> "<text>" [image-file]
+//   node peer2.mjs <hub> recv <from-address> [timeout-s]   the files of <from>'s next message with files:
+//                                                          each one's name, size and SHA-256, as one JSON line
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { randomBytes, createHash, randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
@@ -26,6 +28,23 @@ const post = async (path, body, headers = {}) => {
 };
 await post('/api/register', JSON.stringify({ slug: me.slug, kind: 'person', username: NAME, org_name: NAME }), { 'Content-Type': 'application/json' });
 if (cmd === 'whoami') { console.log(me.slug); process.exit(0); }
+if (cmd === 'recv') {
+  const json = { 'Content-Type': 'application/json' };
+  const end = Date.now() + 1000 * Number(text || 40), received = [];
+  while (Date.now() < end && !received.length) {
+    const p = await post('/api/poll?wait=5', '{}', json);
+    for (const m of p.messages) {
+      if (m.from !== to) continue;
+      for (const a of m.attachments || []) {
+        const r = await fetch(hub + '/api/attachments/' + a.id, { headers: auth });
+        const data = Buffer.from(await r.arrayBuffer());
+        received.push({ name: a.name, bytes: data.length, sha256: createHash('sha256').update(data).digest('hex'), status: r.status });
+      }
+    }
+    if (p.messages.length) await post('/api/ack', JSON.stringify({ ids: p.messages.map((m) => m.id) }), json);
+  }
+  console.log(JSON.stringify({ received }));
+}
 if (cmd === 'send') {
   const attachments = [];
   if (image) {
