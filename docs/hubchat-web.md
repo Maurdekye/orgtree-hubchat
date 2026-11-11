@@ -12,6 +12,15 @@ yet is listed under [Not there yet](#not-there-yet).
 ## What works
 
 - Making an identity, or bringing one back with its 24 recovery words.
+- Linking: **Link from your other device** shows a code for the other
+  device, or scans the QR code the Hubchat app on a PC or phone shows
+  (Settings, Link a device), with this device's camera. A signed-in browser
+  can link another device the same way. The key QR code and the
+  passphrase-locked key file work too.
+- A suggested first hub: when someone makes a new identity, the Add hub
+  step offers a hub the server names or one that answers at the page's own
+  address. It is added only when they tap **Add**. See
+  [The suggested hub](#the-suggested-hub).
 - Adding hubs, the chat list, text messages both ways with Markdown,
   replies, receipts, typing, presence, drafts, deleting, the directory,
   Settings.
@@ -82,7 +91,50 @@ page (React UI, src/)  <- postMessage ->  worker (hubchat-core as WebAssembly)  
   900 px wide, the desktop layout from 900 px, chosen once at start.
 - **A hub must be HTTPS.** A page served over HTTPS may not call `http://`
   addresses, so the web shell refuses them before any request
-  (`page_can_reach`), except `localhost`, `127.0.0.1` and `[::1]`.
+  (`page_can_reach`), except `localhost`, `127.0.0.1` and `[::1]`. A link,
+  key QR code or key file brings only the hubs a page can reach; with none
+  it says so in one sentence.
+- **What only a page can do goes through `WebNative`**
+  (`src/lib/native.ts`): the camera scan, choosing and saving a key file,
+  the suggested hubs. `src/web/webApi.ts` fills it in at start, so the
+  components keep calling `scanQr()`, `pickKeyFile()` and the rest, and
+  nothing outside `src/web` imports from it.
+- **A browser with an identity does not take another by link.** Scanning a
+  link or key code while signed in answers "This browser already has an
+  identity."; sign out of it first.
+
+## Linking and the camera
+
+The web shell's link commands are in `crates/hubchat-web/src/link.rs`, with
+the apps' names and answers (`hc_link_start`, `hc_link_confirm`,
+`hc_link_offer`, `hc_link_approve`, `hc_key_qr`, `hc_restore_qr`,
+`hc_key_file_import` and the rest; events arrive as `hc-link`). The key is
+saved in the browser before the identity is adopted, as for a new identity.
+A key file is read and written as text: the page hands the chosen file's
+text to the core, and saves the one the core makes through the browser's
+download or share sheet.
+
+A phone's browser has no QR reader of its own, so the page shows the camera
+full screen (`src/web/scan.ts`, `getUserMedia` with the back camera), sends
+grey frames to the worker a few times a second, and the core reads them
+(`scan.rs`, the `rqrr` crate without its default features, licence
+`(MIT OR Apache-2.0) AND ISC`). Linking and the reader add about 143 KB
+to the compressed first load. The camera needs a secure page (HTTPS or
+localhost) and the person's permission; refused, the scan says so and the
+typed code still works.
+
+## The suggested hub
+
+When someone makes a new identity, the Add hub step
+(`src/web/suggest.ts`) checks, in this order: each address in
+`default_hubs` of the server's `/config.json`, the page's own address
+(a hub behind the same reverse proxy), and `https://` plus the page's host.
+The first that answers as a hub is shown as "Found <hub>" with an **Add**
+button. Nothing is added without that tap, and typing an address replaces
+the suggestion. The development server sets `default_hubs` with
+`npm run serve:web -- --default-hubs https://hub.example`; the container
+will set it from `HUBCHAT_WEB_DEFAULT_HUBS`. A hub on the same machine but
+another port is found only when it is named there.
 
 ## Building
 
@@ -150,8 +202,10 @@ the hub as `https://pc.example.ts.net:8443`.
   It checks the install screen on an iPhone's user agent, the start from
   the Home Screen and the keyboard handling (with a stand-in for the
   phone's visual viewport), onboarding, the hub refusal message, the
-  recovery words download, a message both ways with a scripted peer,
-  receipts, Settings, a reload, and the second-tab takeover; and that
+  suggested hub, the recovery words download, a message both ways with a
+  scripted peer, receipts, Settings, a second browser that links by
+  scanning the first one's QR code (its camera replaced by a picture of
+  that code), a reload, and the second-tab takeover; and that
   there is no script error, no Content Security Policy violation and no
   missing file. `--width 1280 --height 800` runs the desktop layout. On
   Windows it refuses to run outside Session 0.
@@ -162,8 +216,6 @@ These answer "This isn't available in Hubchat Web yet." or are hidden:
 
 - Files: attaching, receiving, pictures, video and audio; the profile
   picture.
-- Linking devices, key files and QR codes. Recovery words are the one way
-  to bring an identity for now.
 - The hub stream: Hubchat Web long-polls every hub (`stream_web.rs`) until
   it has a carrier over the browser's WebSocket.
 - Notifications (Web Push).
@@ -177,4 +229,6 @@ Headless Chromium on a PC is not an iPhone. Until someone runs it on one,
 these are unverified: the database inside a Home Screen app on iOS, the
 keyboard handling (`src/web/viewport.ts`), the safe areas around the notch
 and home bar, and start time on a phone. Firefox and Safari on a desktop
-have not been run either.
+have not been run either. No real camera has scanned a code: the browser
+test feeds the scanner a picture. The key file and the key QR code are
+covered by the shell's tests only, not in a browser.
