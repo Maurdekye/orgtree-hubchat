@@ -23,6 +23,8 @@ const surfaces = [
   ['Cargo.toml [workspace.package] version', /\[workspace\.package\][^[]*?^version\s*=\s*"([^"]+)"/m.exec(read('Cargo.toml'))?.[1]],
   ['Cargo.lock package hubchat', /^name = "hubchat"\r?\nversion = "([^"]+)"/m.exec(read('Cargo.lock'))?.[1]],
   ['Cargo.lock package hubchat-core', /^name = "hubchat-core"\r?\nversion = "([^"]+)"/m.exec(read('Cargo.lock'))?.[1]],
+  ['Cargo.lock package hubchat-web', /^name = "hubchat-web"\r?\nversion = "([^"]+)"/m.exec(read('Cargo.lock'))?.[1]],
+  ['Cargo.lock package hubchat-web-server', /^name = "hubchat-web-server"\r?\nversion = "([^"]+)"/m.exec(read('Cargo.lock'))?.[1]],
   ['package.json version', json('package.json').version],
   ['package-lock.json version', lock.version],
   ['package-lock.json packages[""].version', lock.packages?.['']?.version],
