@@ -13,6 +13,7 @@ import { Logo } from "../lib/icons";
 import { applyTheme } from "../lib/theme";
 import { isApplePhoneOrPad, isInstalled, keepScale, storageRefused, unsupported } from "./device";
 import { Install } from "./Install";
+import { keepAppFiles } from "./update";
 import { followKeyboard } from "./viewport";
 import { openCore, type Core } from "./webApi";
 import { sentence } from "./wire";
@@ -71,6 +72,8 @@ async function start(takeOver = false): Promise<void> {
   screen?.unmount();
   screen = null;
   installApi(core.api);
+  // begun before the UI starts: its first update check waits for it (update.ts)
+  void keepAppFiles();
   await boot();
 }
 

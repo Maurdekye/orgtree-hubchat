@@ -21,6 +21,8 @@ export interface WebNative {
   saveKeyFileTo(): Promise<string | null>;
   /** Hub addresses worth offering for the first hub: the server's own, the likeliest first. */
   suggestedHubs(): Promise<string[]>;
+  /** A newer build of the web app waiting to load (`install` reloads into it). Null: none. */
+  newerBuild(): Promise<{ version: string; install: () => Promise<void> } | null>;
 }
 let webNative: WebNative | null = null;
 export function installWebNative(w: WebNative): void { webNative = w; }
@@ -28,6 +30,10 @@ export function installWebNative(w: WebNative): void { webNative = w; }
  *  served from somewhere a hub may run too. */
 export async function suggestedHubs(): Promise<string[]> {
   return isWeb && webNative ? webNative.suggestedHubs().catch(() => []) : [];
+}
+/** Hubchat Web's update: a newer build the server has, fetched and waiting. */
+export async function webUpdate(): Promise<{ version: string; install: () => Promise<void> } | null> {
+  return webNative ? webNative.newerBuild() : null;
 }
 function onWeb(): WebNative {
   if (!webNative) throw NOT_ON_WEB;

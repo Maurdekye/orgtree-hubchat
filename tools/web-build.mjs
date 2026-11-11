@@ -6,7 +6,8 @@
 // 1. cargo build -p hubchat-web --target wasm32-unknown-unknown --profile web --locked
 //    (skipped with --wasm: the file is taken as built);
 // 2. wasm-bindgen --target web into --core (default web/core);
-// 3. vite build --config vite.web.config.ts into --out (default dist-web);
+// 3. vite build --config vite.web.config.ts into --out (default dist-web),
+//    then sw.js for exactly those files (tools/web-sw.mjs);
 // 4. the size budget (spec R1.8): what a first visit downloads, compressed,
 //    is at most 3 MB; over it the build fails.
 //
@@ -19,6 +20,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
+import { writeServiceWorker } from './web-sw.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const arg = (name) => { const i = process.argv.indexOf('--' + name); return i > 0 ? process.argv[i + 1] : null; };
@@ -56,6 +58,10 @@ run(`wasm-bindgen ${cli}`, bindgen, ['--target', 'web', '--out-dir', core, '--ou
 // 3. the page
 const out = resolve(arg('out') || join(root, 'dist-web'));
 run('vite build', process.execPath, [join(root, 'node_modules', 'vite', 'bin', 'vite.js'), 'build', '--config', 'vite.web.config.ts'], { HUBCHAT_WEB_CORE: core, HUBCHAT_WEB_OUT: out });
+
+// 3b. the service worker: this build's files, by name and hash
+const sw = writeServiceWorker(out);
+console.log(`[web-build] sw.js: version ${sw.version}, build ${sw.build}, ${sw.files.length} files kept`);
 
 // 4. the budget
 const files = [];

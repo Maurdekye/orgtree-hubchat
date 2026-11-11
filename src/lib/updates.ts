@@ -3,6 +3,8 @@
 // - Desktop, with the updater plugin: a calm banner, and "Restart to update"
 //   installs and relaunches. The tray's update rows show the same state and
 //   ask for the same check and install (lib/tray.ts).
+// - Hubchat Web: the service worker fetches the server's newer build; the
+//   banner's Update reloads into it.
 // - Android (user 2026-10-09 08:29Z): the shell reads the same release feed,
 //   downloads the APK, checks the updater key's signature and hands it to
 //   Android's installer; the banner shows each step (the first time, Android's
@@ -10,7 +12,7 @@
 // In the browser mock, `?update=1` pretends version 0.2.0 is out.
 import { useSyncExternalStore } from "react";
 import { api, isTauri, isWeb, type AppUpdate } from "../api";
-import { errText } from "./native";
+import { errText, webUpdate } from "./native";
 
 export interface Available { version: string; install: () => Promise<void> }
 
@@ -107,8 +109,12 @@ async function androidInstall(u: AppUpdate): Promise<void> {
 }
 
 async function checkRaw(): Promise<Available | null> {
-  // Hubchat Web is whatever its server serves: there is no update to fetch from here
-  if (isWeb) return null;
+  // Hubchat Web is whatever its server serves: a newer build waits in the
+  // service worker, and loading it is a reload (src/web/update.ts)
+  if (isWeb) {
+    const u = await webUpdate();
+    return u ? { version: u.version, install: tracked(u.install) } : null;
+  }
   if (platform === "android") {
     // a test build reads only a local feed (the update test), never the real
     // release; the shell ignores this in the real app

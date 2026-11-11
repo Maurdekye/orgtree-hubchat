@@ -12,7 +12,7 @@ import { openTailscale, useTailscaleOff } from "../lib/tailnet";
 import { toast } from "../lib/toast";
 import { ALLOW_TEXT, allowInstalls, installUpdate, useCheckState, useInstallStep, useUpdate, type Available } from "../lib/updates";
 import { HubHelpLink } from "./HubHelp";
-import { useNow, usePlatform } from "./ui";
+import { useNow, usePlatform, useWeb } from "./ui";
 
 export function useHubProblem() {
   const snap = useSnap();
@@ -105,7 +105,20 @@ export function UpdateBanner() {
   // whichever starts it, the banner shows it and starts no second one
   const st = useCheckState();
   const [hidden, setHidden] = useState<string | null>(null);
+  const web = useWeb();
   if (!avail || hidden === avail.version) return null;
+  if (web) {
+    // Hubchat Web: the newer build is already fetched; Update reloads into it
+    const loading = st.k === "installing";
+    return (
+      <div className="banner upd" role="status" aria-label="Update">
+        <Icon name="restart" />
+        <span><b>A new version of Hubchat is ready.</b>{st.k === "failed" ? " It didn't load: " + st.msg : ""}</span>
+        <button className="btn primary" onClick={() => { installUpdate().catch(() => {}); }} disabled={loading}>{loading ? "Updating…" : "Update"}</button>
+        {loading ? null : <button className="icon-btn" style={{ width: 28, height: 28 }} onClick={() => setHidden(avail.version)} title="Not now" aria-label="Dismiss"><Icon name="close" /></button>}
+      </div>
+    );
+  }
   if (platform === "android") return <AndroidUpdate avail={avail} onHide={() => setHidden(avail.version)} />;
   const installing = st.k === "installing";
   const go = () => { installUpdate().catch((e) => toast("Couldn't update: " + errText(e))); };
