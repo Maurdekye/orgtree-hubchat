@@ -383,6 +383,8 @@ pub struct HubClient {
     addr: HubAddress,
     pub(crate) http: reqwest::Client,
     session_stop: CancelFlag,
+    /// how `sync` is carried (the stream or the long poll); copies share it
+    pub(crate) carrier: std::sync::Arc<crate::stream::Carrier>,
 }
 
 impl HubClient {
@@ -392,8 +394,13 @@ impl HubClient {
             .tcp_keepalive(Duration::from_secs(30))
             .build()
             .expect("http client");
-        Self { addr, http, session_stop: CancelFlag::default() }
+        Self { addr, http, session_stop: CancelFlag::default(), carrier: Default::default() }
     }
+
+    pub(crate) fn address_str(&self) -> &str { self.addr.as_str() }
+
+    /// How the continuous sync is carried now, for the hub's status.
+    pub async fn transport(&self) -> crate::stream::TransportStatus { self.carrier.status().await }
 
     /// Copied clients share the originating runtime cancellation generation.
     pub(crate) fn bind_stop(mut self, stop: CancelFlag) -> Self { self.session_stop = stop; self }

@@ -31,6 +31,9 @@ tracing = { version = "0.1", default-features = false, features = ["std"] }
 rusqlite = { version = "0.42", features = ["bundled", "fallible_uint"] }
 image = { version = "=0.25.9", default-features = false, features = ["png", "jpeg", "webp"] }
 png = "0.17"
+# the hub stream (Mail hub 2.5.0): the same rustls trust as reqwest's; native builds only
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio-tungstenite = { version = "0.26", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }

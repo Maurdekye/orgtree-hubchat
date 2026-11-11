@@ -307,8 +307,8 @@ impl HubClient {
         if let Some(t) = typing {
             body["typing"] = t;
         }
-        self.post_json(me, "/api/sync", &body, Duration::from_secs(wait + 30))
-            .await
+        // the stream when the hub lists it, the long poll otherwise
+        self.carrier.sync(self, me, body, wait).await
         }).await
     }
 

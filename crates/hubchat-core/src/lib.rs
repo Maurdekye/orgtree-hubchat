@@ -15,6 +15,7 @@ pub mod media;
 pub mod recovery;
 pub mod setup;
 pub mod store;
+pub mod stream;
 pub mod questions;
 pub mod text;
 
