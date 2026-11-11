@@ -1,0 +1,1 @@
+{ "name": "Hubchat Web (stand-in)", "short_name": "Hubchat", "start_url": ".", "display": "standalone", "icons": [{ "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }] }

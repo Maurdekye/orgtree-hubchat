@@ -1,0 +1,32 @@
+[package]
+name = "hubchat-web-server"
+description = "Hubchat Web's server: one program that hands out the web app's files and nothing else"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+# The program is `hubchat-web` (the container's only file). The crate has
+# another name because `hubchat-web` is the web app's own core (the
+# WebAssembly shell beside this folder).
+[[bin]]
+name = "hubchat-web"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "signal", "sync", "macros"] }
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+serde_json = "1"
+# HTTPS by the server itself (HUBCHAT_WEB_TLS_CERT / _KEY). ring, not the
+# default aws-lc: it builds for a static Linux binary with a plain C compiler.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+
+# build.rs packs the web app's files into the program, each one also
+# compressed ahead of time (Brotli and gzip).
+[build-dependencies]
+brotli = "9"
+flate2 = "1"
