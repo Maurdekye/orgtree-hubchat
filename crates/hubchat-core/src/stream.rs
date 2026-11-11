@@ -224,7 +224,7 @@ impl Carrier {
     /// Long poll until the schedule's next step (spec 9.3).
     fn fall_back(&self, g: &mut Inner, reason: &str, minutes: u64) {
         let after = self.scaled(Duration::from_secs(minutes * 60));
-        self.fall_back_for(g, reason, after);
+        self.fall_back_for(g, reason, Some(after));
         g.probe_step = 1;
     }
 
