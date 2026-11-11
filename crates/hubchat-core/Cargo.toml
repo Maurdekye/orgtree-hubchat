@@ -35,3 +35,5 @@ png = "0.17"
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 tempfile = "3"
+# the stream's tests (tests/stream.rs) run a fake hub that speaks the WebSocket side
+tokio-tungstenite = "0.26"
