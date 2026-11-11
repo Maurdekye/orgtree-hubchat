@@ -232,7 +232,7 @@ impl Engine {
                 None => 30_000,
             };
             tokio::select! {
-                _ = tokio::time::sleep(Duration::from_millis(wait)) => {}
+                _ = crate::rt::time::sleep(Duration::from_millis(wait)) => {}
                 _ = self.translation_wake.notified() => {}
             }
         }

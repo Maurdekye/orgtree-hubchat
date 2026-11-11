@@ -49,7 +49,7 @@ pub(crate) fn prepare(host: &dyn Host, message: NewOutgoing) -> Result<Prepared>
         .try_fold(0u64, |n, a| n.checked_add(a.bytes))
         .ok_or_else(|| Error::Invalid("attachments are too large".into()))?;
     let mut copied = 0u64;
-    let mut tick = std::time::Instant::now();
+    let mut tick = crate::rt::Instant::now();
     let report = |name: &str, done| {
         host.event(crate::engine::Event::Preparing {
             message_id: prepared.message.id.clone(),
@@ -94,7 +94,7 @@ pub(crate) fn prepare(host: &dyn Host, message: NewOutgoing) -> Result<Prepared>
             hash.update(&buffer[..n]);
             if tick.elapsed() >= std::time::Duration::from_millis(100) {
                 report(&a.name, copied + total);
-                tick = std::time::Instant::now();
+                tick = crate::rt::Instant::now();
             }
         }
         let after = source.metadata()?;
@@ -150,7 +150,7 @@ fn uuid_name(s: &str) -> bool {
     s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 fn ms() -> i64 {
-    std::time::SystemTime::now()
+    crate::rt::system_now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64

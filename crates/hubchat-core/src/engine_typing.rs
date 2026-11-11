@@ -20,7 +20,9 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::rt::Instant;
 
 use super::{Engine, Event};
 
@@ -111,9 +113,9 @@ impl Engine {
         let Some(run) = self.composing.edit(peer, Instant::now()) else { return };
         let me = self.clone();
         let peer = peer.to_string();
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(BEAT);
-            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        crate::rt::spawn(async move {
+            let mut tick = crate::rt::time::interval(BEAT);
+            tick.set_missed_tick_behavior(crate::rt::time::MissedTickBehavior::Delay);
             loop {
                 tick.tick().await;
                 if me.stopped.load(std::sync::atomic::Ordering::Relaxed) || !me.composing.beats(&peer, run, Instant::now()) {

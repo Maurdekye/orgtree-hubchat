@@ -29,7 +29,7 @@ impl Engine {
         for source in sent.into_iter().chain(a.local_path.clone()) {
             let host = self.host.clone();
             let range = range.map(str::to_owned);
-            let read = tokio::task::spawn_blocking(move || read_local(&*host, &source, range.as_deref(), content_type)).await;
+            let read = crate::rt::task::spawn_blocking(move || read_local(&*host, &source, range.as_deref(), content_type)).await;
             if let Ok(Some(answer)) = read {
                 return Ok(answer);
             }

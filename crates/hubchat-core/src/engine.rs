@@ -70,7 +70,7 @@ fn hub_ms(t: &str) -> Option<i64> {
 }
 
 pub fn now() -> String {
-    humantime::format_rfc3339_millis(SystemTime::now()).to_string()
+    humantime::format_rfc3339_millis(crate::rt::system_now()).to_string()
 }
 
 /// What the engine reports to the shell. The shell re-reads the store.
@@ -247,7 +247,7 @@ impl Drop for SendWriter<'_> {
 }
 
 fn unix_ms() -> u64 {
-    SystemTime::now()
+    crate::rt::system_now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
@@ -314,12 +314,12 @@ impl Engine {
         crate::diag::spawn_engine(async move { me.body_loop().await });
         // notifications that wait for their translation (engine_translation)
         let me = self.clone();
-        tokio::spawn(async move { me.held_loop().await });
+        crate::rt::spawn(async move { me.held_loop().await });
         // in use: say so again before the hub's 90 s run out
         let me = self.clone();
-        tokio::spawn(async move {
+        crate::rt::spawn(async move {
             loop {
-                tokio::time::sleep(Duration::from_secs(60)).await;
+                crate::rt::time::sleep(Duration::from_secs(60)).await;
                 if me.stopped.load(std::sync::atomic::Ordering::Relaxed) {
                     return;
                 }
@@ -340,7 +340,7 @@ impl Engine {
         }
         if self.active.swap(on, std::sync::atomic::Ordering::Relaxed) != on {
             let me = self.clone();
-            tokio::spawn(async move { me.report_active(on).await });
+            crate::rt::spawn(async move { me.report_active(on).await });
         }
     }
 
@@ -544,7 +544,7 @@ impl Engine {
     pub async fn check_now(&self, timeout: Duration) -> bool {
         let start = unix_ms();
         self.kick();
-        let deadline = tokio::time::Instant::now() + timeout;
+        let deadline = crate::rt::time::Instant::now() + timeout;
         loop {
             let now_ms = unix_ms();
             let hubs_done = self.hubs.lock().unwrap().values().all(|h| {
@@ -559,10 +559,10 @@ impl Engine {
             if hubs_done && queue_empty {
                 return true;
             }
-            if tokio::time::Instant::now() >= deadline {
+            if crate::rt::time::Instant::now() >= deadline {
                 return false;
             }
-            tokio::time::sleep(Duration::from_millis(250)).await;
+            crate::rt::time::sleep(Duration::from_millis(250)).await;
         }
     }
 
@@ -624,7 +624,7 @@ impl Engine {
     ) -> Result<String> {
         let addr = self.add_hub(&link.hub)?;
         let url = addr.to_string();
-        let deadline = tokio::time::Instant::now() + wait;
+        let deadline = crate::rt::time::Instant::now() + wait;
         let client = loop {
             let found = self
                 .hubs
@@ -636,10 +636,10 @@ impl Engine {
             if let Some(c) = found {
                 break c;
             }
-            if tokio::time::Instant::now() >= deadline {
+            if crate::rt::time::Instant::now() >= deadline {
                 return Err(Error::Invalid(format!("couldn't join {}'s hub", link.pc)));
             }
-            tokio::time::sleep(Duration::from_millis(200)).await;
+            crate::rt::time::sleep(Duration::from_millis(200)).await;
         };
         // A v1 hub sends its roster with the next poll answer, up to a minute
         // away: ask now, so the first message goes through this hub.
@@ -857,7 +857,7 @@ impl Engine {
                     });
                     self.host.event(Event::Directory); // presence there is now unknown
                     tokio::select! {
-                        _ = tokio::time::sleep(Duration::from_secs(wait)) => {}
+                        _ = crate::rt::time::sleep(Duration::from_secs(wait)) => {}
                         _ = retry.notified() => { failures = 0; }
                         _ = kick.notified() => { failures = 0; }
                         _ = suspended.changed() => { failures = 0; }
@@ -1108,7 +1108,7 @@ impl Engine {
                 }
                 typing_seen = r.typing_seq.or(typing_seen);
                 tokio::select! {
-                    _ = tokio::time::sleep(engine_typing::PACE) => {}
+                    _ = crate::rt::time::sleep(engine_typing::PACE) => {}
                     _ = stop.cancelled() => {}
                 }
                 continue;
@@ -1494,13 +1494,13 @@ impl Engine {
     /// The hub is connected, or becomes so within a few seconds (right
     /// after start it is still connecting: not "down" for that moment).
     async fn connected_soon(&self, url: &str) -> bool {
-        let t0 = std::time::Instant::now();
+        let t0 = crate::rt::Instant::now();
         loop {
             let state = self.hubs.lock().unwrap().get(url).map(|h| h.status.state.clone());
             match state {
                 Some(HubState::Connected) => return true,
                 Some(HubState::Connecting) if t0.elapsed() < CONNECTING_GRACE => {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    crate::rt::time::sleep(Duration::from_millis(100)).await;
                 }
                 _ => return false,
             }
@@ -1549,7 +1549,7 @@ impl Engine {
         // Copy/hash on the blocking pool; no network and no SQLite lock during I/O.
         // Admission and ownership of the snapshot then commit without an await.
         let host = self.host.clone();
-        let prepared = tokio::task::spawn_blocking(move || crate::staging::prepare(host.as_ref(), msg))
+        let prepared = crate::rt::task::spawn_blocking(move || crate::staging::prepare(host.as_ref(), msg))
             .await
             .map_err(|e| Error::Invalid(format!("file preparation stopped: {e}")))?
             .map_err(crate::staging::explain_error)?;
@@ -1677,7 +1677,7 @@ impl Engine {
     async fn clean_staging(&self) {
         let store = self.store.clone();
         let root = self.host.staging_dir();
-        let _ = tokio::task::spawn_blocking(move || crate::staging::collect(&root, &store)).await;
+        let _ = crate::rt::task::spawn_blocking(move || crate::staging::collect(&root, &store)).await;
     }
 
     #[cfg(test)]
@@ -1757,7 +1757,7 @@ impl Engine {
                 return Ok(true);
             };
             let file = match self.host.open_source(source) {
-                Ok(f) => tokio::fs::File::from_std(f),
+                Ok(f) => crate::rt::fs::File::from_std(f),
                 Err(e) => {
                     self.store.set_attachment(
                         &a.local_id,
@@ -1971,7 +1971,7 @@ impl Engine {
         client: &HubClient,
         url: &str,
         a: &crate::store::Attachment,
-        file: tokio::fs::File,
+        file: crate::rt::fs::File,
         progress: crate::hub::Progress,
         cancel: CancelFlag,
     ) -> Result<crate::hub::AttachmentMeta> {
@@ -2332,7 +2332,7 @@ impl Engine {
             result = stop.run(async { self.preview_slots.acquire().await.map_err(|_| Error::Cancelled) }) => result?,
         };
         if let Some(dir) = dest.parent() {
-            tokio::fs::create_dir_all(dir).await?;
+            crate::rt::fs::create_dir_all(dir).await?;
         }
         // a partial file never passes for a whole one (and two fetches of
         // the same file don't share one)
@@ -2348,11 +2348,11 @@ impl Engine {
         let _slot = slot;
         match result {
             Ok(_) => {
-                tokio::fs::rename(&part, dest).await?;
+                crate::rt::fs::rename(&part, dest).await?;
                 Ok(())
             }
             Err(e) => {
-                let _ = tokio::fs::remove_file(&part).await;
+                let _ = crate::rt::fs::remove_file(&part).await;
                 if let Error::Hub { status: 410, .. } = &e {
                     self.store
                         .set_attachment(local_id, "expired", None, None, Some(&e.to_string()))?;

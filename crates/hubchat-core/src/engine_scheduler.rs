@@ -11,10 +11,10 @@ impl Engine {
         let store = self.store.clone();
         let root = self.host.staging_dir();
         let _ =
-            tokio::task::spawn_blocking(move || crate::staging::sweep_orphans(&root, &store)).await;
-        let mut workers = tokio::task::JoinSet::new();
-        let mut active = HashMap::<tokio::task::Id, String>::new();
-        let mut clean_at = std::time::Instant::now();
+            crate::rt::task::spawn_blocking(move || crate::staging::sweep_orphans(&root, &store)).await;
+        let mut workers = crate::rt::task::JoinSet::new();
+        let mut active = HashMap::<crate::rt::task::Id, String>::new();
+        let mut clean_at = crate::rt::Instant::now();
         let mut send_cursor: Option<(String, String)> = None;
         let mut download_cursor = String::new();
         let mut suspended = self.suspended.subscribe();
@@ -30,10 +30,10 @@ impl Engine {
                 }
                 return;
             }
-            if std::time::Instant::now() >= clean_at {
+            if crate::rt::Instant::now() >= clean_at {
                 self.clean_staging().await;
                 self.clean_downloads(unix_ms()).await;
-                clean_at = std::time::Instant::now() + Duration::from_secs(30);
+                clean_at = crate::rt::Instant::now() + Duration::from_secs(30);
             }
             self.deliver_transfer_failures(unix_ms()).await;
             let mut more = false;
@@ -118,7 +118,7 @@ impl Engine {
                 _=self.queue_changed.notified()=>{},
                 _=self.file_slots.changed.notified()=>{},
                 _=suspended.changed()=>{},
-                _=tokio::time::sleep(if more {Duration::from_millis(1)} else {Duration::from_secs(2)})=>{},
+                _=crate::rt::time::sleep(if more {Duration::from_millis(1)} else {Duration::from_secs(2)})=>{},
             }
         }
     }
@@ -128,15 +128,15 @@ impl Engine {
         for notice in notices {
             if !self.store.start_failure_notice(&notice,now).unwrap_or(false) {continue;}
             let host=self.host.clone();let copy=notice.clone();
-            if matches!(tokio::task::spawn_blocking(move||host.transfer_failed(&copy)).await,Ok(Ok(()))) {
+            if matches!(crate::rt::task::spawn_blocking(move||host.transfer_failed(&copy)).await,Ok(Ok(()))) {
                 let _=self.store.finish_failure_notice(&notice);
             }
         }
     }
     fn reap_worker(
         &self,
-        active: &mut HashMap<tokio::task::Id, String>,
-        result: std::result::Result<(tokio::task::Id, ()), tokio::task::JoinError>,
+        active: &mut HashMap<crate::rt::task::Id, String>,
+        result: std::result::Result<(crate::rt::task::Id, ()), crate::rt::task::JoinError>,
     ) {
         let id = match &result {
             Ok((id, _)) => *id,
@@ -169,8 +169,8 @@ impl Engine {
     }
     fn launch_downloads(
         self: &Arc<Self>,
-        workers: &mut tokio::task::JoinSet<()>,
-        active: &mut HashMap<tokio::task::Id, String>,
+        workers: &mut crate::rt::task::JoinSet<()>,
+        active: &mut HashMap<crate::rt::task::Id, String>,
         download_cursor: &mut String,
     ) -> bool {
         let mut more = false;

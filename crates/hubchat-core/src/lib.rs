@@ -13,8 +13,14 @@ pub mod identity;
 pub mod link;
 pub mod media;
 pub mod recovery;
+pub mod rt;
 pub mod setup;
 pub mod store;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod stream;
+// Hubchat Web: the same names, long polling only
+#[cfg(target_arch = "wasm32")]
+#[path = "stream_web.rs"]
 pub mod stream;
 pub mod questions;
 pub mod text;

@@ -25,7 +25,7 @@ impl Drop for Writer<'_> {
     }
 }
 async fn digest(path: &std::path::Path, expected: u64) -> Result<String> {
-    let mut file = tokio::fs::File::open(path).await?;
+    let mut file = crate::rt::fs::File::open(path).await?;
     if file.metadata().await?.len() != expected {
         return Err(Error::Invalid(
             "download bytes are incomplete; retry the download".into(),
@@ -81,7 +81,7 @@ async fn remove_empty_partial_dir(partial: &std::path::Path) {
         .filter(|p| p.file_name().is_some_and(|n| n == ".hubchat-downloads"))
     {
         // Never recursive. Another download's partial keeps the directory alive.
-        let _ = tokio::fs::remove_dir(parent).await;
+        let _ = crate::rt::fs::remove_dir(parent).await;
     }
 }
 // Android SELinux denies hard links even within app-private storage. Every
@@ -90,18 +90,18 @@ async fn remove_empty_partial_dir(partial: &std::path::Path) {
 // Compile the same helper in host tests to exercise Android's actual algorithm.
 #[cfg(any(target_os = "android", test))]
 async fn publish_private_file(partial: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
-    match tokio::fs::symlink_metadata(dest).await {
+    match crate::rt::fs::symlink_metadata(dest).await {
         Ok(_) => return Err(std::io::ErrorKind::AlreadyExists.into()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
     }
-    tokio::fs::rename(partial, dest).await
+    crate::rt::fs::rename(partial, dest).await
 }
 async fn publish_file(partial: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
     #[cfg(windows)]
     {
         let (partial, dest) = (partial.to_path_buf(), dest.to_path_buf());
-        tokio::task::spawn_blocking(move || {
+        crate::rt::task::spawn_blocking(move || {
             use std::os::windows::ffi::OsStrExt;
             #[link(name = "Kernel32")]
             extern "system" {
@@ -133,7 +133,7 @@ async fn publish_file(partial: &std::path::Path, dest: &std::path::Path) -> std:
     #[cfg(all(not(windows), not(target_os = "android")))]
     {
         // rename on Unix overwrites; hard_link is atomic and never replaces.
-        tokio::fs::hard_link(partial, dest).await
+        crate::rt::fs::hard_link(partial, dest).await
     }
 }
 impl Engine {
@@ -319,7 +319,7 @@ impl Engine {
                     let parent = path
                         .parent()
                         .ok_or_else(|| Error::Invalid("invalid partial path".into()))?;
-                    tokio::fs::create_dir_all(parent).await?;
+                    crate::rt::fs::create_dir_all(parent).await?;
                     if parent
                         .file_name()
                         .is_some_and(|n| n == ".hubchat-downloads")
@@ -327,7 +327,7 @@ impl Engine {
                         // Visibility is cosmetic; some network volumes refuse attributes.
                         let _ = hide_partial_dir(parent);
                     }
-                    let _ = tokio::fs::OpenOptions::new()
+                    let _ = crate::rt::fs::OpenOptions::new()
                         .create(true)
                         .truncate(false)
                         .write(true)
@@ -398,7 +398,7 @@ impl Engine {
         // not own the copy, and a blocking platform call never owns a DB lease.
         let export_key = key.clone();
         let exported =
-            tokio::task::spawn_blocking(move || host.publish_download(&export_key, &path, &name))
+            crate::rt::task::spawn_blocking(move || host.publish_download(&export_key, &path, &name))
                 .await
                 .map_err(std::io::Error::other)?;
         // Give a journalled platform export the first chance to recover its
@@ -449,7 +449,7 @@ impl Engine {
                     self.store
                         .download_done(&job.local_id, job.attempt, &job.destination)?;
                     let _publication = self.download_publication.lock().await;
-                    let _ = tokio::fs::remove_file(part).await;
+                    let _ = crate::rt::fs::remove_file(part).await;
                     remove_empty_partial_dir(part).await;
                     return Ok(existing.into());
                 }
@@ -489,7 +489,7 @@ impl Engine {
                         job.attempt,
                         &dest.to_string_lossy(),
                     )?;
-                    let _ = tokio::fs::remove_file(part).await;
+                    let _ = crate::rt::fs::remove_file(part).await;
                     remove_empty_partial_dir(part).await;
                     return Ok(dest);
                 }

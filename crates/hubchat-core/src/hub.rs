@@ -389,14 +389,18 @@ pub struct HubClient {
 
 impl HubClient {
     pub fn new(addr: HubAddress) -> Self {
-        let http = reqwest::Client::builder()
+        #[cfg(not(target_arch = "wasm32"))]
+        let builder = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(10))
-            .tcp_keepalive(Duration::from_secs(30))
-            .build()
-            .expect("http client");
+            .tcp_keepalive(Duration::from_secs(30));
+        // a browser owns its connections: every request carries its own time limit
+        #[cfg(target_arch = "wasm32")]
+        let builder = reqwest::Client::builder();
+        let http = builder.build().expect("http client");
         Self { addr, http, session_stop: CancelFlag::default(), carrier: Default::default() }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn address_str(&self) -> &str { self.addr.as_str() }
 
     /// How the continuous sync is carried now, for the hub's status.
@@ -620,7 +624,7 @@ impl HubClient {
         cancel: CancelFlag,
     ) -> Result<AttachmentMeta> {
         self.session_work(async {
-        let file = tokio::fs::File::open(path).await?;
+        let file = crate::rt::fs::File::open(path).await?;
         self.upload(me, file, name, progress, cancel).await
         }).await
     }
@@ -630,7 +634,7 @@ impl HubClient {
     pub async fn upload(
         &self,
         me: &Identity,
-        file: tokio::fs::File,
+        file: crate::rt::fs::File,
         name: &str,
         progress: Option<Progress>,
         cancel: CancelFlag,
@@ -669,7 +673,7 @@ impl HubClient {
                 .post(url)
                 .header("X-Org-Auth", me.auth_header())
                 .header(reqwest::header::CONTENT_LENGTH, total)
-                .body(reqwest::Body::wrap_stream(stream))
+                .body(stream_body(stream)?)
                 .send()
                 .await?;
             let r: R = check(resp).await?.json().await?;
@@ -713,13 +717,13 @@ impl HubClient {
                     .await?;
                 let resp = check(resp).await?;
                 let total = resp.content_length().unwrap_or(0);
-                let mut out = tokio::fs::File::create(&part).await?;
+                let mut out = crate::rt::fs::File::create(&part).await?;
                 let mut done = 0u64;
                 let mut body = resp.bytes_stream();
                 while let Some(chunk) = body.next().await {
                     if cancel.is_cancelled() {
                         drop(out);
-                        let _ = tokio::fs::remove_file(&part).await;
+                        let _ = crate::rt::fs::remove_file(&part).await;
                         return Err(Error::Cancelled);
                     }
                     let chunk = chunk.map_err(|e| Error::Unreachable(e.to_string()))?;
@@ -738,12 +742,12 @@ impl HubClient {
             Ok(done) => {
                 // The complete flushed file now wins the cancellation race.
                 // Never publish it inside a future that can return Cancelled.
-                tokio::fs::rename(&part, dest).await?;
+                crate::rt::fs::rename(&part, dest).await?;
                 Ok(done)
             }
             Err(e) => {
                 if matches!(e, Error::Cancelled | Error::FilePaused) {
-                    let _ = tokio::fs::remove_file(&part).await;
+                    let _ = crate::rt::fs::remove_file(&part).await;
                 }
                 Err(e)
             }
@@ -781,6 +785,22 @@ impl HubClient {
         answer
         }).await
     }
+}
+
+/// The body of an upload, sent piece by piece as `stream` gives it.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn stream_body<S>(stream: S) -> Result<reqwest::Body>
+where
+    S: futures_util::Stream<Item = std::io::Result<bytes::Bytes>> + Send + 'static,
+{
+    Ok(reqwest::Body::wrap_stream(stream))
+}
+
+/// A page cannot send a body piece by piece through this client: Hubchat Web
+/// sends no files yet, and says so instead of reading a file into memory.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn stream_body<S>(_stream: S) -> Result<reqwest::Body> {
+    Err(Error::Io(std::io::Error::new(std::io::ErrorKind::Unsupported, "Files can't be sent from Hubchat Web yet.")))
 }
 
 /// Turn an HTTP error status into `Error::Hub` with the hub's `detail`.

@@ -2,6 +2,7 @@
 //! this layer writes only a private partial file and never exposes it early.
 use crate::{
     hub::{check, CancelFlag, HubClient, Progress},
+    rt::Instant,
     Error, Identity, Result,
 };
 use futures_util::StreamExt;
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     path::Path,
     sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, UNIX_EPOCH},
 };
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
@@ -31,7 +32,7 @@ pub struct DownloadSpec<'a> {
     pub checkpoint: DownloadCheckpoint,
 }
 fn now_ms() -> u64 {
-    SystemTime::now()
+    crate::rt::system_now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
@@ -79,7 +80,7 @@ impl HubClient {
         cancel
             .run(async {
                 let mut state = spec.checkpoint;
-                let length = tokio::fs::metadata(spec.partial)
+                let length = crate::rt::fs::metadata(spec.partial)
                     .await
                     .map(|m| m.len())
                     .unwrap_or(0);
@@ -142,7 +143,7 @@ impl HubClient {
                 state.validator = next_validator;
                 state.updated_ms = now_ms();
                 save(&state)?;
-                let mut out = tokio::fs::OpenOptions::new()
+                let mut out = crate::rt::fs::OpenOptions::new()
                     .create(true)
                     .truncate(false)
                     .write(true)

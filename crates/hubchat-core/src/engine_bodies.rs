@@ -4,8 +4,8 @@ use super::*;
 
 impl Engine {
     pub(super) async fn body_loop(self: Arc<Self>) {
-        let mut workers = tokio::task::JoinSet::new();
-        let mut active = HashMap::<tokio::task::Id, String>::new();
+        let mut workers = crate::rt::task::JoinSet::new();
+        let mut active = HashMap::<crate::rt::task::Id, String>::new();
         let mut cursor = String::new();
         let mut suspended = self.suspended.subscribe();
         loop {
@@ -64,15 +64,15 @@ impl Engine {
                 },
                 _=self.body_changed.notified()=>{},
                 _=suspended.changed()=>{},
-                _=tokio::time::sleep(if more {Duration::from_millis(1)} else {Duration::from_secs(2)})=>{},
+                _=crate::rt::time::sleep(if more {Duration::from_millis(1)} else {Duration::from_secs(2)})=>{},
             }
         }
     }
 
     fn reap_body(
         &self,
-        active: &mut HashMap<tokio::task::Id, String>,
-        result: std::result::Result<(tokio::task::Id, ()), tokio::task::JoinError>,
+        active: &mut HashMap<crate::rt::task::Id, String>,
+        result: std::result::Result<(crate::rt::task::Id, ()), crate::rt::task::JoinError>,
     ) {
         let id = match &result {
             Ok((id, _)) => *id,

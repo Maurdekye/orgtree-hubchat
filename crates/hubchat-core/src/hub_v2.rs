@@ -637,7 +637,7 @@ impl HubClient {
         &self,
         me: &Identity,
         upload_id: &str,
-        file: tokio::fs::File,
+        file: crate::rt::fs::File,
         progress: Option<Progress>,
         cancel: CancelFlag,
     ) -> Result<UploadState> {
@@ -653,7 +653,7 @@ impl HubClient {
         &self,
         me: &Identity,
         upload_id: &str,
-        file: tokio::fs::File,
+        file: crate::rt::fs::File,
         progress: Option<Progress>,
         cancel: CancelFlag,
         confirmed: Option<UploadCheckpoint>,
@@ -664,7 +664,7 @@ impl HubClient {
             let std_file = file.into_std().await;
             let mut tries = 0;
             loop {
-                let f = tokio::fs::File::from_std(std_file.try_clone()?);
+                let f = crate::rt::fs::File::from_std(std_file.try_clone()?);
                 match self
                     .resume_once(
                         me,
@@ -678,7 +678,7 @@ impl HubClient {
                 {
                     Err(e) if e.status() == Some(409) && tries < 20 && !cancel.is_cancelled() => {
                         tries += 1;
-                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        crate::rt::time::sleep(Duration::from_millis(500)).await;
                     }
                     r => return r,
                 }
@@ -692,7 +692,7 @@ impl HubClient {
         &self,
         me: &Identity,
         upload_id: &str,
-        mut file: tokio::fs::File,
+        mut file: crate::rt::fs::File,
         progress: Option<Progress>,
         cancel: CancelFlag,
         confirmed: Option<UploadCheckpoint>,
@@ -747,7 +747,7 @@ impl HubClient {
                 )))
                 .header("X-Org-Auth", me.auth_header())
                 .header(reqwest::header::CONTENT_LENGTH, count)
-                .body(reqwest::Body::wrap_stream(stream))
+                .body(crate::hub::stream_body(stream)?)
                 .send()
                 .await?;
             let result: UploadState = check(resp).await?.json().await?;

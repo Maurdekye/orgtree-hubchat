@@ -84,7 +84,7 @@ impl Engine {
         let host = self.host.clone();
         let key = row.key.clone();
         let receipt = matches!(
-            tokio::task::spawn_blocking(move || host.download_export_committed(&key)).await,
+            crate::rt::task::spawn_blocking(move || host.download_export_committed(&key)).await,
             Ok(Ok(()))
         );
         let path = Path::new(&row.source);
@@ -99,7 +99,7 @@ impl Engine {
             // A stored path outside our download directory never grants deletion.
             true
         } else {
-            match tokio::fs::remove_file(path).await {
+            match crate::rt::fs::remove_file(path).await {
                 Ok(()) => true,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
                 Err(_) => false,
@@ -133,7 +133,7 @@ impl Engine {
                 let host = self.host.clone();
                 let key = row.key.clone();
                 let ok = matches!(
-                    tokio::task::spawn_blocking(
+                    crate::rt::task::spawn_blocking(
                         move || host.download_export_abandoned(&key, &source)
                     )
                     .await,
@@ -157,7 +157,7 @@ impl Engine {
         let root = self.host.download_dir().join(".hubchat-downloads");
         let scan_root = root.clone();
         let store = self.store.clone();
-        let _ = tokio::task::spawn_blocking(move || discover_orphans(&scan_root, &store)).await;
+        let _ = crate::rt::task::spawn_blocking(move || discover_orphans(&scan_root, &store)).await;
         if let Ok(rows) = self.store.stale_downloads(now) {
             for (id, old) in rows {
                 // Advance even skipped writers so a busy head cannot starve later jobs.
@@ -200,7 +200,7 @@ impl Engine {
                     continue;
                 }
                 let _publication = self.download_publication.lock().await;
-                match tokio::fs::remove_file(&path).await {
+                match crate::rt::fs::remove_file(&path).await {
                     Ok(()) => {
                         let _ = self.store.download_gc_removed(&path);
                     }
@@ -211,7 +211,7 @@ impl Engine {
                         let _ = self.store.download_gc_retry(&path, now);
                     }
                 }
-                let _ = tokio::fs::remove_dir(&root).await; // Empty only, never recursive.
+                let _ = crate::rt::fs::remove_dir(&root).await; // Empty only, never recursive.
             }
         }
     }

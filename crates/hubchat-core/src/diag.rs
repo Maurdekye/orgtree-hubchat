@@ -18,11 +18,12 @@
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 use tracing::Level;
 
+use crate::rt::Instant;
 use crate::{Error, Result};
 
 /// Verbose logging (Orgtree's `LOG_VERBOSE`): the call and return line of
@@ -149,12 +150,24 @@ pub fn request(client: &str) -> tracing::Span {
 }
 
 /// `tokio::spawn` for a background loop of the engine: one `engine` request.
-pub fn spawn_engine<F>(fut: F) -> tokio::task::JoinHandle<F::Output>
+#[cfg(not(target_arch = "wasm32"))]
+pub fn spawn_engine<F>(fut: F) -> crate::rt::task::JoinHandle<F::Output>
 where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    tokio::spawn(tracing::Instrument::instrument(fut, request("engine")))
+    crate::rt::spawn(tracing::Instrument::instrument(fut, request("engine")))
+}
+
+/// The same in a browser: one thread, so the loop need not be `Send` (a
+/// request to a hub is not, there).
+#[cfg(target_arch = "wasm32")]
+pub fn spawn_engine<F>(fut: F) -> crate::rt::task::JoinHandle<F::Output>
+where
+    F: Future + 'static,
+    F::Output: 'static,
+{
+    crate::rt::spawn(tracing::Instrument::instrument(fut, request("engine")))
 }
 
 /// A failure worth a warning: `what` and the error's kind, never its text. Without

@@ -1666,6 +1666,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
+name = "gloo-timers"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbb143cf96099802033e0d4f4963b19fd2e0b728bcf076cd9cf7f6634f092994"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "gobject-sys"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1914,11 +1926,15 @@ dependencies = [
  "argon2",
  "base64 0.22.1",
  "bip39",
+ "bytes",
  "chacha20poly1305",
  "futures-util",
+ "getrandom 0.2.17",
+ "gloo-timers",
  "hex",
  "humantime",
  "image",
+ "js-sys",
  "png 0.17.16",
  "rand 0.8.8",
  "reqwest 0.12.28",
@@ -1934,6 +1950,8 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+ "wasm-bindgen-futures",
+ "web-time",
 ]
 
 [[package]]

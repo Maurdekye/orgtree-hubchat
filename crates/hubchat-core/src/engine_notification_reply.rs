@@ -6,12 +6,12 @@ impl Engine {
     pub async fn check_notification_reply(&self, owner: &str, id: &str, peer: &str, timeout: std::time::Duration) -> Result<&'static str> {
         if owner != self.me().address() { return Err(Error::Invalid("Notification identity changed".into())); }
         self.kick();
-        let deadline = tokio::time::Instant::now() + timeout;
+        let deadline = crate::rt::time::Instant::now() + timeout;
         loop {
             if self.stopped.load(std::sync::atomic::Ordering::Relaxed) { return Err(Error::Cancelled); }
             let state = self.store.notification_reply_state(owner, id, peer)?;
-            if state != "retry" || tokio::time::Instant::now() >= deadline { return Ok(state); }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if state != "retry" || crate::rt::time::Instant::now() >= deadline { return Ok(state); }
+            crate::rt::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     }
     pub fn incoming_event(&self, peer: String, id: String, preview: String, quiet: bool) -> Event {

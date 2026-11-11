@@ -50,7 +50,7 @@ pub async fn find_door(hub: &str, ips: &[IpAddr], ports: &[u16], limit: Duration
         return Door::Unknown;
     };
     let own_port = url::Url::parse(addr.as_str()).ok().and_then(|u| u.port());
-    let Ok(Ok(me)) = tokio::time::timeout(limit, requests.door_health(addr)).await else {
+    let Ok(Ok(me)) = crate::rt::time::timeout(limit, requests.door_health(addr)).await else {
         return Door::Unknown;
     };
     let mut hosts: Vec<IpAddr> = vec![Ipv4Addr::LOCALHOST.into()];
@@ -111,7 +111,7 @@ async fn qr_hubs_with(
     // no door runs, so there is no outside address to look up
     let me = match door {
         Door::Off => None,
-        _ => match tokio::time::timeout(limit, requests.door_health(addr.clone())).await {
+        _ => match crate::rt::time::timeout(limit, requests.door_health(addr.clone())).await {
             Ok(Ok(me)) => Some(me),
             _ => None,
         },
@@ -180,7 +180,7 @@ pub fn is_tailnet(ip: &IpAddr) -> bool {
 
 /// Whether `a` answers /healthz as the hub `me` (same name and address count).
 async fn same_hub(me: &Health, a: HubAddress, limit: Duration, requests: &Discovery) -> bool {
-    match tokio::time::timeout(limit, requests.door_health(a)).await {
+    match crate::rt::time::timeout(limit, requests.door_health(a)).await {
         Ok(Ok(h)) => h.name == me.name && h.orgs == me.orgs,
         _ => false,
     }
@@ -194,7 +194,7 @@ const GRACE: Duration = Duration::from_millis(750);
 /// Which of `at` answer /healthz as the hub `me` (same name and address
 /// count), all at once; in the order given.
 async fn answering(me: &Health, at: Vec<(IpAddr, u16)>, limit: Duration, requests: &Discovery) -> Vec<(IpAddr, u16)> {
-    let mut tries = tokio::task::JoinSet::new();
+    let mut tries = crate::rt::task::JoinSet::new();
     for (i, (ip, port)) in at.iter().copied().enumerate() {
         let Ok(a) = HubAddress::parse(&SocketAddr::new(ip, port).to_string()) else {
             continue;
@@ -204,10 +204,10 @@ async fn answering(me: &Health, at: Vec<(IpAddr, u16)>, limit: Duration, request
         tries.spawn(async move { same_hub(&me, a, limit, &requests).await.then_some(i) });
     }
     let mut ok: Vec<usize> = Vec::new();
-    let mut until: Option<tokio::time::Instant> = None;
+    let mut until: Option<crate::rt::time::Instant> = None;
     loop {
         let next = match until {
-            Some(t) => match tokio::time::timeout_at(t, tries.join_next()).await {
+            Some(t) => match crate::rt::time::timeout_at(t, tries.join_next()).await {
                 Ok(r) => r,
                 Err(_) => break, // the rest were too slow; dropping the set stops them
             },
@@ -216,7 +216,7 @@ async fn answering(me: &Health, at: Vec<(IpAddr, u16)>, limit: Duration, request
         let Some(r) = next else { break };
         if let Ok(Some(i)) = r {
             ok.push(i);
-            until.get_or_insert_with(|| tokio::time::Instant::now() + GRACE);
+            until.get_or_insert_with(|| crate::rt::time::Instant::now() + GRACE);
         }
     }
     ok.sort_unstable();

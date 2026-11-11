@@ -90,7 +90,7 @@ impl Engine {
             initial=false;
             // Retry on an existing poll/update, never a new automatic cadence.
             if changes.changed().await.is_err() { return; }
-            if failed { tokio::time::sleep(Duration::from_secs(8)).await; }
+            if failed { crate::rt::time::sleep(Duration::from_secs(8)).await; }
         }
     }
     pub fn edit_picture(&self, expected_owner:&str, normalized:Option<(Vec<u8>,u32)>)->Result<PictureRecord> {

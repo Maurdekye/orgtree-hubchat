@@ -35,7 +35,7 @@ impl Engine {
         };
         let host = self.host.clone();
         let prepared =
-            tokio::task::spawn_blocking(move || crate::staging::prepare(host.as_ref(), candidate))
+            crate::rt::task::spawn_blocking(move || crate::staging::prepare(host.as_ref(), candidate))
                 .await
                 .map_err(|_| Error::Invalid("File preparation stopped; retry the message.".into()))
                 .and_then(|result| result.map_err(crate::staging::explain_error));
