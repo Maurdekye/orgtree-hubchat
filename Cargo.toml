@@ -13,3 +13,9 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+# Hubchat Web's core (crates/hubchat-web, wasm32-unknown-unknown): every
+# visitor downloads it, so small comes before fast.
+[profile.web]
+inherits = "release"
+opt-level = "s"

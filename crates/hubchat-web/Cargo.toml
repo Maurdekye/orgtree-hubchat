@@ -6,9 +6,27 @@ edition.workspace = true
 rust-version.workspace = true
 publish = false
 
+[lib]
+# cdylib: what wasm-bindgen turns into the browser module. rlib: so the
+# shell's own tests (and `cargo check --workspace`) build natively.
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 hubchat-core = { path = "../hubchat-core" }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Only the browser build talks to JavaScript. The version of wasm-bindgen is
+# pinned: the `wasm-bindgen` command that post-processes the build must be
+# exactly this version (docs/hubchat-web.md).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+console_error_panic_hook = "0.1"
+sqlite-wasm-rs = { version = "0.6", default-features = false, features = ["wasm-bindgen"] }
+sqlite-wasm-vfs = { version = "0.3", features = ["sahpool"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
