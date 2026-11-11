@@ -8,6 +8,7 @@ import { useSnap, useTypingPeers } from "../lib/store";
 import { openMenu, type MenuEntry, type MenuItem } from "../lib/ctxmenu";
 import { copyText } from "../lib/native";
 import { mentionWireToken } from "../lib/mentions";
+import { needsAnswerLabel, rowClick } from "../lib/asks";
 import { Addr, KindGlyph, PeerAvatar, Tick, pressKeys, usePlatform } from "./ui";
 
 export type ChatFilter = "all" | "agents" | "people";
@@ -61,8 +62,6 @@ const PRESS_CLICK_MS = 700;
 
 /** What a chat's unread badge says to a screen reader and on hover; the rail's button says it too. */
 const unreadLabel = (n: number) => n + " unread";
-/** What the dot on the taskbar means for a chat: question cards waiting for an answer (the taskbar rule). */
-export const needsAnswerLabel = (n: number) => n + (n === 1 ? " question needs" : " questions need") + " your answer";
 
 export function ChatRows({ rows, selected, onOpen, onInfo, onCloseDm, onShowQuestion }: { rows: ReturnType<typeof useFilteredChats>["rows"]; selected: string | null; onOpen: (peer: string) => void; onInfo?: (peer: string) => void; onCloseDm?: (peer: string) => void; /** open the chat, then scroll to the pending card and highlight it */ onShowQuestion?: (peer: string, id: string) => void }) {
   const snap = useSnap();
@@ -85,7 +84,7 @@ export function ChatRows({ rows, selected, onOpen, onInfo, onCloseDm, onShowQues
         else if (m.outgoing) prev = <><Tick m={m} /><span className="you">You:</span><span className="t" dir="auto">{preview(m)}</span></>;
         else prev = <>{m.kind === "question" ? <span className="q">Question ·</span> : null}{m.kind === "question" ? " " : null}<span className="t" dir="auto">{preview(m)}</span></>;
         return (
-          <div key={c.peer} className={"crow" + (selected === c.peer ? " sel" : "") + (c.unread ? " unread" : "") + (c.needs_answer ? " asks" : "")} onClick={() => { if (Date.now() - pressedAt.current <= PRESS_CLICK_MS) return; if (c.needs_answer && c.first_question && onShowQuestion) onShowQuestion(c.peer, c.first_question); else onOpen(c.peer); }} role="button" tabIndex={0}
+          <div key={c.peer} className={"crow" + (selected === c.peer ? " sel" : "") + (c.unread ? " unread" : "") + (c.needs_answer ? " asks" : "")} onClick={() => { if (Date.now() - pressedAt.current <= PRESS_CLICK_MS) return; const go = rowClick(c, !!onShowQuestion); if (go.to === "question") onShowQuestion?.(c.peer, go.id); else onOpen(c.peer); }} role="button" tabIndex={0}
             onContextMenu={(e) => { if (platform === "android") pressedAt.current = Date.now(); chatMenu(e, c.peer, onOpen, onInfo, "Open", onCloseDm); }}
             onKeyDown={pressKeys(() => onOpen(c.peer))}>
             <PeerAvatar address={c.peer} c={ct} hubs={hubs} size={platform === "android" ? 52 : 44} />

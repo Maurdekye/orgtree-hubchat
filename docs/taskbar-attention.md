@@ -78,6 +78,6 @@ other sign in the app, so the dot now explains itself:
   neither applies (`taskbar::hint`, set with the overlay from `tray_recent`).
 
 Not in this change: a menu listing of pending questions (a follow-up job).
-Verification: `store_taskbar::tests::taskbar_counts_and_chat_needs_answer_follow_the_taskbar_rule`
+Verification: `node --test tools/needs-answer.test.ts` (label and click decision, `src/lib/asks.ts`), `store_taskbar::tests::taskbar_counts_and_chat_needs_answer_follow_the_taskbar_rule`
 and `taskbar::tests::the_hover_text_says_why_the_dot_is_on`. The row marker,
 click-to-card navigation and hover text on a real taskbar are not tested.
