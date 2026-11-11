@@ -132,6 +132,13 @@ pub async fn call(cmd: String, args: String) -> Result<String, JsValue> {
     serde_json::to_string(&out).map_err(err)
 }
 
+/// The text of a QR code in a camera frame of `width` x `height` grey pixels
+/// (`scan.rs`). Null: none in this frame.
+#[wasm_bindgen]
+pub fn scan(width: u32, height: u32, grey: &[u8]) -> Option<String> {
+    crate::scan::decode(width as usize, height as usize, grey)
+}
+
 /// The page is going away, or another tab takes over: stop the engine.
 #[wasm_bindgen]
 pub fn stop() {

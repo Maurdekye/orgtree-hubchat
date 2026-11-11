@@ -8,9 +8,11 @@
 /// grey pixels (one byte each, row by row, 0 black to 255 white). None: no
 /// code in it, or a frame that is not what it says.
 pub fn decode(width: usize, height: usize, grey: &[u8]) -> Option<String> {
-    // RED: not written yet
-    let _ = (width, height, grey);
-    None
+    if width == 0 || height == 0 || width.checked_mul(height) != Some(grey.len()) {
+        return None;
+    }
+    let mut image = rqrr::PreparedImage::prepare_from_greyscale(width, height, |x, y| grey[y * width + x]);
+    image.detect_grids().into_iter().find_map(|grid| grid.decode().ok().map(|(_, text)| text))
 }
 
 #[cfg(test)]

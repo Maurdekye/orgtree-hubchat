@@ -15,9 +15,6 @@
 //!   a link (coordinator 2026-11-11): it says `HAS_IDENTITY`;
 //! - the key file is text the page reads and saves (`text`, not a path).
 
-// RED: the tests below and what they need to compile. The commands are not written yet.
-#![allow(unused_imports, dead_code)]
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -69,16 +66,354 @@ pub struct HubRow {
     reachable: bool,
 }
 
+/// The address as the shell keeps it, when it is one a page can call.
+fn reachable_form(input: &str) -> Option<String> {
+    HubAddress::parse(input).ok().map(|a| a.to_string()).filter(|u| page_can_reach(u))
+}
+
+/// The hubs of `list` a page can call, each once, in order.
+fn reachable_hubs(list: &[String]) -> Vec<String> {
+    let mut keep: Vec<String> = Vec::new();
+    for h in list.iter().filter_map(|h| reachable_form(h)) {
+        if !keep.contains(&h) {
+            keep.push(h);
+        }
+    }
+    keep
+}
+
+impl Adoption {
+    /// The identity a link, a key QR or a key file brought, with the hubs to add.
+    fn from_bundle(bundle: &Bundle, hubs: Vec<String>) -> R<Adoption> {
+        let mut meta = vec![("profile.name", bundle.name.clone()), ("profile.about", bundle.about.clone())];
+        if bundle.recovery_saved {
+            meta.push(("recovery.saved", "yes".into()));
+        }
+        Ok(Adoption { me: bundle.identity().map_err(s)?, brand_new: false, meta, hubs })
+    }
+}
+
 impl Shell {
-    pub(crate) fn plan_link(&self, _cmd: &str, _args: &Value) -> R<Option<Adoption>> {
-        Ok(None)
+    fn emit_link(&self, ev: &LinkEvent) {
+        if let Ok(json) = serde_json::to_string(ev) {
+            self.emit("hc-link", &json);
+        }
     }
 
-    #[cfg(test)]
-    pub(crate) async fn receive(&self, _bundle: Bundle, _via: &str, _aliases: &[String], _reception: &link::Reception) {}
+    /// The identity commands of linking (`hc_link_confirm`, `hc_restore_qr`,
+    /// `hc_key_file_import`): what to take, for `Shell::plan_identity`.
+    pub(crate) fn plan_link(&self, cmd: &str, args: &Value) -> R<Option<Adoption>> {
+        if !matches!(cmd, "hc_link_confirm" | "hc_restore_qr" | "hc_key_file_import") {
+            return Ok(None);
+        }
+        if self.engine().is_ok() {
+            return Err(HAS_IDENTITY.into());
+        }
+        let plan = match cmd {
+            "hc_link_confirm" => {
+                // exactly the hubs the user kept in the review; checked before anything is taken
+                let mut keep: Vec<String> = Vec::new();
+                for h in arg::<Vec<String>>(args, "hubs")?.iter().map(|h| h.trim()).filter(|h| !h.is_empty()) {
+                    let a = HubAddress::parse(h).map_err(s)?.to_string();
+                    if !page_can_reach(&a) {
+                        return Err(NEEDS_HTTPS.into());
+                    }
+                    if !keep.contains(&a) {
+                        keep.push(a);
+                    }
+                }
+                let bundle = self.pending.lock().unwrap().take().ok_or("nothing to confirm: link again")?;
+                Adoption::from_bundle(&bundle, keep)?
+            }
+            "hc_restore_qr" => {
+                let b = link::from_qr(&arg::<String>(args, "text")?).map_err(s)?;
+                Adoption::from_bundle(&b, reachable_hubs(&link::hubs_for_device(&b.hubs, None, &[])))?
+            }
+            _ => {
+                let (text, passphrase): (String, String) = (arg(args, "text")?, arg(args, "passphrase")?);
+                let b = link::from_key_file(&text, &passphrase).map_err(s)?;
+                Adoption::from_bundle(&b, reachable_hubs(&link::hubs_for_device(&b.hubs, None, &[])))?
+            }
+        };
+        Ok(Some(plan))
+    }
 
-    pub(crate) async fn link_call(self: &Arc<Self>, _cmd: &str, _args: &Value) -> Option<R<Value>> {
-        None
+    fn my_bundle(&self) -> R<Bundle> {
+        let e = self.engine()?;
+        Ok(Bundle {
+            id: e.me().id().into(),
+            secret: e.me().secret().into(),
+            name: self.meta("profile.name"),
+            about: self.meta("profile.about"),
+            hubs: self.store().hubs().map_err(s)?.into_iter().map(|h| h.url).collect(),
+            recovery_saved: self.meta("recovery.saved") == "yes",
+        })
+    }
+
+    /// A link's hub under each address the link names, the likeliest first:
+    /// the likeliest a page can call that answers (as `name`, when given),
+    /// else the first one's failure. All are tried at once, `limit` each.
+    async fn probe_first(&self, hubs: &[String], name: Option<&str>, limit: Duration, origin: Option<&link::Reception>) -> Probe {
+        if hubs.is_empty() {
+            return Probe::Invalid { error: "the link names no hub".into() };
+        }
+        let reach = reachable_hubs(hubs);
+        if reach.is_empty() {
+            return Probe::Invalid { error: LINK_NEEDS_HTTPS.into() };
+        }
+        let mut all = futures_util::future::join_all(reach.iter().map(|h| self.probe_with(h, name, limit, origin.cloned()))).await;
+        match all.iter().position(|p| matches!(p, Probe::Connected { .. })) {
+            Some(i) => all.swap_remove(i),
+            None => all.swap_remove(0),
+        }
+    }
+
+    /// The identity a link carries just arrived. This browser's own: nothing
+    /// to do. Otherwise it waits in memory (an unadopted key is never
+    /// written anywhere) while the user reviews its hubs, each tried here.
+    async fn arrived(&self, bundle: Bundle, via: &str, aliases: &[String], reception: &link::Reception) -> (LinkEvent, Option<Bundle>) {
+        let current = self.engine().ok().map(|e| e.me().address());
+        let to = match bundle.identity() {
+            Ok(me) => me.address(),
+            Err(e) => return (LinkEvent::Failed { error: s(e) }, None),
+        };
+        if current.as_deref() == Some(to.as_str()) {
+            return (LinkEvent::Same { address: to }, None);
+        }
+        if current.is_some() {
+            return (LinkEvent::Failed { error: HAS_IDENTITY.into() }, None);
+        }
+        let rows = link::review_hubs(&bundle.hubs, via, aliases);
+        let probed: Vec<(HubRow, Option<link::HubKey>)> = futures_util::future::join_all(rows.into_iter().map(|(theirs, all)| async move {
+            let reach = reachable_hubs(&all);
+            if reach.is_empty() {
+                let address = all.first().cloned().unwrap_or_default();
+                return (HubRow { theirs, address, candidates: all, name: None, error: Some(NEEDS_HTTPS.into()), reachable: false }, None);
+            }
+            match self.probe_first(&reach, None, Duration::from_secs(5), Some(reception)).await {
+                Probe::Connected { url, name, version, orgs, .. } => {
+                    let key = (name.clone(), version, orgs);
+                    (HubRow { theirs, address: url, candidates: reach, name: Some(name), error: None, reachable: true }, Some(key))
+                }
+                Probe::Unreachable { error, .. } | Probe::NotAHub { error, .. } | Probe::Invalid { error } => {
+                    (HubRow { theirs, address: reach[0].clone(), candidates: reach, name: None, error: Some(error), reachable: false }, None)
+                }
+            }
+        }))
+        .await;
+        // one row per hub: the same hub under two names merges
+        let keyed: Vec<(String, Vec<String>, Option<link::HubKey>)> = probed.iter().map(|(r, k)| (r.theirs.clone(), r.candidates.clone(), k.clone())).collect();
+        let hubs: Vec<HubRow> = link::merge_same_hubs(&keyed, &bundle.hubs, via)
+            .into_iter()
+            .map(|(i, theirs, candidates)| HubRow { theirs, candidates, ..probed[i].0.clone() })
+            .collect();
+        let name = bundle.name.clone();
+        (LinkEvent::Review { from: None, to, name, hubs }, Some(bundle))
+    }
+
+    /// What a link brought, checked and offered for review: the tests' way in, without a hub.
+    #[cfg(test)]
+    pub(crate) async fn receive(&self, bundle: Bundle, via: &str, aliases: &[String], reception: &link::Reception) {
+        let (event, pending) = self.arrived(bundle, via, aliases, reception).await;
+        if let Some(bundle) = pending {
+            *self.pending.lock().unwrap() = Some(bundle);
+        }
+        self.emit_link(&event);
+    }
+
+    async fn link_start(self: &Arc<Self>, args: &Value) -> R<Value> {
+        if self.engine().is_ok() {
+            return Err(HAS_IDENTITY.into());
+        }
+        let (hub, device_name): (String, String) = (arg(args, "hub")?, arg(args, "deviceName")?);
+        let (code, aliases): (Option<String>, Option<Vec<String>>) = (arg(args, "code")?, arg(args, "aliases")?);
+        let addr = HubAddress::parse(&hub).map_err(s)?;
+        if !page_can_reach(addr.as_str()) {
+            return Err(NEEDS_HTTPS.into());
+        }
+        // a code from a scanned or typed link (the other device made it), or our own
+        let code = match code {
+            Some(c) => link::format_code(&link::normalize_code(&c).map_err(s)?),
+            None => link::new_link_code(),
+        };
+        let temp = link::link_identity(&code).map_err(s)?;
+        let client = link::start_client(self.store(), addr.clone(), || None).map_err(s)?;
+        let name = if device_name.trim().is_empty() { self.device_name() } else { device_name.trim().chars().take(48).collect() };
+        let profile = Profile { kind: "chat".into(), org_name: name, username: "link".into(), blurb: "Waiting to be linked to a Hubchat identity".into() };
+        client.register(&temp, &profile).await.map_err(s)?;
+        let stop = CancelFlag::default();
+        if let Some(old) = self.link_stop.lock().unwrap().replace(stop.clone()) {
+            old.cancel();
+        }
+        let (shell, code2, via, aliases) = (self.clone(), code.clone(), addr.to_string(), aliases.unwrap_or_default());
+        rt::spawn(async move {
+            let reception = link::Reception::new(client.clone(), stop.clone());
+            let t0 = rt::Instant::now();
+            reception.commit(|| shell.emit_link(&LinkEvent::Waiting { expires_in_s: LINK_TTL.as_secs() }));
+            let outcome = loop {
+                if stop.is_cancelled() || client.session_cancelled() {
+                    break None;
+                }
+                if t0.elapsed() > LINK_TTL {
+                    break Some(LinkEvent::Expired);
+                }
+                let p = match reception.work(client.poll(&temp, 20)).await {
+                    Ok(p) => p,
+                    Err(_) if stop.is_cancelled() || client.session_cancelled() => break None,
+                    Err(_) => {
+                        rt::time::sleep(Duration::from_secs(3)).await;
+                        continue;
+                    }
+                };
+                let ids: Vec<String> = p.messages.iter().map(|m| m.id.clone()).collect();
+                let found = p.messages.iter().find_map(|m| link::open_from_link(&code2, &m.body).ok().map(|b| (m.id.clone(), b)));
+                if let Some((id, bundle)) = found {
+                    // hubs that keep history would keep our copy of the sealed identity: delete it
+                    let cleanup = async {
+                        if !ids.is_empty() {
+                            if let Err(e @ (hubchat_core::Error::Cancelled | hubchat_core::Error::FilePaused)) = client.ack(&temp, &ids).await {
+                                return Err(e);
+                            }
+                        }
+                        if let Err(e @ (hubchat_core::Error::Cancelled | hubchat_core::Error::FilePaused)) = client.delete_message(&temp, &id).await {
+                            return Err(e);
+                        }
+                        Ok(())
+                    };
+                    let _ = reception
+                        .complete(cleanup, async { Ok(shell.arrived(bundle, &via, &aliases, &reception).await) }, |(event, pending)| {
+                            if let Some(bundle) = pending {
+                                *shell.pending.lock().unwrap() = Some(bundle);
+                            }
+                            shell.emit_link(&event);
+                        })
+                        .await;
+                    break None;
+                }
+                if !ids.is_empty() {
+                    let _ = client.ack(&temp, &ids).await;
+                }
+            };
+            let _ = client.unregister(&temp).await;
+            if let Some(ev) = outcome {
+                reception.commit(|| shell.emit_link(&ev));
+            }
+        });
+        let hub = addr.to_string();
+        let qr = LinkUrl { code: link::normalize_code(&code).map_err(s)?, hubs: vec![hub.clone()], hub_name: None, role: Some("take".into()) }.to_url();
+        Ok(json!({ "code": code, "qr": qr, "hub": hub, "phone_access_off": false }))
+    }
+
+    /// A link code this browser offered or approved is done with: after
+    /// `delay`, take the waiting address it names off every hub we use.
+    fn forget_link_address(&self, code: &str, delay: Duration) {
+        let (Ok(engine), Ok(temp)) = (self.engine(), link::link_identity(code)) else { return };
+        let hubs: Vec<HubClient> = engine.hub_statuses().iter().filter_map(|h| engine.hub_client(&h.url)).collect();
+        rt::spawn(async move {
+            rt::time::sleep(delay).await;
+            for client in hubs {
+                let _ = client.unregister(&temp).await;
+            }
+        });
+    }
+
+    /// The link, QR and key-file commands. None: not one of them.
+    pub(crate) async fn link_call(self: &Arc<Self>, cmd: &str, args: &Value) -> Option<R<Value>> {
+        Some(match cmd {
+            "hc_parse_link" => (|| {
+                let l = LinkUrl::parse(&arg::<String>(args, "input")?).map_err(s)?;
+                Ok(json!({ "code": link::format_code(&l.code), "hub": l.hubs.first(), "hubs": l.hubs, "hub_name": l.hub_name, "role": l.role }))
+            })(),
+            "hc_probe_link_hubs" => match (arg::<Vec<String>>(args, "hubs"), arg::<Option<String>>(args, "name")) {
+                (Ok(hubs), Ok(name)) => out(self.probe_first(&hubs, name.as_deref(), Duration::from_secs(5), None).await),
+                (Err(e), _) | (_, Err(e)) => Err(e),
+            },
+            "hc_link_start" => self.link_start(args).await,
+            "hc_link_cancel" => {
+                if let Some(f) = self.link_stop.lock().unwrap().take() {
+                    f.cancel();
+                }
+                Ok(Value::Null)
+            }
+            "hc_link_discard" => {
+                self.pending.lock().unwrap().take();
+                Ok(Value::Null)
+            }
+            // a caller without a key store of its own (tests); the worker plans first (wasm.rs)
+            "hc_link_confirm" | "hc_restore_qr" | "hc_key_file_import" => match self.plan_link(cmd, args) {
+                Ok(Some(plan)) => self.adopt(plan).map(Value::String),
+                Ok(None) => return None,
+                Err(e) => Err(e),
+            },
+            // ------------------------------------------- signed-in browser
+            "hc_link_offer" => self.link_offer(args),
+            "hc_link_lookup" => self.link_lookup(args),
+            "hc_link_approve" => self.link_approve(args).await,
+            "hc_link_forget" => (|| {
+                let code = link::normalize_code(&arg::<String>(args, "code")?).map_err(s)?;
+                self.forget_link_address(&code, Duration::ZERO);
+                Ok(Value::Null)
+            })(),
+            // the offline QR (shown behind a warning in the UI)
+            "hc_key_qr" => self.my_bundle().map(|b| Value::String(link::to_qr(&b))),
+            // The apps write the passphrase-locked key file themselves (`hc_key_file_export`); a
+            // page gets its text and hands it to the browser (src/web/webApi.ts).
+            "hc_key_file_text" => (|| {
+                let text = link::to_key_file(&self.my_bundle()?, &arg::<String>(args, "passphrase")?).map_err(s)?;
+                Ok(json!({ "name": KEY_FILE_NAME, "text": text }))
+            })(),
+            _ => return None,
+        })
+    }
+
+    /// Signed-in browser: a one-time code (and QR) for a NEW device to scan or type.
+    fn link_offer(&self, args: &Value) -> R<Value> {
+        let e = self.engine()?;
+        let statuses = e.hub_statuses();
+        let hub = match arg::<Option<String>>(args, "hub")? {
+            Some(h) => HubAddress::parse(&h).map_err(s)?.to_string(),
+            None => statuses
+                .iter()
+                .find(|h| matches!(h.state, hubchat_core::engine::HubState::Connected))
+                .or_else(|| statuses.iter().find(|h| h.state != hubchat_core::engine::HubState::Disabled))
+                .map(|h| h.url.clone())
+                .ok_or("add a hub first: the new device links through one")?,
+        };
+        e.hub_client(&hub).ok_or("Enable this saved hub on this device before linking.")?;
+        let hub_name = statuses.iter().find(|h| h.url == hub).map(|h| h.name.clone()).filter(|n| !n.trim().is_empty());
+        // a page knows no other address of its hub than the one it calls
+        let hubs = link::hub_aliases(&hub, None, &[], None);
+        let code = link::new_link_code();
+        let qr = LinkUrl { code: link::normalize_code(&code).map_err(s)?, hubs: hubs.clone(), hub_name, role: Some("give".into()) }.to_url();
+        Ok(json!({ "code": code, "qr": qr, "hub": hub, "hubs": hubs, "phone_access_off": false }))
+    }
+
+    fn link_lookup(&self, args: &Value) -> R<Value> {
+        let l = LinkUrl::parse(&arg::<String>(args, "input")?).map_err(s)?;
+        let address = link::link_identity(&l.code).map_err(s)?.address();
+        let entry = self.store().directory().map_err(s)?.into_iter().find(|d| d.address == address);
+        let mine: Vec<String> = self.store().hubs().map_err(s)?.into_iter().map(|h| h.url).collect();
+        let ours = |h: &String| HubAddress::parse(h).map(|a| mine.contains(&a.to_string())).unwrap_or(false);
+        let unknown_hub = if l.hubs.iter().any(ours) { None } else { l.hubs.first().cloned() };
+        Ok(json!({
+            "code": l.code,
+            "address": address,
+            "device_name": entry.as_ref().map(|e| e.org_name.clone()),
+            "hubs": entry.map(|e| e.hubs).unwrap_or_default(),
+            "unknown_hub": unknown_hub,
+        }))
+    }
+
+    async fn link_approve(&self, args: &Value) -> R<Value> {
+        let e = self.engine()?;
+        let code = link::normalize_code(&arg::<String>(args, "code")?).map_err(s)?;
+        let to = link::link_identity(&code).map_err(s)?.address();
+        let body = link::seal_for_link(&code, &self.my_bundle()?).map_err(s)?;
+        let hub = e.send_unlisted(&to, &body).await.map_err(s)?;
+        // the new device takes its message and leaves the hub within seconds; if it
+        // crashed first, its waiting address would stay on the hub's list for good
+        self.forget_link_address(&code, Duration::from_secs(180));
+        Ok(Value::String(hub))
     }
 }
 
