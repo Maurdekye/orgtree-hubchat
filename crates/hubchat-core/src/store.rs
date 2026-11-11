@@ -408,6 +408,8 @@ pub struct ChatSummary {
     pub peer: String,
     pub last: Message,
     pub unread: u64,
+    /// incoming question cards still unanswered, by the taskbar rule (`taskbar_questions`)
+    pub needs_answer: u64,
 }
 
 /// A directory row: one address, merged across hubs.
@@ -905,7 +907,7 @@ impl Store {
         let mut out = Vec::with_capacity(peers.len());
         for (peer, _, unread) in peers {
             if let Some(last) = self.chat(&peer, None, None, 1)?.pop() {
-                out.push(ChatSummary { peer, last, unread });
+                out.push(ChatSummary { peer, last, unread, needs_answer: 0 });
             }
         }
         Ok(out)

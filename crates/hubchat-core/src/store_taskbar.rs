@@ -6,6 +6,11 @@ const ATTENTION_SQL: &str = "SELECT EXISTS(SELECT 1 FROM messages WHERE outgoing
     OR EXISTS(SELECT 1 FROM taskbar_questions WHERE pending=1)";
 
 impl Store {
+    /// What the taskbar dot says: (unread messages including history-only unread, unanswered incoming questions).
+    pub fn taskbar_counts(&self) -> Result<(u64, u64)> {
+        Ok((0, 0))
+    }
+
     pub fn taskbar_attention(&self) -> Result<bool> {
         self.with(|c| c.query_row(ATTENTION_SQL, [], |r| r.get(0)))
     }
@@ -27,6 +32,26 @@ mod tests {
         let mut v = serde_json::json!({"id":id,"from":from,"to":to,"body":"", "received_at":"2026-10-19T00:00:00.000Z","read_at":"2026-10-19T00:01:00.000Z"});
         v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
         s.upsert_synced(HUB, ME, &serde_json::from_value(v).unwrap()).unwrap();
+    }
+    #[test]
+    fn taskbar_counts_and_chat_needs_answer_follow_the_taskbar_rule() {
+        let s = store();
+        assert_eq!(s.taskbar_counts().unwrap(), (0, 0));
+        add(&s, "u1", false, PEER, serde_json::json!({"read_at":null}));
+        add(&s, "q1", false, PEER, serde_json::json!({"kind":"question"}));
+        add(&s, "q2", false, "kim.abcdef", serde_json::json!({"kind":"question"}));
+        s.set_old_unread(HUB, "remote.abcdef", 3, None).unwrap();
+        assert_eq!(s.taskbar_counts().unwrap(), (4, 2), "unread incl. history-only, and pending questions");
+        let by = |s: &Store, p: &str| s.chats().unwrap().into_iter().find(|c| c.peer == p).map(|c| c.needs_answer);
+        assert_eq!(by(&s, PEER), Some(1));
+        assert_eq!(by(&s, "kim.abcdef"), Some(1));
+        add(&s, "ans", true, PEER, serde_json::json!({"reply_to":"q1"}));
+        assert_eq!(s.taskbar_counts().unwrap().1, 1);
+        assert_eq!(by(&s, PEER), Some(0), "answered: no marker");
+        add(&s, "later", true, "kim.abcdef", serde_json::json!({"received_at":"2026-10-19T00:05:00.000Z"}));
+        assert_eq!(by(&s, "kim.abcdef"), Some(0), "a later outgoing message settles it, the same rule as the dot");
+        assert_eq!(s.taskbar_attention().unwrap(), true, "the rule itself is unchanged: unread still lights it");
+        assert_eq!(s.taskbar_counts().unwrap().1, 0);
     }
     #[test]
     fn taskbar_unread_includes_closed_and_history_only_chats_and_clears() {
