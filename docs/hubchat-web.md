@@ -174,6 +174,28 @@ after Vite); the cache is named after the hash.
   with `Cache-Control: no-cache`, or browsers keep an old build.
   `tools/web-static.mjs` does.
 
+## An older server than the browser last used
+
+A server can go back to an older build (a rollback, or two servers behind
+one address). The browser's database may then have been written by a newer
+build, with a schema the older code does not know. Hubchat Web does not
+open it: `Store::open_refusing_newer` (hubchat-core) reads the schema
+version before it writes anything and refuses a newer one, leaving the file
+as it is. The start screen then reads **Update the Hubchat Web server**,
+names the address that serves the older build and its version, says that
+the identity and messages are untouched, and offers **Reload**
+(`src/web/startError.ts`; the page knows the refusal by the core's words
+`store::NEWER_STORE`, which the two files must keep the same). Once the
+server has the newer build again, a reload opens the data as before.
+
+The apps are not changed: they open their database with `Store::open`, as
+always.
+
+Tests: `store::tests::a_store_from_a_newer_build_is_refused_and_left_alone`
+(hubchat-core) and `node --test tools/web-start-error.test.ts`. The screen
+itself has not been produced in a browser: the test has no way to put a
+newer database into the browser's private file system.
+
 ## The suggested hub
 
 Someone who has just made a new identity and has no hub yet is offered hubs
@@ -324,8 +346,6 @@ These answer "This isn't available in Hubchat Web yet." or are hidden:
 - Notifications (Web Push).
 - Settings, About has no "Check for updates" button on the web: the check
   runs by itself.
-- "Update the Hubchat Web server", for a database written by a newer build
-  than the one served (spec, Version skew).
 - The release workflow that builds and publishes the server's image.
 
 ## Not checked on a real device

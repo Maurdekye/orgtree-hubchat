@@ -144,8 +144,11 @@ shown "A new version is ready" with **Update**; the app keeps working on
 the old files until they tap it. Their identity and messages are in their
 browser and are not touched.
 
-Run a Hubchat Web at least as new as the newest one your people have used:
-an older server can't open a database a newer app wrote.
+Run a Hubchat Web at least as new as the newest one your people have used.
+If the server goes back to an older build, a browser that used the newer
+one shows "Update the Hubchat Web server" and waits: it does not open, or
+change, the data the newer build wrote. Nothing is lost; putting the newer
+build back and reloading brings everything back.
 
 ## Commands
 
