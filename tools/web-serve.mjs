@@ -1,6 +1,6 @@
 // Try a built Hubchat Web (`npm run build:web`) on this machine:
 //
-//   node tools/web-serve.mjs [--dist dist-web] [--port 8787] [--host 127.0.0.1]
+//   node tools/web-serve.mjs [--dist dist-web] [--port 8787] [--host 127.0.0.1] [--default-hubs https://hub.example]
 //
 // It listens on this machine only (a browser treats http://localhost as
 // secure). A phone needs HTTPS in front of it, and the hub must name the
@@ -19,7 +19,9 @@ const port = Number(arg('port', 8787)), host = arg('host', '127.0.0.1');
 if (!existsSync(join(dist, 'index.html'))) { console.error(`no built page in ${dist}: run npm run build:web first`); process.exit(2); }
 
 const served = [];
-const server = webServer(dist, served);
+// --default-hubs https://hub.example,https://other.example: offered to someone adding their first hub
+const hubs = String(arg('default-hubs', '')).split(',').map((h) => h.trim()).filter(Boolean);
+const server = webServer(dist, served, hubs.length ? { name: 'Hubchat Web', default_hubs: hubs } : null);
 server.on('error', (e) => { console.error(`can't listen on ${host}:${port}: ${e.message}`); process.exit(1); });
 server.listen(port, host, () => {
   console.log(`Hubchat Web (${dist}) on http://${host === '0.0.0.0' || host === '::' ? 'localhost' : host}:${port}`);

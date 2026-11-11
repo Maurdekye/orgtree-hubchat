@@ -16,6 +16,10 @@ hubchat-core = { path = "../hubchat-core" }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+futures-util = "0.3"
+# Reads the QR code in a camera frame (scan.rs): an iPhone's browser has no
+# barcode reader. Without its default feature it brings no image codecs.
+rqrr = { version = "0.11", default-features = false }
 
 # Only the browser build talks to JavaScript. The version of wasm-bindgen is
 # pinned: the `wasm-bindgen` command that post-processes the build must be
@@ -30,3 +34,5 @@ sqlite-wasm-vfs = { version = "0.3", features = ["sahpool"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
+# draws the QR codes scan.rs's tests read back
+qrcode = { version = "0.14", default-features = false }

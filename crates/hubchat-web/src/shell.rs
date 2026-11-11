@@ -33,9 +33,9 @@ pub const NEEDS_HTTPS: &str = "Hubchat Web can only reach a hub over HTTPS. Ask 
 /// Where events go: the event's name (`hc`, as the apps emit it) and its JSON.
 pub type Sink = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
-type R<T> = Result<T, String>;
+pub(crate) type R<T> = Result<T, String>;
 
-fn s<E: std::fmt::Display>(e: E) -> String {
+pub(crate) fn s<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
@@ -74,7 +74,9 @@ impl Host for ShellHost {
 pub struct Adoption {
     pub me: Identity,
     pub brand_new: bool,
-    meta: Vec<(&'static str, String)>,
+    pub(crate) meta: Vec<(&'static str, String)>,
+    /// The hubs that come with it (a link, a key QR or a key file), added once it runs.
+    pub(crate) hubs: Vec<String>,
 }
 
 pub struct Shell {
@@ -86,6 +88,10 @@ pub struct Shell {
     own_name: String,
     foreground: AtomicBool,
     open_chat: Mutex<Option<String>>,
+    /// The link this browser is waiting on (`link.rs`): cancelled by a new one, Cancel or shutdown.
+    pub(crate) link_stop: Mutex<Option<hubchat_core::hub::CancelFlag>>,
+    /// What a link brought, until the user confirms or drops it. Memory only.
+    pub(crate) pending: Mutex<Option<hubchat_core::link::Bundle>>,
 }
 
 fn must_wipe(owner: Option<&str>, has_data: bool, new: &str, brand_new: bool) -> bool {
@@ -104,18 +110,18 @@ pub fn page_can_reach(url: &str) -> bool {
     matches!(host, "localhost" | "127.0.0.1" | "::1")
 }
 
-fn arg<T: DeserializeOwned>(args: &Value, name: &str) -> R<T> {
+pub(crate) fn arg<T: DeserializeOwned>(args: &Value, name: &str) -> R<T> {
     let v = args.get(name).cloned().unwrap_or(Value::Null);
     serde_json::from_value(v).map_err(|e| format!("invalid args `{name}`: {e}"))
 }
 
-fn out<T: Serialize>(v: T) -> R<Value> {
+pub(crate) fn out<T: Serialize>(v: T) -> R<Value> {
     serde_json::to_value(v).map_err(s)
 }
 
 #[derive(Serialize)]
 #[serde(tag = "result", rename_all = "snake_case")]
-enum Probe {
+pub(crate) enum Probe {
     Connected { url: String, name: String, max_attachment_bytes: u64, features: Vec<String>, version: Option<String>, orgs: Option<u64>, discovered: bool },
     Unreachable { url: String, error: String },
     NotAHub { url: String, error: String },
@@ -146,6 +152,8 @@ impl Shell {
             own_name: own_name.trim().to_owned(),
             foreground: AtomicBool::new(false),
             open_chat: Mutex::new(None),
+            link_stop: Mutex::new(None),
+            pending: Mutex::new(None),
         });
         match identity {
             Some(me) => shell.start_with(me)?,
@@ -165,7 +173,12 @@ impl Shell {
         self.engine.lock().unwrap().clone().ok_or_else(|| "no identity yet".to_string())
     }
 
-    fn meta(&self, k: &str) -> String {
+    /// One event to the page, under the name the apps emit it.
+    pub(crate) fn emit(&self, name: &str, json: &str) {
+        (self.host.sink)(name, json);
+    }
+
+    pub(crate) fn meta(&self, k: &str) -> String {
         self.store.meta(k).ok().flatten().unwrap_or_default()
     }
 
@@ -174,7 +187,7 @@ impl Shell {
         has("device.id") || has("identity.address")
     }
 
-    fn device_name(&self) -> String {
+    pub(crate) fn device_name(&self) -> String {
         self.store.meta("device.name").ok().flatten().filter(|n| !n.trim().is_empty()).unwrap_or_else(|| {
             if self.own_name.is_empty() { "Hubchat Web".into() } else { self.own_name.clone() }
         })
@@ -216,13 +229,14 @@ impl Shell {
         let plan = match cmd {
             "hc_create_identity" => {
                 let (id, name): (String, String) = (arg(args, "id")?, arg(args, "name")?);
-                Adoption { me: Identity::generate(&id).map_err(s)?, brand_new: true, meta: vec![("profile.name", name.trim().to_owned())] }
+                Adoption { me: Identity::generate(&id).map_err(s)?, brand_new: true, meta: vec![("profile.name", name.trim().to_owned())], hubs: Vec::new() }
             }
             "hc_restore_words" => {
                 let words: String = arg(args, "words")?;
-                Adoption { me: recovery::from_words(&words).map_err(s)?, brand_new: false, meta: vec![("recovery.saved", "yes".into())] }
+                Adoption { me: recovery::from_words(&words).map_err(s)?, brand_new: false, meta: vec![("recovery.saved", "yes".into())], hubs: Vec::new() }
             }
-            _ => return Ok(None),
+            // a link's review confirmed, a key QR, a key file
+            _ => return self.plan_link(cmd, args),
         };
         if self.engine.lock().unwrap().is_some() {
             return Err("this device already has an identity".into());
@@ -246,6 +260,11 @@ impl Shell {
             self.store.set_meta(k, v).map_err(s)?;
         }
         self.start_with(plan.me)?;
+        if let Ok(e) = self.engine() {
+            for h in &plan.hubs {
+                let _ = e.add_hub(h);
+            }
+        }
         Ok(address)
     }
 
@@ -297,6 +316,12 @@ impl Shell {
     }
 
     async fn probe_one(&self, input: &str, limit: Duration) -> Probe {
+        self.probe_with(input, None, limit, None).await
+    }
+
+    /// /healthz at `input` within `limit`. `name`: the hub that must answer. `origin`: the link
+    /// this request belongs to (it ends with the link).
+    pub(crate) async fn probe_with(&self, input: &str, name: Option<&str>, limit: Duration, origin: Option<hubchat_core::link::Reception>) -> Probe {
         let addr = match HubAddress::parse(input) {
             Ok(a) => a,
             Err(e) => return Probe::Invalid { error: s(e) },
@@ -305,9 +330,14 @@ impl Shell {
         if !page_can_reach(&url) {
             return Probe::Invalid { error: NEEDS_HTTPS.into() };
         }
-        let r: Result<hubchat_core::Result<Health>, _> = rt::time::timeout(limit, self.discovery().health(addr)).await;
+        let requests = match origin {
+            Some(origin) => self.discovery().with_origin(origin),
+            None => self.discovery(),
+        };
+        let r: Result<hubchat_core::Result<Health>, _> = rt::time::timeout(limit, requests.health(addr)).await;
         match r {
             Err(_) => Probe::Unreachable { url, error: format!("no answer within {} s", limit.as_secs()) },
+            Ok(Ok(h)) if name.is_some_and(|n| n != h.name) => Probe::NotAHub { url, error: format!("another hub answers there ({})", h.name) },
             Ok(Ok(h)) => Probe::Connected {
                 url,
                 max_attachment_bytes: h.max_attachment_bytes(),
@@ -528,12 +558,19 @@ impl Shell {
                 "active": false, "verbose": false, "default_verbose": false, "pinned": false, "dir": "", "fallback": false,
                 "files": 0, "bytes": 0, "max_bytes": 0, "retention_days": 0,
             })),
-            _ => Err(NOT_YET.into()),
+            // linking, the key QR and the key file (link.rs)
+            _ => match self.link_call(cmd, args).await {
+                Some(answer) => answer,
+                None => Err(NOT_YET.into()),
+            },
         }
     }
 
     /// Stop the engine (the page is going away).
     pub fn shutdown(&self) {
+        if let Some(link) = self.link_stop.lock().unwrap().take() {
+            link.cancel();
+        }
         if let Some(e) = self.engine.lock().unwrap().take() {
             e.shutdown();
         }
@@ -541,7 +578,7 @@ impl Shell {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn shell(store: Arc<Store>, identity: Option<Identity>) -> (Arc<Shell>, Arc<Mutex<Vec<(String, String)>>>) {
@@ -551,11 +588,11 @@ mod tests {
         (Shell::open(store, sink, "Test browser", identity).unwrap(), seen)
     }
 
-    fn fresh() -> (Arc<Shell>, Arc<Mutex<Vec<(String, String)>>>) {
+    pub(crate) fn fresh() -> (Arc<Shell>, Arc<Mutex<Vec<(String, String)>>>) {
         shell(Arc::new(Store::open_in_memory().unwrap()), None)
     }
 
-    async fn take(shell: &Arc<Shell>, cmd: &str, args: Value) -> String {
+    pub(crate) async fn take(shell: &Arc<Shell>, cmd: &str, args: Value) -> String {
         let plan = shell.plan_identity(cmd, &args).unwrap().expect("an identity command");
         shell.adopt(plan).unwrap()
     }

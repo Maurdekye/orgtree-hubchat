@@ -12,6 +12,8 @@
 //!   commands, events and the key between it and the worker's script
 //!   (`src/web/core.worker.ts`).
 
+pub mod link;
+pub mod scan;
 pub mod shell;
 
 #[cfg(target_arch = "wasm32")]

@@ -69,13 +69,36 @@ const started = [];
 const browsers = [];
 
 const served = [];
-const web = webServer(dist, served);
+// the server names the test hub, as a container's HUBCHAT_WEB_DEFAULT_HUBS would
+const webConfig = { name: 'Hubchat Web', default_hubs: [] };
+const web = webServer(dist, served, webConfig);
 
 const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1';
 // before any of the page's own script: note policy violations, and when the app first shows
 const WATCH = `window.__csp = []; window.__shown = null;
   document.addEventListener('securitypolicyviolation', (e) => window.__csp.push(e.violatedDirective + ' <- ' + e.blockedURI));
   new MutationObserver(() => { if (window.__shown === null && document.querySelector('.fork-opt, .crow, .gate b')) window.__shown = Math.round(performance.now()); }).observe(document, { childList: true, subtree: true });`;
+
+// A camera for the browser that scans: a canvas stands in for it (this machine has none, and a test
+// opens no real one). It shows a grey wall until the test holds a QR code up to it (`window.__qr`,
+// the picture another browser drew), then that picture on a white card: real pixels, read by the
+// app's own scanner and decoder.
+const CAMERA = `window.__qr = null;
+  if (navigator.mediaDevices) navigator.mediaDevices.getUserMedia = async () => {
+    const c = document.createElement('canvas'); c.width = 640; c.height = 480;
+    const g = c.getContext('2d');
+    let img = null, n = 0;
+    const draw = () => {
+      if (!img && window.__qr) { const i = new Image(); i.onload = () => { img = i; }; i.src = window.__qr; }
+      g.fillStyle = '#7d828b'; g.fillRect(0, 0, 640, 480);
+      if (img) { g.fillStyle = '#fff'; g.fillRect(150, 70, 340, 340); g.drawImage(img, 170, 90, 300, 300); }
+      // something moves, so the stream keeps giving frames
+      g.fillStyle = (n++ % 2) ? '#7d828b' : '#7e838c'; g.fillRect(0, 0, 4, 4);
+    };
+    draw(); setInterval(draw, 100);
+    window.__cameraOpened = (window.__cameraOpened || 0) + 1;
+    return c.captureStream(10);
+  };`;
 
 /** A browser of its own (a fresh profile: no storage, no cache), and what drives its page. */
 async function open({ w = width, h = height, ua = null, before = '' } = {}) {
@@ -177,6 +200,7 @@ async function main() {
 
   const hubPort = await freePort();
   const HUB = `http://127.0.0.1:${hubPort}`;
+  webConfig.default_hubs.push(HUB);
   // nothing of this machine's own hub settings reaches the test hub
   const hubEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(HUB_|MAILHUB_|HUBCHAT_)/i.test(k)));
   const hubLog = openSync(join(run, 'hub.log'), 'w');
@@ -213,7 +237,7 @@ async function main() {
   for (const s of first) console.log(`  ${String(s.sent).padStart(9)} B  ${s.path}`);
   check('the first visit is within the size budget (3 MB compressed)', sent <= 3_000_000, sent + ' B');
   check('it is the web shell: no window title bar, the layout by width', await b.eval(`!document.querySelector('.titlebar') && document.documentElement.dataset.platform === ${JSON.stringify(phone ? 'android' : 'desktop')}`));
-  check('the welcome screen offers what a page can do: no camera scan, the key made in this browser',
+  check('the welcome screen offers what a page can do: no Orgtree setup scan, the key made in this browser',
     await b.eval(`!document.body.innerText.includes('Scan setup code') && !document.body.innerText.includes('No code?') && document.body.innerText.includes('Made in this browser') && [...document.querySelectorAll('.fork-opt')].length === 2`),
     await b.eval(`[...document.querySelectorAll('.fork-opt')].map((o) => o.innerText.split('\\n')[0]).join(' | ')`));
   await shot('web-01-welcome.png');
@@ -230,6 +254,10 @@ async function main() {
   // ------------------------------------------------------- 5. add the hub
   // the browser itself logs each refused request: that noise is expected here, and only here
   const quiet = b.errors.length;
+  check('the hub the server names is offered, and not added until asked',
+    await waitFor(`!!document.querySelector('.probe-card.ok') && document.querySelector('.probe-card.ok').innerText.includes('Found e2ehub') && [...document.querySelectorAll('.probe-card.ok button')].some((x) => x.innerText.includes('Add e2ehub')) && !document.querySelector('.hublist-ob')`, 15000),
+    await b.eval(`(document.querySelector('.probe-card')||{}).innerText || document.body.innerText.slice(0, 300)`));
+  await shot('web-02b-suggested.png');
   await fill('#hub-in', STRANGER);
   await clickText('button', 'Check', 500);
   check("a server that doesn't let the page in is told apart from one that isn't there, with the address its owner must add",
@@ -303,6 +331,63 @@ async function main() {
     await shot('web-09-settings.png');
     await b.key('Escape', 0, 600);
   }
+
+  // ------------- 8b. a second browser links by scanning this one's QR code
+  // (user 2026-11-11: scan the QR a signed-in device shows, with the web app's camera)
+  if (phone) {
+    await b.click('button[aria-label="Back"]', 700);
+    await b.click('button[aria-label="Settings"]', 900);
+    await clickText('.li', 'Devices', 900);
+  } else {
+    await b.click('button[aria-label="Settings"]', 900);
+    await clickText('[role="tab"]', 'Devices', 900);
+  }
+  await clickText('button', 'Link a device', 900);
+  check('a signed-in browser shows a link QR code and its code', await waitFor(`!!document.querySelector('.qrbox img') && /^[0-9A-Z]{4}(-[0-9A-Z]{4}){3}$/.test(document.querySelector('.paircode')?.innerText.trim() || '')`, 20000),
+    await b.eval(`document.body.innerText.slice(0, 300)`));
+  const qrPicture = await b.eval(`document.querySelector('.qrbox img')?.src || ''`);
+  const qrText = await b.eval(`(document.querySelector('.qrbox img')?.alt || '').replace('QR code for ', '')`);
+  check('the QR is a link that gives this identity, through the hub', /^hubchat:\/\/link\?/.test(qrText) && qrText.includes('role=give') && qrText.includes(encodeURIComponent(HUB)), qrText);
+  await shot('web-14-link-qr.png');
+
+  const t2 = await open({ before: CAMERA });
+  await t2.b.nav(origin + '/', 0);
+  check('a second browser starts with no identity', await t2.waitFor(`!!document.querySelector('.fork-opt')`, 60000), await t2.b.eval(`document.body.innerText.slice(0, 200)`));
+  await t2.clickText('.fork-opt', 'I already use Hubchat', 800);
+  const ways = await t2.b.eval(`[...document.querySelectorAll('.method')].map((o) => o.innerText.split('\\n')[0])`);
+  check('it offers every way to bring an identity: scan, a code, a key file, recovery words',
+    ways.some((w) => /Scan/.test(w)) && ways.some((w) => /Key file/.test(w)) && ways.some((w) => /Recovery words/.test(w)) && ways.some((w) => /code/i.test(w)), ways.join(' | '));
+  await t2.shot('web-15-link-ways.png');
+  if (phone) await t2.clickText('.method', 'Scan the QR code from your other device', 600);
+  else { await t2.clickText('.method', 'Scan a QR code', 600); await t2.clickText('.ob-foot button', 'Open the camera', 600); }
+  check('the camera opens over the app, with a way out', await t2.waitFor(`!!document.querySelector('.web-scan video') && document.querySelector('.web-scan video').videoWidth > 0 && !!document.querySelector('.web-scan-cancel')`, 15000),
+    await t2.b.eval(`document.body.innerText.slice(0, 200)`));
+  await sleep(700);
+  check('a camera that shows no code keeps scanning', await t2.b.eval(`!!document.querySelector('.web-scan')`));
+  await t2.shot('web-16-scanning.png');
+  // hold the first browser's QR code up to the camera
+  await t2.b.eval(`window.__qr = ${JSON.stringify(qrPicture)}; true`);
+  check('the QR code is read and the camera closes', await t2.waitFor(`!document.querySelector('.web-scan')`, 20000), await t2.b.eval(`document.body.innerText.slice(0, 300)`));
+  check('the second browser waits to be approved', await t2.waitFor(`/approve/i.test(document.body.innerText) && !document.querySelector('.probe-card.bad')`, 30000), await t2.b.eval(`document.body.innerText.slice(0, 400)`));
+  await t2.shot('web-17-waiting.png');
+  check('the first browser names the device that asks', await waitFor(`!!document.querySelector('.approve b') && /Link .+\\?/.test(document.querySelector('.approve b').innerText)`, 40000), await b.eval(`document.body.innerText.slice(0, 400)`));
+  await shot('web-18-approve.png');
+  await clickText('button.primary', 'Approve', 500);
+  check('the first browser sends the identity', await waitFor(`document.body.innerText.includes('now uses your identity')`, 30000), await b.eval(`document.body.innerText.slice(0, 400)`));
+  check('the second browser shows what arrived, and the hub that comes with it, before it takes anything',
+    await t2.waitFor(`document.body.innerText.includes('Bring these hubs to this browser?') && document.body.innerText.includes(${JSON.stringify(address)}) && document.body.innerText.includes('e2ehub') && [...document.querySelectorAll('input')].some((i) => i.value.includes(${JSON.stringify(HUB.replace('http://', ''))}))`, 40000),
+    await t2.b.eval(`document.body.innerText.slice(0, 500)`));
+  await t2.shot('web-19-review.png');
+  await t2.clickText('.ob-foot button', 'Confirm', 1500);
+  check('after Confirm the second browser is the same identity and fetches its chat from the hub',
+    await t2.waitFor(`!document.querySelector('.fork-opt') && [...document.querySelectorAll('.crow')].some((r) => r.innerText.includes('Test Peer'))`, 60000), await t2.b.eval(`document.body.innerText.slice(0, 400)`));
+  await t2.shot('web-20-linked.png');
+  check('the scanning browser opened its camera once, and has no script error or policy violation',
+    await t2.b.eval(`window.__cameraOpened === 1 && (window.__csp || []).length === 0`) && t2.b.errors.length === 0, t2.b.errors.join(' | ') + ' ' + await t2.b.eval(`JSON.stringify(window.__csp || [])`));
+  await t2.close();
+  await clickText('button', 'Done', 600);
+  if (phone) { await b.click('button[aria-label="Back"]', 600); await b.click('button[aria-label="Back"]', 600); await clickText('.crow', 'Test Peer', 1000); }
+  else await b.key('Escape', 0, 600);
 
   // ----------------------------------- 9. a reload keeps identity and chat
   await collect();

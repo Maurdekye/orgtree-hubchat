@@ -18,7 +18,7 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; ch
 
 /** An HTTP server for the built page in `dist` (not listening yet). `served` gets one entry per answer:
  *  { path, status, raw, sent }, the file's size and what went over the wire. */
-export function webServer(dist, served = []) {
+export function webServer(dist, served = [], config = null) {
   const root = resolve(dist);
   const packed = new Map();
   return createServer((req, res) => {
@@ -28,6 +28,14 @@ export function webServer(dist, served = []) {
     let rel;
     try { rel = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { refuse(400, String(req.url)); return; }
     if (rel.endsWith('/')) rel += 'index.html';
+    // what the container answers from its settings (spec R6.1); here, from `config`
+    if (rel === '/config.json' && config) {
+      const body = Buffer.from(JSON.stringify(config));
+      served.push({ path: rel, status: 200, raw: body.length, sent: body.length });
+      res.writeHead(200, { ...head, 'cache-control': 'no-cache', 'content-type': 'application/json', 'content-length': body.length });
+      res.end(req.method === 'HEAD' ? undefined : body);
+      return;
+    }
     const file = normalize(join(root, rel));
     if (!file.startsWith(root + sep) || !existsSync(file) || !statSync(file).isFile()) { refuse(404, rel); return; }
     const raw = statSync(file).size;
