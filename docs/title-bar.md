@@ -168,7 +168,7 @@ which changed only the tests.
 - **Red: 5/11,** exactly the expected 6 failures: both computed styles are
   `none`, and at the four bar points `Chrome_RenderWidgetHostHWND` answers
   `HTCLIENT`. The buttons, the body and cleanup pass.
-- **Built CSS:** `app-desktop.css` is imported `?inline` (`src/main.tsx`),
+- **Built CSS:** `app-desktop.css` is imported `?inline` (`src/boot.tsx`),
   so its rules are a string in the JS bundle, not in a `.css` file. The
   tip's bundle holds both `app-region` forms for drag and for no-drag.
 - **Leftovers:** none, and the installed Hubchat Test profile was untouched.

@@ -1,5 +1,16 @@
 # Hubchat development invariants
 
+- 2026-11-11: Hubchat Web (`crates/hubchat-web`, `src/web`, `web/`) runs the
+  SAME core as WebAssembly in a page's worker. In `hubchat-core`, tasks,
+  timers, clocks and `fs` go through `crate::rt` (native: tokio/std), never
+  `tokio::spawn`, `tokio::time`, `Instant::now()` or `SystemTime::now()`:
+  they panic in a browser. Native-only code (`stream.rs`) is cfg-gated with a
+  web twin (`stream_web.rs`: long poll). The web build has its own entry and
+  Vite config; nothing outside `src/web` imports from it. UI differences hang
+  on `useWeb()`/`isWeb`; `platform` stays the layout. A web command keeps the
+  Tauri name and arguments (`shell.rs`). See docs/hubchat-web.md. [decided:
+  user 2026-11-11 m5f4979db6af9; verified: rt.rs, shell.rs, web-e2e.mjs]
+
 - 2026-11-08: Orgtree mentions are md() chips (`oref`/`onode`, grammar pinned
   to Orgtree's fixture). The allow-list gains only `data-oref` on `a.oref`; a
   chip opens Orgtree only on desktop, for an org this PC runs (by address).
@@ -248,15 +259,13 @@
   directory + active chats, excluding self and link-waiting placeholders),
   mirroring Orgtree's mentions menu: Bucket 1 is contacts mentioned in the open
   chat (newest first, ignoring Markdown code spans/fences); Bucket 2 is the
-  rest ordered by `max(lastChatted, lastMentionedByThisAccount)` descending
-  (scanning and caching up to `MENTION_SCAN_LIMIT = 200` outgoing messages per
-  chat without calling `api.chat` per keystroke), then lowercased display name,
-  kind and address ascending (word-substring filtering on `/[-_./\s]+/` narrows
-  without reordering; exact/prefix score and online-presence sort keys are
-  dropped). The menu renders up to `MENU_STEP = 60` rows bottom-up via
-  `.reverse()` (expanding by `+60` on scroll/step near the top) with the initial
-  highlight on the bottom row (`mentionItems.length - 1`, rank #1) and `ArrowUp`
-  moving away from the input (`ArrowDown` toward it, flipping when `.below`).
+  rest by `max(lastChatted, lastMentionedByThisAccount)` descending (at most
+  `MENTION_SCAN_LIMIT = 200` outgoing messages per chat, cached; no `api.chat`
+  per keystroke), then lowercased name, kind and address (the word-substring
+  filter on `/[-_./\s]+/` narrows without reordering; no score or presence
+  keys). Up to `MENU_STEP = 60` rows render bottom-up (`+60` near the top),
+  the highlight starts on the bottom row (rank #1), `ArrowUp` moves away from
+  the input (flipped when `.below`).
   `Tab`/`Enter` or click (desktop) and tap (Android) complete the active `@`
   token as `@net:<address> ` so older clients and Orgtree read it as plain text;
   `Escape` dismisses the hint list before cancelling an active reply. In message
@@ -346,13 +355,6 @@
   on the user's phone over the WebView debugger; proof
   tools/proof-mobile-back-loading.mjs; docs/android-back-defense.md]
 
-- 2026-10-16 (pending native/device proof): Android completed downloads use a typed ACTION_VIEW with URI
-  read permission. Keep MediaStore content URIs unchanged; only filesystem
-  downloads use FileProvider with runtime applicationId authority. APK MIME
-  selects the system installer; errors flow to the existing card toast. No
-  duplicate export and no desktop routing change. [verified: `commands.rs`,
-  `android.rs`, `DownloadOpener.kt`; docs/android-download-open.md]
-
 - 2026-10-16: Android completed downloads use a typed ACTION_VIEW with URI
   read permission. Keep MediaStore content URIs unchanged; only filesystem
   downloads use FileProvider with runtime applicationId authority. APK MIME
@@ -402,24 +404,14 @@
   Orgtree's title bar does: the user wants it (2026-10-15 11:30Z, reversing
   11:04Z), so don't suppress it. Anything clickable added to the bar needs
   `app-region: no-drag`. `data-tauri-drag-region` stays as the path for a
-  WebView2 without non-client regions. Agents cannot test a window drag:
-  their window station is non-interactive (`GetCursorPos` error 1459, no
-  move loop, rig round 446). `tools/e2e-drag-region.mjs` checks the computed
-  style, Windows' hit test and posted clicks (Alt+Space's menu, the
-  right-click's menu, double-click maximise). The drag and the right-click's
-  menu are the user's checks: a posted right-click opens no menu on the rig,
-  though Alt+Space does. WebView2 covers a drag region with child windows of
-  its own that answer HTCAPTION wherever they are asked, so a hit test may
-  ask only the windows under the point (rig round 447). Their top few pixels
-  answer HTTOP (the window's top resize border): keep test points below
-  them. The CSS minifier merges rules with equal declarations, so count
-  `app-region` declarations in the bundle, not rules. [verified:
-  app-desktop.css, TitleBar.tsx, wry webview2/mod.rs; docs/title-bar.md; rig
-  rounds 447 and 450: e2e-drag-region tip 11/11, base 5/11 with the 6
-  expected failures; title-bar-menu rerun 2026-10-15 14:05Z with the
-  corrected point: tip 15/18, base 13/18, differing by exactly the version
-  label's 2 checks, the 3 right-clicks failing in both (the rig's limit);
-  the drag and a real right-click not measured]
+  WebView2 without non-client regions. Agents cannot test a window drag
+  (non-interactive window station): `tools/e2e-drag-region.mjs` checks the
+  computed style, Windows' hit test and posted clicks; the drag and the
+  right-click's menu are the user's checks. Hit-test only the windows under
+  the point, below the top few pixels (they answer HTTOP), and count
+  `app-region` declarations in the bundle, not rules (the minifier merges
+  them). [verified: app-desktop.css, TitleBar.tsx, wry webview2/mod.rs;
+  measured runs (rig rounds 446-450) and limits: docs/title-bar.md]
 
 - 2026-10-15: Message bubbles show a kind tag only for Question, on desktop
   and Android. Other and unknown kinds have no tag or spoken kind prefix.
@@ -726,11 +718,9 @@
   While an identity runs, saved enabled hubs require an active bound client.
   With no identity running (the lost-key screen relinking or restoring) an
   enabled saved hub gets a setup client like an unsaved one: no runtime exists
-  for a disable to cancel, and the switch needs a running identity. This
-  replaces "saved enabled hubs always require a bound client; only genuinely
-  unsaved setup may construct an unbound client", which made the lost-key
-  relink review show the user's working hubs as "invalid input: This saved hub
-  is unavailable" [coordinator ruling 2026-10-14, Orgtree docket
+  for a disable to cancel, and the switch needs a running identity (before,
+  the lost-key relink review called the user's working hubs unavailable)
+  [coordinator ruling 2026-10-14, Orgtree docket
   phone-linking-says-existing-hubs-are-invalid-whe; `link::start_client`].
   Received-link acknowledgement, discovery (including spawned requests) and
   review publication retain both the originating hub token and listener attempt.
