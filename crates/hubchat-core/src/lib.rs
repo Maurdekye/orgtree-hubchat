@@ -22,6 +22,8 @@ pub mod stream;
 #[cfg(target_arch = "wasm32")]
 #[path = "stream_web.rs"]
 pub mod stream;
+// Hubchat Web's files: compiled everywhere so its tests run natively; used by rt::fs in a browser
+pub mod webfs;
 pub mod questions;
 pub mod text;
 
