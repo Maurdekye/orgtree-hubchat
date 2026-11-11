@@ -12,12 +12,14 @@ import { pathToFileURL } from 'node:url';
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function launch({ width = 1440, height = 900, dpr = 1, port = 9300 + Math.floor(Math.random() * 400) } = {}) {
+/** `exe`: another Chromium (Playwright's chrome-headless-shell, which has no window at all); `args`: more
+ *  switches (`--mute-audio`); `mobile`: a phone's viewport. The defaults are what every older caller gets. */
+export async function launch({ width = 1440, height = 900, dpr = 1, port = 9300 + Math.floor(Math.random() * 400), exe = CHROME, args = [], mobile = false } = {}) {
   const prof = mkdtempSync(join(tmpdir(), 'hc-chrome-'));
-  const proc = spawn(CHROME, ['--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
-    '--disable-extensions', `--remote-debugging-port=${port}`, `--user-data-dir=${prof}`, `--window-size=${width},${height}`, 'about:blank'],
+  const proc = spawn(exe, [/headless-shell/i.test(exe) ? '--headless' : '--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
+    '--disable-extensions', ...args, `--remote-debugging-port=${port}`, `--user-data-dir=${prof}`, `--window-size=${width},${height}`, 'about:blank'],
     { stdio: 'ignore' });
-  return connect(port, proc, prof, { width, height, dpr });
+  return connect(port, proc, prof, { width, height, dpr, mobile });
 }
 
 /** Attach to a browser already listening on `port` (e.g. a Tauri app's
@@ -27,7 +29,7 @@ export async function attach(port, { width = 0, height = 0, dpr = 1 } = {}) {
   return connect(port, null, null, { width, height, dpr });
 }
 
-async function connect(port, proc, prof, { width, height, dpr }) {
+async function connect(port, proc, prof, { width, height, dpr, mobile = false }) {
   let targets = null;
   for (let i = 0; i < 60 && !targets; i++) {
     await sleep(150);
@@ -64,11 +66,13 @@ async function connect(port, proc, prof, { width, height, dpr }) {
   };
   const send = (method, params = {}) => new Promise((r, j) => { const i = ++id; pending.set(i, { r, j }); ws.send(JSON.stringify({ id: i, method, params })); });
   await send('Page.enable'); await send('Runtime.enable'); await send('Log.enable');
-  const metrics = async (w, h, d) => send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: d, mobile: false });
+  const metrics = async (w, h, d) => send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: d, mobile });
   if (width) await metrics(width, height, dpr);
 
   const api = {
     errors,
+    /** The browser this driver started (null when it attached to one): its process id. */
+    pid: proc ? proc.pid : null,
     /** The page this driver took: its URL as the browser listed it then. */
     target: { id: page.id, url: page.url, title: page.title },
     send,

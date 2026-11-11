@@ -8,18 +8,20 @@ import { useEffect, useRef, useState } from "react";
 import { api, type Probe } from "../api";
 import { Icon } from "../lib/icons";
 import { bytes } from "../lib/format";
-import { errText } from "../lib/native";
+import { copyText, errText } from "../lib/native";
 import { hubVersion } from "../lib/peers";
 import { refreshState } from "../lib/store";
 import { HubHelp } from "./HubHelp";
 import { foundWhere } from "./HubReview";
-import { NoteCard, usePlatform } from "./ui";
+import { NoteCard, usePlatform, useWeb } from "./ui";
 
 type Phase = { k: "idle" } | { k: "checking"; input: string } | { k: "result"; p: Probe } | { k: "adding" } | { k: "error"; msg: string };
 
 /** `initial`: an address to start from (a scanned link's hub this device couldn't reach). */
 export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel, initial }: { onAdded?: (url: string, name: string) => void; onPick?: (url: string, name: string) => void; existing: string[]; autoFocus?: boolean; onCancel?: () => void; initial?: string }) {
   const platform = usePlatform();
+  // Hubchat Web: a page may only call https (spec R2.2)
+  const web = useWeb();
   const [value, setValue] = useState(initial ?? "");
   const [ph, setPh] = useState<Phase>({ k: "idle" });
   const [help, setHelp] = useState(false);
@@ -72,6 +74,14 @@ export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel, initi
           </div>
         </div>
       );
+    } else if (p.result === "not_allowed") {
+      card = (
+        <div className="probe-card bad"><Icon name="error" />
+          <div><b>This hub doesn't allow this web app yet</b>Something answers at <span className="mono">{p.url}</span>, but it doesn't let this web app in. If it is your hub, its owner needs to add <span className="mono">{p.origin}</span> to the hub's web app addresses.
+            <div className="acts"><button className="btn" onClick={() => void copyText(p.origin, "Address copied")}><Icon name="copy" />Copy address</button><button className="btn" onClick={check}><Icon name="refresh" />Try again</button></div>
+          </div>
+        </div>
+      );
     } else if (p.result === "not_a_hub") {
       card = <div className="probe-card bad"><Icon name="error" /><div><b>Not an Orgtree mail hub</b>Something answered at <span className="mono">{p.url}</span>, but it isn't a hub: {p.error}</div></div>;
     } else {
@@ -95,7 +105,9 @@ export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel, initi
           {platform === "desktop" ? checkBtn : null}
           {platform === "desktop" && onCancel ? <button className="btn ghost" onClick={onCancel}>Cancel</button> : null}
         </div>
-        <div className="help">No <span className="mono">http://</span>? Hubchat adds it. No port? Hubchat tries the hub's usual ports.</div>
+        {web
+          ? <div className="help">Hubchat Web reaches a hub only over HTTPS: enter its <span className="mono">https://</span> address.</div>
+          : <div className="help">No <span className="mono">http://</span>? Hubchat adds it. No port? Hubchat tries the hub's usual ports.</div>}
       </div>
       {card}
       {platform === "android" ? <div className="pad" style={{ marginBottom: 8 }}>{checkBtn}</div> : null}

@@ -24,7 +24,7 @@ import { GuideBody } from "./Guide";
 import { TransfersPanel } from "./Transfers";
 import { pickStatus } from "./StatusPicker";
 import { scanSetup } from "../lib/setup";
-import { Addr, Avatar, Confirm, NoteCard, QR, Switch, pressKeys, useDialogFocus, useNow, usePlatform } from "./ui";
+import { Addr, Avatar, Confirm, NoteCard, QR, Switch, pressKeys, useDialogFocus, useNow, usePlatform, useWeb } from "./ui";
 
 export type SetTab = "profile" | "hubs" | "devices" | "transfers" | "notifications" | "recovery" | "privacy" | "appearance" | "general" | "developer" | "help" | "about";
 /** Every section (Android titles its screens from this too; General and Developer are desktop only). */
@@ -651,17 +651,37 @@ function useVersion(): string {
   return v;
 }
 
+/** Hubchat Web's About, where the apps have their update check (a page is whatever its server serves): which
+ *  server that is and what trusting it means, and whether the browser promised to keep Hubchat's data. */
+function AboutWeb() {
+  const platform = usePlatform();
+  // null: not known yet
+  const [kept, setKept] = useState<boolean | null>(null);
+  useEffect(() => {
+    let live = true;
+    try { navigator.storage.persisted().then((p) => { if (live) setKept(p); }, () => { /* stays unknown */ }); } catch { /* a browser without it */ }
+    return () => { live = false; };
+  }, []);
+  return (
+    <div className={platform === "android" ? "pad" : undefined} style={{ marginTop: 14 }}>
+      <NoteCard icon="dns"><b>Served by <span className="mono">{location.origin}</span>.</b> Whoever runs that server controls the code this browser runs. Use a server you or your organisation run.</NoteCard>
+      {kept === false ? <NoteCard icon="warning" warn><b>This browser may delete Hubchat's data if you don't open it for a while.</b> Keep your recovery words.</NoteCard> : null}
+    </div>
+  );
+}
+
 function About() {
   const platform = usePlatform();
+  const web = useWeb();
   const version = useVersion();
   const ver = version ? "Version " + version : "\u00a0";
   const text = "Hubchat is a chat client for the Orgtree mail hub. It talks to Orgtree orgs, AI agent sessions (such as Claude Code or Codex) and people by address. There is no account and no cloud: your identity lives on your devices and your messages travel through hubs you choose.";
-  if (platform === "android") return <><div className="hero"><Logo size={72} /><div className="name">Hubchat</div><div className="dim">{ver}</div></div><div className="pad help" style={{ fontSize: 14, lineHeight: 1.55 }}>{text}</div><UpdateCheck /></>;
+  if (platform === "android") return <><div className="hero"><Logo size={72} /><div className="name">Hubchat</div><div className="dim">{ver}</div></div><div className="pad help" style={{ fontSize: 14, lineHeight: 1.55 }}>{text}</div>{web ? <AboutWeb /> : <UpdateCheck />}</>;
   return (
     <>
       <div style={{ display: "flex", gap: 16, alignItems: "center", margin: "10px 0 18px" }}><Logo size={56} /><div><div style={{ font: "600 20px var(--font-display)", color: "var(--ink-strong)" }}>Hubchat</div><div className="dim">{ver}</div></div></div>
       <div className="help" style={{ fontSize: 13.5, lineHeight: 1.55 }}>{text}</div>
-      <UpdateCheck />
+      {web ? <AboutWeb /> : <UpdateCheck />}
     </>
   );
 }

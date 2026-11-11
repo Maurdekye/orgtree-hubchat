@@ -22,7 +22,7 @@ import { foldAt } from "../lib/replies";
 import { cardOf, type CardKnown } from "../lib/questions";
 import { noteDraft, usePreparation, getPreparation, submitOutgoing, clearPreparation, getSnap, useSnap, usePendingRestore, takeRestore, holdsDraft } from "../lib/store";
 import { setReplies } from "../lib/answers";
-import { KindGlyph, PeerAvatar, usePlatform } from "./ui";
+import { KindGlyph, PeerAvatar, usePlatform, useWeb } from "./ui";
 import { refreshKey, useRestoredRefreshState, useRefreshState } from "../lib/refresh";
 import { sendsOnEnter, useEnterKey } from "../lib/enterKey";
 
@@ -102,6 +102,8 @@ function keepMentionItemInView(listEl: HTMLElement, activeEl: HTMLElement | null
 
 export function Composer({ peer, c, hubs, msgs, replies, picked, cardState, pos, onRemoveReply, onUnpick, onCancelReply, onSent, ref, off }: Props) {
   const platform = usePlatform();
+  // Hubchat Web sends no files yet: no paperclip there
+  const web = useWeb();
   const enter = useEnterKey();
   const snap = useSnap();
   const [text, setText] = useState("");
@@ -601,7 +603,7 @@ export function Composer({ peer, c, hubs, msgs, replies, picked, cardState, pos,
   const row = (
     <div className="comp-row">
       <div className="comp-box">
-        <button className="icon-btn" disabled={sending} onClick={attach} title="Attach files" aria-label="Attach files"><Icon name="attach" /></button>
+        {web ? null : <button className="icon-btn" disabled={sending} onClick={attach} title="Attach files" aria-label="Attach files"><Icon name="attach" /></button>}
         <textarea disabled={sending} ref={ta} rows={1} value={text} spellCheck dir="auto" aria-label={"Message " + displayName(c, peer)} placeholder={"Message " + displayName(c, peer)}
           onChange={(e) => { setCaret(e.target.selectionStart ?? e.target.value.length); setDismissedAt(null); change(e.target.value); }}
           onSelect={syncCaret}

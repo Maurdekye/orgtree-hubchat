@@ -1,0 +1,22 @@
+/* Hubchat Web's own screens and fixes (src/web). The apps never load this. */
+
+/* The screen before the app (start.tsx): the apps' boot screen (.boot in
+   app.css) with a title, a sentence and one button. */
+.gate { padding: calc(24px + env(safe-area-inset-top)) 24px calc(24px + env(safe-area-inset-bottom)); text-align: center; }
+.gate b { color: var(--ink); font-size: 15px; font-weight: 600; }
+.gate span { max-width: 460px; line-height: 1.45; }
+.gate .btn { margin-top: 6px; }
+
+/* Add to Home Screen (Install.tsx): the taps, in the order they are made. */
+.install .taps { list-style: none; margin: 10px 0 0; padding: 4px 14px; width: min(340px, 100%); box-sizing: border-box; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); text-align: left; }
+.install .taps li { display: flex; align-items: center; gap: 14px; padding: 10px 0; color: var(--ink); font-size: 14px; }
+.install .taps li + li { border-top: 1px solid var(--line); }
+.install .taps i { flex: none; width: 36px; height: 36px; border-radius: 10px; background: var(--accent-soft); color: var(--accent-text); display: flex; align-items: center; justify-content: center; }
+.install .taps i svg:not(.logo) { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.install .taps b { font-size: inherit; }
+
+/* An iPhone's keyboard covers the page instead of resizing it. While it is
+   up (viewport.ts), the phone layout takes the part that is still visible;
+   the home bar's inset is under the keyboard then. */
+html[data-keyboard] .screen { top: var(--visible-top); bottom: auto; height: var(--visible-height); padding-bottom: 0; }
+html[data-keyboard] .ob { bottom: 0; }

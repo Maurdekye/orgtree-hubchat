@@ -13,6 +13,10 @@ import { appVersion } from "../lib/native";
 export type Platform = "desktop" | "android";
 export const PlatformCtx = createContext<Platform>("desktop");
 export const usePlatform = () => useContext(PlatformCtx);
+/** True in Hubchat Web (State.shell): the core runs in this page, and the UI leaves out what only an
+ *  installed app can do. `usePlatform` stays the layout. */
+export const WebCtx = createContext(false);
+export const useWeb = () => useContext(WebCtx);
 
 export function Avatar({ kind, name, size, pres, presTitle, address, picture }: { kind: Kind | "me"; name: string; size: number; pres?: PresState; presTitle?: string; address?: string; picture?: PictureMeta | null }) {
   const fallback = avatarFallback(kind, name);

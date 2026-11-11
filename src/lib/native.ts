@@ -1,12 +1,18 @@
 // Plugin calls (file pickers, opener, clipboard, QR scanner, autostart, app
 // version) with browser fallbacks so the mock build works in a normal browser.
-import { api, isTauri } from "../api";
+// Hubchat Web (`isWeb`) is neither: what a page cannot do yet says so instead
+// of pretending, as the mock may.
+import { api, isTauri, isWeb } from "../api";
 import { toast } from "./toast";
 
 const sleep = (n: number) => new Promise((r) => setTimeout(r, n));
 
+/** What Hubchat Web answers for something it does not do yet (the core says the same). */
+const NOT_ON_WEB = "This isn't available in Hubchat Web yet.";
+
 /** Pick files to attach: paths (desktop) or content:// URIs (Android). */
 export async function pickFiles(): Promise<string[]> {
+  if (isWeb) throw "Files can't be sent from Hubchat Web yet.";
   if (!isTauri) {
     const all = ["C:\\Users\\alex\\Documents\\nightly-logs.zip", "C:\\Users\\alex\\Pictures\\screenshot-rc3.png", "C:\\Users\\alex\\Documents\\release-notes.md"];
     return [all[Math.floor(Math.random() * all.length)]];
@@ -18,6 +24,7 @@ export async function pickFiles(): Promise<string[]> {
 }
 
 export async function openFile(path: string): Promise<void> {
+  if (isWeb) throw NOT_ON_WEB;
   if (!isTauri) { toast("Opening " + path.split(/[\\/]/).pop()); return; }
   const { openPath } = await import("@tauri-apps/plugin-opener");
   await openPath(path);
@@ -31,6 +38,7 @@ export async function openAttachment(messageId: string, localId: string, reveal:
 
 /** Pick a key file to import: a path, or on Android a content:// URI. */
 export async function pickKeyFile(): Promise<string | null> {
+  if (isWeb) throw NOT_ON_WEB;
   if (!isTauri) { await sleep(200); return MOCK_KEY_FILE; }
   const { open }= await import("@tauri-apps/plugin-dialog");
   const r = await open({ multiple: false, directory: false });
@@ -39,6 +47,7 @@ export async function pickKeyFile(): Promise<string | null> {
 
 /** Where to save the key file (a path, or on Android a content:// URI). */
 export async function saveKeyFileTo(): Promise<string | null> {
+  if (isWeb) throw NOT_ON_WEB;
   if (!isTauri) { await sleep(200); return MOCK_KEY_FILE; }
   const { save }= await import("@tauri-apps/plugin-dialog");
   return await save({ defaultPath: "hubchat-key.hubchat-key" });
@@ -54,6 +63,7 @@ const MOCK_KEY_FILE = "C:\\Users\\alex\\Documents\\hubchat-key.hubchat-key";
 
 /** Scan one QR code with the camera (Android). Null when the user backs out. */
 export async function scanQr(mockText: string): Promise<string | null> {
+  if (isWeb) throw "Hubchat Web can't scan a code with the camera yet.";
   if (!isTauri) {
     await sleep(900);
     return new URLSearchParams(location.search).get("scan") ?? mockText;
@@ -74,6 +84,7 @@ export async function scanQr(mockText: string): Promise<string | null> {
 
 /** The app's version (tauri.conf.json). */
 export async function appVersion(): Promise<string> {
+  if (isWeb) return (await import("../../package.json")).version;
   if (!isTauri) return "1.3.6";
   const { getVersion } = await import("@tauri-apps/api/app");
   return await getVersion();
@@ -82,12 +93,14 @@ export async function appVersion(): Promise<string> {
 /** Start with Windows (desktop): the autostart plugin, or localStorage in the mock. */
 export const autostart = {
   async get(): Promise<boolean> {
+    if (isWeb) return false;
     if (!isTauri) return localStorage.getItem("hubchat.mock.autostart") === "1";
     const { isEnabled } = await import("@tauri-apps/plugin-autostart");
     return await isEnabled();
   },
   /** Through the shell, so the tray's tick follows; the value now in effect. */
   async set(on: boolean): Promise<boolean> {
+    if (isWeb) return false;
     if (!isTauri) { localStorage.setItem("hubchat.mock.autostart", on ? "1" : "0"); return on; }
     return await api.setAutostart(on);
   },

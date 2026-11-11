@@ -1,7 +1,7 @@
 // Recovery words: copy or download (user 19:08Z). Both count as "saved",
 // which stops the reminder.
 import { save } from "@tauri-apps/plugin-dialog";
-import { api } from "../api";
+import { api, isWeb } from "../api";
 import { copyText, errText } from "./native";
 import { refreshState } from "./store";
 import { toast } from "./toast";
@@ -11,18 +11,22 @@ export async function copyWords(words: string[]) {
   try { await api.recoverySaved(); await refreshState(); } catch { /* copying still worked */ }
 }
 
-/** Desktop: a save dialog. Android: straight to Downloads. */
+/** Desktop: a save dialog. Android: straight to Downloads. Hubchat Web: the browser's own download, or
+ *  its share sheet on an iPhone (src/web/webApi.ts); nothing may be awaited before that call, because a
+ *  browser saves a file only inside the click. */
 export async function downloadWords(platform: string, id: string): Promise<boolean> {
   try {
     let dest: string | null = null;
-    if (platform !== "android") {
+    if (!isWeb && platform !== "android") {
       const picked = await save({ defaultPath: `hubchat-recovery-${id}.txt`, filters: [{ name: "Text", extensions: ["txt"] }] });
       if (!picked) return false;
       dest = String(picked);
     }
     const where = await api.saveRecovery(dest);
+    // Hubchat Web: the share sheet was closed without saving
+    if (isWeb && !where) return false;
     await refreshState();
-    toast(platform === "android" ? `Saved to ${where}` : "Recovery words saved");
+    toast(platform === "android" && !isWeb ? `Saved to ${where}` : "Recovery words saved");
     return true;
   } catch (e) {
     toast("Couldn't save: " + errText(e));

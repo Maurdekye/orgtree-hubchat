@@ -2,11 +2,20 @@
 // The core owns hubs, identity, messages and transfers; the UI renders what
 // these calls return and re-reads when an `hc` event says something changed.
 //
-// Outside Tauri (a plain browser during `npm run dev`) main.tsx installs the
+// Outside Tauri (a plain browser during `npm run dev`) boot.tsx installs the
 // in-memory mock from src/lib/mock.ts over `api` before the first render, so
-// the UI can be developed and screenshotted without the Rust core.
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+// the UI can be developed and screenshotted without the Rust core. Hubchat
+// Web (src/web) installs the real core, running in the page's own worker.
+import { convertFileSrc, invoke, type InvokeArgs, type InvokeOptions } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+
+/** How the commands reach the core: Tauri's IPC in the apps, the core's worker in Hubchat Web (src/web). */
+export interface Transport {
+  invoke<T>(cmd: string, args?: InvokeArgs, options?: InvokeOptions): Promise<T>;
+  listen<T>(event: string, handler: (e: { payload: T }) => void): Promise<UnlistenFn>;
+  /** Where a player reads `<message>/<attachment>` from; null where there is no player. */
+  mediaUrl(path: string): string | null;
+}
 
 export type HubState = "connecting" | "connected" | "refused" | "disconnected" | "disabled";
 
@@ -129,6 +138,9 @@ export interface State {
   device_maker: string;
   hubs: HubStatus[];
   platform: "desktop" | "android";
+  /** What runs the core: an installed app, or this page (Hubchat Web). `platform` stays the layout; the UI
+   *  hides what a web page cannot do by this. Absent from an older shell: an app. */
+  shell?: "tauri" | "web";
   /** This device had an identity but its key is gone (the lost-key screen). */
   key_lost: KeyLost | null;
   /** The key was restored from Hubchat's backup (Windows); say so once. */
@@ -264,6 +276,10 @@ export type Probe =
   | { result: "connected"; url: string; name: string; max_attachment_bytes: number; features: string[]; version?: string | null; discovered?: boolean }
   | { result: "unreachable"; url: string; error: string }
   | { result: "not_a_hub"; url: string; error: string }
+  /** Hubchat Web only: something answers at `url`, but does not let this page (`origin`) call it. A hub
+   *  does that until its owner adds the page's address to the hub's web app addresses. `error` says so
+   *  in a few words, for the places that only show why a hub did not answer. */
+  | { result: "not_allowed"; url: string; origin: string; error: string }
   | { result: "invalid"; error: string };
 
 export interface Resolved {
@@ -442,7 +458,8 @@ export interface SetupState {
   reply_id: string | null;
 }
 
-export const tauriApi = {
+/** Every command of the core, over `transport`: the same names and arguments whatever carries them. */
+export const makeApi = ({ invoke, listen, mediaUrl }: Transport) => ({
   state: () => invoke<State>("hc_state"),
   uiState: (foreground: boolean, chat: string | null) => invoke<void>("hc_ui_state", { foreground, chat }),
 
@@ -527,7 +544,7 @@ export const tauriApi = {
   filePreview: (source: string, name: string) => invoke<ArrayBuffer>("hc_file_preview", { source, name }),
   /** Where a chat's player reads a video or audio attachment: the hcmedia scheme answers its ranges from this
    *  device's copy or the hub, saving nothing (src-tauri/src/media.rs). Null: no player here. */
-  mediaUrl: (messageId: string, localId: string): string | null => convertFileSrc(messageId + "/" + localId, "hcmedia"),
+  mediaUrl: (messageId: string, localId: string): string | null => mediaUrl(messageId + "/" + localId),
   /** The clipboard, read natively (desktop: the right-click menu's Paste). */
   clipboardText: () => invoke<string | null>("hc_clipboard_text"),
   clipboardImage: () => invoke<ArrayBuffer>("hc_clipboard_image"),
@@ -624,7 +641,9 @@ export const tauriApi = {
   openLogsFolder: () => invoke<void>("hc_open_logs_folder"),
 
   onEvent: (f: (e: HcEvent) => void): Promise<UnlistenFn> => listen<HcEvent>("hc", (e) => f(e.payload)),
-};
+});
+
+export const tauriApi = makeApi({ invoke, listen, mediaUrl: (path) => convertFileSrc(path, "hcmedia") });
 
 export type Api = typeof tauriApi;
 
@@ -638,6 +657,10 @@ export function installApi(impl: Api): void {
 
 /** True inside the Tauri webview (desktop or Android). */
 export const isTauri: boolean = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+/** True in Hubchat Web: the real core runs in this page's worker and there is no native shell. The web
+ *  entry (src/web/main.ts) sets the mark before any other module loads. */
+export const isWeb: boolean = typeof window !== "undefined" && "__HUBCHAT_WEB__" in window;
 
 /** A fresh client-side message id (the hub dedupes retries by it). */
 export function newId(): string {

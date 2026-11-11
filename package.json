@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "build:web": "node tools/web-build.mjs",
+    "serve:web": "node tools/web-serve.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

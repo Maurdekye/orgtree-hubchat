@@ -6,8 +6,9 @@ import { CtxMenu } from "./components/CtxMenu";
 import { Desktop } from "./components/Desktop";
 import { LostKey, Onboarding } from "./components/Onboarding";
 import { SetupFlow } from "./components/SetupFlow";
-import { PlatformCtx, Toasts } from "./components/ui";
+import { PlatformCtx, Toasts, WebCtx } from "./components/ui";
 import { TitleBar } from "./components/TitleBar";
+import { isWeb } from "./api";
 import { onContextMenu } from "./lib/ctxmenu";
 import { Logo } from "./lib/icons";
 import { useSetup } from "./lib/setup";
@@ -21,6 +22,8 @@ export default function App() {
   const [lostPick, setLostPick] = useState<"method" | "restore" | null>(null);
   useEffect(() => { void startStore(); }, []);
   const platform = snap.state?.platform ?? "desktop";
+  // Hubchat Web: the state says so; before there is one, the page's own mark does
+  const web = snap.state ? snap.state.shell === "web" : isWeb;
   // desktop: Hubchat's own right-click menus, never the WebView's (user
   // 2026-10-09 05:54Z); Android keeps its own long-press behaviour
   const desktop = snap.state?.platform === "desktop";
@@ -32,8 +35,9 @@ export default function App() {
   }, [desktop]);
 
   // Desktop windows are frameless: our own title bar sits on top of everything.
+  // (A browser tab has its own frame: no title bar there.)
   const framed = (content: React.ReactNode) =>
-    platform === "desktop" ? <div className="win"><TitleBar /><div className="win-body">{content}</div></div> : content;
+    platform === "desktop" ? <div className="win">{web ? null : <TitleBar />}<div className="win-body">{content}</div></div> : content;
   if (!snap.ready || !snap.state) {
     return framed(
       <div className="boot">
@@ -50,5 +54,5 @@ export default function App() {
   else body = platform === "android" ? <Android key={snap.state.me.address} /> : <Desktop key={snap.state.me.address} />;
   // Scan setup code: a screen over everything on Android, a modal on desktop
   if (setup) body = <>{body}<SetupFlow key={setup.n} req={setup} /></>;
-  return <PlatformCtx.Provider value={platform}>{framed(<>{body}<CtxMenu /></>)}</PlatformCtx.Provider>;
+  return <WebCtx.Provider value={web}><PlatformCtx.Provider value={platform}>{framed(<>{body}<CtxMenu /></>)}</PlatformCtx.Provider></WebCtx.Provider>;
 }

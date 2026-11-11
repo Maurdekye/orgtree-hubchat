@@ -9,7 +9,7 @@
 //   permission to install apps).
 // In the browser mock, `?update=1` pretends version 0.2.0 is out.
 import { useSyncExternalStore } from "react";
-import { api, isTauri, type AppUpdate } from "../api";
+import { api, isTauri, isWeb, type AppUpdate } from "../api";
 import { errText } from "./native";
 
 export interface Available { version: string; install: () => Promise<void> }
@@ -107,6 +107,8 @@ async function androidInstall(u: AppUpdate): Promise<void> {
 }
 
 async function checkRaw(): Promise<Available | null> {
+  // Hubchat Web is whatever its server serves: there is no update to fetch from here
+  if (isWeb) return null;
   if (platform === "android") {
     // a test build reads only a local feed (the update test), never the real
     // release; the shell ignores this in the real app

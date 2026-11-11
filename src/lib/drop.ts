@@ -4,7 +4,7 @@
 // drop events, fanned out to hooks that test the pointer against an element.
 // The browser mock uses the page's own drag events with made-up paths.
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { isTauri } from "../api";
+import { isTauri, isWeb } from "../api";
 
 type DropEv = { type: "over"; x: number; y: number } | { type: "drop"; x: number; y: number; paths: string[] } | { type: "leave" };
 
@@ -15,6 +15,8 @@ let started = false;
 function start() {
   if (started) return;
   started = true;
+  // Hubchat Web sends no files yet: a drop there is the browser's own business
+  if (isWeb) return;
   if (isTauri) {
     void import("@tauri-apps/api/webview").then(({ getCurrentWebview }) =>
       getCurrentWebview().onDragDropEvent(({ payload: p }) => {
