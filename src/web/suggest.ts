@@ -21,15 +21,26 @@ function listedAddress(entry: unknown): string | null {
   return /^[a-z][a-z0-9+.-]*:\/\//i.test(t) ? t : "https://" + t;
 }
 
-export async function suggestedHubs(): Promise<SuggestedHubs> {
-  let config: { suggested_hubs?: unknown; hub_suggestions?: unknown } = {};
+/** What the server says in /config.json. A server without one (plain files): nothing set. */
+async function serverConfig(): Promise<{ name?: unknown; suggested_hubs?: unknown; hub_suggestions?: unknown }> {
   try {
     const r = await fetch(new URL("config.json", document.baseURI), { cache: "no-cache" });
     if (r.ok) {
       const c: unknown = await r.json();
-      if (c && typeof c === "object") config = c;
+      if (c && typeof c === "object") return c;
     }
-  } catch { /* a server without one: nothing set */ }
+  } catch { /* a server without one */ }
+  return {};
+}
+
+/** The label the server's operator gave it (HUBCHAT_WEB_NAME), for the welcome screen. Empty: none. */
+export async function serverName(): Promise<string> {
+  const { name } = await serverConfig();
+  return typeof name === "string" ? name.trim().slice(0, 48) : "";
+}
+
+export async function suggestedHubs(): Promise<SuggestedHubs> {
+  const config = await serverConfig();
   if (config.hub_suggestions === false) return { listed: false, addresses: [] };
   const listed: string[] = [];
   if (Array.isArray(config.suggested_hubs)) {

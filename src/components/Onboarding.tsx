@@ -12,7 +12,7 @@ import { copyWords, downloadWords } from "../lib/recovery";
 import { RECOVERY_FILE_ERROR, RECOVERY_FILE_LIMIT, recoveryFileWords } from "../lib/recoveryFile";
 import { api, type KeyLost, type LinkEvent, type LinkStart, type Probe } from "../api";
 import { Icon, Logo, type IconName } from "../lib/icons";
-import { baseName, errText, pickKeyFile, scanQr, suggestedHubs } from "../lib/native";
+import { baseName, errText, pickKeyFile, scanQr, serverName, suggestedHubs } from "../lib/native";
 import { getSnap, refreshAll, refreshState, setOnboarding, useSnap } from "../lib/store";
 import { splitAddr } from "../lib/peers";
 import { toast } from "../lib/toast";
@@ -499,12 +499,16 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
   const startScan = () => { pick("join", "scan"); void scanLink(); };
   // Scan setup code's name step: "Link this phone instead" (gap 4)
   useLinkInstead(() => pick("words", "method"));
+  // the label the operator gave this Hubchat Web server (HUBCHAT_WEB_NAME); the apps come from no server
+  const [served, setServed] = useState("");
+  useEffect(() => { void serverName().then(setServed); }, []);
 
   if (step === "welcome") {
     return (
       <Frame step={step} flow={flow} actions={[]}>
         <Logo size={64} />
         <h1>Hubchat</h1>
+        {served ? <p className="lead web-served">{served}</p> : null}
         <p className="lead" style={{ marginBottom: 0 }}>Chat with your agents, and people, over your own Orgtree mail hub.</p>
         <div className="ob-feats">
           <Feat ic="key" t="Your key is your identity" s={(web ? "Made in this browser" : "Made on your " + device) + "; your address comes from it. No account, and nobody issues it."} />

@@ -23,6 +23,8 @@ export interface WebNative {
   /** Hub addresses to offer for the first hub (spec R6.2a). `listed`: the server named them, so each
    *  is shown whatever its check finds; else they are guesses, shown only when a hub answers. */
   suggestedHubs(): Promise<SuggestedHubs>;
+  /** The label the server's operator gave this Hubchat Web, for the welcome screen. Empty: none. */
+  serverName(): Promise<string>;
   /** A newer build of the web app waiting to load (`install` reloads into it). Null: none. */
   newerBuild(): Promise<{ version: string; install: () => Promise<void> } | null>;
 }
@@ -33,6 +35,10 @@ export function installWebNative(w: WebNative): void { webNative = w; }
 export async function suggestedHubs(): Promise<SuggestedHubs> {
   const none: SuggestedHubs = { listed: false, addresses: [] };
   return isWeb && webNative ? webNative.suggestedHubs().catch(() => none) : none;
+}
+/** The label of the Hubchat Web server this page came from. The apps come from no server: "". */
+export async function serverName(): Promise<string> {
+  return isWeb && webNative ? webNative.serverName().catch(() => "") : "";
 }
 /** Hubchat Web's update: a newer build the server has, fetched and waiting. */
 export async function webUpdate(): Promise<{ version: string; install: () => Promise<void> } | null> {

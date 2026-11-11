@@ -13,7 +13,7 @@ import { deviceName, layout } from "./device";
 import { pickFile, pickedText } from "./files";
 import { saveText } from "./save";
 import { scanQr } from "./scan";
-import { suggestedHubs } from "./suggest";
+import { serverName, suggestedHubs } from "./suggest";
 import { newerBuild } from "./update";
 import { sentence, type FromCore, type ToCore } from "./wire";
 
@@ -204,6 +204,7 @@ export async function openCore(takeOver = false): Promise<Core | null> {
     pickKeyFile: () => pickFile(".hubchat-key,text/plain"),
     saveKeyFileTo: () => Promise.resolve(KEY_FILE_DEST),
     suggestedHubs,
+    serverName,
     newerBuild,
   });
   const platform = layout();
