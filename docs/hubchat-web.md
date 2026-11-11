@@ -222,7 +222,10 @@ the hub as `https://pc.example.ts.net:8443`.
   that code), a reload, and the second-tab takeover; and that
   there is no script error, no Content Security Policy violation and no
   missing file. `--width 1280 --height 800` runs the desktop layout. On
-  Windows it refuses to run outside Session 0.
+  Windows it refuses to run outside Session 0. Every browser it starts has
+  both clipboard permissions denied and the page's clipboard calls replaced
+  by ones that refuse, before any page loads; it prints what it measured
+  (`receipt: clipboard ...`) and stops if a browser is not guarded.
 
 ## Not there yet
 

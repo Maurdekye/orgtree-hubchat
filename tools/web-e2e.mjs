@@ -108,15 +108,48 @@ const CAMERA = `window.__qr = null;
     return c.captureStream(10);
   };`;
 
+// The clipboard is refused in every browser of this test, before any page loads (team rule TEST
+// WINDOW ISOLATION): the browser denies both clipboard permissions, and each page's own clipboard
+// calls are replaced by ones that refuse and say so on the console, which the script-error checks
+// then fail on. Nothing in this test asks for the clipboard.
+const CLIPBOARD = `(() => {
+    const refuse = (what) => () => { console.error('CLIPBOARD ASKED FOR: ' + what); return Promise.reject(new DOMException('the clipboard is blocked in this test', 'NotAllowedError')); };
+    if (navigator.clipboard) for (const k of ['read', 'readText', 'write', 'writeText']) { try { Object.defineProperty(navigator.clipboard, k, { value: refuse(k), configurable: false, writable: false }); } catch (e) { /* measured below */ } }
+    const exec = document.execCommand ? document.execCommand.bind(document) : null;
+    document.execCommand = (cmd, ...rest) => { if (/^(copy|cut|paste)$/i.test(String(cmd))) { console.error('CLIPBOARD ASKED FOR: execCommand ' + cmd); return false; } return exec ? exec(cmd, ...rest) : false; };
+  })();
+  `;
+/** What a page says of its clipboard: both permissions' states, and whether its own calls are the refusing ones. */
+const CLIPBOARD_STATE = (w) => `Promise.all(['clipboard-read', 'clipboard-write'].map((n) => ${w}.navigator.permissions.query({ name: n }).then((x) => x.state, () => 'unknown'))).then((st) => ({ read: st[0], write: st[1], stubbed: !!${w}.navigator.clipboard && ['read', 'readText', 'write', 'writeText'].every((k) => Object.prototype.hasOwnProperty.call(${w}.navigator.clipboard, k)) }))`;
+/** One entry per browser (and the second tab): what was measured at its first page. */
+const guards = [];
+let opened = 0;
+const guarded = (g) => g.read === 'denied' && g.write === 'denied' && g.stubbed;
+
 /** A browser of its own (a fresh profile: no storage, no cache), and what drives its page. */
 async function open({ w = width, h = height, ua = null, before = '' } = {}) {
   const b = await launch({ width: w, height: h, dpr: 2, mobile: w < 900, ...(arg('browser') ? { exe: arg('browser') } : {}),
     args: ['--mute-audio', '--disable-background-networking', '--disable-sync', '--disable-component-update', '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1', ...(ua ? ['--user-agent=' + ua] : [])] });
   browsers.push(b);
   const session = sessionOf(b.pid);
-  console.log(`receipt: runner pid ${process.pid} session ${mySession}; browser pid ${b.pid} session ${session}; muted; throwaway profile; loopback only; no clipboard, no OS input`);
+  console.log(`receipt: runner pid ${process.pid} session ${mySession}; browser pid ${b.pid} session ${session}; muted; throwaway profile; loopback only; clipboard denied (measured below), no OS input`);
   if (session !== 0 && !flag('any-session')) throw new Error('the browser is not in Session 0');
-  await b.send('Page.addScriptToEvaluateOnNewDocument', { source: WATCH + before });
+  opened++;
+  // before any page: the browser refuses the clipboard to every origin, and every page gets the refusing calls
+  for (const name of ['clipboard-read', 'clipboard-write']) await b.send('Browser.setPermission', { permission: { name }, setting: 'denied' });
+  await b.send('Page.addScriptToEvaluateOnNewDocument', { source: CLIPBOARD + WATCH + before });
+  // measured at this browser's first page, before the test does anything in it
+  const nav = b.nav.bind(b);
+  let measured = false;
+  b.nav = async (url, wait) => {
+    await nav(url, wait);
+    if (measured || !/^http/.test(url)) return;
+    measured = true;
+    const g = await b.eval(CLIPBOARD_STATE('window'));
+    guards.push({ where: 'browser pid ' + b.pid, ...g });
+    console.log(`receipt: clipboard in browser pid ${b.pid}: read ${g.read}, write ${g.write}, the page's own clipboard calls ${g.stubbed ? 'refuse' : 'ARE NOT REPLACED'}`);
+    if (!guarded(g)) throw new Error('the clipboard is not refused in browser pid ' + b.pid + ': stopping before anything else runs in it');
+  };
   const rawShot = b.shot.bind(b);
   return {
     b,
@@ -414,6 +447,12 @@ async function main() {
     await b.eval(`(() => { const w = ${second}; return w ? w.document.body.innerText.slice(0, 200) : 'no second tab'; })()`));
   await b.eval(`${second}.document.querySelector('.gate button').click()`);
   check('the first tab gives the core up and says so', await waitFor(`!!document.querySelector('.gate b') && document.querySelector('.gate b').innerText.includes('open in another tab')`, 30000), await b.eval(`document.body.innerText.slice(0, 200)`));
+  // the second tab is a page of the same browser (its permissions are denied already); its own calls are replaced from here
+  {
+    const g = await b.eval(`(() => { const w = ${second}; const refuse = (what) => () => { console.error('CLIPBOARD ASKED FOR: ' + what); return Promise.reject(new DOMException('the clipboard is blocked in this test', 'NotAllowedError')); }; for (const k of ['read', 'readText', 'write', 'writeText']) { try { Object.defineProperty(w.navigator.clipboard, k, { value: refuse(k), configurable: false, writable: false }); } catch (e) { /* measured */ } } return ${CLIPBOARD_STATE('w')}; })()`);
+    guards.push({ where: 'second tab of browser pid ' + b.pid, ...g });
+    console.log(`receipt: clipboard in the second tab of browser pid ${b.pid}: read ${g.read}, write ${g.write}, the page's own clipboard calls ${g.stubbed ? 'refuse' : 'ARE NOT REPLACED'}`);
+  }
   check('the second tab took over and shows the chats', await waitFor(`(() => { const w = ${second}; return !!w && ${kept('w.document')}; })()`, 60000),
     await b.eval(`(() => { const w = ${second}; return w ? w.document.body.innerText.slice(0, 300) : 'no second tab'; })()`));
   await shot('web-13-other-tab.png');
@@ -421,6 +460,9 @@ async function main() {
   await collect();
   check('no Content Security Policy violation', violations.length === 0, violations.join(' | '));
   check('no script errors', b.errors.length === 0, b.errors.join(' | '));
+  check('the clipboard was refused in every browser from its first page on, and nothing asked for it',
+    guards.length === opened + 1 && guards.every(guarded) && !b.errors.some((e) => e.includes('CLIPBOARD ASKED FOR')),
+    guards.map((g) => `${g.where}: read ${g.read}, write ${g.write}, ${g.stubbed ? 'calls refuse' : 'calls NOT replaced'}`).join('; '));
   check('nothing was asked for that the server does not have', served.every((s) => s.status === 200), served.filter((s) => s.status !== 200).map((s) => s.status + ' ' + s.path).join(' '));
 }
 
