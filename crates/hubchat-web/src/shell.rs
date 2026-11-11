@@ -592,6 +592,14 @@ pub(crate) mod tests {
         shell(Arc::new(Store::open_in_memory().unwrap()), None)
     }
 
+    /// A shell whose files are in `root` (files.rs's tests).
+    pub(crate) fn fresh_in(root: PathBuf) -> (Arc<Shell>, Arc<Mutex<Vec<(String, String)>>>) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink_seen = seen.clone();
+        let sink: Sink = Arc::new(move |name, json| sink_seen.lock().unwrap().push((name.to_owned(), json.to_owned())));
+        (Shell::open_at(Arc::new(Store::open_in_memory().unwrap()), sink, "Test browser", None, root).unwrap(), seen)
+    }
+
     pub(crate) async fn take(shell: &Arc<Shell>, cmd: &str, args: Value) -> String {
         let plan = shell.plan_identity(cmd, &args).unwrap().expect("an identity command");
         shell.adopt(plan).unwrap()
@@ -713,12 +721,6 @@ pub(crate) mod tests {
         assert_eq!(chats[0]["peer"], "ann.111111");
         // the UI was told through the same `hc` events the apps emit
         assert!(seen.lock().unwrap().iter().any(|(name, json)| name == "hc" && json.contains(r#""type":"chat""#) && json.contains("ann.111111")), "{:?}", seen.lock().unwrap());
-        // files wait for a later version, and say so
-        let e = sh
-            .call("hc_send", &json!({ "msg": { "id": "m2", "peer": "ann.111111", "body": "", "attachments": [{ "name": "a.txt", "bytes": 1, "source": "x" }] } }))
-            .await
-            .unwrap_err();
-        assert_eq!(e, "Files can't be sent from Hubchat Web yet.");
         sh.shutdown();
     }
 

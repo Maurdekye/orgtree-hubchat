@@ -8,10 +8,13 @@
 //!
 //! - `shell`: the commands the UI calls, answered from the core. It knows
 //!   nothing of a browser, so its tests run natively.
+//! - `files`: the files of chats (chosen, sent, shown, saved), with the
+//!   core's own file layer; its tests run natively too.
 //! - `wasm` (browser builds only): starts the shell in the worker and passes
 //!   commands, events and the key between it and the worker's script
 //!   (`src/web/core.worker.ts`).
 
+pub mod files;
 pub mod link;
 pub mod scan;
 pub mod shell;
