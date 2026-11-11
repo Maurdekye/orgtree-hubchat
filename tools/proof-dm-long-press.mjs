@@ -49,10 +49,12 @@ const group = async (id, fn) => { try { await fn(); } catch (e) { check(id + ' t
 const press = async el => { await act(async () => { el.dispatchEvent(new window.MouseEvent('contextmenu', {bubbles: true, cancelable: true, clientX: 30, clientY: 30})); }); await settle(); };
 const tap = async el => { if (!el) return; await act(async () => { el.click(); await Promise.resolve(); }); await settle(); };
 const rowOf = peer => [...document.querySelectorAll('.crow')].find(r => r.textContent.includes(peer === MAYA ? 'hi' : 'hello'));
+let screens = 0;
+// every check gets a freshly mounted screen (new key): a press in one must not leave its lift guard running in the next
 const screen = async () => {
   platform = 'android';
   const went = [], closed = [];
-  await render(h(PlatformCtx.Provider, {value: 'android'}, h(CtxMenu), h(ToastProbe), h(Chats, {go: s => went.push(s), close: p => closed.push(p)})));
+  await render(h(PlatformCtx.Provider, {value: 'android'}, h(CtxMenu), h(ToastProbe), h(Chats, {key: 's' + (++screens), go: s => went.push(s), close: p => closed.push(p)})));
   await wait(80);
   return {went, closed};
 };
