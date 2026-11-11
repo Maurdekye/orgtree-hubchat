@@ -1,13 +1,30 @@
 // Scan a QR code with the camera (the desktop app's link QR; user
-// 2026-11-11). A browser on an iPhone has no barcode reader of its own, so
-// frames go to the core's worker, which reads them (crates/hubchat-web
-// scan.rs). The camera runs only while this screen is up; no frame is kept.
+// 2026-11-11). Where the browser reads QR codes itself (BarcodeDetector:
+// Chrome on Android), it is asked first. A browser on an iPhone has no such
+// reader, so every frame also goes to the core's worker, which reads it
+// (crates/hubchat-web scan.rs). The camera runs only while this screen is
+// up; no frame is kept.
+//
+// A code on a monitor is small in the picture (the first real try, user
+// 2026-11-11 11:53Z, failed on frames scaled down to 800 pixels): the camera
+// is asked for 1080p and the frames go to the reader at that size.
 
 /** Reads one frame: its size and its grey pixels, one byte each. Null: no code in it. */
 export type ReadFrame = (width: number, height: number, grey: Uint8Array) => Promise<string | null>;
 
-/** Frames are scaled down to this on their longer side: enough for a link's QR, and quick to read. */
-const LONG_SIDE = 800;
+/** Frames larger than this on their longer side are scaled down to it. A 1080p camera frame is not. */
+const LONG_SIDE = 1920;
+
+/** The browser's own QR reader, where it has one. */
+interface NativeReader { detect(source: HTMLVideoElement): Promise<{ rawValue?: string }[]> }
+async function nativeReader(): Promise<NativeReader | null> {
+  const Detector = (window as unknown as { BarcodeDetector?: { new (o: { formats: string[] }): NativeReader; getSupportedFormats?: () => Promise<string[]> } }).BarcodeDetector;
+  if (!Detector) return null;
+  try {
+    const formats = (await Detector.getSupportedFormats?.()) ?? [];
+    return formats.includes("qr_code") ? new Detector({ formats: ["qr_code"] }) : null;
+  } catch { return null; }
+}
 /** A pause between frames, so the scan does not take the whole core. */
 const PAUSE_MS = 120;
 
@@ -33,10 +50,16 @@ export async function scanQr(read: ReadFrame): Promise<string | null> {
   if (!navigator.mediaDevices?.getUserMedia) throw "This browser gives Hubchat no camera. Type the code instead.";
   let stream: MediaStream;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } } });
+    stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
   } catch (e) {
     throw cameraError(e);
   }
+
+  // keep refocusing as the phone moves, where the camera can be told to (it is the default on most)
+  const track = stream.getVideoTracks()[0];
+  const modes = (track?.getCapabilities?.() as { focusMode?: string[] } | undefined)?.focusMode;
+  if (track && modes?.includes("continuous")) void track.applyConstraints({ advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet] }).catch(() => {});
+  let native = await nativeReader();
 
   const box = document.createElement("div");
   box.className = "web-scan";
@@ -51,7 +74,7 @@ export async function scanQr(read: ReadFrame): Promise<string | null> {
   video.srcObject = stream;
   const hint = document.createElement("div");
   hint.className = "web-scan-hint";
-  hint.textContent = "Point the camera at the QR code";
+  hint.textContent = "Point the camera at the QR code. Move closer if it isn't read.";
   const cancel = document.createElement("button");
   cancel.type = "button";
   cancel.className = "btn web-scan-cancel";
@@ -83,6 +106,13 @@ export async function scanQr(read: ReadFrame): Promise<string | null> {
     const step = async () => {
       if (done) return;
       const w = video.videoWidth, h = video.videoHeight;
+      if (native && w > 0 && video.readyState >= 2) {
+        try {
+          const text = (await native.detect(video)).find((c) => c.rawValue)?.rawValue;
+          if (text) { finish(text); return; }
+        } catch { native = null; /* the core reads from here on */ }
+        if (done) return;
+      }
       if (pen && w > 0 && h > 0 && video.readyState >= 2) {
         const k = Math.min(1, LONG_SIDE / Math.max(w, h));
         canvas.width = Math.max(1, Math.round(w * k));

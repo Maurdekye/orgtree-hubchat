@@ -9,9 +9,6 @@
 //! soft, tilted, with the screen's pixel grid and glare. So a frame is read
 //! several ways, cheapest first, until one finds a code.
 
-// RED: see decode
-#![allow(dead_code)]
-
 /// One grey picture: `w` x `h` bytes, row by row, 0 black to 255 white.
 struct Grey {
     w: usize,
@@ -120,8 +117,23 @@ pub fn decode(width: usize, height: usize, grey: &[u8]) -> Option<String> {
     if let Some(text) = read(width, height, grey) {
         return Some(text);
     }
-    // RED: the other ways to read a frame are written, not used yet
-    None
+    if width < 32 || height < 32 {
+        return None;
+    }
+    // 2. smoothed, black decided against the square around each pixel
+    let soft = smooth(width, height, grey);
+    if let Some(text) = read_local(width, height, &soft, width.max(height) / 8, 92) {
+        return Some(text);
+    }
+    // 3. the middle, where a person aims (two thirds of each side), twice as
+    //    large and sharpened: a code that is small and soft in the frame
+    let (cw, ch) = (width * 2 / 3, height * 2 / 3);
+    let big = enlarged(width, &soft, (width - cw) / 2, (height - ch) / 2, cw, ch);
+    let sharp = sharpen(big.w, big.h, &big.px, 2, 2.0);
+    if let Some(text) = read_local(big.w, big.h, &sharp, big.w.max(big.h) / 24, 96) {
+        return Some(text);
+    }
+    read_local(big.w, big.h, &big.px, big.w.max(big.h) / 8, 92)
 }
 
 #[cfg(test)]
