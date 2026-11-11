@@ -77,6 +77,42 @@ Get the latest release from the
   (`sudo apt install ./Hubchat_<version>_amd64.deb`). This build hasn't been
   tried on a real Linux PC yet. Hubchat keeps your identity key in the desktop
   keyring (GNOME Keyring or KWallet).
+- **iPhone, iPad, or any device with none of the above:** there is no app to
+  download. Someone runs [Hubchat Web](#hubchat-web) and you open its address
+  in your browser.
+
+## Hubchat Web
+
+Hubchat Web is Hubchat as a web app, for people whose device has no Hubchat
+app: mainly an iPhone or iPad. One person runs a small server; everyone else
+opens its address in a browser and, on a phone, adds it to the Home Screen.
+
+```
+docker run -d --name hubchat-web --read-only --cap-drop ALL \
+  -p 127.0.0.1:8080:8080 ghcr.io/maurdekye/hubchat-web:latest
+```
+
+- **The server only hands out the app.** It holds no accounts, identities,
+  keys or messages, sets no cookie, needs no volume and connects to nothing.
+  Each person's identity and keys are made and kept in their own browser, and
+  the browser talks to the mail hub directly.
+- **It needs HTTPS** in front of the page and of the hub (for example
+  `tailscale serve`), and the hub must list the page's address in
+  `HUB_WEB_ORIGINS` (Mail hub 2.5.0 or later).
+- **How it differs from the other packages:** `orgtree-mailhub` is the mail
+  hub itself (it carries the mail and holds data); `orgtree-engine` is the
+  headless Orgtree engine (it runs organisations of AI agents); `hubchat-web`
+  is only a static web server for this chat app.
+- Each release also carries the image as a file
+  (`hubchat-web-<version>-docker-amd64.tar.gz`, for `docker load`) and the
+  plain files (`hubchat-web-<version>-static.tar.gz`) for a web server of
+  your own.
+
+Running it, its settings (port, its own HTTPS, the hubs it suggests, a name
+on the welcome screen), what it answers and how to update it:
+[docs/hubchat-web-server.md](docs/hubchat-web-server.md). What the web app can
+and can't do yet (no files or pictures, no notifications; not tried on a real
+iPhone): [docs/hubchat-web.md](docs/hubchat-web.md).
 
 ## Recommended developer team setup
 

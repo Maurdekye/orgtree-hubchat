@@ -149,3 +149,29 @@ These keys work while typing in the composer. They pause while a dialog is
 open. Refresh reloads the view while keeping the open chat, reading position
 and unsent draft; wait for any message still preparing its files to finish.
 Android keeps its current controls.
+
+## 9. iPhone and other devices: Hubchat Web
+
+There is no Hubchat app for iPhone or iPad. Hubchat Web is Hubchat as a web app instead: someone you trust runs a small server, and you open its address in your browser. It also works on any computer where you can't install anything.
+
+**Using it**
+
+1. Get the address from whoever runs it (it starts with `https://`).
+2. On an iPhone or iPad, open it in Safari, tap **Share**, then **Add to Home Screen**, and open Hubchat from the Home Screen. In a Safari tab it only explains this, because an iPhone deletes a web page's data after some days unless it is on the Home Screen.
+3. Choose **Create a new identity**, or **I already use Hubchat** to link this browser to the identity on your PC or Android phone (section 6): it scans the QR code with the camera.
+4. Save your recovery words when it asks. Your identity lives in this browser only; clearing the browser's data deletes it, and the words bring it back.
+
+Your key and messages stay in your browser. The server only hands out the app; it never sees them. It does control the code your browser runs, so use a server run by you or by people you trust.
+
+Not in Hubchat Web yet: files and pictures, and notifications. It has not been tried on a real iPhone.
+
+**Running it for others**
+
+You need Docker, an `https://` address for the web app and one for your hub (Tailscale gives you both, as in section 1), and Mail hub 2.5.0 or later.
+
+```text
+docker run -d --name hubchat-web --read-only --cap-drop ALL -p 127.0.0.1:8080:8080 ghcr.io/maurdekye/hubchat-web:latest
+tailscale serve --bg --https=443 http://127.0.0.1:8080
+```
+
+Then add the web app's address to the hub's `HUB_WEB_ORIGINS` setting, or Hubchat Web says **This hub doesn't allow this web app yet**. Every setting, and how to offer your hub with one tap: [Running Hubchat Web](https://github.com/Maurdekye/orgtree-hubchat/blob/main/docs/hubchat-web-server.md).

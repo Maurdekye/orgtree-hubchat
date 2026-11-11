@@ -6,10 +6,11 @@ const source = readFileSync(process.argv[2], "utf8");
 const clean = source.replace(/\r\n?/g, "\n").replace(/^# .*\n+/, "")
   .replace(/<!-- screenshots -->[\s\S]*?<!-- \/screenshots -->\n*/g, "");
 const actual = splitGuide(source);
-assert.equal(actual.sections.length, 8, "every current setup section becomes a tab");
+assert.equal(actual.sections.length, 10, "every current setup section becomes a tab");
 assert.equal(actual.sections[0].title, "Developer teams: shared standalone mailhub");
 assert.equal(actual.sections[1].label, "With Orgtree and Tailscale");
 assert.equal(actual.sections[7].label, "When it stops working");
+assert.equal(actual.sections[9].label, "iPhone and other devices: Hubchat Web");
 assert.equal(actual.intro + actual.sections.map(section => section.markdown).join(""), clean,
   "splitting preserves every retained character in order");
 assert.ok(!actual.sections.some(section => section.markdown.includes("<!-- screenshots -->")));

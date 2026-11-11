@@ -11,9 +11,11 @@ automatically.
 | macOS (Apple Silicon and Intel) | `build-macos.yml` | macos-15 | `Hubchat_<v>_universal.dmg`, `Hubchat_<v>_universal.app.tar.gz` (+ `.sig`) |
 | Linux (x86_64) | `build-linux.yml` | ubuntu-22.04 | `Hubchat_<v>_amd64.AppImage` (+ `.sig`), `Hubchat_<v>_amd64.deb` (+ `.sig`) |
 | Android (arm64) | `build-android.yml` | ubuntu-24.04 | `Hubchat_<v>_arm64.apk` (+ `.sig`) and the same file as `Hubchat-android.apk` |
+| Hubchat Web | `build-web.yml` | ubuntu-24.04 | `hubchat-web-<v>-static.tar.gz`, `hubchat-web-<v>-docker-amd64.tar.gz`, `build-info-web.json` |
 | all | `release.yml` | ubuntu-24.04 | `latest.json` (the updater feed), `SHA256SUMS.txt` |
 
-`release.yml` runs the four builds, then:
+`release.yml` runs the four builds and the Hubchat Web build
+([below](#hubchat-web)), then:
 
 1. **sign**: the only job that ever sees the real keys. It runs in the protected
    `release` environment and executes no project code; it installs the pinned Tauri
@@ -26,14 +28,15 @@ automatically.
      shipped.
    - The builds themselves only ever hold throwaway keys.
 2. **stage**: writes `latest.json` from the platforms' updater entries, and
-   `SHA256SUMS.txt`.
+   `SHA256SUMS.txt`. It refuses a release without its three Hubchat Web files.
 3. **draft**: `gh release create --draft` with every asset.
 
 ## Cutting a release
 
 1. Bump the release version inputs in one commit:
-   - `Cargo.toml` (`[workspace.package] version`) and the `hubchat` and
-     `hubchat-core` entries in `Cargo.lock`;
+   - `Cargo.toml` (`[workspace.package] version`) and the `hubchat`,
+     `hubchat-core`, `hubchat-web` and `hubchat-web-server` entries in
+     `Cargo.lock` (the Hubchat Web builds run `cargo --locked`);
    - `package.json` and both version fields of `package-lock.json`;
    - `src-tauri/tauri.conf.json`;
    - the browser mock's version in `src/lib/native.ts`.
@@ -85,6 +88,9 @@ Publish it, which makes it the release every installed Hubchat updates from:
 gh release edit v<v> -R Maurdekye/orgtree-hubchat --draft=false --latest
 ```
 
+Publishing also starts **publish-web-image**, which pushes the release's
+Hubchat Web image to the registry ([below](#hubchat-web)).
+
 Publishing starts the **verify-release** workflow. It downloads every public asset as an installed app would and checks it against `SHA256SUMS.txt`, the updater feed and the tag, and it checks that GitHub's "latest" release is the right one. A red run means: roll back (below). To check a release again: `gh workflow run verify-release.yml -f tag=<tag>`.
 
 ## Rolling back
@@ -104,13 +110,19 @@ Publishing starts the **verify-release** workflow. It downloads every public ass
   forward. The fix for them is a new patch release.
 - Never replace an asset of a published release: its `.sig`, `latest.json` and
   `SHA256SUMS.txt` would no longer match it.
+- **Hubchat Web's image**: marking the previous release as latest does not move
+  the registry's `latest` tag. Push the previous image again:
+  `gh workflow run publish-web-image.yml -R Maurdekye/orgtree-hubchat -f
+  tag=v<previous>` (when the previous release has a Hubchat Web image). People
+  with the web app open are offered whatever build their server serves.
 
 ## Test runs
 
 A push to the branch `ci-test/hubchat-release` runs the whole pipeline as a test.
 Throwaway keys stand in for the real ones, and no release is created; the staged
 assets are the run's artifact. Each `build-<platform>.yml` also runs on its own
-from a push to `ci-test/hubchat-<platform>`. Once the workflows are on `main`, a
+from a push to `ci-test/hubchat-<platform>` (`ci-test/hubchat-web` for
+`build-web.yml`). Once the workflows are on `main`, a
 manual run can test any tag or commit:
 
 ```
@@ -235,3 +247,69 @@ hand-made ones did.
     keeping the key only in memory.
 - **Android**: allow your browser or file manager to install apps when Android
   asks.
+
+## Hubchat Web
+
+Hubchat Web (the web app for an iPhone or any browser, and the small server
+that hands it out: `docs/hubchat-web-server.md`) ships with every release
+and has Hubchat's version. It is not an installed app: it has no updater
+entry in `latest.json` and nothing of it is signed.
+
+**`build-web.yml`** (job `web` of `release.yml`; on its own from a push to
+`ci-test/hubchat-web`), on one ubuntu-24.04 runner:
+
+1. Runs the server's own tests (`cargo test -p hubchat-web-server`).
+2. Builds the web app with `tools/web-build.mjs`: the core to WebAssembly
+   (Rust target `wasm32-unknown-unknown`, `clang` for SQLite), the
+   `wasm-bindgen` command at exactly the version `Cargo.lock` pins, the
+   page, and the size budget (a first visit downloads at most 3 MB).
+3. Runs `.github/ci/web/package.sh`, which
+   - packs the page as `hubchat-web-<v>-static.tar.gz`, reproducibly (sorted,
+     no times, no owners);
+   - builds the server program with the page inside it, static, in the
+     official `rust:1.89-alpine` image (`--locked`);
+   - runs `.github/ci/web/smoke.sh` on the program;
+   - builds the image from that same program
+     (`crates/hubchat-web-server/Dockerfile`: FROM scratch, one file), runs
+     the smoke on the image, and checks the image holds that program;
+   - saves the image as `hubchat-web-<v>-docker-amd64.tar.gz` (`docker load`
+     gives `hubchat-web:<v>`);
+   - writes `build-info-web.json`: the version, the commit, both files'
+     SHA-256, every page file's SHA-256, the program's SHA-256 and size, and
+     the image's id.
+
+The three files travel with the other platforms' files through `sign`
+(untouched) into `stage`, which refuses the release unless all three are
+there and `build-info-web.json` records exactly those two files; they get
+their lines in `SHA256SUMS.txt` like every asset. `verify-release` checks
+them again once published.
+
+**`publish-web-image.yml`** runs when a release is published (never for a
+draft). It downloads the release's own image file, checks it against
+`SHA256SUMS.txt` and `build-info-web.json`, loads it, and pushes it with the
+run's own token as `ghcr.io/maurdekye/hubchat-web:<v>`, and as `:latest` for
+a stable release only. Then it pulls each tag back and checks that the
+program inside is the recorded one. What is pushed is the file the release
+carries, never a rebuild. A release from before Hubchat Web has no image:
+the workflow says so and does nothing. To run it again for a published
+release:
+
+```
+gh workflow run publish-web-image.yml -R Maurdekye/orgtree-hubchat -f tag=v<v>
+```
+
+The first push creates the package `hubchat-web` as **private**. Its owner
+makes it public once: on GitHub, the package's page, **Package settings**,
+**Change visibility**, Public. Until then `docker pull` needs a login.
+
+Checking a draft's Hubchat Web by hand:
+
+```
+docker load -i hubchat-web-<v>-docker-amd64.tar.gz
+docker run --rm hubchat-web:<v> version          (prints hubchat-web <v>)
+bash .github/ci/web/smoke.sh image hubchat-web:<v> <v> smoke-logs
+```
+
+Not in the workflow: an arm64 image, and a browser opening the app from
+the image (`tools/web-e2e.mjs --server` does that locally; it needs a mail
+hub and PostgreSQL).
