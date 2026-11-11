@@ -16,6 +16,8 @@ export interface SuggestedHubs { listed: boolean; addresses: string[] }
 export interface WebNative {
   /** Scan one QR code with the camera. Null: the user closed it. */
   scanQr(): Promise<string | null>;
+  /** Choose files to send: what stands for each as an attachment's source (the core keeps its copy). */
+  pickFiles(): Promise<string[]>;
   /** Choose a key file: what stands for it in `api.keyFileImport`. */
   pickKeyFile(): Promise<string | null>;
   /** What stands for "where to save the key file" in `api.keyFileExport`: the browser decides where. */
@@ -51,7 +53,7 @@ function onWeb(): WebNative {
 
 /** Pick files to attach: paths (desktop) or content:// URIs (Android). */
 export async function pickFiles(): Promise<string[]> {
-  if (isWeb) throw "Files can't be sent from Hubchat Web yet.";
+  if (isWeb) return onWeb().pickFiles();
   if (!isTauri) {
     const all = ["C:\\Users\\alex\\Documents\\nightly-logs.zip", "C:\\Users\\alex\\Pictures\\screenshot-rc3.png", "C:\\Users\\alex\\Documents\\release-notes.md"];
     return [all[Math.floor(Math.random() * all.length)]];

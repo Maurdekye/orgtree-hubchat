@@ -36,6 +36,27 @@ export function pickFile(accept: string): Promise<string | null> {
   });
 }
 
+/** Let the user choose files to send. Empty: they closed the chooser. Call it in a click. */
+export function pickFilesToSend(): Promise<File[]> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.style.display = "none";
+    let settled = false;
+    const settle = (files: File[]) => {
+      if (settled) return;
+      settled = true;
+      input.remove();
+      resolve(files);
+    };
+    input.onchange = () => settle(Array.from(input.files ?? []));
+    input.addEventListener("cancel", () => settle([]));
+    document.body.appendChild(input);
+    input.click();
+  });
+}
+
 /** The text of a file picked with `pickFile`, at most `limit` bytes of it. Rejects with a sentence. */
 export async function pickedText(token: string, limit: number): Promise<string> {
   const file = picked.get(token);

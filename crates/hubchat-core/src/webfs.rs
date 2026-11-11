@@ -179,6 +179,11 @@ impl<B: Backend> Fs<B> {
         Ok(Self { backend, state: Rc::new(RefCell::new(State { index, open: HashMap::new() })), now })
     }
 
+    /// What keeps the files (for what only it can do with one).
+    pub fn backend(&self) -> &B {
+        &self.backend
+    }
+
     // ---- what the core asks without waiting (from the index)
 
     pub fn metadata_now(&self, path: &str) -> io::Result<Metadata> {

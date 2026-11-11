@@ -112,8 +112,67 @@ pub async fn boot(host: JsValue) -> Result<(), JsValue> {
     let name = text_field(&host, "deviceName").unwrap_or_default();
     let sink: Sink = Arc::new(emit);
     let shell = Shell::open(store, sink, &name, identity).map_err(err)?;
-    SHELL.with(|s| *s.borrow_mut() = Some(shell));
+    SHELL.with(|s| *s.borrow_mut() = Some(shell.clone()));
+    // previews of messages that are gone, chosen files kept long enough
+    hubchat_core::rt::spawn(async move { shell.sweep_files().await });
     Ok(())
+}
+
+/// A chosen file is read this much at a time (a page holds no more of it).
+const PUT_PIECE: f64 = 1024.0 * 1024.0;
+
+/// Copy a file the user chose (a `Blob`) into Hubchat Web's own files: its
+/// path there, which is its `source` from then on.
+async fn put(shell: &Arc<Shell>, name: &str, blob: &JsValue) -> Result<String, JsValue> {
+    use tokio::io::AsyncWriteExt;
+    let size = Reflect::get(blob, &JsValue::from_str("size"))?.as_f64().ok_or_else(|| err("expected a file"))?;
+    let slice = Reflect::get(blob, &JsValue::from_str("slice"))?.dyn_into::<Function>().map_err(|_| err("expected a file"))?;
+    let (path, mut file) = shell.new_picked(name).await.map_err(err)?;
+    let copied: Result<(), JsValue> = async {
+        let mut at = 0.0;
+        while at < size {
+            let end = (at + PUT_PIECE).min(size);
+            let piece = slice.call2(blob, &JsValue::from_f64(at), &JsValue::from_f64(end))?;
+            let read = Reflect::get(&piece, &JsValue::from_str("arrayBuffer"))?.dyn_into::<Function>().map_err(|_| err("expected a file"))?.call0(&piece)?;
+            let bytes = js_sys::Uint8Array::new(&JsFuture::from(Promise::resolve(&read)).await?).to_vec();
+            file.write_all(&bytes).await.map_err(err)?;
+            at = end;
+        }
+        file.flush().await.map_err(err)
+    }
+    .await;
+    drop(file);
+    match copied {
+        Ok(()) => Ok(path),
+        Err(e) => {
+            shell.drop_picked(&path).await;
+            Err(err(format!("Hubchat couldn't keep that file to send it: {}", thrown(&e))))
+        }
+    }
+}
+
+/// A command that takes or gives more than JSON:
+/// - `hc_web_put` {name} with `blob`: keep a chosen file; its path.
+/// - `hc_file_preview`, `hc_attachment_preview`: the picture's bytes.
+/// - `hc_web_file` {messageId, localId}: `{ name, file }`, this browser's
+///   copy of an attachment as the browser's own `File`.
+#[wasm_bindgen]
+pub async fn raw(cmd: String, args: String, blob: JsValue) -> Result<JsValue, JsValue> {
+    let shell = SHELL.with(|s| s.borrow().clone()).ok_or_else(|| err("the core is not started"))?;
+    let args: Value = if args.is_empty() { Value::Null } else { serde_json::from_str(&args).map_err(err)? };
+    let word = |name: &str| args.get(name).and_then(Value::as_str).map(str::to_owned).ok_or_else(|| err(format!("missing argument: {name}")));
+    match cmd.as_str() {
+        "hc_web_put" => Ok(JsValue::from_str(&put(&shell, &word("name")?, &blob).await?)),
+        "hc_web_file" => {
+            let (path, name) = shell.attachment_file(&word("messageId")?, &word("localId")?).map_err(err)?;
+            let file = hubchat_core::rt::fs::browser_file(&path).await.map_err(err)?;
+            let out = js_sys::Object::new();
+            Reflect::set(&out, &JsValue::from_str("name"), &JsValue::from_str(&name))?;
+            Reflect::set(&out, &JsValue::from_str("file"), &file)?;
+            Ok(out.into())
+        }
+        _ => Ok(js_sys::Uint8Array::from(shell.bytes(&cmd, &args).await.map_err(err)?.as_slice()).into()),
+    }
 }
 
 /// One command of the UI: its name and its arguments as JSON; the answer as

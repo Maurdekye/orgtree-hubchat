@@ -7,6 +7,9 @@ export type ToCore =
   | { t: "boot"; deviceName: string }
   /** One command of src/api.ts: its name and its arguments, as the apps' invoke() sends them. */
   | { t: "call"; id: number; cmd: string; args: unknown }
+  /** A command that takes or gives more than JSON (wasm.rs, `raw`): `blob` is a file the user chose;
+   *  the answer may be bytes or the browser's own File. */
+  | { t: "raw"; id: number; cmd: string; args: unknown; blob?: Blob }
   /** One camera frame to read a QR code from (scan.ts): its grey pixels, one byte each. */
   | { t: "scan"; id: number; width: number; height: number; grey: ArrayBuffer }
   /** Stop the engine and say `stopped`: another tab takes over, or the page goes away. */

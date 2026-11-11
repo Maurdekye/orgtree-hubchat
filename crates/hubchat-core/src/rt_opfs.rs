@@ -95,6 +95,13 @@ impl Opfs {
         wait(call(&dir, "getFileHandle", &[name.into(), options(&[("create", create.into())])])?).await
     }
 
+    /// The browser's own `File` for what is at `key` (what a page can save
+    /// or share): a view of the stored bytes, not a copy of them.
+    pub async fn browser_file(&self, key: &str) -> io::Result<JsValue> {
+        let file = self.file(key, false).await?;
+        wait(call(&file, "getFile", &[])?).await
+    }
+
     async fn hold(&self, key: &str, create: bool) -> io::Result<OpfsHandle> {
         let file = self.file(key, create).await?;
         let handle = wait(call(&file, "createSyncAccessHandle", &[])?).await?;

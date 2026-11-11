@@ -49,6 +49,9 @@ pub struct KeyLost {
 
 struct ShellHost {
     sink: Sink,
+    /// Where this shell's files are (`files.rs`): `/` of Hubchat Web's own
+    /// files in a browser, a folder of their own in a test.
+    root: PathBuf,
 }
 
 impl Host for ShellHost {
@@ -57,14 +60,21 @@ impl Host for ShellHost {
             (self.sink)("hc", &json);
         }
     }
+    // In a browser the core opens a source through its own file layer and
+    // never asks for a `std::fs::File` (there is none in a page).
+    #[cfg(target_arch = "wasm32")]
     fn open_source(&self, _source: &str) -> std::io::Result<std::fs::File> {
         Err(std::io::Error::new(std::io::ErrorKind::Unsupported, NOT_YET))
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    fn open_source(&self, source: &str) -> std::io::Result<std::fs::File> {
+        std::fs::File::open(source)
+    }
     fn download_dir(&self) -> PathBuf {
-        PathBuf::from("/downloads")
+        self.root.join("downloads")
     }
     fn staging_dir(&self) -> PathBuf {
-        PathBuf::from("/outbox")
+        self.root.join("outbox")
     }
 }
 
@@ -144,10 +154,15 @@ impl Shell {
     /// holds, if anything. Without one, a store that belonged to an identity
     /// shows the lost-key screen.
     pub fn open(store: Arc<Store>, sink: Sink, own_name: &str, identity: Option<Identity>) -> R<Arc<Shell>> {
+        Self::open_at(store, sink, own_name, identity, PathBuf::from("/"))
+    }
+
+    /// `open`, with this shell's files under `root`.
+    pub fn open_at(store: Arc<Store>, sink: Sink, own_name: &str, identity: Option<Identity>, root: PathBuf) -> R<Arc<Shell>> {
         let shell = Arc::new(Shell {
             store,
             engine: Mutex::new(None),
-            host: Arc::new(ShellHost { sink }),
+            host: Arc::new(ShellHost { sink, root }),
             key_lost: Mutex::new(None),
             own_name: own_name.trim().to_owned(),
             foreground: AtomicBool::new(false),
@@ -167,6 +182,11 @@ impl Shell {
 
     pub fn store(&self) -> &Arc<Store> {
         &self.store
+    }
+
+    /// Where this shell's files are (`files.rs`).
+    pub fn root(&self) -> &std::path::Path {
+        &self.host.root
     }
 
     pub fn engine(&self) -> R<Arc<Engine>> {
@@ -523,15 +543,21 @@ impl Shell {
             "hc_message" => out(self.store.message(&arg::<String>(args, "id")?).map_err(s)?),
             "hc_send" => {
                 let SendRequest { msg, replies, answers } = arg(args, "msg")?;
-                if !msg.attachments.is_empty() {
-                    return Err("Files can't be sent from Hubchat Web yet.".into());
-                }
                 unit(self.engine()?.send_with(msg, ReplyMeta { replies, answers }).await)
             }
             "hc_draft_answers" => out(self.store.draft_answers(&arg::<String>(args, "peer")?).map_err(s)?),
             "hc_set_draft_answers" => unit(self.store.set_draft_answers(&arg::<String>(args, "peer")?, &arg(args, "answers")?)),
             "hc_card_answers" => out(self.store.card_answers(&arg::<String>(args, "peer")?, &arg::<Vec<String>>(args, "ids")?).map_err(s)?),
             "hc_retry" => unit(self.engine()?.retry(&arg::<String>(args, "id")?)),
+            // ------------------------------------------------------ files (files.rs)
+            "hc_file_info" => self.file_info(&arg::<String>(args, "source")?).await,
+            "hc_download" => unit(
+                self.engine()?
+                    .queue_download_copy(&arg::<String>(args, "messageId")?, &arg::<String>(args, "localId")?, arg::<Option<bool>>(args, "freshCopy")?.unwrap_or(false))
+                    .map(|_| ()),
+            ),
+            "hc_cancel_transfer" => unit(self.engine()?.cancel_transfer(&arg::<String>(args, "localId")?)),
+            "hc_remove_attachment" => unit(self.engine()?.remove_attachment(&arg::<String>(args, "messageId")?, &arg::<String>(args, "localId")?).await),
             "hc_transfers" => out(self.store.transfer_page(arg::<Option<String>>(args, "after")?.as_deref().unwrap_or("")).map_err(s)?),
             "hc_transfer_history" => {
                 out(self.engine()?.transfer_history(arg::<Option<String>>(args, "after")?.as_deref().unwrap_or("")).map_err(s)?)

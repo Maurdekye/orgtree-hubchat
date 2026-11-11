@@ -186,6 +186,17 @@ pub async fn symlink_metadata(path: impl AsRef<Path>) -> io::Result<Metadata> {
     metadata_now(path)
 }
 
+/// The browser's own `File` object for a stored file: what a page hands to
+/// the share sheet or a download, without the bytes passing through here.
+pub async fn browser_file(path: impl AsRef<Path>) -> io::Result<wasm_bindgen_futures::wasm_bindgen::JsValue> {
+    let fs = files()?;
+    let path = text(path);
+    if !fs.metadata_now(&path)?.is_file() {
+        return Err(io::Error::new(io::ErrorKind::NotFound, "not a file"));
+    }
+    fs.backend().browser_file(&webfs::key(&path)?).await
+}
+
 // ---- what the core asks without waiting (natively: the same std calls as always)
 
 /// What is at `path` (std's `symlink_metadata`; there are no links here).

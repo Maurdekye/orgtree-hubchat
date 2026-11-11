@@ -6,8 +6,13 @@ import { isApplePhoneOrPad } from "./device";
  *  download does not work in a Home Screen app there), a download in every other browser. False: the
  *  user closed the share sheet without choosing. Call it in the click itself: a browser shares and
  *  downloads only for one. */
-export async function saveText(name: string, text: string): Promise<boolean> {
-  const file = new File([text], name, { type: "text/plain" });
+export function saveText(name: string, text: string): Promise<boolean> {
+  return saveFile(new File([text], name, { type: "text/plain" }));
+}
+
+/** The same for any file (an attachment saved from a chat). */
+export async function saveFile(file: File): Promise<boolean> {
+  const name = file.name;
   if (isApplePhoneOrPad() && typeof navigator.share === "function" && navigator.canShare?.({ files: [file] })) {
     try {
       await navigator.share({ files: [file] });

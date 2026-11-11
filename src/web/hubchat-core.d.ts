@@ -19,6 +19,9 @@ declare module "@hubchat-core" {
   export function boot(host: CoreHost): Promise<void>;
   /** One command: its name and its arguments as JSON; the answer as JSON. Rejects with a sentence. */
   export function call(cmd: string, args: string): Promise<string>;
+  /** A command that takes or gives more than JSON: `hc_web_put` (keep the chosen file `blob`; its path),
+   *  `hc_file_preview` and `hc_attachment_preview` (a picture's bytes), `hc_web_file` (`{ name, file }`). */
+  export function raw(cmd: string, args: string, blob: Blob | null): Promise<unknown>;
   /** The text of a QR code in a frame of `width` x `height` grey pixels. Undefined: none in it. */
   export function scan(width: number, height: number, grey: Uint8Array): string | undefined;
   /** Stop the engine. */

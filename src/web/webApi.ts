@@ -6,12 +6,12 @@
 // may hold, so a tab takes the Web Lock `hubchat-core` before it starts the
 // worker, and gives both up when another tab asks on the BroadcastChannel
 // `hubchat` (Use it here).
-import type { InvokeArgs } from "@tauri-apps/api/core";
+import type { InvokeArgs, InvokeOptions } from "@tauri-apps/api/core";
 import { makeApi, type Api, type Probe } from "../api";
 import { installWebNative } from "../lib/native";
 import { deviceName, layout } from "./device";
-import { pickFile, pickedText } from "./files";
-import { saveText } from "./save";
+import { pickFile, pickFilesToSend, pickedText } from "./files";
+import { saveFile, saveText } from "./save";
 import { scanQr } from "./scan";
 import { serverName, suggestedHubs } from "./suggest";
 import { newerBuild } from "./update";
@@ -131,13 +131,36 @@ export async function openCore(takeOver = false): Promise<Core | null> {
   /** One command, to the core. */
   const call = <T>(cmd: string, args?: InvokeArgs): Promise<T> => {
     if (dead) return Promise.reject(dead);
-    // bytes (a pasted image) are for files, which the web app does not send yet
+    // bytes are not JSON: what carries them goes through `raw`
     if (args instanceof ArrayBuffer || ArrayBuffer.isView(args) || Array.isArray(args)) return Promise.reject(NOT_YET);
     return new Promise<T>((resolve, reject) => {
       const id = ++lastId;
       pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
       send({ t: "call", id, cmd, args: args ?? {} });
     });
+  };
+
+  /** A command that takes or gives more than JSON (a chosen file in, bytes or a File out). */
+  const raw = <T>(cmd: string, args: Record<string, unknown>, blob?: Blob): Promise<T> => {
+    if (dead) return Promise.reject(dead);
+    return new Promise<T>((resolve, reject) => {
+      const id = ++lastId;
+      pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
+      send({ t: "raw", id, cmd, args, blob });
+    });
+  };
+  /** Keep a chosen file with the core: what stands for it from then on (the apps have a path). */
+  const keepFile = (file: Blob, name: string): Promise<string> => raw<string>("hc_web_put", { name }, file);
+  /** A picture's bytes, as the apps' commands answer them. */
+  const picture = async (cmd: string, args: Record<string, unknown>): Promise<ArrayBuffer> => {
+    const bytes = await raw<Uint8Array>(cmd, args);
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+  };
+  /** The apps open a saved file with the system's app. A page hands this browser's copy to the
+   *  browser: the share sheet on an iPhone, a download elsewhere. */
+  const openAttachment = async (args: Record<string, unknown>): Promise<void> => {
+    const got = await raw<{ name: string; file: File }>("hc_web_file", args);
+    await saveFile(new File([got.file], got.name, { type: got.file.type }));
   };
 
   // The apps write the recovery words file themselves (`hc_save_recovery`). A page hands it to the
@@ -177,8 +200,15 @@ export async function openCore(takeOver = false): Promise<Core | null> {
   };
 
   /** One command of src/api.ts: the core's, but for what only the page can do. */
-  const invoke = <T>(cmd: string, args?: InvokeArgs): Promise<T> => {
+  const invoke = <T>(cmd: string, args?: InvokeArgs, options?: InvokeOptions): Promise<T> => {
     if (cmd === "hc_save_recovery") return saveRecovery() as Promise<T>;
+    if (cmd === "hc_file_preview" || cmd === "hc_attachment_preview") return picture(cmd, (args ?? {}) as Record<string, unknown>) as Promise<T>;
+    if (cmd === "hc_open_attachment") return openAttachment((args ?? {}) as Record<string, unknown>) as Promise<T>;
+    if (cmd === "hc_save_pasted") {
+      // a pasted picture: its bytes, and its name in a header (src/api.ts)
+      const name = new Headers(options?.headers as HeadersInit | undefined).get("x-name") ?? "pasted.png";
+      return keepFile(new Blob([args as Uint8Array<ArrayBuffer>]), name) as Promise<T>;
+    }
     if (cmd === "hc_key_file_import") return importKeyFile((args ?? {}) as Record<string, unknown>) as Promise<T>;
     if (cmd === "hc_key_file_export") return exportKeyFile((args ?? {}) as Record<string, unknown>) as Promise<T>;
     const answer = call<T>(cmd, args);
@@ -202,6 +232,11 @@ export async function openCore(takeOver = false): Promise<Core | null> {
   installWebNative({
     scanQr: () => scanQr(readFrame),
     pickKeyFile: () => pickFile(".hubchat-key,text/plain"),
+    pickFiles: async () => {
+      const paths: string[] = [];
+      for (const file of await pickFilesToSend()) paths.push(await keepFile(file, file.name));
+      return paths;
+    },
     saveKeyFileTo: () => Promise.resolve(KEY_FILE_DEST),
     suggestedHubs,
     serverName,

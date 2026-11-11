@@ -17,6 +17,8 @@ rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 futures-util = "0.3"
+# files.rs and wasm.rs write through the core's file layer, whose files are tokio's kind
+tokio = { version = "1", default-features = false, features = ["io-util"] }
 # Reads the QR code in a camera frame (scan.rs): an iPhone's browser has no
 # barcode reader. Without its default feature it brings no image codecs.
 rqrr = { version = "0.11", default-features = false }
