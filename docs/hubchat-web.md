@@ -114,11 +114,24 @@ A key file is read and written as text: the page hands the chosen file's
 text to the core, and saves the one the core makes through the browser's
 download or share sheet.
 
-A phone's browser has no QR reader of its own, so the page shows the camera
-full screen (`src/web/scan.ts`, `getUserMedia` with the back camera), sends
-grey frames to the worker a few times a second, and the core reads them
-(`scan.rs`, the `rqrr` crate without its default features, licence
-`(MIT OR Apache-2.0) AND ISC`). Linking and the reader add about 143 KB
+The page shows the camera full screen (`src/web/scan.ts`, `getUserMedia`
+with the back camera at 1080p, continuous focus where the camera takes the
+setting). Where the browser reads QR codes itself (`BarcodeDetector`, Chrome
+on Android) it is asked first. An iPhone's browser has no such reader, so
+every frame also goes to the worker as grey pixels, at the camera's own size,
+and the core reads it (`scan.rs`, the `rqrr` crate without its default
+features, licence `(MIT OR Apache-2.0) AND ISC`).
+
+A code on a monitor is a hard picture: small in the frame, soft, tilted, on
+a dark window with glare. `scan.rs` therefore reads a frame up to four ways,
+cheapest first: as it is; smoothed, with black decided against the square
+around each pixel; the middle two thirds enlarged twice and sharpened; the
+same without sharpening. Measured on drawn photo-like frames (1080 x 1920,
+noise, blur): it reads from about 5 pixels a module up, and often at 4; the
+reader alone needed about 8 once the picture was soft. The ignored test
+`scan::tests::what_the_reader_manages` prints that table. The first real
+camera try (2026-11-11) failed because frames were scaled to 800 pixels,
+which left the code under 3 pixels a module. Linking and the reader add about 143 KB
 to the compressed first load. The camera needs a secure page (HTTPS or
 localhost) and the person's permission; refused, the scan says so and the
 typed code still works.
