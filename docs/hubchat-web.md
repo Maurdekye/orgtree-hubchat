@@ -29,6 +29,9 @@ yet is listed under [Not there yet](#not-there-yet).
   downloads into the browser's own storage; **Open** then hands it to the
   browser (the share sheet on an iPhone, a download elsewhere). See
   [Files](#files).
+- Notifications: off until the person turns them on (a card on the chat
+  list, or Settings, Notifications). The person's hubs then send them, also
+  while Hubchat is closed. See [Notifications](#notifications).
 - Saving the recovery words: Copy, or Download (the share sheet on an
   iPhone). On the web the words must be saved before the chat list opens.
 - Opening without a network: the app's files are kept in the browser, so
@@ -246,6 +249,50 @@ and the core works on those exactly as it works on a disk.
 
 There is no "Show in folder" on the web: a browser has no folder to show.
 
+## Notifications
+
+A phone freezes a page in the background, so Hubchat Web hears of new mail
+there only through the browser's own push. A hub with Web Push (Mail hub
+2.5.1, feature `webpush`) sends the notification itself; the hub's
+`docs/v2-additions.md` has what it sends and when.
+
+- **Turning them on** (`src/web/push.ts`), in the tap, because a browser
+  asks its permission only then: the page makes a P-256 key pair, subscribes
+  with the public key (`userVisibleOnly`), and hands the subscription, the
+  private key, its own address and "Show message text" to the core
+  (`hc_web_push_set`). The key is made here so that several self-hosted
+  hubs can each sign for the one subscription a browser allows; it lets its
+  holder push to this subscription and nothing else.
+- **Every hub is handed it** (`crates/hubchat-core/src/engine_webpush.rs`):
+  the subscription is kept in the store, and each hub's sync compares what
+  that hub last heard with it before each request, registering or removing
+  what differs. So a hub added later, one that was unreachable and one that
+  was updated since all get it by themselves. Settings names a hub that
+  cannot: "<hub> needs an update before it can send notifications to this
+  device." Removing a hub takes the subscription off it; when that cannot
+  be confirmed, the page makes a new subscription, so the removed hub's
+  copy is dead.
+- **Kept in line**: at each start, and when the service worker says the
+  browser changed the subscription, the page compares the browser's
+  subscription with the kept one and subscribes again when they differ. A
+  permission taken back in the browser turns notifications off.
+- **Shown** by the service worker (`web/sw.template.js`): the hub's JSON
+  gives the title, the text, the tag and the address to open. Every push
+  shows a notification, also one it cannot read (`Hubchat` / `New
+  message`): a browser takes the subscription away from an app whose pushes
+  show nothing. Only this app's own pages are opened. A tap brings the open
+  app to the front and names the chat (`hc-pending`, the apps' route), or
+  opens the app at `#/chat/<address>`.
+- **While the app is open** it shows no notification itself: it reports
+  the device in use (as the apps do), and a hub holds a browser's push
+  while any device of the person is in use. The unread count shows on the
+  app's icon and in the tab's title, `(3) Hubchat`.
+- **Start over** tells every hub to forget the subscription first, while
+  there is still a key to ask with.
+
+Without notifications (not turned on, refused, or a hub without Web Push)
+messages arrive while the app is open.
+
 ## The suggested hub
 
 Someone who has just made a new identity and has no hub yet is offered hubs
@@ -352,6 +399,8 @@ the hub as `https://pc.example.ts.net:8443`.
 ## Tests
 
 - `cargo test -p hubchat-web --lib`: the shell's commands, natively.
+- `node --test tools/web-sw-push.test.mjs`: the service worker's own
+  script and what it does with a push and a tapped notification.
 - `cargo check -p hubchat-web --target wasm32-unknown-unknown`: the core
   and the shell build for the browser.
 - The whole native suite (`hubchat-core`, `hubchat`) must stay green: the
@@ -364,7 +413,10 @@ the hub as `https://pc.example.ts.net:8443`.
   phone's visual viewport), onboarding, the hub refusal message, the
   suggested hubs (one that answers, one listed that does not, none with
   suggestions switched off), the recovery words download, a message both ways with a
-  scripted peer, receipts, Settings, a second browser that links by
+  scripted peer, receipts, files both ways, notifications (the hub's
+  signed, encrypted push for a new message; the hub must be a debug build
+  with its `push-test` feature, so it may push to the test's own
+  receiver), Settings, a second browser that links by
   scanning the first one's QR code (its camera replaced by a picture of
   that code), a reload, the app's files kept by the service worker, a
   start with the server gone, a newer build put on the server (the banner,
@@ -396,7 +448,6 @@ These answer "This isn't available in Hubchat Web yet." or are hidden:
   files stay until the site's data is cleared.
 - The hub stream: Hubchat Web long-polls every hub (`stream_web.rs`) until
   it has a carrier over the browser's WebSocket.
-- Notifications (Web Push).
 - Settings, About has no "Check for updates" button on the web: the check
   runs by itself.
 - The release workflow that builds and publishes the server's image.
@@ -414,3 +465,11 @@ Chromium: the private file system's synchronous handles and moving a file
 there have not been run in Safari. The file chooser itself is replaced in
 the browser test; a real one, the share sheet and a pasted picture have not
 been tried. The profile picture has not been tried on the web.
+
+No notification has reached a real browser yet. The browser test replaces
+the browser's subscription (its headless browser reaches no push service)
+and proves the rest with a real hub: the registration, the hub's push, its
+signature and what it decrypts to. Whether Apple's, Google's and Mozilla's
+push services accept that signature, and how an iPhone shows the
+notification, are unproven. The service worker's part is proven by running
+its script (`tools/web-sw-push.test.mjs`), not in a browser.
