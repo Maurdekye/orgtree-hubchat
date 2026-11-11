@@ -82,6 +82,20 @@ pub fn chat_link(owner: &str, peer: &str) -> String {
     url.into()
 }
 
+/// A chat link that also names the question card to show (`q`); Jump List "Needs attention" entries use it.
+/// STUB for the red commit.
+pub fn question_link(owner: &str, peer: &str, _id: &str) -> String { chat_link(owner, peer) }
+
+/// "<chat name> asks: <the question, one line, at most 60 characters>" (mirrors Orgtree's "<org>: <who> asks").
+/// STUB for the red commit.
+pub fn attention_title(name: &str, _body: &str) -> String { name.to_owned() }
+
+/// The "Needs attention" group: one entry per pending question. STUB for the red commit.
+unsafe fn attention_collection(_exe: &str, _entries: &[ContactLink]) -> Result<IObjectArray> {
+    let c: IObjectCollection = unsafe { CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)? };
+    c.cast()
+}
+
 fn link(exe: &str, title: &str, target: &str, icon: Option<&std::path::Path>) -> Result<IShellLinkW> {
     // Only our URL builder supplies target: quoting cannot become another argument.
     unsafe {
@@ -323,6 +337,51 @@ mod tests {
             assert_ne!(DestroyIcon(loaded), 0);
         }
     }
+    #[test]
+    fn a_question_entry_carries_the_card_in_one_encoded_argument() {
+        let link = question_link("me.123456", "peer.123456", "7f3c2a10-aaaa-bbbb-cccc-0123456789ab");
+        assert!(!link.contains('"'));
+        let url = url::Url::parse(&link).unwrap();
+        let pairs = url.query_pairs().collect::<std::collections::HashMap<_,_>>();
+        assert_eq!(pairs.get("to").unwrap(), "peer.123456");
+        assert_eq!(pairs.get("owner").unwrap(), "me.123456");
+        assert_eq!(pairs.get("q").unwrap(), "7f3c2a10-aaaa-bbbb-cccc-0123456789ab");
+        assert_eq!(url.host_str(), Some("chat"));
+        let odd = url::Url::parse(&question_link("me.123456", "p.123456", "a&b=\"c")).unwrap();
+        assert_eq!(odd.query_pairs().find(|(k, _)| k == "q").unwrap().1, "a&b=\"c");
+    }
+
+    #[test]
+    fn a_question_entry_reads_like_orgtrees_attention_entries() {
+        assert_eq!(attention_title("Pat", "Ship rc3 to beta?"), "Pat asks: Ship rc3 to beta?");
+        assert_eq!(attention_title("Pat", ""), "Pat asks");
+        assert_eq!(attention_title("Pat", "two\nlines\there"), "Pat asks: two lines here", "control characters become spaces");
+        let long = attention_title("Pat", &"x".repeat(200));
+        assert_eq!(long, format!("Pat asks: {}\u{2026}", "x".repeat(59)), "the question is cut at 60 characters");
+        assert!(attention_title(&"n".repeat(300), "q").chars().count() <= 200, "a whole title is at most 200 characters");
+    }
+
+    #[test]
+    fn the_attention_group_has_one_entry_per_question_with_the_card_in_its_argument() {
+        unsafe {
+            CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok().unwrap();
+            let _apartment = Apartment;
+            let exe = r"C:\scratch\hubchat.exe";
+            let entries = [
+                ContactLink { name: attention_title("Pat", "One?"), target: question_link("me.123456", "pat.123456", "q1"), icon: None },
+                ContactLink { name: attention_title("Kim", "Two?"), target: question_link("me.123456", "kim.123456", "q2"), icon: None },
+            ];
+            let group = attention_collection(exe, &entries).unwrap();
+            assert_eq!(group.GetCount().unwrap(), 2);
+            let first = group.GetAt::<IShellLinkW>(0).unwrap();
+            assert_eq!(arguments(&first).unwrap(), format!("\"{}\"", entries[0].target));
+            let props: IPropertyStore = first.cast().unwrap();
+            let title = props.GetValue(&TITLE).unwrap();
+            assert_eq!(BSTR::try_from(&title).unwrap().to_string(), "Pat asks: One?");
+            assert_eq!(attention_collection(exe, &[]).unwrap().GetCount().unwrap(), 0);
+        }
+    }
+
     #[test]
     fn chat_activation_encodes_identity_and_contact_as_one_argument() {
         let link = chat_link("me.123456", "peer.123456&other=\"x");
