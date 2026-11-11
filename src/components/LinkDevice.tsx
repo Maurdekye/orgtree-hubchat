@@ -15,7 +15,7 @@ import { routeLink, startJoin } from "../lib/join";
 import { errText, saveKeyFileTo, scanQr } from "../lib/native";
 import { refreshDirectory, refreshState, useSnap } from "../lib/store";
 import { toast } from "../lib/toast";
-import { Modal, ModalHead, NoteCard, QR, useNow, usePlatform } from "./ui";
+import { Modal, ModalHead, NoteCard, QR, useNow, useDeviceWord, usePlatform } from "./ui";
 
 export type LinkTab = "offer" | "approve" | "qr" | "file";
 const TAB_LABELS: [LinkTab, string, string][] = [
@@ -113,7 +113,7 @@ function OfferTab({ onClose }: { onClose: () => void }) {
   const deny = () => { run.current++; setSt({ k: "denied" }); };
   const blk = platform === "android" ? " block" : "";
   const hubs = snap.state?.hubs;
-  const self = platform === "android" ? "phone" : "PC";
+  const self = useDeviceWord();
 
   if (st.k === "done") {
     return (
@@ -183,6 +183,7 @@ function OfferTab({ onClose }: { onClose: () => void }) {
 
 function ApproveTab({ onClose, initialInput }: { onClose: () => void; initialInput?: string }) {
   const platform = usePlatform();
+  const self = useDeviceWord();
   const snap = useSnap();
   const [code, setCode] = useState("");
   /** A scanned QR's full text (it also names the hub); the box shows just its code. */
@@ -279,7 +280,7 @@ function ApproveTab({ onClose, initialInput }: { onClose: () => void; initialInp
       <>
         <Lead>Check the name below: it should be the device you are holding.</Lead>
         <div className="approve"><Icon name={devIcon(name)} /><div className="t"><b>Link “{name}”?</b><span>{r.hubs.length ? "Waiting on " + r.hubs.map(hubName).join(", ") + " · " : ""}code {r.code}</span></div></div>
-        <NoteCard icon="warning" warn><b>Approve only a device you are holding.</b> It gets your key and becomes you, like this {platform === "android" ? "phone" : "PC"}.</NoteCard>
+        <NoteCard icon="warning" warn><b>Approve only a device you are holding.</b> It gets your key and becomes you, like this {self}.</NoteCard>
         {st.k === "sending" ? <div className="probe-card busy"><span className="spin" /><div>Sending your key, hubs and profile to “{name}”…</div></div> : null}
         <Acts>
           <button className={"btn ghost" + (platform === "android" ? " block" : "")} onClick={deny} disabled={st.k === "sending"}>Deny</button>
@@ -326,6 +327,7 @@ function ApproveTab({ onClose, initialInput }: { onClose: () => void; initialInp
 
 function KeyQrTab({ onClose }: { onClose: () => void }) {
   const platform = usePlatform();
+  const self = useDeviceWord();
   const snap = useSnap();
   const [qr, setQr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -352,7 +354,7 @@ function KeyQrTab({ onClose }: { onClose: () => void }) {
       {platform === "android"
         ? <div className="qrwrap big"><QR text={qr} size={260} /><span className="help">On the new phone: <span style={{ fontWeight: 600, color: "var(--ink)" }}>I already use Hubchat › Scan a QR code</span>. Nothing goes over the network.</span></div>
         : <div className="pair"><QR text={qr} size={210} />{steps}</div>}
-      <div className={"help" + (platform === "android" ? " pad" : "")} style={{ marginTop: 14 }}>This {platform === "android" ? "phone" : "PC"} can't tell when the other device has read it: hide the code once it says Welcome back.</div>
+      <div className={"help" + (platform === "android" ? " pad" : "")} style={{ marginTop: 14 }}>This {self} can't tell when the other device has read it: hide the code once it says Welcome back.</div>
       <Acts><button className={"btn primary" + (platform === "android" ? " block" : "")} onClick={() => setQr(null)}>Done</button></Acts>
     </>
   );
@@ -360,6 +362,7 @@ function KeyQrTab({ onClose }: { onClose: () => void }) {
 
 export function KeyFileTab({ onRecovery }: { onRecovery?: () => void }) {
   const platform = usePlatform();
+  const self = useDeviceWord();
   const [p1, setP1] = useState("");
   const [p2, setP2] = useState("");
   const [busy, setBusy] = useState(false);
@@ -380,7 +383,7 @@ export function KeyFileTab({ onRecovery }: { onRecovery?: () => void }) {
   const short = !!p1 && p1.length < 8;
   return (
     <>
-      <Lead>For a device that can't scan, or when no other device is at hand. The key file holds your key, your id, your profile and your hub list, locked with a passphrase. Keep it somewhere other than this {platform === "android" ? "phone" : "PC"}.</Lead>
+      <Lead>For a device that can't scan, or when no other device is at hand. The key file holds your key, your id, your profile and your hub list, locked with a passphrase. Keep it somewhere other than this {self}.</Lead>
       <div className="kfpanel" style={platform === "desktop" ? { margin: "0 0 12px" } : undefined}>
         <label className="input"><Icon name="lock" /><input type="password" value={p1} placeholder="Passphrase (8 or more characters)" autoComplete="new-password" onChange={(e) => { setP1(e.target.value); setSaved(null); }} /></label>
         <label className="input"><Icon name="lock" /><input type="password" value={p2} placeholder="Repeat it" autoComplete="new-password" onChange={(e) => setP2(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && ok && !busy) void save(); }} /></label>

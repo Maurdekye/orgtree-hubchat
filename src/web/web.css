@@ -20,3 +20,9 @@
    the home bar's inset is under the keyboard then. */
 html[data-keyboard] .screen { top: var(--visible-top); bottom: auto; height: var(--visible-height); padding-bottom: 0; }
 html[data-keyboard] .ob { bottom: 0; }
+
+/* The camera, while a QR code is scanned (scan.ts): over everything, the picture filling the screen. */
+.web-scan { position: fixed; inset: 0; z-index: 1000; background: #000; display: flex; align-items: center; justify-content: center; }
+.web-scan video { width: 100%; height: 100%; object-fit: cover; }
+.web-scan-hint { position: absolute; left: 0; right: 0; top: calc(env(safe-area-inset-top, 0px) + 24px); text-align: center; color: #fff; font-size: 15px; text-shadow: 0 1px 3px rgba(0, 0, 0, .8); padding: 0 24px; }
+.web-scan-cancel { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(env(safe-area-inset-bottom, 0px) + 28px); min-width: 140px; }

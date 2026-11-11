@@ -7,6 +7,8 @@ export type ToCore =
   | { t: "boot"; deviceName: string }
   /** One command of src/api.ts: its name and its arguments, as the apps' invoke() sends them. */
   | { t: "call"; id: number; cmd: string; args: unknown }
+  /** One camera frame to read a QR code from (scan.ts): its grey pixels, one byte each. */
+  | { t: "scan"; id: number; width: number; height: number; grey: ArrayBuffer }
   /** Stop the engine and say `stopped`: another tab takes over, or the page goes away. */
   | { t: "stop" };
 
@@ -19,6 +21,8 @@ export type FromCore =
   | { t: "ret"; id: number; ok: false; error: string }
   /** An event of the core: `name` is the apps' event name (`hc`), `ev` its payload. */
   | { t: "event"; name: string; ev: unknown }
+  /** What a `scan` frame held: the QR code's text, or null. */
+  | { t: "scanned"; id: number; text: string | null }
   | { t: "stopped" };
 
 /** An error as a sentence: invoke() rejects with a string, as Tauri's does. */

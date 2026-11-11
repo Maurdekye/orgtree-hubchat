@@ -17,6 +17,12 @@ export const usePlatform = () => useContext(PlatformCtx);
  *  installed app can do. `usePlatform` stays the layout. */
 export const WebCtx = createContext(false);
 export const useWeb = () => useContext(WebCtx);
+/** What this device is called in a sentence: "this phone", "this PC", "this browser" (Hubchat Web). */
+export const useDeviceWord = (): "browser" | "phone" | "PC" => {
+  const web = useContext(WebCtx);
+  const platform = usePlatform();
+  return web ? "browser" : platform === "android" ? "phone" : "PC";
+};
 
 export function Avatar({ kind, name, size, pres, presTitle, address, picture }: { kind: Kind | "me"; name: string; size: number; pres?: PresState; presTitle?: string; address?: string; picture?: PictureMeta | null }) {
   const fallback = avatarFallback(kind, name);

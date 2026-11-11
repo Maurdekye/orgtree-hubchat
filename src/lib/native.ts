@@ -10,6 +10,30 @@ const sleep = (n: number) => new Promise((r) => setTimeout(r, n));
 /** What Hubchat Web answers for something it does not do yet (the core says the same). */
 const NOT_ON_WEB = "This isn't available in Hubchat Web yet.";
 
+/** What only a page can do for Hubchat Web: the camera, the browser's file chooser and its downloads.
+ *  src/web fills it in at start (webApi.ts); nothing here imports from src/web. */
+export interface WebNative {
+  /** Scan one QR code with the camera. Null: the user closed it. */
+  scanQr(): Promise<string | null>;
+  /** Choose a key file: what stands for it in `api.keyFileImport`. */
+  pickKeyFile(): Promise<string | null>;
+  /** What stands for "where to save the key file" in `api.keyFileExport`: the browser decides where. */
+  saveKeyFileTo(): Promise<string | null>;
+  /** Hub addresses worth offering for the first hub: the server's own, the likeliest first. */
+  suggestedHubs(): Promise<string[]>;
+}
+let webNative: WebNative | null = null;
+export function installWebNative(w: WebNative): void { webNative = w; }
+/** Hub addresses to offer someone adding their first hub. The apps have none: only Hubchat Web is
+ *  served from somewhere a hub may run too. */
+export async function suggestedHubs(): Promise<string[]> {
+  return isWeb && webNative ? webNative.suggestedHubs().catch(() => []) : [];
+}
+function onWeb(): WebNative {
+  if (!webNative) throw NOT_ON_WEB;
+  return webNative;
+}
+
 /** Pick files to attach: paths (desktop) or content:// URIs (Android). */
 export async function pickFiles(): Promise<string[]> {
   if (isWeb) throw "Files can't be sent from Hubchat Web yet.";
@@ -38,7 +62,7 @@ export async function openAttachment(messageId: string, localId: string, reveal:
 
 /** Pick a key file to import: a path, or on Android a content:// URI. */
 export async function pickKeyFile(): Promise<string | null> {
-  if (isWeb) throw NOT_ON_WEB;
+  if (isWeb) return onWeb().pickKeyFile();
   if (!isTauri) { await sleep(200); return MOCK_KEY_FILE; }
   const { open }= await import("@tauri-apps/plugin-dialog");
   const r = await open({ multiple: false, directory: false });
@@ -47,7 +71,7 @@ export async function pickKeyFile(): Promise<string | null> {
 
 /** Where to save the key file (a path, or on Android a content:// URI). */
 export async function saveKeyFileTo(): Promise<string | null> {
-  if (isWeb) throw NOT_ON_WEB;
+  if (isWeb) return onWeb().saveKeyFileTo();
   if (!isTauri) { await sleep(200); return MOCK_KEY_FILE; }
   const { save }= await import("@tauri-apps/plugin-dialog");
   return await save({ defaultPath: "hubchat-key.hubchat-key" });
@@ -63,7 +87,7 @@ const MOCK_KEY_FILE = "C:\\Users\\alex\\Documents\\hubchat-key.hubchat-key";
 
 /** Scan one QR code with the camera (Android). Null when the user backs out. */
 export async function scanQr(mockText: string): Promise<string | null> {
-  if (isWeb) throw "Hubchat Web can't scan a code with the camera yet.";
+  if (isWeb) return onWeb().scanQr();
   if (!isTauri) {
     await sleep(900);
     return new URLSearchParams(location.search).get("scan") ?? mockText;

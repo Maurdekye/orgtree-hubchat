@@ -8,8 +8,12 @@
 // `hubchat` (Use it here).
 import type { InvokeArgs } from "@tauri-apps/api/core";
 import { makeApi, type Api, type Probe } from "../api";
+import { installWebNative } from "../lib/native";
 import { deviceName, layout } from "./device";
+import { pickFile, pickedText } from "./files";
 import { saveText } from "./save";
+import { scanQr } from "./scan";
+import { suggestedHubs } from "./suggest";
 import { sentence, type FromCore, type ToCore } from "./wire";
 
 const LOCK = "hubchat-core";
@@ -18,8 +22,14 @@ const CHANNEL = "hubchat";
 /** What the core answers for a command a browser cannot do yet (crates/hubchat-web/src/shell.rs). */
 const NOT_YET = "This isn't available in Hubchat Web yet.";
 
-/** The recovery words as the file the apps save (the core's `hc_recovery_file`). */
+/** A small text file the core made for the page to save: the recovery words (`hc_recovery_file`), the
+ *  passphrase-locked key file (`hc_key_file_text`). */
 interface RecoveryFile { name: string; text: string }
+
+/** A key file is a few hundred bytes; the apps read at most this much of one. */
+const KEY_FILE_LIMIT = 1 << 20;
+/** What stands for "where to save the key file": the browser decides where. */
+const KEY_FILE_DEST = "hubchat-key.hubchat-key";
 
 /** Hold the lock until the returned function is called. Null: another tab has it (and `wait` is off). */
 function hold(wait: boolean): Promise<(() => void) | null> {
@@ -75,6 +85,7 @@ export async function openCore(takeOver = false): Promise<Core | null> {
   const worker = new Worker(new URL("./core.worker.ts", import.meta.url), { type: "module" });
   const send = (m: ToCore) => worker.postMessage(m);
   const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: string) => void }>();
+  const frames = new Map<number, (text: string | null) => void>();
   const listeners = new Map<string, Set<(e: { payload: unknown }) => void>>();
   let lastId = 0;
   let stopped: (() => void) | null = null;
@@ -89,6 +100,10 @@ export async function openCore(takeOver = false): Promise<Core | null> {
         const p = pending.get(m.id);
         pending.delete(m.id);
         if (p) { if (m.ok) p.resolve(m.value); else p.reject(m.error); }
+      } else if (m.t === "scanned") {
+        const f = frames.get(m.id);
+        frames.delete(m.id);
+        f?.(m.text);
       } else if (m.t === "event") listeners.get(m.name)?.forEach((f) => f({ payload: m.ev }));
       else if (m.t === "stopped") stopped?.();
     };
@@ -98,6 +113,8 @@ export async function openCore(takeOver = false): Promise<Core | null> {
       reject(dead);
       for (const p of pending.values()) p.reject(dead);
       pending.clear();
+      for (const f of frames.values()) f(null);
+      frames.clear();
     };
   });
   send({ t: "boot", deviceName: deviceName() });
@@ -134,14 +151,40 @@ export async function openCore(takeOver = false): Promise<Core | null> {
     return file.name;
   };
 
+  /** One camera frame, to the core: the text of the QR code in it, or null. */
+  const readFrame = (width: number, height: number, grey: Uint8Array): Promise<string | null> => {
+    if (dead) return Promise.reject(dead);
+    return new Promise((resolve) => {
+      const id = ++lastId;
+      frames.set(id, resolve);
+      const m: ToCore = { t: "scan", id, width, height, grey: grey.buffer as ArrayBuffer };
+      worker.postMessage(m, [m.grey]);
+    });
+  };
+
+  // The apps read and write the key file by its path. A page has the file the user chose, and hands
+  // the one the core made to the browser.
+  const importKeyFile = async (args: Record<string, unknown>): Promise<string> => {
+    const text = await pickedText(String(args.source ?? ""), KEY_FILE_LIMIT);
+    const address = await call<string>("hc_key_file_import", { text, passphrase: args.passphrase });
+    keepStorage();
+    return address;
+  };
+  const exportKeyFile = async (args: Record<string, unknown>): Promise<void> => {
+    const file = await call<RecoveryFile>("hc_key_file_text", { passphrase: args.passphrase });
+    if (!(await saveText(file.name, file.text))) throw "The key file wasn't saved.";
+  };
+
   /** One command of src/api.ts: the core's, but for what only the page can do. */
   const invoke = <T>(cmd: string, args?: InvokeArgs): Promise<T> => {
     if (cmd === "hc_save_recovery") return saveRecovery() as Promise<T>;
+    if (cmd === "hc_key_file_import") return importKeyFile((args ?? {}) as Record<string, unknown>) as Promise<T>;
+    if (cmd === "hc_key_file_export") return exportKeyFile((args ?? {}) as Record<string, unknown>) as Promise<T>;
     const answer = call<T>(cmd, args);
     if (cmd === "hc_probe_hub") return (answer as Promise<Probe>).then(explain) as Promise<T>;
     if (cmd === "hc_recovery_words") {
       void answer.then(() => call<RecoveryFile>("hc_recovery_file")).then((f) => { recoveryFile = f; }, () => { /* Download asks again */ });
-    } else if (cmd === "hc_create_identity" || cmd === "hc_restore_words") {
+    } else if (cmd === "hc_create_identity" || cmd === "hc_restore_words" || cmd === "hc_link_confirm" || cmd === "hc_restore_qr") {
       void answer.then(keepStorage, () => { /* no identity came of it */ });
     }
     return answer;
@@ -155,6 +198,12 @@ export async function openCore(takeOver = false): Promise<Core | null> {
   };
 
   const base = makeApi({ invoke, listen, mediaUrl: () => null });
+  installWebNative({
+    scanQr: () => scanQr(readFrame),
+    pickKeyFile: () => pickFile(".hubchat-key,text/plain"),
+    saveKeyFileTo: () => Promise.resolve(KEY_FILE_DEST),
+    suggestedHubs,
+  });
   const platform = layout();
   const api: Api = { ...base, state: async () => ({ ...(await base.state()), platform }) };
   void base.state().then((st) => { if (st.me) keepStorage(); }, () => { /* the UI's own start says why */ });
@@ -172,6 +221,8 @@ export async function openCore(takeOver = false): Promise<Core | null> {
       dead = "Hubchat is open in another tab or window.";
       for (const p of pending.values()) p.reject(dead);
       pending.clear();
+      for (const f of frames.values()) f(null);
+      frames.clear();
       document.removeEventListener("visibilitychange", wake);
       window.removeEventListener("pageshow", wake);
       window.removeEventListener("online", wake);

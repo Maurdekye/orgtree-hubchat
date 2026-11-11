@@ -19,6 +19,8 @@ declare module "@hubchat-core" {
   export function boot(host: CoreHost): Promise<void>;
   /** One command: its name and its arguments as JSON; the answer as JSON. Rejects with a sentence. */
   export function call(cmd: string, args: string): Promise<string>;
+  /** The text of a QR code in a frame of `width` x `height` grey pixels. Undefined: none in it. */
+  export function scan(width: number, height: number, grey: Uint8Array): string | undefined;
   /** Stop the engine. */
   export function stop(): void;
 }

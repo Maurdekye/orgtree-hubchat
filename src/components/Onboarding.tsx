@@ -12,7 +12,7 @@ import { copyWords, downloadWords } from "../lib/recovery";
 import { RECOVERY_FILE_ERROR, RECOVERY_FILE_LIMIT, recoveryFileWords } from "../lib/recoveryFile";
 import { api, type KeyLost, type LinkEvent, type LinkStart, type Probe } from "../api";
 import { Icon, Logo, type IconName } from "../lib/icons";
-import { baseName, errText, pickKeyFile, scanQr } from "../lib/native";
+import { baseName, errText, pickKeyFile, scanQr, suggestedHubs } from "../lib/native";
 import { getSnap, refreshAll, refreshState, setOnboarding, useSnap } from "../lib/store";
 import { splitAddr } from "../lib/peers";
 import { toast } from "../lib/toast";
@@ -147,8 +147,7 @@ export function LostKey({ lost, onPick }: { lost: KeyLost; onPick: (s: "method" 
           <div className="ob-sub">Bring your key back</div>
         </>}
         <div className="methods">
-          {/* Hubchat Web does not link yet */}
-          {web ? null : <Opt cls="method" ic="link" t="Link from your other device" s={"Your phone, or another device with your identity, approves this " + device + ". Your key comes back, and your chats stay."} onClick={() => onPick("method")} />}
+          <Opt cls="method" ic="link" t="Link from your other device" s={"Your phone, or another device with your identity, approves this " + device + ". Your key comes back, and your chats stay."} onClick={() => onPick("method")} />
           <Opt cls="method" ic="key" t="Recovery words" s="Type the 24 words you saved when you made your identity." onClick={() => onPick("restore")} />
           {retrying ? null : <Opt cls="method" ic="add" t="Start over with a new identity" s={"This " + device + "'s chats, hubs and settings are removed. Your address keeps working on your other devices."} onClick={() => setConfirm(true)} />}
         </div>
@@ -203,7 +202,8 @@ type Wait = { k: "starting" } | { k: "waiting"; s: LinkStart; until: number } | 
  *  before anything is saved. Confirm adopts it with the ticked hubs. */
 function ReviewStep({ ev, flow, busy, err, onConfirm, onCancel }: { ev: Arrived; flow: Flow; busy?: boolean; err?: string | null; onConfirm: (urls: string[]) => void; onCancel: () => void }) {
   const platform = usePlatform();
-  const device = platform === "android" ? "phone" : "PC";
+  const web = useWeb();
+  const device = web ? "browser" : platform === "android" ? "phone" : "PC";
   const rev = useHubReview(ev.hubs);
   const back = () => { if (!busy) onCancel(); };
   return (
@@ -285,7 +285,8 @@ function LinkWait({ hub, hubName, name, code, aliases, other, onDone, onCancel, 
     phase.current = "over";
     onDoneRef.current(address);
   };
-  const device = platform === "android" ? "phone" : "PC";
+  const web = useWeb();
+  const device = web ? "browser" : platform === "android" ? "phone" : "PC";
   const otherDev = platform === "android" ? "your PC" : "your other device";
   if (st.k === "review") return <ReviewStep ev={st.ev} flow={flow} busy={st.busy} err={st.err} onConfirm={(urls) => void confirm(urls)} onCancel={cancel} />;
   if (code) {
@@ -359,7 +360,7 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
   // Hubchat Web: a page scans nothing, and for now recovery words are its one way to bring an identity
   const web = useWeb();
   const device = web ? "browser" : platform === "android" ? "phone" : "PC";
-  const [step, setStep] = useState<Step>(start === "method" && web ? "restore" : start ?? "welcome");
+  const [step, setStep] = useState<Step>(start ?? "welcome");
   const [flow, setFlow] = useState<Flow>(start ? "words" : "new");
   const [id, setId] = useState("");
   const [name, setName] = useState("");
@@ -371,6 +372,20 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
   const [address, setAddress] = useState("");
   const [added, setAdded] = useState<{ url: string; name: string }[]>([]);
   const [more, setMore] = useState(false);
+  /** A hub that answers where this page is served from (Hubchat Web): offered, never added unasked. */
+  const [nearby, setNearby] = useState<Probe | null>(null);
+  useEffect(() => {
+    if (step !== "hub" || flow !== "new") return;
+    let live = true;
+    void (async () => {
+      for (const a of await suggestedHubs()) {
+        const p = await api.probeHub(a).catch(() => null);
+        if (!live) return;
+        if (p?.result === "connected") { setNearby({ ...p, discovered: true }); return; }
+      }
+    })();
+    return () => { live = false; };
+  }, [step, flow]);
   const [words, setWords] = useState<string[]>([]);
   const [restore, setRestore] = useState("");
   const [readingWords, setReadingWords] = useState(false);
@@ -482,7 +497,7 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
         <div className="fork" style={pad(platform)}>
           {platform === "android" && !web ? <Opt cls="fork-opt primary" ic="qr" t="Scan setup code" s="From Orgtree on your PC" onClick={() => void scanSetup()} /> : null}
           <Opt cls={"fork-opt" + (platform === "android" && !web ? "" : " primary")} ic="add" t="Create a new identity" s="Choose an id. Hubchat makes your key and your address." onClick={() => pick("new", "id")} />
-          <Opt cls="fork-opt" ic="sync" t="I already use Hubchat" s={web ? "Bring your identity back with your recovery words." : "Bring your identity from another device, a key file or your recovery words."} onClick={() => pick("words", web ? "restore" : "method")} />
+          <Opt cls="fork-opt" ic="sync" t="I already use Hubchat" s={"Bring your identity from another device, a key file or your recovery words."} onClick={() => pick("words", "method")} />
         </div>
         {platform === "android" && !web ? <NoCode /> : null}
       </Frame>
@@ -570,7 +585,7 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
           </div>
         ) : null}
         {!added.length || more
-          ? <HubAdder existing={existing} autoFocus onAdded={(url, n) => { setAdded((l) => [...l, { url, name: n }]); setMore(false); }} onCancel={added.length ? () => setMore(false) : undefined} />
+          ? <HubAdder existing={existing} autoFocus found={added.length ? null : nearby} onAdded={(url, n) => { setAdded((l) => [...l, { url, name: n }]); setMore(false); }} onCancel={added.length ? () => setMore(false) : undefined} />
           : <>
               <div style={{ margin: "-4px 0 14px", ...pad(platform) }}><button className="link" onClick={() => setMore(true)}>+ Add another hub</button></div>
               <NoteCard icon="privacy"><b>The hub can read your messages.</b> The hub's operator can read messages that pass through it; everyone on a hub is listed in its directory.</NoteCard>
@@ -600,16 +615,16 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
     if (platform === "android") {
       return (
         <Frame step={step} flow={flow} back={toWelcome} wide actions={[]}>
-          <h2>Bring your identity to this phone</h2>
-          <p className="lead">Your identity is a key, and your address comes with it: there is no id to choose. The easiest way: your PC shows a QR code, this phone scans it.</p>
+          <h2>Bring your identity to this {device}</h2>
+          <p className="lead">Your identity is a key, and your address comes with it: there is no id to choose. The easiest way: your PC shows a QR code, this {device} scans it.</p>
           <div className="methods">
-            <Opt cls="method primary" ic="qr" t="Scan the QR code from your other device" s="This phone joins through your hub; you approve it on the PC. Your key, hubs and profile arrive sealed." onClick={startScan} />
+            <Opt cls="method primary" ic="qr" t="Scan the QR code from your other device" s={"This " + device + " joins through your hub; you approve it on the PC. Your key, hubs and profile arrive sealed."} onClick={startScan} />
           </div>
           <FooterHint />
           <div className="ob-alt"><button className="link" onClick={() => { setCode(""); pick("type", "typecode"); }}>Type the code instead</button></div>
           <div className="ob-sub">Other ways</div>
           <div className="methods">
-            <Opt cls="method" ic="link" t="Show a code on this phone instead" s="This phone shows a code and your other device approves it." onClick={() => pick("link", "linkhub")} />
+            <Opt cls="method" ic="link" t={"Show a code on this " + device + " instead"} s={"This " + device + " shows a code and your other device approves it."} onClick={() => pick("link", "linkhub")} />
             <Opt cls="method" ic="file" t="Key file" s="Open a key file saved from Hubchat, with its passphrase." onClick={() => pick("file", "keyfile")} />
             <Opt cls="method" ic="key" t="Recovery words" s="Type the 24 words you saved when you made your identity." onClick={() => pick("words", "restore")} />
           </div>
@@ -716,7 +731,8 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
   }
 
   if (step === "scan") {
-    if (platform === "desktop") {
+    // a browser scans in either layout: a laptop's camera reads a screen held up to it
+    if (platform === "desktop" && !web) {
       return (
         <Frame step={step} flow={flow} back={() => go("method")} wide actions={[]}>
           <h2>This PC can't scan a code</h2>
@@ -814,7 +830,7 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
     finally { setBusy(false); }
   };
   return (
-    <Frame step={step} flow={flow} back={busy ? undefined : () => (web ? toWelcome() : go("method"))} wide actions={[{ label: busy ? "Checking…" : "Continue", primary: true, disabled: !n || busy || readingWords, onClick: doRestore }]}>
+    <Frame step={step} flow={flow} back={busy ? undefined : () => go("method")} wide actions={[{ label: busy ? "Checking…" : "Continue", primary: true, disabled: !n || busy || readingWords, onClick: doRestore }]}>
       <h2>Recovery words</h2>
       <p className="lead">Your words carry your key and your id, so your address comes back exactly as it was.</p>
       <div className="field">

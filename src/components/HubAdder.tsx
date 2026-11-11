@@ -17,8 +17,9 @@ import { NoteCard, usePlatform, useWeb } from "./ui";
 
 type Phase = { k: "idle" } | { k: "checking"; input: string } | { k: "result"; p: Probe } | { k: "adding" } | { k: "error"; msg: string };
 
-/** `initial`: an address to start from (a scanned link's hub this device couldn't reach). */
-export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel, initial }: { onAdded?: (url: string, name: string) => void; onPick?: (url: string, name: string) => void; existing: string[]; autoFocus?: boolean; onCancel?: () => void; initial?: string }) {
+/** `initial`: an address to start from (a scanned link's hub this device couldn't reach).
+ *  `found`: a hub already checked and reachable, offered until the user types an address. */
+export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel, initial, found }: { found?: Probe | null; onAdded?: (url: string, name: string) => void; onPick?: (url: string, name: string) => void; existing: string[]; autoFocus?: boolean; onCancel?: () => void; initial?: string }) {
   const platform = usePlatform();
   // Hubchat Web: a page may only call https (spec R2.2)
   const web = useWeb();
@@ -30,6 +31,11 @@ export function HubAdder({ onAdded, onPick, existing, autoFocus, onCancel, initi
   // the card's link opens the help and brings it into view
   useEffect(() => { if (helpAsk) helpRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }); }, [helpAsk]);
   const showHelp = () => { setHelp(true); setHelpAsk((n) => n + 1); };
+
+  // a suggestion never replaces what the user is doing
+  useEffect(() => {
+    if (found) setPh((p) => (p.k === "idle" ? { k: "result", p: found } : p));
+  }, [found]);
 
   const check = async () => {
     const input = value.trim(); if (!input) return;

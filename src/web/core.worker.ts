@@ -3,7 +3,7 @@
 // origin's private file system, which only a dedicated worker may open this
 // way), the hub connections and the key store; the page only sends commands
 // and gets answers and events (wire.ts).
-import init, { boot, call, stop } from "@hubchat-core";
+import init, { boot, call, scan, stop } from "@hubchat-core";
 import wasmUrl from "@hubchat-core/wasm?url";
 import { clearIdentity, loadIdentity, saveIdentity } from "./keys";
 import { sentence, type FromCore, type ToCore } from "./wire";
@@ -38,6 +38,10 @@ scope.onmessage = (e) => {
     (started ?? Promise.reject("the core is not started"))
       .then(() => call(cmd, JSON.stringify(args ?? null)))
       .then((json) => post({ t: "ret", id, ok: true, value: JSON.parse(json) }), (err) => post({ t: "ret", id, ok: false, error: sentence(err) }));
+  } else if (m.t === "scan") {
+    const { id, width, height, grey } = m;
+    (started ?? Promise.reject("the core is not started"))
+      .then(() => post({ t: "scanned", id, text: scan(width, height, new Uint8Array(grey)) ?? null }), () => post({ t: "scanned", id, text: null }));
   } else if (m.t === "stop") {
     try { stop(); } catch { /* the page ends this worker anyway */ }
     post({ t: "stopped" });
