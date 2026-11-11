@@ -1,0 +1,1 @@
+Long-press a DM in the Android chat list to open its menu: Open, Contact info, Copy mention and Close DM.
