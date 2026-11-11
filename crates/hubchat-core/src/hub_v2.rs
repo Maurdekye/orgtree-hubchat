@@ -571,6 +571,27 @@ impl HubClient {
         }).await
     }
 
+    /// Register a browser's push subscription (hub feature `webpush`): the
+    /// hub sends this device's notifications there itself. All of it is
+    /// secret: keep it out of debug output and shell state.
+    pub async fn register_web_push(&self, me: &Identity, device_id: &str, s: &crate::engine::WebPush) -> Result<()> {
+        self.session_work(async {
+        let _: serde_json::Value = self
+            .post_json(
+                me,
+                "/api/push",
+                &serde_json::json!({
+                    "kind": "webpush", "device_id": device_id, "endpoint": s.endpoint,
+                    "p256dh": s.p256dh, "auth": s.auth, "vapid": s.vapid,
+                    "navigate": s.navigate, "preview": s.preview,
+                }),
+                Duration::from_secs(15),
+            )
+            .await?;
+        Ok(())
+        }).await
+    }
+
     /// Idempotently remove this device's push capability from a hub.
     pub async fn unregister_push(&self, me: &Identity, device_id: &str) -> Result<()> {
         self.session_work(async {

@@ -14,6 +14,7 @@ import { pickFile, pickFilesToSend, pickedText } from "./files";
 import { saveFile, saveText } from "./save";
 import { scanQr } from "./scan";
 import { serverName, suggestedHubs } from "./suggest";
+import { disablePush, enablePush, pendingChat, showUnread, syncPush, takePendingChat, watchPush } from "./push";
 import { newerBuild } from "./update";
 import { sentence, type FromCore, type ToCore } from "./wire";
 
@@ -199,9 +200,25 @@ export async function openCore(takeOver = false): Promise<Core | null> {
     if (!(await saveText(file.name, file.text))) throw "The key file wasn't saved.";
   };
 
+  // Notifications (spec R4.6). The apps show them themselves; a browser shows only what a hub
+  // pushes to its subscription. Turning them on asks the browser's permission, so it must run in
+  // the tap; "Show message text" goes to the hubs with the subscription.
+  const setNotifications = async (n: { enabled: boolean; preview: boolean; sound: boolean }): Promise<void> => {
+    const now = await call<{ endpoint: string | null }>("hc_web_push");
+    if (n.enabled && !now.endpoint) await enablePush(call, n.preview);
+    else if (!n.enabled && now.endpoint) await disablePush(call, false);
+    await call("hc_set_notifications", n);
+  };
+
   /** One command of src/api.ts: the core's, but for what only the page can do. */
   const invoke = <T>(cmd: string, args?: InvokeArgs, options?: InvokeOptions): Promise<T> => {
     if (cmd === "hc_save_recovery") return saveRecovery() as Promise<T>;
+    if (cmd === "hc_take_pending_chat") return Promise.resolve(takePendingChat()) as Promise<T>;
+    if (cmd === "hc_set_notifications") return setNotifications((args ?? {}) as { enabled: boolean; preview: boolean; sound: boolean }) as Promise<T>;
+    if (cmd === "hc_start_over") {
+      // the hubs forget where this browser's notifications went, while there is still a key to ask with
+      return disablePush(call, true).catch(() => { /* a hub that can't be told forgets nothing; the subscription is gone */ }).then(() => call<T>(cmd, args));
+    }
     if (cmd === "hc_file_preview" || cmd === "hc_attachment_preview") return picture(cmd, (args ?? {}) as Record<string, unknown>) as Promise<T>;
     if (cmd === "hc_open_attachment") return openAttachment((args ?? {}) as Record<string, unknown>) as Promise<T>;
     if (cmd === "hc_save_pasted") {
@@ -244,7 +261,30 @@ export async function openCore(takeOver = false): Promise<Core | null> {
   });
   const platform = layout();
   const api: Api = { ...base, state: async () => ({ ...(await base.state()), platform }) };
-  void base.state().then((st) => { if (st.me) keepStorage(); }, () => { /* the UI's own start says why */ });
+  void base.state().then((st) => {
+    if (!st.me) return;
+    keepStorage();
+    // the browser's subscription and what the hubs were handed are brought in line again
+    void syncPush(call).catch(() => { /* next start */ });
+  }, () => { /* the UI's own start says why */ });
+  watchPush(call);
+  // a hub that was removed without being told still holds the subscription: a new one replaces it
+  // the unread count on the app's icon and in the tab's title, while the app is open
+  let counting: number | null = null;
+  const countUnread = () => {
+    if (counting !== null) return;
+    counting = window.setTimeout(() => {
+      counting = null;
+      void call<{ unread?: number }[]>("hc_chats").then((chats) => showUnread(chats.reduce((n, c) => n + (c.unread ?? 0), 0)), () => { /* no identity yet */ });
+    }, 400);
+  };
+  void listen<{ type?: string }>("hc", (e) => {
+    const type = e.payload?.type;
+    if (type === "hub") void syncPush(call, true).catch(() => { /* next start */ });
+    else if (type === "chat" || type === "incoming") countUnread();
+  });
+  countUnread();
+  if (pendingChat()) window.dispatchEvent(new Event("hc-pending"));
 
   // R1.7: a phone freezes a page in the background and its timers with it. Back in front, or back
   // online, every hub's sync starts again at once instead of waiting out a backoff.

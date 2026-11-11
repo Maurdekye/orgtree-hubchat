@@ -513,6 +513,8 @@ impl Engine {
             if rt.status.features.iter().any(|f| f == "unifiedpush") {
                 let _ = rt.client.unregister_push(&self.me, &self.device().0).await;
             }
+            // a browser's notifications: off this hub, or a new subscription is due
+            self.forget_web_push(&rt.client, url).await;
             // deletes it still owes go now or never (best effort)
             if rt.status.state == HubState::Connected {
                 let _ = self
@@ -1053,6 +1055,8 @@ impl Engine {
             self.tell_status(client, url, features).await?;
             // and the language we read in (engine_translation)
             self.tell_language(client, url, features).await?;
+            // and where a browser's notifications go (engine_webpush)
+            self.tell_web_push(client, url, features).await?;
             let first_page = cursor.is_none();
             self.mark_for(url, stop, |s| s.waiting_since_ms = Some(unix_ms()));
             let asked = unix_ms();
@@ -2637,6 +2641,10 @@ pub use engine_status::{chosen_status, STATUSES};
 
 #[path = "engine_translation.rs"]
 mod engine_translation;
+
+#[path = "engine_webpush.rs"]
+mod engine_webpush;
+pub use engine_webpush::{WebPush, WebPushHub};
 pub use engine_translation::chosen_language;
 
 #[cfg(test)]

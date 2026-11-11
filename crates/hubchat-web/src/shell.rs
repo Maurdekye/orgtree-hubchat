@@ -314,7 +314,9 @@ impl Shell {
             "read_receipts": on("settings.read_receipts"),
             "status": hubchat_core::engine::chosen_status(&self.store),
             "language": hubchat_core::engine::chosen_language(&self.store),
-            "notifications": { "enabled": on("settings.notify"), "preview": on("settings.notify_preview"), "sound": self.meta("settings.notify_sound") == "on" },
+            // a browser shows notifications only through its push subscription: they are on
+            // when it has one (off until the person turns them on)
+            "notifications": { "enabled": engine.as_ref().is_some_and(|e| e.web_push().is_some()), "preview": on("settings.notify_preview"), "sound": false },
             "stay_connected": null,
             "push": null,
             "file_background_hint": null,
@@ -451,6 +453,41 @@ impl Shell {
                 for (k, name) in [("settings.notify", "enabled"), ("settings.notify_preview", "preview"), ("settings.notify_sound", "sound")] {
                     self.store.set_meta(k, v(arg(args, name)?)).map_err(s)?;
                 }
+                // "Show message text" goes with the subscription: every hub is told
+                if let Ok(e) = self.engine() {
+                    if let Some(mut subscription) = e.web_push() {
+                        let preview: bool = arg(args, "preview")?;
+                        if subscription.preview != preview {
+                            subscription.preview = preview;
+                            e.set_web_push(Some(&subscription)).map_err(s)?;
+                        }
+                    }
+                }
+                Ok(Value::Null)
+            }
+            // ---------------------------------------- notifications (engine_webpush)
+            // What this browser's notifications are: where they go (the page compares it with
+            // the browser's own subscription), and what each hub has of it.
+            "hc_web_push" => {
+                let e = self.engine()?;
+                let s = e.web_push();
+                Ok(json!({
+                    "endpoint": s.as_ref().map(|s| s.endpoint.clone()),
+                    "preview": s.as_ref().is_none_or(|s| s.preview),
+                    "hubs": e.web_push_hubs().map_err(|e| e.to_string())?,
+                    "resubscribe": e.web_push_must_resubscribe(),
+                }))
+            }
+            // The page turned notifications on (its subscription) or off (null).
+            "hc_web_push_set" => {
+                let subscription: Option<hubchat_core::engine::WebPush> = arg(args, "subscription")?;
+                unit(self.engine()?.set_web_push(subscription.as_ref()))
+            }
+            // Off, and every hub told now (before starting over, when nothing is left to tell them later).
+            "hc_web_push_off" => {
+                let e = self.engine()?;
+                e.set_web_push(None).map_err(s)?;
+                let _ = e.unregister_push().await;
                 Ok(Value::Null)
             }
             "hc_set_active" => {
@@ -721,7 +758,22 @@ pub(crate) mod tests {
         assert_eq!((r["address"].clone(), r["valid"].clone(), r["is_me"].clone()), (json!("ann.111111"), json!(true), json!(false)));
         sh.call("hc_set_notifications", &json!({ "enabled": true, "preview": false, "sound": false })).await.unwrap();
         let st = sh.call("hc_state", &json!({})).await.unwrap();
-        assert_eq!(st["notifications"], json!({ "enabled": true, "preview": false, "sound": false }));
+        // on the web notifications are on when the browser has a push subscription
+        assert_eq!(st["notifications"], json!({ "enabled": false, "preview": false, "sound": false }));
+        let subscription = json!({ "endpoint": "https://push.example/x", "p256dh": "p", "auth": "a", "vapid": "v", "navigate": "https://chat.example/", "preview": false });
+        sh.call("hc_web_push_set", &json!({ "subscription": subscription })).await.unwrap();
+        assert_eq!(sh.call("hc_state", &json!({})).await.unwrap()["notifications"]["enabled"], true);
+        assert_eq!(
+            sh.call("hc_web_push", &json!({})).await.unwrap(),
+            json!({ "endpoint": "https://push.example/x", "preview": false, "hubs": [], "resubscribe": false })
+        );
+        // "Show message text" changes what the hubs are handed
+        sh.call("hc_set_notifications", &json!({ "enabled": true, "preview": true, "sound": false })).await.unwrap();
+        assert_eq!(sh.call("hc_web_push", &json!({})).await.unwrap()["preview"], true);
+        sh.call("hc_web_push_off", &json!({})).await.unwrap();
+        assert_eq!(sh.call("hc_state", &json!({})).await.unwrap()["notifications"]["enabled"], false);
+        assert_eq!(sh.call("hc_web_push", &json!({})).await.unwrap()["endpoint"], Value::Null);
+        assert!(sh.call("hc_web_push_set", &json!({ "subscription": { "endpoint": 7 } })).await.is_err());
         assert_eq!(sh.call("hc_set_device_name", &json!({ "name": " Kitchen tablet " })).await.unwrap(), "Kitchen tablet");
         assert_eq!(sh.call("hc_set_device_name", &json!({ "name": "" })).await.unwrap(), "Test browser");
         sh.call("hc_ui_state", &json!({ "foreground": true, "chat": null })).await.unwrap();

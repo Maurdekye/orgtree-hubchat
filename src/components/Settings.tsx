@@ -2,7 +2,7 @@
 // General (desktop), About.
 // Desktop: one modal with a nav column. Android: a list and a screen each.
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { api, type Devices, type HubStatus, type LogInfo } from "../api";
+import { api, type Devices, type HubStatus, type LogInfo, type WebPushHub } from "../api";
 import { chatLink, chatLinkTarget } from "../lib/chatlink";
 import { Icon, Logo, type IconName } from "../lib/icons";
 import { bytes } from "../lib/format";
@@ -451,9 +451,32 @@ function Developer() {
 
 /** Settings › Notifications (design): notify, show the text, sound on
  *  desktop; on Android, stay connected or check every 15 minutes (D6). */
+/** Hubchat Web: the hubs that can't send this browser its notifications, each named (spec R4.6). */
+function WebPushHubs({ on }: { on: boolean }) {
+  const snap = useSnap();
+  const [hubs, setHubs] = useState<WebPushHub[]>([]);
+  const states = (snap.state?.hubs ?? []).map((h) => h.url + h.state).join(" ");
+  useEffect(() => {
+    if (!on) { setHubs([]); return; }
+    let live = true;
+    const read = () => api.webPush().then((p) => { if (live) setHubs(p.hubs); }, () => {});
+    void read();
+    // a hub is told at its next turn: look again shortly
+    const t = window.setTimeout(read, 3000);
+    return () => { live = false; window.clearTimeout(t); };
+  }, [on, states]);
+  const cannot = hubs.filter((h) => h.state === "needs_update" || h.state === "refused");
+  return <>{cannot.map((h) => (
+    <NoteCard key={h.url} icon="dns" className="push-hub-note"><b>{h.name || h.url}</b> {h.state === "needs_update"
+      ? "needs an update before it can send notifications to this device."
+      : "refused to send notifications to this device. Its owner decides where it may send them."}</NoteCard>
+  ))}</>;
+}
+
 function Notifications() {
   const snap = useSnap();
   const platform = usePlatform();
+  const web = useWeb();
   const n = snap.state?.notifications ?? { enabled: true, preview: true, sound: false };
   const stay = snap.state?.stay_connected;
   const push = snap.state?.push;
@@ -487,11 +510,13 @@ function Notifications() {
         shows no notifications and plays no sound on any of your devices. Messages still arrive. <button type="button" className="link" onClick={() => void pickStatus("auto")}>Turn it off</button></NoteCard> : null}
       <Sec first>
         <Card>
-          <ToggleRow icon="bell" t1={platform === "android" ? "Notifications" : "Show notifications"} t2={platform === "android" ? "For chats that are not on screen." : "When a message arrives in a chat that is not on screen."} on={n.enabled} onChange={(v) => void set({ enabled: v })} label="Show notifications" />
-          <ToggleRow icon="visibility" t1="Show message text" t2="Off: notifications only say who wrote." on={n.preview} onChange={(v) => void set({ preview: v })} label="Show message text" />
-          {platform === "desktop" ? <ToggleRow icon="bell" t1="Play a sound" on={n.sound} onChange={(v) => void set({ sound: v })} label="Play a sound" /> : null}
+          <ToggleRow icon="bell" t1={web || platform === "android" ? "Notifications" : "Show notifications"} t2={web ? "For new messages while Hubchat is closed or in the background. Your hubs send them." : platform === "android" ? "For chats that are not on screen." : "When a message arrives in a chat that is not on screen."} on={n.enabled} onChange={(v) => void set({ enabled: v })} label="Show notifications" />
+          <ToggleRow icon="visibility" t1="Show message text" t2={web ? "Off: notifications only say that there is a new message." : "Off: notifications only say who wrote."} on={n.preview} onChange={(v) => void set({ preview: v })} label="Show message text" />
+          {/* a browser decides the sound itself */}
+          {platform === "desktop" && !web ? <ToggleRow icon="bell" t1="Play a sound" on={n.sound} onChange={(v) => void set({ sound: v })} label="Play a sound" /> : null}
         </Card>
       </Sec>
+      {web ? <WebPushHubs on={n.enabled} /> : null}
       {platform === "android" && stay != null ? (
         <Sec title="Background">
           {push ? <>

@@ -97,6 +97,33 @@ export function RecoveryBanner({ onShow }: { onShow: () => void }) {
   );
 }
 
+const NOTIFY_CARD = "hubchat.web.notify-card";
+
+/** Hubchat Web, once after signing in (spec R4.6): notifications are off until the person turns them
+ *  on, because a browser asks its permission only from a tap. Dismissed for good with the cross. */
+export function NotifyBanner() {
+  const web = useWeb();
+  const snap = useSnap();
+  const [gone, setGone] = useState(() => { try { return localStorage.getItem(NOTIFY_CARD) === "dismissed"; } catch { return false; } });
+  const [busy, setBusy] = useState(false);
+  const n = snap.state?.notifications;
+  if (!web || gone || !snap.state?.me || !n || n.enabled || !snap.state.hubs.length) return null;
+  if (!("Notification" in window) || !("PushManager" in window) || Notification.permission === "denied") return null;
+  const dismiss = () => { try { localStorage.setItem(NOTIFY_CARD, "dismissed"); } catch { /* shown again next time */ } setGone(true); };
+  const on = () => {
+    setBusy(true);
+    api.setNotifications({ ...n, enabled: true }).then(refreshState).then(dismiss, (e) => { toast(errText(e)); setBusy(false); });
+  };
+  return (
+    <div className="banner notify" role="region" aria-label="Notifications">
+      <Icon name="bell" />
+      <span><b>Turn on notifications</b> to hear of new messages while Hubchat is closed.</span>
+      <button className="btn primary" onClick={on} disabled={busy}>{busy ? "Turning on…" : "Turn on"}</button>
+      <button className="icon-btn" style={{ width: 28, height: 28 }} onClick={dismiss} title="Not now" aria-label="Dismiss"><Icon name="close" /></button>
+    </div>
+  );
+}
+
 /** An update is ready to install. Dismissed until the next check. */
 export function UpdateBanner() {
   const avail = useUpdate();

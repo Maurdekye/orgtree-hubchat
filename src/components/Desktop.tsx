@@ -18,7 +18,7 @@ import { IDLE_STOPS_READING, useActive, useForeground, useLastChat, useMessage, 
 import { isSetupLink, startSetup, useSetupChat } from "../lib/setup";
 import { chatLinkQuestion, chatLinkTarget, shortcutView } from "../lib/chatlink";
 import { startUpdateChecks } from "../lib/updates";
-import { HubBanner, KeyRestoredBanner, RecoveryBanner, UpdateBanner } from "./Banners";
+import { HubBanner, KeyRestoredBanner, NotifyBanner, RecoveryBanner, UpdateBanner } from "./Banners";
 import { ChatRows, EmptyChats, RailRows, useFilteredChats, type ChatFilter } from "./ChatList";
 import { ContactInfo } from "./ContactInfo";
 import { Conversation } from "./Conversation";
@@ -226,6 +226,7 @@ export function Desktop() {
     <div className="app">
       <KeyRestoredBanner />
       <UpdateBanner />
+      <NotifyBanner />
       <HubBanner />
       <RecoveryBanner onShow={() => settings("recovery")} />
       <div className="body">

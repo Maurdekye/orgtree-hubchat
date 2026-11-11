@@ -18,6 +18,12 @@ export function keepAppFiles(): Promise<void> {
   return registering;
 }
 
+/** The service worker's registration (push hangs off it); null where there is none. */
+export async function workerRegistration(): Promise<ServiceWorkerRegistration | null> {
+  await keepAppFiles();
+  return registration;
+}
+
 /** A newer build that is being fetched has settled: fetched, or failed. */
 function settled(r: ServiceWorkerRegistration): Promise<void> {
   const w = r.installing;

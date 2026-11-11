@@ -12,7 +12,7 @@ import { chatLinkTarget } from "../lib/chatlink";
 import { useLauncherTheme } from "../lib/shortcutAvatars";
 import { installKeyboardImages } from "../lib/keyboardImages";
 import { startTake, useActive, useForeground, useLastChat, useMessage, usePendingLink, useReadTracking } from "../lib/visibility";
-import { FileBackgroundBanner, HubBanner, RecoveryBanner, UpdateBanner } from "./Banners";
+import { FileBackgroundBanner, HubBanner, NotifyBanner, RecoveryBanner, UpdateBanner } from "./Banners";
 import { startTailnetWatch } from "../lib/tailnet";
 import { startUpdateChecks } from "../lib/updates";
 import { isSetupLink, startSetup, useSetupChat } from "../lib/setup";
@@ -79,6 +79,7 @@ export function Chats({ go, close, showQuestion }: { go: (s: Scr) => void; close
         </>}
       </div>
       <UpdateBanner />
+      <NotifyBanner />
       <HubBanner />
       <FileBackgroundBanner />
       <RecoveryBanner onShow={() => go({ s: "set", tab: "recovery" })} />

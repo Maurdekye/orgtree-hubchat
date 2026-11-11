@@ -17,6 +17,9 @@ export interface Transport {
   mediaUrl(path: string): string | null;
 }
 
+/** A hub and this browser's notifications: `needs_update` is a hub without Web Push, `refused` one that said no. */
+export interface WebPushHub { url: string; name: string; state: "registered" | "needs_update" | "refused" | "waiting" }
+
 export type HubState = "connecting" | "connected" | "refused" | "disconnected" | "disabled";
 
 export interface HubStatus {
@@ -486,6 +489,8 @@ export const makeApi = ({ invoke, listen, mediaUrl }: Transport) => ({
   setStatus: (status: MyStatus) => invoke<void>("hc_set_status", { status }),
   setLanguage: (language: string) => invoke<void>("hc_set_language", { language }),
   setNotifications: (n: NotifySettings) => invoke<void>("hc_set_notifications", { enabled: n.enabled, preview: n.preview, sound: n.sound }),
+  /** Hubchat Web only: what each hub has of this browser's notifications (crates/hubchat-web, `hc_web_push`). */
+  webPush: () => invoke<{ hubs: WebPushHub[] }>("hc_web_push"),
   setStayConnected: (on: boolean) => invoke<void>("hc_set_stay_connected", { on }),
   setPush: (on: boolean, distributor: string) => invoke<void>("hc_set_push", { on, distributor }),
   /** This device is in use (user 23:50Z): our other devices don't notify meanwhile. */

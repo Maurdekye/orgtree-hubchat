@@ -1715,6 +1715,12 @@ pub(crate) fn status_said_key(url: &str) -> String {
     format!("status.said.{url}")
 }
 
+/// What the hub last heard of a browser's push subscription
+/// (engine_webpush).
+pub(crate) fn webpush_said_key(url: &str) -> String {
+    format!("webpush.said.{url}")
+}
+
 /// The language we read in that the hub is still to be told
 /// (engine_translation).
 pub(crate) fn language_owed_key(url: &str) -> String {
@@ -1743,6 +1749,7 @@ fn forget_hub_sync(tx: &rusqlite::Transaction, url: &str) -> rusqlite::Result<()
         status_said_key(url),
         language_owed_key(url),
         language_said_key(url),
+        webpush_said_key(url),
         store_hub_enabled::disabled_key(url),
     ] {
         tx.execute("DELETE FROM meta WHERE key=?", [key])?;

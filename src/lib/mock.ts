@@ -700,6 +700,7 @@ export const mockApi: Api = {
   setStatus: async (status) => { st.status = status; },
   setLanguage: async (language) => { await sleep(150); st.language = language; },
   setNotifications: async (n) => { st.notifications = { ...n }; },
+  webPush: async () => ({ hubs: [] }),
   setStayConnected: async (on) => { await sleep(300); st.stay_connected = on; },
   setPush: async (on, distributor) => {
     await sleep(300);
