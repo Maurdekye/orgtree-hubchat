@@ -2340,6 +2340,19 @@ mod tests {
         s.set_send_hub("pat.222222", None).unwrap();
         assert_eq!(s.send_hub("pat.222222").unwrap(), None);
     }
+
+    /// Hubchat Web keeps this same store in the browser, so the SQLite
+    /// binding has to be one that also builds for the browser target
+    /// (rusqlite 0.42; 0.32 had no such build). The SQLite compiled into
+    /// every app follows the binding: 3.46 before it, 3.53 with it.
+    #[test]
+    fn the_stores_sqlite_is_the_one_that_also_builds_for_the_browser() {
+        assert!(
+            rusqlite::version_number() >= 3_053_000,
+            "SQLite {} is compiled in: the binding was not upgraded",
+            rusqlite::version()
+        );
+    }
 }
 
 #[path = "staging_store.rs"]
