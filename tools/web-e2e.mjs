@@ -10,14 +10,19 @@
 //   tick climbs to read -> a second peer sends a picture, which shows ->
 //   a picture and a file larger than one upload piece are attached, sent,
 //   and reach the peer byte for byte -> a file the peer sends is saved in
-//   the browser and handed to its downloads -> Settings open -> a reload keeps the identity and
+//   the browser and handed to its downloads -> notifications are turned on:
+//   the hub is handed the browser's push subscription, pushes a signed,
+//   encrypted notification for a new message, and the service worker shows
+//   it -> Settings open -> a reload keeps the identity and
 //   the chat -> a second tab is told Hubchat is open elsewhere, takes over,
 //   and the first tab is told the same.
 //
 //   node tools/web-e2e.mjs --dist <built page> --hub <orgtree-mailhub exe> --pg <HUB_TEST_PG folder> --out <folder>
 //        [--browser <chromium exe>] [--width 390 --height 844] [--any-session] [--server <hubchat-web program>]
 //
-// --hub: a Mail hub with web origins (2.5.0 line: HUB_WEB_ORIGINS). --pg: the
+// --hub: a Mail hub with web origins (2.5.0 line: HUB_WEB_ORIGINS) and Web Push
+// (2.5.1), built with its `push-test` feature (a DEBUG build: it lets the hub
+// push to the test's own receiver on 127.0.0.1; never a hub anyone uses). --pg: the
 // hub suite's PostgreSQL template (its make-hub-test-pg.sh): bin/ and
 // template/{data,password.txt}. --width: below 900 the phone layout, from
 // 900 the desktop one. The page is served the way the spec has it (R3.4,
@@ -31,7 +36,7 @@
 // that, for a machine with no signed-in user to disturb). It stops only the
 // processes it started, by their own handles.
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createDecipheriv, createECDH, createHash, createPublicKey, hkdfSync, randomBytes, verify } from 'node:crypto';
 import { crc32, deflateSync } from 'node:zlib';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -294,7 +299,11 @@ async function main() {
   webConfig.suggested_hubs.push(NOBODY);
 
   // --------------------------------------------------------------- the browser
-  t = await open();
+  // This headless browser reads its notification permission as denied whatever it is (asking for it
+  // answers granted, once granted below): the page is given the reading a real browser has (not asked
+  // yet, then what asking answered), so the
+  // app offers notifications as it would there.
+  t = await open({ before: `(() => { let said = 'default'; const ask = Notification.requestPermission.bind(Notification); Notification.requestPermission = async () => (said = await ask()); Object.defineProperty(Notification, 'permission', { get: () => said, configurable: true }); })();` });
   const { b, shot, waitFor, clickText, fill } = t;
   const second = `window.open('', 'hcw2')`;
   const violations = [];
@@ -462,6 +471,114 @@ async function main() {
     check('Open hands the browser the same bytes', existsSync(savedReport) && sha(readFileSync(savedReport)) === sha(report), existsSync(savedReport) ? 'the bytes differ' : 'no report.pdf in ' + downloads);
     check('a browser has no folder to show a file in', await b.eval(`!document.body.innerText.includes('Show in folder')`));
     await shot('web-08c-files.png');
+  }
+
+  // ------------------------------------------------------ 7c. notifications
+  // No push service is reachable here (the browser resolves loopback only), so the browser's
+  // subscription is the one thing replaced: it names a receiver in this test, with a real key pair.
+  // Everything else is the app, the hub and the service worker: the registration, the hub's signed
+  // and encrypted push, and the notification shown for it.
+  {
+    const hubHas = ((await (await fetch(HUB + '/healthz')).json()).features || []).includes('webpush');
+    check('the hub can send Web Push (Mail hub 2.5.1, built with push-test for this test)', hubHas);
+    const pushes = [];
+    const receiver = createServer((req, res) => { const parts = []; req.on('data', (c) => parts.push(c)); req.on('end', () => { pushes.push({ headers: req.headers, body: Buffer.concat(parts) }); res.writeHead(201); res.end(); }); });
+    await new Promise((r) => receiver.listen(0, '127.0.0.1', r));
+    started.push(['push receiver', { kill: () => receiver.close() }, null]);
+    const ENDPOINT = `http://127.0.0.1:${receiver.address().port}/push/a-secret-endpoint`;
+    const device = createECDH('prime256v1'); device.generateKeys();
+    const devicePublic = device.getPublicKey(), deviceAuth = randomBytes(16);
+    await b.send('Browser.setPermission', { permission: { name: 'notifications' }, setting: 'granted', origin });
+    await b.eval(`(() => {
+      const made = { endpoint: ${JSON.stringify(ENDPOINT)}, expirationTime: null,
+        toJSON: () => ({ endpoint: ${JSON.stringify(ENDPOINT)}, keys: { p256dh: ${JSON.stringify(devicePublic.toString('base64url'))}, auth: ${JSON.stringify(deviceAuth.toString('base64url'))} } }),
+        unsubscribe: async () => { window.__push.sub = null; window.__push.ended++; return true; } };
+      window.__push = { sub: null, key: null, visibleOnly: null, ended: 0 };
+      PushManager.prototype.subscribe = async function (o) { window.__push.key = btoa(String.fromCharCode(...new Uint8Array(o.applicationServerKey))); window.__push.visibleOnly = o.userVisibleOnly; window.__push.sub = made; return made; };
+      PushManager.prototype.getSubscription = async function () { return window.__push.sub; };
+    })()`);
+    if (phone) await b.click('button[aria-label="Back"]', 700);
+    check('the chat list offers to turn notifications on', await waitFor(`!!document.querySelector('.banner.notify')`, 10000), await b.eval(`document.body.innerText.slice(0, 200)`));
+    await shot('web-08d-notify-card.png');
+    await b.click('.banner.notify .btn.primary', 500);
+    check('turning them on subscribes the browser, for visible pushes only, under a key made for it',
+      await waitFor(`!document.querySelector('.banner.notify') && !!window.__push.sub && window.__push.visibleOnly === true && atob(window.__push.key).length === 65`, 15000),
+      await b.eval(`JSON.stringify({ card: !!document.querySelector('.banner.notify'), sub: !!window.__push.sub, key: window.__push.key }) + ' ' + (document.querySelector('.toast')?.innerText || '')`));
+    const signingKey = Buffer.from(await b.eval('window.__push.key'), 'base64');
+
+    // the app is put in the background: a hub sends a browser nothing while any device is in use
+    await sleep(1500);
+    await b.eval(`(() => { Object.defineProperty(document, 'visibilityState', { get: () => 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); window.dispatchEvent(new Event('blur')); })()`);
+    await sleep(1500);
+    const pat = (...args) => { const r = spawnSync(process.execPath, [join(here, 'peer2.mjs'), HUB, ...args], { encoding: 'utf8', env: { ...hubEnv, PEER_STATE: join(run, 'pat.json') }, timeout: 120000 }); try { return JSON.parse(r.stdout.trim().split('\n').pop()); } catch { return { failed: (r.stderr || r.stdout || '').slice(0, 300) }; } };
+    const patAddress = spawnSync(process.execPath, [join(here, 'peer2.mjs'), HUB, 'whoami'], { encoding: 'utf8', env: { ...hubEnv, PEER_STATE: join(run, 'pat.json') } }).stdout.trim();
+    const written = pat('send', address, 'Are we still on for 3?');
+    for (let i = 0; i < 80 && !pushes.length; i++) await sleep(250);
+    check('the hub pushes to the browser for a new message', !!written.sent && pushes.length === 1, JSON.stringify(written) + ' pushes: ' + pushes.length);
+    let said = null, signed = 'no push';
+    if (pushes.length) {
+      const { headers, body } = pushes[0];
+      // RFC 8292: the token is signed with the key the browser subscribed under
+      try {
+        const m = /^vapid t=([^,]+), k=(.+)$/.exec(headers.authorization || '');
+        const [head, claims, signature] = m[1].split('.');
+        const point = Buffer.from(m[2], 'base64url');
+        const key = createPublicKey({ key: { kty: 'EC', crv: 'P-256', x: point.subarray(1, 33).toString('base64url'), y: point.subarray(33).toString('base64url') }, format: 'jwk' });
+        const fine = verify('sha256', Buffer.from(head + '.' + claims), { key, dsaEncoding: 'ieee-p1363' }, Buffer.from(signature, 'base64url'));
+        const c = JSON.parse(Buffer.from(claims, 'base64url').toString());
+        signed = fine && point.equals(signingKey) && c.aud === new URL(ENDPOINT).origin && c.exp > Date.now() / 1000 && /^(mailto:|https:)/.test(c.sub) && headers.urgency === 'high' && headers['content-encoding'] === 'aes128gcm' && !('topic' in headers)
+          ? 'ok' : JSON.stringify({ fine, sameKey: point.equals(signingKey), c, urgency: headers.urgency });
+      } catch (e) { signed = String(e); }
+      // RFC 8291: only the browser's key opens it
+      try {
+        const salt = body.subarray(0, 16), idLength = body[20], hubPublic = body.subarray(21, 21 + idLength), sealed = body.subarray(21 + idLength);
+        const ikm = Buffer.from(hkdfSync('sha256', device.computeSecret(hubPublic), deviceAuth, Buffer.concat([Buffer.from('WebPush: info\0'), devicePublic, hubPublic]), 32));
+        const contentKey = Buffer.from(hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: aes128gcm\0'), 16));
+        const nonce = Buffer.from(hkdfSync('sha256', ikm, salt, Buffer.from('Content-Encoding: nonce\0'), 12));
+        const open = createDecipheriv('aes-128-gcm', contentKey, nonce);
+        open.setAuthTag(sealed.subarray(sealed.length - 16));
+        const plain = Buffer.concat([open.update(sealed.subarray(0, sealed.length - 16)), open.final()]);
+        said = JSON.parse(plain.subarray(0, plain.lastIndexOf(2)).toString());
+      } catch (e) { said = { failed: String(e) }; }
+    }
+    check("the push is signed with the browser's own key, for that push service", signed === 'ok', signed);
+    check('it decrypts, with the key only the browser has, to the notification: who wrote and what',
+      said?.web_push === 8030 && said.notification?.title === 'Pat Peer' && said.notification?.body === 'Are we still on for 3?' && said.notification?.navigate === origin + '/#/chat/' + patAddress && said.notification?.tag === 'hc-' + patAddress && said.app_badge >= 1,
+      JSON.stringify(said));
+
+    // What the service worker shows for this push is proven apart (tools/web-sw-push.test.mjs): this
+    // headless browser shows no notifications at all, whatever its permission says.
+
+    check('the unread message counts in the tab title', await waitFor(`/^\\(\\d+\\) Hubchat$/.test(document.title)`, 10000), await b.eval('document.title'));
+    // back in front; a tapped notification names its chat (the service worker's word to the open app)
+    await b.eval(`(() => { delete document.visibilityState; document.dispatchEvent(new Event('visibilitychange')); window.dispatchEvent(new Event('focus')); })()`);
+    await b.eval(`navigator.serviceWorker.dispatchEvent(new MessageEvent('message', { data: { t: 'open', navigate: ${JSON.stringify(origin + '/#/chat/')} + ${JSON.stringify(patAddress)} } }))`);
+    check('a tapped notification opens its chat', await waitFor(`[...document.querySelectorAll('.msg.in')].some((m) => m.innerText.includes('Are we still on for 3?')) && !!document.querySelector('.comp-box textarea')`, 10000),
+      await b.eval(`document.body.innerText.slice(0, 200)`));
+    await shot('web-08e-notified-chat.png');
+
+    // Settings > Notifications: on, and off again (the hub forgets the subscription)
+    if (phone) { await b.click('button[aria-label="Back"]', 700); await b.click('button[aria-label="Settings"]', 900); await clickText('.li', 'Notifications', 900); }
+    else { await b.click('button[aria-label="Settings"]', 900); await b.click('#settab-notifications', 700); }
+    const toggle = `document.querySelector('button[role="switch"][aria-label="Show notifications"]')`;
+    check('Settings shows notifications on, with no sound switch (the browser decides)',
+      await waitFor(`${toggle}?.getAttribute('aria-checked') === 'true'`, 5000) && await b.eval(`!document.querySelector('button[role="switch"][aria-label="Play a sound"]') && !document.querySelector('.push-hub-note')`),
+      await b.eval(`document.body.innerText.slice(0, 300)`));
+    await shot('web-08f-notifications.png');
+    await b.eval(`${toggle}.click()`);
+    check('turned off, the browser\'s subscription is ended', await waitFor(`${toggle}?.getAttribute('aria-checked') === 'false' && window.__push.sub === null && window.__push.ended >= 1`, 10000),
+      await b.eval(`JSON.stringify(window.__push) + ' ' + (document.querySelector('.toast')?.innerText || '')`));
+    if (phone) { await b.click('button[aria-label="Back"]', 600); await b.click('button[aria-label="Back"]', 600); await clickText('.crow', 'Pat Peer', 1000); }
+    else await b.key('Escape', 0, 600);
+    // and the hub pushes nothing more
+    await sleep(1500);
+    await b.eval(`(() => { Object.defineProperty(document, 'visibilityState', { get: () => 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); window.dispatchEvent(new Event('blur')); })()`);
+    await sleep(1500);
+    const before = pushes.length;
+    pat('send', address, 'after notifications were turned off');
+    await sleep(8000);
+    check('with notifications off the hub pushes nothing', pushes.length === before, 'pushes: ' + pushes.length + ' (were ' + before + ')');
+    await b.eval(`(() => { delete document.visibilityState; document.dispatchEvent(new Event('visibilitychange')); window.dispatchEvent(new Event('focus')); })()`);
   }
 
   // ------------------------------------------------------------ 8. Settings
