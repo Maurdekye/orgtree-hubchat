@@ -15,12 +15,13 @@ Proof: `tools/proof-copy-mention.mjs` (jsdom, recording clipboard stub; checks C
 | Contact mention in a message | desktop | opens its chat (nothing when no hub lists it) | Open chat, Contact info, **Copy mention**; only **Copy mention** when no hub lists it |
 | Orgtree chip in a message | desktop | opens the item in Orgtree when it can | Open <kind> in Orgtree (only when it can open), Open <org> in Orgtree (disabled when it cannot), **Copy mention** |
 | Chat header, avatar or name | desktop | Contact info | Contact info, **Copy mention**, Close DM (new menu) |
+| Chat list row | Android | opens the chat | long-press sheet: Open, Contact info, **Copy mention**, Close DM (as the desktop row menu; the press does not also open the chat) |
 | Conversation menu (⋮) | Android | | Contact info, Send through…, **Copy mention**, Close DM |
 | Contact mention in a message | Android | opens its chat | long-press sheet: Open chat, Contact info, **Copy mention** (only Copy mention when no hub lists it) |
 | Orgtree chip in a message | Android | a toast with its hint | long-press sheet: **Copy mention** |
 | Message info preview | both | nothing | only **Copy mention** for the target |
 
-Android chat, Directory and New chat rows have no long-press menu; a phone contact's mention is copied from the
+Android Directory and New chat rows have no long-press menu; a phone contact's mention is also copied from the
 conversation's ⋮ menu. There is no per-message sender name or avatar (chats are one-to-one).
 
 ## What is copied (no trailing space)

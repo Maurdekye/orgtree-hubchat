@@ -1,5 +1,5 @@
 // The chat list rows (desktop sidebar and Android's first screen).
-import type { MouseEvent as ReactMouseEvent } from "react";
+import { useRef, type MouseEvent as ReactMouseEvent } from "react";
 import type { ChatSummary } from "../api";
 import { Icon, Logo } from "../lib/icons";
 import { shortWhen } from "../lib/format";
@@ -56,6 +56,9 @@ export function chatMenu(e: ReactMouseEvent, peer: string, onOpen: (peer: string
   ]);
 }
 
+/** How long after a phone long-press a click on the row is the lift of that press, not a tap. */
+const PRESS_CLICK_MS = 700;
+
 /** What a chat's unread badge says to a screen reader and on hover; the rail's button says it too. */
 const unreadLabel = (n: number) => n + " unread";
 
@@ -64,6 +67,8 @@ export function ChatRows({ rows, selected, onOpen, onInfo, onCloseDm }: { rows: 
   const platform = usePlatform();
   const writing = useTypingPeers();
   const hubs = snap.state?.hubs || [];
+  // a phone's long-press (the WebView's contextmenu) may be followed by the click of the lift: it must not open the chat
+  const pressedAt = useRef(0);
   return (
     <>
       {rows.map((c) => {
@@ -78,8 +83,8 @@ export function ChatRows({ rows, selected, onOpen, onInfo, onCloseDm }: { rows: 
         else if (m.outgoing) prev = <><Tick m={m} /><span className="you">You:</span><span className="t" dir="auto">{preview(m)}</span></>;
         else prev = <>{m.kind === "question" ? <span className="q">Question ·</span> : null}{m.kind === "question" ? " " : null}<span className="t" dir="auto">{preview(m)}</span></>;
         return (
-          <div key={c.peer} className={"crow" + (selected === c.peer ? " sel" : "") + (c.unread ? " unread" : "")} onClick={() => onOpen(c.peer)} role="button" tabIndex={0}
-            onContextMenu={platform === "desktop" ? (e) => chatMenu(e, c.peer, onOpen, onInfo, "Open", onCloseDm) : undefined}
+          <div key={c.peer} className={"crow" + (selected === c.peer ? " sel" : "") + (c.unread ? " unread" : "")} onClick={() => { if (Date.now() - pressedAt.current > PRESS_CLICK_MS) onOpen(c.peer); }} role="button" tabIndex={0}
+            onContextMenu={(e) => { if (platform === "android") pressedAt.current = Date.now(); chatMenu(e, c.peer, onOpen, onInfo, "Open", onCloseDm); }}
             onKeyDown={pressKeys(() => onOpen(c.peer))}>
             <PeerAvatar address={c.peer} c={ct} hubs={hubs} size={platform === "android" ? 52 : 44} />
             <div className="crow-main">

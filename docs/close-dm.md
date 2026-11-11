@@ -6,7 +6,7 @@ Starting a DM with the same address restores its existing history. A new incomin
 message brings it back to the list without opening the conversation on screen.
 
 On desktop, use the conversation header's Close DM button or the chat row's
-right-click menu (including the collapsed sidebar). On Android, use Close DM
+right-click menu (including the collapsed sidebar). On Android, long-press the chat row in the chat list and choose Close DM, or use Close DM
 in the conversation's More menu. The action returns to the chat list; reopening
 works through New chat, Directory, address links and notification taps.
 

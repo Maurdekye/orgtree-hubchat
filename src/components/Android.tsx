@@ -58,7 +58,7 @@ let backOpenScreen: (() => boolean) | null = null;
   return false;
 };
 
-export function Chats({ go }: { go: (s: Scr) => void }) {
+export function Chats({ go, close }: { go: (s: Scr) => void; close: (peer: string) => void }) {
   const [filter, setFilter] = useState<ChatFilter>("all");
   const [q, setQ] = useState("");
   const [searching, setSearching] = useState(false);
@@ -85,7 +85,7 @@ export function Chats({ go }: { go: (s: Scr) => void }) {
       <div className="fchips">{f("all", "All")}{f("agents", "Agents")}{f("people", "People")}</div>
       <div className="scr-body" role="main">
         {!total ? <EmptyChats onNew={() => go({ s: "newchat" })} />
-          : rows.length ? <><ChatRows rows={rows} selected={null} onOpen={(p) => go({ s: "conv", p })} /><div style={{ height: 90 }} /></>
+          : rows.length ? <><ChatRows rows={rows} selected={null} onOpen={(p) => go({ s: "conv", p })} onInfo={(p) => go({ s: "info", p })} onCloseDm={close} /><div style={{ height: 90 }} /></>
           : <div className="empty"><b>No chats match</b>To reach someone new, use New chat and type their address.</div>}
       </div>
       <button className="fab" onClick={() => go({ s: "newchat" })} aria-label="New chat"><Icon name="new_chat" />New chat</button>
@@ -335,7 +335,7 @@ export function Android() {
 
   let screen;
   switch (top.s) {
-    case "chats": screen = <Chats go={go} />; break;
+    case "chats": screen = <Chats go={go} close={close} />; break;
     case "conv": {
       const p = top.p;
       const contact = () => go({ s: "info", p });
