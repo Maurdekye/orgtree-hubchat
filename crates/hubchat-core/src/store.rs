@@ -2176,6 +2176,49 @@ mod tests {
         assert_eq!(version(&s), MIGRATIONS.len());
     }
 
+    /// Every older schema a real store can have opens and reaches the newest:
+    /// a store at user_version N holds exactly migrations 1..=N, because
+    /// `migrate` commits each step with its version in one transaction.
+    #[test]
+    fn a_store_at_every_older_version_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        for v in 0..=MIGRATIONS.len() {
+            let path = dir.path().join(format!("v{v}.db"));
+            drop(legacy_schema_fixture(&path, v));
+            let s = Store::open(&path).unwrap_or_else(|e| panic!("a version-{v} store: {e:?}"));
+            let got: usize = s.with(|c| c.query_row("PRAGMA user_version", [], |r| r.get(0))).unwrap();
+            assert_eq!(got, MIGRATIONS.len(), "a version-{v} store");
+        }
+    }
+
+    /// Migration 17 (moved from tests/hub_removal.rs): a real version-16
+    /// store fetches each saved hub's whole directory once more, so contacts
+    /// a removal of the same address dropped come back without the user
+    /// doing anything. Its sync position stays, and nothing is scheduled twice.
+    #[test]
+    fn a_store_from_before_the_fix_fetches_each_directory_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hubchat.sqlite3");
+        let due = |u: &str| format!("sync.directory_refresh_due.{u}");
+        let hubs = ["http://star-system:7378", "http://pendragon:7370"];
+        {
+            let c = legacy_schema_fixture(&path, 16);
+            for u in hubs {
+                c.execute("INSERT INTO hubs(url, added_at) VALUES(?, 't0')", [u]).unwrap();
+                c.execute("INSERT INTO meta(key, value) VALUES(?, '2583-40-0')", [format!("sync.cursor.{u}")]).unwrap();
+            }
+        }
+        let s = Store::open(&path).unwrap();
+        for u in hubs {
+            assert_eq!(s.meta(&due(u)).unwrap().as_deref(), Some("yes"), "{u}");
+            assert_eq!(s.meta(&format!("sync.cursor.{u}")).unwrap().as_deref(), Some("2583-40-0"), "{u}");
+        }
+        s.delete_meta(&due(hubs[0])).unwrap();
+        drop(s);
+        let s = Store::open(&path).unwrap();
+        assert_eq!(s.meta(&due(hubs[0])).unwrap(), None, "scheduled again");
+    }
+
     /// B3: a hub that starts its sync over drops only what no other hub
     /// still holds.
     #[test]

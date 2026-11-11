@@ -58,33 +58,8 @@ fn an_address_added_again_starts_its_sync_over() {
     assert_eq!(s.meta(&format!("sync.cursor.{u}")).unwrap().as_deref(), Some("9-9-0"));
 }
 
-/// Migration 17: a store from before the fix fetches each saved hub's whole
-/// directory once more, so contacts a removal of the same address dropped
-/// come back without the user doing anything. Its sync position stays, and
-/// nothing is scheduled twice.
-#[test]
-fn a_store_from_before_the_fix_fetches_each_directory_once() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("hubchat.sqlite3");
-    let due = |u: &str| format!("sync.directory_refresh_due.{u}");
-    let hubs = ["http://star-system:7378", "http://pendragon:7370"];
-    {
-        let s = Store::open(&path).unwrap();
-        for u in hubs {
-            s.add_hub(u, "t0").unwrap();
-            s.set_meta(&format!("sync.cursor.{u}"), "2583-40-0").unwrap();
-            s.delete_meta(&due(u)).unwrap();
-        }
-    }
-    // the store as it stood before migration 17
-    rusqlite::Connection::open(&path).unwrap().pragma_update(None, "user_version", 16).unwrap();
-    let s = Store::open(&path).unwrap();
-    for u in hubs {
-        assert_eq!(s.meta(&due(u)).unwrap().as_deref(), Some("yes"), "{u}");
-        assert_eq!(s.meta(&format!("sync.cursor.{u}")).unwrap().as_deref(), Some("2583-40-0"), "{u}");
-    }
-    s.delete_meta(&due(hubs[0])).unwrap();
-    drop(s);
-    let s = Store::open(&path).unwrap();
-    assert_eq!(s.meta(&due(hubs[0])).unwrap(), None, "scheduled again");
-}
+// Migration 17's upgrade check (a store from before the fix fetches each
+// directory once) lives in src/store.rs's unit tests: only they can build a
+// real version-16 store (legacy_schema_fixture). Rewinding user_version on a
+// fully migrated store re-ran migration 18 onto a table that already had its
+// column ("duplicate column name: copy_key").
