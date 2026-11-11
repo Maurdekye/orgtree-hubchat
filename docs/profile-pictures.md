@@ -72,7 +72,8 @@ existing dependencies. These are component/bridge compilation proofs, not an
 installed desktop, Android WebView, device, live hub or pixel acceptance run.
 
 Image0.25.9 is pinned to preserve declared Rust1.85 compatibility (0.25.10 requires
-1.88). Both the native command check and the final nine focused core tests now
+1.88). (Since 2026-11-11 the declared Rust version is 1.89, which rusqlite 0.42
+requires; the image pin is unchanged.) Both the native command check and the final nine focused core tests now
 include0.25.9; earlier0.25.6 receipts remain separate. The added renderer cases
 exercise native-preview display, passing original bytes/changed square crop to
 Save, and rejecting a late preview after an owner change. Organization settings
