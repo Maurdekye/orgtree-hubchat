@@ -1,0 +1,1 @@
+Hubchat gets new mail over a live connection when the mail hub offers one, and falls back to the usual polling otherwise.
