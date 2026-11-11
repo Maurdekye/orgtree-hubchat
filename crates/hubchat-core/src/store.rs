@@ -436,6 +436,11 @@ pub struct Contact {
     pub language: Option<String>,
 }
 
+/// How `open_refusing_newer` starts what it says of a store written by a
+/// newer build. Hubchat Web's page knows it by these words
+/// (src/web/startError.ts).
+pub const NEWER_STORE: &str = "this database was written by a newer Hubchat";
+
 fn db(e: rusqlite::Error) -> Error {
     Error::Store(e.to_string())
 }
@@ -444,6 +449,11 @@ impl Store {
     pub fn open(path: &Path) -> Result<Self> {
         let con = Connection::open(path).map_err(db)?;
         Self::init(con)
+    }
+
+    /// Like `open`, for Hubchat Web. (Red: it does not refuse yet.)
+    pub fn open_refusing_newer(path: &Path) -> Result<Self> {
+        Self::open(path)
     }
 
     pub fn open_in_memory() -> Result<Self> {
@@ -2205,6 +2215,45 @@ mod tests {
             let got: usize = s.with(|c| c.query_row("PRAGMA user_version", [], |r| r.get(0))).unwrap();
             assert_eq!(got, MIGRATIONS.len(), "a version-{v} store");
         }
+    }
+
+    /// Hubchat Web can be served by an older server than the one a browser
+    /// last used (spec, Version skew). Its store, written by the newer
+    /// build, is refused and left exactly as it is: old code must not run
+    /// on a schema it does not know. The apps' own `open` is unchanged.
+    #[test]
+    fn a_store_from_a_newer_build_is_refused_and_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("newer.db");
+        let newer = MIGRATIONS.len() + 2;
+        {
+            let s = Store::open(&path).unwrap();
+            s.with(|c| {
+                c.execute_batch("CREATE TABLE from_the_future (x INTEGER); INSERT INTO from_the_future VALUES (7);")?;
+                c.pragma_update(None, "user_version", newer)
+            })
+            .unwrap();
+        }
+        let before = std::fs::read(&path).unwrap();
+        let Err(e) = Store::open_refusing_newer(&path) else { panic!("a newer store was opened") };
+        let said = e.to_string();
+        assert!(said.contains(NEWER_STORE), "{said}");
+        assert!(said.contains(&format!("its schema is {newer}, this build knows {}", MIGRATIONS.len())), "{said}");
+        assert_eq!(std::fs::read(&path).unwrap(), before, "nothing was written to it");
+        // the apps open as they always did
+        let s = Store::open(&path).unwrap();
+        assert_eq!(s.with(|c| c.query_row("PRAGMA user_version", [], |r| r.get::<_, usize>(0))).unwrap(), newer);
+        drop(s);
+
+        // a store of this build, an older one, and a new file all open
+        let same = dir.path().join("same.db");
+        drop(Store::open(&same).unwrap());
+        Store::open_refusing_newer(&same).unwrap();
+        let older = dir.path().join("older.db");
+        drop(legacy_schema_fixture(&older, MIGRATIONS.len() - 1));
+        let s = Store::open_refusing_newer(&older).unwrap();
+        assert_eq!(s.with(|c| c.query_row("PRAGMA user_version", [], |r| r.get::<_, usize>(0))).unwrap(), MIGRATIONS.len());
+        Store::open_refusing_newer(&dir.path().join("new.db")).unwrap();
     }
 
     /// Migration 17 (moved from tests/hub_removal.rs): a real version-16
