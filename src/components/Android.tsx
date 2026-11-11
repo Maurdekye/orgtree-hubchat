@@ -58,7 +58,7 @@ let backOpenScreen: (() => boolean) | null = null;
   return false;
 };
 
-function Chats({ go }: { go: (s: Scr) => void }) {
+export function Chats({ go }: { go: (s: Scr) => void }) {
   const [filter, setFilter] = useState<ChatFilter>("all");
   const [q, setQ] = useState("");
   const [searching, setSearching] = useState(false);
