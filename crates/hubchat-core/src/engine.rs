@@ -1548,11 +1548,7 @@ impl Engine {
         let meta = crate::questions::Meta { replies: reply.replies, answers: reply.answers, ..Default::default() }.stored();
         // Copy/hash on the blocking pool; no network and no SQLite lock during I/O.
         // Admission and ownership of the snapshot then commit without an await.
-        let host = self.host.clone();
-        let prepared = crate::rt::task::spawn_blocking(move || crate::staging::prepare(host.as_ref(), msg))
-            .await
-            .map_err(|e| Error::Invalid(format!("file preparation stopped: {e}")))?
-            .map_err(crate::staging::explain_error)?;
+        let prepared = crate::staging::prepare_task(self.host.clone(), msg).await?;
         self.store.queue_prepared(
             &prepared.message,
             &now(),
@@ -1675,9 +1671,7 @@ impl Engine {
     }
 
     async fn clean_staging(&self) {
-        let store = self.store.clone();
-        let root = self.host.staging_dir();
-        let _ = crate::rt::task::spawn_blocking(move || crate::staging::collect(&root, &store)).await;
+        crate::staging::collect_task(self.host.staging_dir(), self.store.clone()).await;
     }
 
     #[cfg(test)]

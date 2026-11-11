@@ -752,7 +752,7 @@ impl HubClient {
                 )))
                 .header("X-Org-Auth", me.auth_header())
                 .header(reqwest::header::CONTENT_LENGTH, count)
-                .body(crate::hub::stream_body(stream)?)
+                .body(crate::hub::stream_body(stream).await?)
                 .send()
                 .await?;
             let result: UploadState = check(resp).await?.json().await?;

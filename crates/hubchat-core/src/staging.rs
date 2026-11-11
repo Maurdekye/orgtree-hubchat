@@ -1,9 +1,17 @@
 //! Private immutable copies admitted before a message enters the network queue.
 use crate::{engine::Host, store::NewOutgoing, Error, Result};
+#[cfg(not(target_arch = "wasm32"))]
 use sha2::{Digest, Sha256};
+#[cfg(not(target_arch = "wasm32"))]
 use std::fs::{self, OpenOptions};
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::{Read, Write};
 use std::path::PathBuf;
+
+// In a browser nothing may block: the same work with `rt::fs`.
+#[cfg(target_arch = "wasm32")]
+#[path = "staging_web.rs"]
+mod web;
 
 pub(crate) struct Prepared {
     pub message: NewOutgoing,
@@ -21,12 +29,51 @@ impl Prepared {
 impl Drop for Prepared {
     fn drop(&mut self) {
         // Only our newly-created UUID directory; never a caller-supplied path.
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(dir) = &self.directory {
             let _ = fs::remove_dir_all(dir);
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(dir) = self.directory.take() {
+            crate::rt::spawn(async move {
+                let _ = crate::rt::fs::remove_dir_all(dir).await;
+            });
         }
     }
 }
 
+/// The private copies of a message's files, made off the caller's thread.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) async fn prepare_task(host: std::sync::Arc<dyn Host>, message: NewOutgoing) -> Result<Prepared> {
+    crate::rt::task::spawn_blocking(move || prepare(host.as_ref(), message))
+        .await
+        .map_err(|e| Error::Invalid(format!("file preparation stopped: {e}")))?
+        .map_err(explain_error)
+}
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn prepare_task(host: std::sync::Arc<dyn Host>, message: NewOutgoing) -> Result<Prepared> {
+    web::prepare(host.as_ref(), message).await.map_err(explain_error)
+}
+/// `collect`, off the caller's thread.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) async fn collect_task(root: PathBuf, store: std::sync::Arc<crate::store::Store>) {
+    let _ = crate::rt::task::spawn_blocking(move || collect(&root, &store)).await;
+}
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn collect_task(root: PathBuf, store: std::sync::Arc<crate::store::Store>) {
+    let _ = web::collect(&root, &store).await;
+}
+/// `sweep_orphans`, off the caller's thread.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) async fn sweep_task(root: PathBuf, store: std::sync::Arc<crate::store::Store>) {
+    let _ = crate::rt::task::spawn_blocking(move || sweep_orphans(&root, &store)).await;
+}
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn sweep_task(root: PathBuf, store: std::sync::Arc<crate::store::Store>) {
+    let _ = web::sweep_orphans(&root, &store).await;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn prepare(host: &dyn Host, message: NewOutgoing) -> Result<Prepared> {
     let mut prepared = Prepared {
         message,
@@ -116,6 +163,7 @@ pub(crate) fn prepare(host: &dyn Host, message: NewOutgoing) -> Result<Prepared>
     Ok(prepared)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn sync_dir(path: &std::path::Path) -> std::io::Result<()> {
     #[cfg(unix)]
     {
@@ -142,9 +190,16 @@ fn private_file(root: &std::path::Path, path: &std::path::Path) -> bool {
             .and_then(|x| x.to_str())
             .is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
         && path.extension().is_some_and(|x| x == "bin")
-        && !dir
-            .symlink_metadata()
-            .is_ok_and(|m| m.file_type().is_symlink())
+        && !is_link(dir)
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn is_link(path: &std::path::Path) -> bool {
+    path.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink())
+}
+/// A browser's private file system has no links.
+#[cfg(target_arch = "wasm32")]
+fn is_link(_path: &std::path::Path) -> bool {
+    false
 }
 fn uuid_name(s: &str) -> bool {
     s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit())
@@ -158,6 +213,7 @@ fn ms() -> i64 {
 
 /// A durable queue is filled in the same transaction as send/deletion. Failed
 /// removals stay due for retry; a missing file is already collected.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn collect(root: &std::path::Path, store: &crate::store::Store) -> Result<()> {
     let at = ms();
     for path in store.staging_due(at)? {
@@ -185,6 +241,7 @@ pub(crate) fn collect(root: &std::path::Path, store: &crate::store::Store) -> Re
 
 /// Startup removes old abandoned pre-admission copies. The 24-hour grace also
 /// protects a concurrent send still preparing a folder with no database row.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn sweep_orphans(root: &std::path::Path, store: &crate::store::Store) -> Result<()> {
     let entries = match fs::read_dir(root) {
         Ok(e) => e,

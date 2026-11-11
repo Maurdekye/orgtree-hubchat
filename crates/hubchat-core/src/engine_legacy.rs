@@ -33,12 +33,7 @@ impl Engine {
                 })
                 .collect(),
         };
-        let host = self.host.clone();
-        let prepared =
-            crate::rt::task::spawn_blocking(move || crate::staging::prepare(host.as_ref(), candidate))
-                .await
-                .map_err(|_| Error::Invalid("File preparation stopped; retry the message.".into()))
-                .and_then(|result| result.map_err(crate::staging::explain_error));
+        let prepared = crate::staging::prepare_task(self.host.clone(), candidate).await;
         let prepared = match prepared {
             Ok(p) => p,
             Err(e) => {

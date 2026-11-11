@@ -673,7 +673,7 @@ impl HubClient {
                 .post(url)
                 .header("X-Org-Auth", me.auth_header())
                 .header(reqwest::header::CONTENT_LENGTH, total)
-                .body(stream_body(stream)?)
+                .body(stream_body(stream).await?)
                 .send()
                 .await?;
             let r: R = check(resp).await?.json().await?;
@@ -789,18 +789,35 @@ impl HubClient {
 
 /// The body of an upload, sent piece by piece as `stream` gives it.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn stream_body<S>(stream: S) -> Result<reqwest::Body>
+pub(crate) async fn stream_body<S>(stream: S) -> Result<reqwest::Body>
 where
     S: futures_util::Stream<Item = std::io::Result<bytes::Bytes>> + Send + 'static,
 {
     Ok(reqwest::Body::wrap_stream(stream))
 }
 
-/// A page cannot send a body piece by piece through this client: Hubchat Web
-/// sends no files yet, and says so instead of reading a file into memory.
+/// The most a page holds in memory for one request body.
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn stream_body<S>(_stream: S) -> Result<reqwest::Body> {
-    Err(Error::Io(std::io::Error::new(std::io::ErrorKind::Unsupported, "Files can't be sent from Hubchat Web yet.")))
+const WEB_BODY_MAX: usize = 64 * 1024 * 1024;
+
+/// A page cannot send a body piece by piece through this client: the pieces
+/// are gathered and sent as one. A resumable upload asks for 8 MiB at a time;
+/// a hub that takes a file only whole gets at most `WEB_BODY_MAX`.
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn stream_body<S>(stream: S) -> Result<reqwest::Body>
+where
+    S: futures_util::Stream<Item = std::io::Result<bytes::Bytes>> + 'static,
+{
+    futures_util::pin_mut!(stream);
+    let mut all = Vec::new();
+    while let Some(piece) = stream.next().await {
+        let piece = piece?;
+        if all.len() + piece.len() > WEB_BODY_MAX {
+            return Err(Error::Invalid("This file is too large to send from Hubchat Web through this hub.".into()));
+        }
+        all.extend_from_slice(&piece);
+    }
+    Ok(reqwest::Body::from(all))
 }
 
 /// Turn an HTTP error status into `Error::Hub` with the hub's `detail`.

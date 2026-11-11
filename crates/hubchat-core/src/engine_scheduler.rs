@@ -8,10 +8,7 @@ pub(super) fn transient(e: &Error) -> bool {
 }
 impl Engine {
     pub(super) async fn sender_loop(self: Arc<Self>) {
-        let store = self.store.clone();
-        let root = self.host.staging_dir();
-        let _ =
-            crate::rt::task::spawn_blocking(move || crate::staging::sweep_orphans(&root, &store)).await;
+        crate::staging::sweep_task(self.host.staging_dir(), self.store.clone()).await;
         let mut workers = crate::rt::task::JoinSet::new();
         let mut active = HashMap::<crate::rt::task::Id, String>::new();
         let mut clean_at = crate::rt::Instant::now();

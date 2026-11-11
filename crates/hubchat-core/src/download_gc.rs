@@ -22,26 +22,39 @@ fn private_partial(root: &Path, path: &Path) -> bool {
             .file_stem()
             .and_then(|s| s.to_str())
             .is_some_and(|s| s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit()))
-        && !root
-            .symlink_metadata()
-            .is_ok_and(|m| m.file_type().is_symlink())
-        && !path
-            .symlink_metadata()
-            .is_ok_and(|m| m.file_type().is_symlink())
+        && !is_link(root)
+        && !is_link(path)
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn is_link(path: &Path) -> bool {
+    path.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink())
+}
+/// A browser's private file system has no links.
+#[cfg(target_arch = "wasm32")]
+fn is_link(_path: &Path) -> bool {
+    false
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn list_names(root: &Path) -> std::io::Result<impl Iterator<Item = std::io::Result<String>>> {
+    Ok(std::fs::read_dir(root)?.map(|entry| entry.map(|e| e.file_name().to_string_lossy().into_owned())))
+}
+#[cfg(target_arch = "wasm32")]
+fn list_names(root: &Path) -> std::io::Result<impl Iterator<Item = std::io::Result<String>>> {
+    Ok(crate::rt::fs::read_dir_now(root)?.into_iter().map(|e| Ok(e.name)))
 }
 // Scan names in bounded keyset pages without retaining an unbounded directory
 // listing. A persisted cursor also advances past recent and unrelated entries.
 fn discover_orphans(root: &Path, store: &Store) -> Result<()> {
     let after = store.meta("download.gc.cursor")?.unwrap_or_default();
-    let entries = match std::fs::read_dir(root) {
+    // names only; natively this is std's listing, as before
+    let entries = match list_names(root) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e.into()),
     };
     let mut names = std::collections::BTreeSet::new();
-    for entry in entries {
-        let entry = entry?;
-        let name = entry.file_name().to_string_lossy().into_owned();
+    for name in entries {
+        let name = name?;
         if name > after {
             names.insert(name);
             if names.len() > 32 {
@@ -54,7 +67,7 @@ fn discover_orphans(root: &Path, store: &Store) -> Result<()> {
         if !private_partial(root, &path) {
             continue;
         }
-        let Ok(meta) = path.symlink_metadata() else {
+        let Ok(meta) = crate::rt::fs::metadata_now(&path) else {
             continue;
         };
         if !meta.is_file() {
@@ -63,7 +76,7 @@ fn discover_orphans(root: &Path, store: &Store) -> Result<()> {
         if meta
             .modified()
             .ok()
-            .and_then(|t| t.elapsed().ok())
+            .and_then(|t| crate::rt::system_now().duration_since(t).ok())
             .is_some_and(|age| age.as_secs() >= 86400)
         {
             store.queue_orphan_partial(&path.to_string_lossy())?;
