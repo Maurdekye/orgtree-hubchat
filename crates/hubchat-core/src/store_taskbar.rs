@@ -8,7 +8,15 @@ const ATTENTION_SQL: &str = "SELECT EXISTS(SELECT 1 FROM messages WHERE outgoing
 impl Store {
     /// What the taskbar dot says: (unread messages including history-only unread, unanswered incoming questions).
     pub fn taskbar_counts(&self) -> Result<(u64, u64)> {
-        Ok((0, 0))
+        self.with(|c| {
+            c.query_row(
+                "SELECT (SELECT COUNT(*) FROM messages WHERE outgoing=0 AND seen=0)
+                      + (SELECT COALESCE(SUM(old_unread), 0) FROM history_marks WHERE old_unread>0),
+                        (SELECT COUNT(*) FROM taskbar_questions WHERE pending=1)",
+                [],
+                |r| Ok((r.get::<_, i64>(0)? as u64, r.get::<_, i64>(1)? as u64)),
+            )
+        })
     }
 
     pub fn taskbar_attention(&self) -> Result<bool> {

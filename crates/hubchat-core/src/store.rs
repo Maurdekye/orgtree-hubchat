@@ -904,10 +904,17 @@ impl Store {
             let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? as u64)))?;
             rows.collect()
         })?;
+        // the taskbar's own projection: pending incoming questions per chat
+        let asking: std::collections::HashMap<String, u64> = self.with(|c| {
+            let mut st = c.prepare("SELECT peer, COUNT(*) FROM taskbar_questions WHERE pending=1 GROUP BY peer")?;
+            let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64)))?;
+            rows.collect()
+        })?;
         let mut out = Vec::with_capacity(peers.len());
         for (peer, _, unread) in peers {
             if let Some(last) = self.chat(&peer, None, None, 1)?.pop() {
-                out.push(ChatSummary { peer, last, unread, needs_answer: 0 });
+                let needs_answer = asking.get(&peer).copied().unwrap_or(0);
+                out.push(ChatSummary { peer, last, unread, needs_answer });
             }
         }
         Ok(out)
