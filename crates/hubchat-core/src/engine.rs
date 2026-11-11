@@ -2646,3 +2646,7 @@ mod translation_tests;
 #[cfg(test)]
 #[path = "engine_status_tests.rs"]
 mod status_tests;
+
+#[cfg(test)]
+#[path = "engine_webpush_tests.rs"]
+mod webpush_tests;
