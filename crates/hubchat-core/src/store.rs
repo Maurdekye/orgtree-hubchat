@@ -451,9 +451,18 @@ impl Store {
         Self::init(con)
     }
 
-    /// Like `open`, for Hubchat Web. (Red: it does not refuse yet.)
+    /// Like `open`, but a store whose schema is newer than this build knows
+    /// is refused and not touched. For Hubchat Web, where a server can go
+    /// back to an older build than the one a browser last used: old code
+    /// must not run on a schema it does not know. The apps keep `open`.
     pub fn open_refusing_newer(path: &Path) -> Result<Self> {
-        Self::open(path)
+        let con = Connection::open(path).map_err(db)?;
+        // before anything is written: the schema's own statements come after
+        let have: usize = con.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(db)?;
+        if have > MIGRATIONS.len() {
+            return Err(Error::Store(format!("{NEWER_STORE} (its schema is {have}, this build knows {})", MIGRATIONS.len())));
+        }
+        Self::init(con)
     }
 
     pub fn open_in_memory() -> Result<Self> {

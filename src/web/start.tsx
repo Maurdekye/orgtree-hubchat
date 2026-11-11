@@ -16,7 +16,7 @@ import { Install } from "./Install";
 import { keepAppFiles } from "./update";
 import { followKeyboard } from "./viewport";
 import { openCore, type Core } from "./webApi";
-import { sentence } from "./wire";
+import { startFailure } from "./startError";
 
 const el = document.getElementById("root") as HTMLElement;
 let screen: Root | null = null;
@@ -57,7 +57,10 @@ async function start(takeOver = false): Promise<void> {
   try {
     core = await openCore(takeOver);
   } catch (e) {
-    show("Hubchat couldn't start its core: " + sentence(e), { bad: true, action: { label: "Reload", run: () => location.reload() } });
+    // a database from a newer build than this server has: "Update the Hubchat Web server"
+    const version = await import("../../package.json").then((p) => p.version, () => "");
+    const f = startFailure(e, location.origin, version);
+    show(f.text, { title: f.title, bad: f.bad, action: { label: f.action, run: () => location.reload() } });
     return;
   }
   if (!core) {

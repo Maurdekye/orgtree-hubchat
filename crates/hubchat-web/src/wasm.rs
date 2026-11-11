@@ -90,7 +90,9 @@ pub async fn boot(host: JsValue) -> Result<(), JsValue> {
     sqlite_wasm_vfs::sahpool::install::<sqlite_wasm_rs::WasmOsCallback>(&pool, true)
         .await
         .map_err(|e| err(format!("This browser didn't give Hubchat its storage ({e}).")))?;
-    let store = Arc::new(Store::open(Path::new(DATABASE)).map_err(err)?);
+    // a database written by a newer build than this one is refused, untouched: the page then
+    // asks for the server to be updated (src/web/startError.ts)
+    let store = Arc::new(Store::open_refusing_newer(Path::new(DATABASE)).map_err(err)?);
     let kept = host_call("loadIdentity", &[]).await.map_err(|e| err(format!("Hubchat couldn't read its key in this browser: {}", thrown(&e))))?;
     let identity = if kept.is_null() || kept.is_undefined() {
         None
