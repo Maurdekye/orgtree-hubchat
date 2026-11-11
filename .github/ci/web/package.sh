@@ -66,6 +66,14 @@ dk build -f "$(win "$repo/crates/hubchat-web-server/Dockerfile")" -t "hubchat-we
   --build-arg "HUBCHAT_WEB_IMAGE_VERSION=$version" --build-arg "HUBCHAT_WEB_IMAGE_REVISION=$commit" \
   --provenance=false "$(win "$work/ctx")"
 bash "$here/smoke.sh" image "hubchat-web:$version" "$version" "$work/logs/image"
+# what the package's page will say: GHCR takes it from these labels (a one-platform image)
+for label in title description source url documentation licenses version revision; do
+  value="$(dk image inspect -f "{{ index .Config.Labels \"org.opencontainers.image.$label\" }}" "hubchat-web:$version")"
+  [ -n "$value" ] || fail "the image has no label org.opencontainers.image.$label"
+done
+[ "$(dk image inspect -f '{{ index .Config.Labels "org.opencontainers.image.version" }}' "hubchat-web:$version")" = "$version" ] || fail "the image's version label is not $version"
+[ "$(dk image inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "hubchat-web:$version")" = "$commit" ] || fail "the image's revision label is not $commit"
+echo "labels: title, description, source, url, documentation, licenses, version $version, revision $commit"
 # the program in the image is the one built above
 dk create --name "$id" "hubchat-web:$version" >/dev/null
 dk cp "$id:/hubchat-web" "$(win "$work/from-image")"

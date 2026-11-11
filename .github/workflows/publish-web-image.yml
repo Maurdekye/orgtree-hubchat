@@ -11,6 +11,13 @@
 #   gh workflow run publish-web-image.yml -R Maurdekye/orgtree-hubchat -f tag=v1.4.0
 # GitHub creates the package private at its first push; its owner makes it
 # public once (Package settings, Change visibility).
+# The package page's description comes from the image's labels
+# (org.opencontainers.image.description and the rest): that works because
+# ONE platform is pushed, as a plain image. If a second platform is ever
+# added, GHCR reads the description only from annotations on an OCI index:
+# push the per-platform images and the index in OCI format with index
+# annotations (description, source, url, documentation, licenses), or the
+# page is blank (measured on the mail hub's package, 2026-11-11).
 name: publish-web-image
 
 on:
@@ -90,6 +97,15 @@ jobs:
           for t in "${tags[@]}"; do
             docker tag "hubchat-web:$VERSION" "$remote:$t"
             docker push "$remote:$t"
+          done
+          # one platform, one manifest: not an index (the package page reads the image's labels)
+          for t in "${tags[@]}"; do
+            kind="$(docker buildx imagetools inspect "$remote:$t" --raw | jq -r .mediaType)"
+            echo "$remote:$t is $kind"
+            case "$kind" in
+              application/vnd.docker.distribution.manifest.v2+json|application/vnd.oci.image.manifest.v1+json) ;;
+              *) echo "::error::$remote:$t is $kind, not a single image manifest: its page would show no description"; exit 1 ;;
+            esac
           done
           # read them back: what the registry now serves is the release's program
           for t in "${tags[@]}"; do

@@ -298,6 +298,16 @@ release:
 gh workflow run publish-web-image.yml -R Maurdekye/orgtree-hubchat -f tag=v<v>
 ```
 
+The package page's description comes from the image's labels
+(`org.opencontainers.image.description`, `source`, `url`, `documentation`,
+`licenses`; `package.sh` refuses an image without them). GHCR reads labels
+only for a one-platform image, which is what is pushed, and the workflow
+checks that each pushed tag is a single image manifest. If an arm64 image
+is ever added, the description must move to annotations on an OCI index:
+push the per-platform images and the index in OCI format with index
+annotations, or the page is blank (the mail hub's package showed this on
+2026-11-11).
+
 The first push creates the package `hubchat-web` as **private**. Its owner
 makes it public once: on GitHub, the package's page, **Package settings**,
 **Change visibility**, Public. Until then `docker pull` needs a login.

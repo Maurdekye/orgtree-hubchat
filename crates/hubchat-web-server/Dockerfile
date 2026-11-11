@@ -10,12 +10,18 @@
 #   docker build -f crates/hubchat-web-server/Dockerfile -t hubchat-web <folder with hubchat-web>
 FROM scratch
 # Set by the release workflow; a local build leaves them empty. image.source
-# links the package ghcr.io/maurdekye/hubchat-web to the repository.
+# links the package ghcr.io/maurdekye/hubchat-web to the repository, and
+# image.description is the text on the package's page: GHCR reads it from
+# these labels because the image is for ONE platform. A package for several
+# platforms shows it only from annotations on an OCI index
+# (docs/ci-release.md, "Hubchat Web").
 ARG HUBCHAT_WEB_IMAGE_VERSION=
 ARG HUBCHAT_WEB_IMAGE_REVISION=
 LABEL org.opencontainers.image.title="hubchat-web" \
       org.opencontainers.image.description="Hubchat Web: serves Hubchat as a web app, for an iPhone or any browser. It only hands out the app; identities, keys and messages stay in each person's browser." \
       org.opencontainers.image.source="https://github.com/Maurdekye/orgtree-hubchat" \
+      org.opencontainers.image.url="https://github.com/Maurdekye/orgtree-hubchat#hubchat-web" \
+      org.opencontainers.image.documentation="https://github.com/Maurdekye/orgtree-hubchat/blob/main/docs/hubchat-web-server.md" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version="${HUBCHAT_WEB_IMAGE_VERSION}" \
       org.opencontainers.image.revision="${HUBCHAT_WEB_IMAGE_REVISION}"
