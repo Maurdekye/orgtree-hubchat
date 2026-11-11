@@ -52,10 +52,13 @@ mod tests {
         assert_eq!(s.taskbar_counts().unwrap(), (4, 2), "unread incl. history-only, and pending questions");
         let by = |s: &Store, p: &str| s.chats().unwrap().into_iter().find(|c| c.peer == p).map(|c| c.needs_answer);
         assert_eq!(by(&s, PEER), Some(1));
+        let first = |s: &Store, p: &str| s.chats().unwrap().into_iter().find(|c| c.peer == p).and_then(|c| c.first_question);
+        assert_eq!(first(&s, PEER).as_deref(), Some("q1"), "the click target is the pending card");
         assert_eq!(by(&s, "kim.abcdef"), Some(1));
         add(&s, "ans", true, PEER, serde_json::json!({"reply_to":"q1"}));
         assert_eq!(s.taskbar_counts().unwrap().1, 1);
         assert_eq!(by(&s, PEER), Some(0), "answered: no marker");
+        assert_eq!(first(&s, PEER), None);
         add(&s, "later", true, "kim.abcdef", serde_json::json!({"received_at":"2026-10-19T00:05:00.000Z"}));
         assert_eq!(by(&s, "kim.abcdef"), Some(0), "a later outgoing message settles it, the same rule as the dot");
         assert_eq!(s.taskbar_attention().unwrap(), true, "the rule itself is unchanged: unread still lights it");

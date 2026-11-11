@@ -85,7 +85,7 @@ export function Chats({ go, close }: { go: (s: Scr) => void; close: (peer: strin
       <div className="fchips">{f("all", "All")}{f("agents", "Agents")}{f("people", "People")}</div>
       <div className="scr-body" role="main">
         {!total ? <EmptyChats onNew={() => go({ s: "newchat" })} />
-          : rows.length ? <><ChatRows rows={rows} selected={null} onOpen={(p) => go({ s: "conv", p })} onInfo={(p) => go({ s: "info", p })} onCloseDm={close} /><div style={{ height: 90 }} /></>
+          : rows.length ? <><ChatRows rows={rows} selected={null} onOpen={(p) => go({ s: "conv", p })} onInfo={(p) => go({ s: "info", p })} onCloseDm={close} onShowQuestion={(p, id) => { go({ s: "conv", p }); setFileJump({ peer: p, id }); }} /><div style={{ height: 90 }} /></>
           : <div className="empty"><b>No chats match</b>To reach someone new, use New chat and type their address.</div>}
       </div>
       <button className="fab" onClick={() => go({ s: "newchat" })} aria-label="New chat"><Icon name="new_chat" />New chat</button>

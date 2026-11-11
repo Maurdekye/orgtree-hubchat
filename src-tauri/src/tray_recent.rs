@@ -83,14 +83,15 @@ pub fn sync(app: &AppHandle) {
             RecentRow { peer: chat.peer, name, kind, unread: chat.unread, typing: false, picture: None, picture_key }
         }).collect::<Vec<_>>();
         let taskbar = c.store.taskbar_attention().map_err(|e|e.to_string())?;
-        Ok((owner.to_owned(), rows, dot, taskbar))
+        let counts = c.store.taskbar_counts().map_err(|e|e.to_string())?;
+        Ok((owner.to_owned(), rows, dot, taskbar, counts))
     }));
     let available = loaded.is_ok();
-    let (owner, rows, dot, taskbar) = match loaded {
-        Ok((o,r,d,t)) => (o,r,Some(d),Some(t)),
+    let (owner, rows, dot, taskbar, counts) = match loaded {
+        Ok((o,r,d,t,n)) => (o,r,Some(d),Some(t),Some(n)),
         Err(_) => match core().and_then(|c|c.engine()) {
-            Ok(e) => (e.me().address(), vec![], None, None),
-            Err(_) => (String::new(), vec![], Some(false), Some(false))
+            Ok(e) => (e.me().address(), vec![], None, None, None),
+            Err(_) => (String::new(), vec![], Some(false), Some(false), Some((0, 0)))
         }
     };
     let publish = || {
@@ -107,6 +108,10 @@ pub fn sync(app: &AppHandle) {
         if change_dot { set_dot(app, final_dot.unwrap_or(false)); }
         if change_taskbar && crate::taskbar::set_dot(app, final_taskbar.unwrap_or(false)) {
             r.view.lock().unwrap().taskbar_dot = final_taskbar;
+        }
+        // a failed read keeps the last hover text; a new owner without counts clears it
+        if let Some((unread, questions)) = counts.or(if changed_owner { Some((0, 0)) } else { None }) {
+            crate::taskbar::set_hint(app, &crate::taskbar::hint(unread, questions));
         }
         Ok(changed_owner)
     };

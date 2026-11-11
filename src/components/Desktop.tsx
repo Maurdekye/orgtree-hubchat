@@ -260,7 +260,7 @@ export function Desktop() {
           <div className="filters">{fchip("all", "All")}{fchip("agents", "Agents")}{fchip("people", "People")}</div>
           <div className="clist scroll">
             {!total && !chat ? <EmptyChats onNew={() => setOv({ k: "newchat", q: "" })} />
-              : rows.length ? <ChatRows rows={rows} selected={chat} onOpen={open} onInfo={contactInfo} onCloseDm={close} />
+              : rows.length ? <ChatRows rows={rows} selected={chat} onOpen={open} onInfo={contactInfo} onCloseDm={close} onShowQuestion={(p, id) => { open(p); setFileJump({ peer: p, id }); }} />
               : <div className="list-empty"><Icon name="search" /><b>No chats match</b>To reach someone new, use <button className="link" onClick={() => setOv({ k: "newchat", q })}>New chat</button> and type their address.</div>}
           </div>
           <div className="side-foot">

@@ -410,6 +410,8 @@ pub struct ChatSummary {
     pub unread: u64,
     /// incoming question cards still unanswered, by the taskbar rule (`taskbar_questions`)
     pub needs_answer: u64,
+    /// the oldest of them: where a click goes (scroll to it and highlight)
+    pub first_question: Option<String>,
 }
 
 /// A directory row: one address, merged across hubs.
@@ -905,16 +907,21 @@ impl Store {
             rows.collect()
         })?;
         // the taskbar's own projection: pending incoming questions per chat
-        let asking: std::collections::HashMap<String, u64> = self.with(|c| {
-            let mut st = c.prepare("SELECT peer, COUNT(*) FROM taskbar_questions WHERE pending=1 GROUP BY peer")?;
-            let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64)))?;
+        let asking: std::collections::HashMap<String, (u64, Option<String>)> = self.with(|c| {
+            let mut st = c.prepare(
+                "SELECT t.peer, COUNT(*),
+                        (SELECT q.id FROM taskbar_questions t2 JOIN messages q ON q.id=t2.id
+                          WHERE t2.peer=t.peer AND t2.pending=1 ORDER BY q.created_at, q.id LIMIT 1)
+                   FROM taskbar_questions t WHERE t.pending=1 GROUP BY t.peer",
+            )?;
+            let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, (r.get::<_, i64>(1)? as u64, r.get::<_, Option<String>>(2)?))))?;
             rows.collect()
         })?;
         let mut out = Vec::with_capacity(peers.len());
         for (peer, _, unread) in peers {
             if let Some(last) = self.chat(&peer, None, None, 1)?.pop() {
-                let needs_answer = asking.get(&peer).copied().unwrap_or(0);
-                out.push(ChatSummary { peer, last, unread, needs_answer });
+                let (needs_answer, first_question) = asking.get(&peer).cloned().unwrap_or((0, None));
+                out.push(ChatSummary { peer, last, unread, needs_answer, first_question });
             }
         }
         Ok(out)

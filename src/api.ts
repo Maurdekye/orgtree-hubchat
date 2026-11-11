@@ -233,6 +233,10 @@ export interface ChatSummary {
   peer: string;
   last: Message;
   unread: number;
+  /** incoming question cards still unanswered (the taskbar dot's rule) */
+  needs_answer: number;
+  /** the oldest of them: where a click goes */
+  first_question?: string | null;
 }
 
 /** A directory row: one address merged across every hub that lists it. */

@@ -14,9 +14,9 @@ export type ChatFilter = "all" | "agents" | "people";
 
 export function useFilteredChats(filter: ChatFilter, q: string, open: string | null) {
   const snap = useSnap();
-  let chats: (ChatSummary | { peer: string; last: null; unread: 0 })[] = snap.chats;
+  let chats: (ChatSummary | { peer: string; last: null; unread: 0; needs_answer: 0; first_question?: null })[] = snap.chats;
   // a chat opened from New chat shows in the list before its first message
-  if (open && !chats.some((c) => c.peer === open)) chats = [{ peer: open, last: null, unread: 0 }, ...chats];
+  if (open && !chats.some((c) => c.peer === open)) chats = [{ peer: open, last: null, unread: 0, needs_answer: 0 }, ...chats];
   const qq = q.trim().toLowerCase();
   const counts = { all: chats.length, agents: 0, people: 0 };
   const rows = chats.filter((c) => {
@@ -61,8 +61,10 @@ const PRESS_CLICK_MS = 700;
 
 /** What a chat's unread badge says to a screen reader and on hover; the rail's button says it too. */
 const unreadLabel = (n: number) => n + " unread";
+/** What the dot on the taskbar means for a chat: question cards waiting for an answer (the taskbar rule). */
+export const needsAnswerLabel = (n: number) => n + (n === 1 ? " question needs" : " questions need") + " your answer";
 
-export function ChatRows({ rows, selected, onOpen, onInfo, onCloseDm }: { rows: ReturnType<typeof useFilteredChats>["rows"]; selected: string | null; onOpen: (peer: string) => void; onInfo?: (peer: string) => void; onCloseDm?: (peer: string) => void }) {
+export function ChatRows({ rows, selected, onOpen, onInfo, onCloseDm, onShowQuestion }: { rows: ReturnType<typeof useFilteredChats>["rows"]; selected: string | null; onOpen: (peer: string) => void; onInfo?: (peer: string) => void; onCloseDm?: (peer: string) => void; /** open the chat, then scroll to the pending card and highlight it */ onShowQuestion?: (peer: string, id: string) => void }) {
   const snap = useSnap();
   const platform = usePlatform();
   const writing = useTypingPeers();
@@ -83,13 +85,13 @@ export function ChatRows({ rows, selected, onOpen, onInfo, onCloseDm }: { rows: 
         else if (m.outgoing) prev = <><Tick m={m} /><span className="you">You:</span><span className="t" dir="auto">{preview(m)}</span></>;
         else prev = <>{m.kind === "question" ? <span className="q">Question ·</span> : null}{m.kind === "question" ? " " : null}<span className="t" dir="auto">{preview(m)}</span></>;
         return (
-          <div key={c.peer} className={"crow" + (selected === c.peer ? " sel" : "") + (c.unread ? " unread" : "")} onClick={() => { if (Date.now() - pressedAt.current > PRESS_CLICK_MS) onOpen(c.peer); }} role="button" tabIndex={0}
+          <div key={c.peer} className={"crow" + (selected === c.peer ? " sel" : "") + (c.unread ? " unread" : "") + (c.needs_answer ? " asks" : "")} onClick={() => { if (Date.now() - pressedAt.current <= PRESS_CLICK_MS) return; if (c.needs_answer && c.first_question && onShowQuestion) onShowQuestion(c.peer, c.first_question); else onOpen(c.peer); }} role="button" tabIndex={0}
             onContextMenu={(e) => { if (platform === "android") pressedAt.current = Date.now(); chatMenu(e, c.peer, onOpen, onInfo, "Open", onCloseDm); }}
             onKeyDown={pressKeys(() => onOpen(c.peer))}>
             <PeerAvatar address={c.peer} c={ct} hubs={hubs} size={platform === "android" ? 52 : 44} />
             <div className="crow-main">
               <div className="crow-l1"><span className="crow-name" title={name}>{name}</span><KindGlyph kind={kindOf(ct)} /><span className="crow-time">{m ? shortWhen(msgTime(m)) : ""}</span></div>
-              <div className="crow-l2"><span className="crow-prev">{prev}</span>{c.unread ? <span className="badge" title={unreadLabel(c.unread)} role="img" aria-label={unreadLabel(c.unread)}>{c.unread}</span> : null}</div>
+              <div className="crow-l2"><span className="crow-prev">{prev}</span>{c.needs_answer ? <span className="badge asks-badge" title={needsAnswerLabel(c.needs_answer)} role="img" aria-label={needsAnswerLabel(c.needs_answer)}>?</span> : null}{c.unread ? <span className="badge" title={unreadLabel(c.unread)} role="img" aria-label={unreadLabel(c.unread)}>{c.unread}</span> : null}</div>
             </div>
           </div>
         );
@@ -109,8 +111,8 @@ export function RailRows({ rows, selected, onOpen, onInfo, onCloseDm }: { rows: 
         const ct = snap.byAddr.get(c.peer);
         const name = displayName(ct, c.peer);
         return (
-          <button key={c.peer} className={"rrow" + (selected === c.peer ? " sel" : "") + (c.unread ? " unread" : "")} onClick={() => onOpen(c.peer)}
-            title={name} aria-label={name + (c.unread ? ", " + unreadLabel(c.unread) : "")}
+          <button key={c.peer} className={"rrow" + (selected === c.peer ? " sel" : "") + (c.unread ? " unread" : "") + (c.needs_answer ? " asks" : "")} onClick={() => onOpen(c.peer)}
+            title={name} aria-label={name + (c.unread ? ", " + unreadLabel(c.unread) : "") + (c.needs_answer ? ", " + needsAnswerLabel(c.needs_answer) : "")}
             onContextMenu={(e) => chatMenu(e, c.peer, onOpen, onInfo, "Open", onCloseDm)}>
             <PeerAvatar address={c.peer} c={ct} hubs={hubs} size={40} />
             {c.unread ? <span className="badge">{c.unread}</span> : null}

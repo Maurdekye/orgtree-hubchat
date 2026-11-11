@@ -587,6 +587,13 @@ async function pipeline(m: Message) {
   }
 }
 
+/** The taskbar rule in the mock: an incoming question with no reply to it and no later outgoing message in its chat. */
+function pendingQuestions(l: Message[]): { needs_answer: number; first_question: string | null } {
+  const open = l.filter((m) => !m.outgoing && m.kind === "question"
+    && !l.some((a) => a.outgoing && (a.reply_to === m.id || Date.parse(a.created_at) > Date.parse(m.created_at))));
+  return { needs_answer: open.length, first_question: open[0]?.id ?? null };
+}
+
 function chatsList(): ChatSummary[] {
   const by = new Map<string, Message[]>();
   for (const m of msgs) { const l = by.get(m.peer) || []; l.push(m); by.set(m.peer, l); }
@@ -594,7 +601,7 @@ function chatsList(): ChatSummary[] {
   for (const [peer, l] of by) {
     if (closedDms().has(peer)) continue;
     l.sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
-    out.push({ peer, last: clone(l[l.length - 1]), unread: l.filter((m) => !m.outgoing && !m.seen).length + (oldUnread.get(peer) || 0) });
+    out.push({ peer, last: clone(l[l.length - 1]), ...pendingQuestions(l), unread: l.filter((m) => !m.outgoing && !m.seen).length + (oldUnread.get(peer) || 0) });
   }
   return out.sort((a, b) => Date.parse(b.last.created_at) - Date.parse(a.last.created_at));
 }
