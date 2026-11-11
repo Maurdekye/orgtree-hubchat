@@ -27,8 +27,11 @@ use crate::shell::{Shell, Sink};
 
 /// The database, in the origin's private file system.
 const DATABASE: &str = "/hubchat.db";
-/// Its directory there (beside nothing else of this origin).
+/// Its directory there.
 const DIRECTORY: &str = "hubchat";
+/// The directory of Hubchat Web's files there (attachments on their way out
+/// and in), beside the database's.
+const FILES: &str = "hubchat-files";
 
 thread_local! {
     // a worker is one thread: these never leave it
@@ -90,6 +93,11 @@ pub async fn boot(host: JsValue) -> Result<(), JsValue> {
     sqlite_wasm_vfs::sahpool::install::<sqlite_wasm_rs::WasmOsCallback>(&pool, true)
         .await
         .map_err(|e| err(format!("This browser didn't give Hubchat its storage ({e}).")))?;
+    // The files' directory, read once. A browser that refuses it still chats: file work
+    // then answers that there is no file storage here (rt::fs), text is not held up.
+    if let Err(e) = hubchat_core::rt::fs::init(FILES).await {
+        emit("hc-web-files", &serde_json::json!({ "refused": e.to_string() }).to_string());
+    }
     // a database written by a newer build than this one is refused, untouched: the page then
     // asks for the server to be updated (src/web/startError.ts)
     let store = Arc::new(Store::open_refusing_newer(Path::new(DATABASE)).map_err(err)?);
