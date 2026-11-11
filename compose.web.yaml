@@ -1,0 +1,36 @@
+# Hubchat Web beside a mail hub: an example (docs/hubchat-web-server.md).
+#
+#   docker compose -f compose.web.yaml up -d
+#
+# It serves the web app on port 8080 over plain HTTP. A phone needs HTTPS in
+# front of it AND in front of the hub, for example with Tailscale on this
+# machine:
+#
+#   tailscale serve --bg --https=443  http://127.0.0.1:8080    (Hubchat Web)
+#   tailscale serve --bg --https=8443 http://127.0.0.1:7370    (the mail hub)
+#
+# and the hub must allow the page: in the hub's .env,
+#   HUB_WEB_ORIGINS=https://<this machine>.<tailnet>.ts.net
+#
+# To run both from one file, paste the `hubchat-web` service into the mail
+# hub's compose.yaml. They share nothing: Hubchat Web never talks to the hub,
+# each person's browser does.
+services:
+  hubchat-web:
+    image: ghcr.io/maurdekye/hubchat-web:${HUBCHAT_WEB_VERSION:-latest}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"   # loopback only: the HTTPS in front reaches it here
+    environment:
+      # The hubs offered to someone adding their first hub. Here: the hub
+      # behind this machine's port 8443. Leave it out and Hubchat Web offers a
+      # hub at its own address, when one answers there.
+      HUBCHAT_WEB_SUGGEST_HUBS: ${HUBCHAT_WEB_SUGGEST_HUBS:-}
+      # false: suggest no hub at all
+      HUBCHAT_WEB_HUB_SUGGESTIONS: ${HUBCHAT_WEB_HUB_SUGGESTIONS:-true}
+      # a label on the welcome screen
+      HUBCHAT_WEB_NAME: ${HUBCHAT_WEB_NAME:-}
+    # it writes nothing and needs no privilege
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
