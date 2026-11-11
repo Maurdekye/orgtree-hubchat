@@ -12,13 +12,15 @@
 //   and the first tab is told the same.
 //
 //   node tools/web-e2e.mjs --dist <built page> --hub <orgtree-mailhub exe> --pg <HUB_TEST_PG folder> --out <folder>
-//        [--browser <chromium exe>] [--width 390 --height 844] [--any-session]
+//        [--browser <chromium exe>] [--width 390 --height 844] [--any-session] [--server <hubchat-web program>]
 //
 // --hub: a Mail hub with web origins (2.5.0 line: HUB_WEB_ORIGINS). --pg: the
 // hub suite's PostgreSQL template (its make-hub-test-pg.sh): bin/ and
 // template/{data,password.txt}. --width: below 900 the phone layout, from
 // 900 the desktop one. The page is served the way the spec has it (R3.4,
 // tools/web-static.mjs): with its Content Security Policy, compressed.
+// --server: the built `hubchat-web` program (crates/hubchat-web-server, built
+// with HUBCHAT_WEB_DIST): at the end the page it holds is opened from it too.
 //
 // It never touches a real hub, key or clipboard, sends no OS input (CDP
 // only), runs the browser muted and able to resolve nothing but loopback,
@@ -46,9 +48,10 @@ const check = (name, ok, detail = '') => { results.push({ name, ok: !!ok }); con
 
 const dist = resolve(arg('dist', join(here, '..', 'dist-web')));
 const hubExe = arg('hub'), pgRoot = arg('pg'), out = resolve(arg('out', join(tmpdir(), 'hubchat-web-e2e')));
+const serverExe = arg('server');
 const width = Number(arg('width', 390)), height = Number(arg('height', 844));
 const phone = width < 900;
-if (!hubExe || !pgRoot || !existsSync(hubExe) || !existsSync(join(pgRoot, 'template', 'data')) || !existsSync(join(dist, 'index.html')) || (arg('browser') && !existsSync(arg('browser')))) {
+if (!hubExe || !pgRoot || !existsSync(hubExe) || !existsSync(join(pgRoot, 'template', 'data')) || !existsSync(join(dist, 'index.html')) || (arg('browser') && !existsSync(arg('browser'))) || (serverExe && !existsSync(serverExe))) {
   console.error('usage: node tools/web-e2e.mjs --dist <built page> --hub <orgtree-mailhub exe> --pg <HUB_TEST_PG folder> --out <folder>');
   process.exit(2);
 }
@@ -72,7 +75,7 @@ const browsers = [];
 const served = [];
 // what the server says about suggesting hubs, as a container's HUBCHAT_WEB_SUGGEST_HUBS and
 // HUBCHAT_WEB_HUB_SUGGESTIONS would (spec R6.2a); the test changes it as it goes
-const webConfig = { name: 'Hubchat Web', suggested_hubs: [], hub_suggestions: true };
+const webConfig = { name: 'The test server', suggested_hubs: [], hub_suggestions: true };
 // a copy of the built page is served, so the test can put a newer build there (section 9b)
 const site = join(run, 'site');
 cpSync(dist, site, { recursive: true });
@@ -94,7 +97,7 @@ const CAMERA = `window.__qr = null;
     // code a quarter of its width on a dark window, turned a little, out of focus
     const c = document.createElement('canvas'); c.width = 1080; c.height = 1920;
     const g = c.getContext('2d');
-    let img = null, n = 0;
+    let img = null, n = 0, held = false;
     const draw = () => {
       if (!img && window.__qr) { const i = new Image(); i.onload = () => { img = i; }; i.src = window.__qr; }
       g.filter = 'none'; g.setTransform(1, 0, 0, 1, 0, 0);
@@ -104,11 +107,14 @@ const CAMERA = `window.__qr = null;
         g.translate(540, 900); g.rotate(4 * Math.PI / 180);
         g.fillStyle = '#e4e6ea'; g.fillRect(-150, -150, 300, 300); g.drawImage(img, -125, -125, 250, 250);
         g.filter = 'none'; g.setTransform(1, 0, 0, 1, 0, 0);
+        held = true;
       }
       // something moves, so the stream keeps giving frames
       g.fillStyle = (n++ % 2) ? '#2b2e36' : '#2c2f37'; g.fillRect(0, 0, 4, 4);
     };
     draw(); setInterval(draw, 100);
+    // what the camera shows, for the test's record (web-16b)
+    window.__cameraFrame = () => (held ? c.toDataURL('image/png') : null);
     window.__cameraOpened = (window.__cameraOpened || 0) + 1;
     return c.captureStream(10);
   };`;
@@ -295,6 +301,8 @@ async function main() {
   from = served.length;
   await b.nav(origin + '/', 0);
   check('the app starts in the browser', await waitFor(`!!document.querySelector('.fork-opt')`, 60000), await b.eval(`document.body.innerText.slice(0, 200)`));
+  check("the welcome screen carries the label the server's operator gave it",
+    await waitFor(`!!document.querySelector('.web-served') && document.querySelector('.web-served').innerText.trim() === 'The test server'`, 5000), await b.eval(`document.body.innerText.slice(0, 120)`));
   const firstShown = await b.eval('window.__shown');
   const first = served.slice(from).filter((s) => s.status === 200);
   const sent = first.reduce((n, s) => n + s.sent, 0), raw = first.reduce((n, s) => n + s.raw, 0);
@@ -428,6 +436,12 @@ async function main() {
   check('it offers every way to bring an identity: scan, a code, a key file, recovery words',
     ways.some((w) => /Scan/.test(w)) && ways.some((w) => /Key file/.test(w)) && ways.some((w) => /Recovery words/.test(w)) && ways.some((w) => /code/i.test(w)), ways.join(' | '));
   await t2.shot('web-15-link-ways.png');
+  // a phone's screen may end above the last way: the same step, scrolled to its end
+  await t2.b.eval(`(() => { const all = document.querySelectorAll('.method'); all[all.length - 1].scrollIntoView({ block: 'end' }); return true; })()`);
+  await sleep(300);
+  await t2.shot('web-15b-link-ways-end.png');
+  await t2.b.eval(`(() => { document.querySelector('.method').scrollIntoView({ block: 'start' }); return true; })()`);
+  await sleep(200);
   if (phone) await t2.clickText('.method', 'Scan the QR code from your other device', 600);
   else { await t2.clickText('.method', 'Scan a QR code', 600); await t2.clickText('.ob-foot button', 'Open the camera', 600); }
   check('the camera opens over the app, with a way out', await t2.waitFor(`!!document.querySelector('.web-scan video') && document.querySelector('.web-scan video').videoWidth > 0 && !!document.querySelector('.web-scan-cancel')`, 15000),
@@ -437,6 +451,14 @@ async function main() {
   await t2.shot('web-16-scanning.png');
   // hold the first browser's QR code up to the camera
   await t2.b.eval(`window.__qr = ${JSON.stringify(qrPicture)}; true`);
+  // web-16 above is the camera before the code is held up. This is the frame the scanner is given
+  // once it is: the camera's own picture, not a screenshot (the scanner closes as soon as it reads).
+  {
+    let frame = null;
+    for (let i = 0; i < 40 && !frame; i++) { frame = await t2.b.eval(`window.__cameraFrame ? window.__cameraFrame() : null`).catch(() => null); if (!frame) await sleep(50); }
+    if (frame) writeFileSync(join(out, 'web-16b-camera-frame.png'), Buffer.from(frame.split(',')[1], 'base64'));
+    check('the camera then shows the code as a phone sees a monitor: small, turned, out of focus', !!frame);
+  }
   check('the QR code is read and the camera closes', await t2.waitFor(`!document.querySelector('.web-scan')`, 20000), await t2.b.eval(`document.body.innerText.slice(0, 300)`));
   check('the second browser waits to be approved', await t2.waitFor(`/approve/i.test(document.body.innerText) && !document.querySelector('.probe-card.bad')`, 30000), await t2.b.eval(`document.body.innerText.slice(0, 400)`));
   await t2.shot('web-17-waiting.png');
@@ -520,6 +542,36 @@ async function main() {
   check('the second tab took over and shows the chats', await waitFor(`(() => { const w = ${second}; return !!w && ${kept('w.document')}; })()`, 60000),
     await b.eval(`(() => { const w = ${second}; return w ? w.document.body.innerText.slice(0, 300) : 'no second tab'; })()`));
   await shot('web-13-other-tab.png');
+
+  // ------------------------------- 11. the server program itself (--server)
+  // The built `hubchat-web` hands out the page it holds, with its own headers and its own
+  // /config.json: the app must start from it too, with nothing blocked that it needs.
+  if (serverExe) {
+    const port = await freePort();
+    const proc = spawn(serverExe, [], { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true,
+      env: { ...process.env, HUBCHAT_WEB_BIND: '127.0.0.1', HUBCHAT_WEB_PORT: String(port), HUBCHAT_WEB_NAME: "Ada's family", HUBCHAT_WEB_HUB_SUGGESTIONS: 'false', HUBCHAT_WEB_SUGGEST_HUBS: '', HUBCHAT_WEB_TLS_CERT: '', HUBCHAT_WEB_TLS_KEY: '', HUBCHAT_WEB_LOG: 'off' } });
+    let said = '';
+    proc.stderr.on('data', (d) => { said += d; });
+    started.push(['hubchat-web', proc]);
+    const own = `http://127.0.0.1:${port}`;
+    let health = null;
+    for (let i = 0; i < 80 && !health; i++) { try { health = await (await fetch(own + '/healthz')).json(); } catch { await sleep(250); } }
+    check('the hubchat-web program starts and says it is healthy', health?.ok === true && health.app === 'hubchat-web' && /^\d+\.\d+\.\d+/.test(health.version || ''), JSON.stringify(health) + ' ' + said.trim());
+    check('it holds a built Hubchat Web, not the stand-in page', !/stand-in/.test(said), said.trim());
+    const s = await open();
+    await s.b.nav(own + '/', 0);
+    check('served by the hubchat-web program, the app starts', await s.waitFor(`!!document.querySelector('.fork-opt')`, 60000), await s.b.eval(`document.body.innerText.slice(0, 200)`));
+    check("its welcome screen carries the server's name", await s.waitFor(`!!document.querySelector('.web-served') && document.querySelector('.web-served').innerText.trim() === "Ada's family"`, 5000), await s.b.eval(`document.body.innerText.slice(0, 120)`));
+    const policy = await s.b.eval(`({ camera: document.featurePolicy.allowsFeature('camera'), microphone: document.featurePolicy.allowsFeature('microphone'), geolocation: document.featurePolicy.allowsFeature('geolocation') })`);
+    check('its Permissions-Policy leaves the page its camera and nothing else', policy.camera === true && policy.microphone === false && policy.geolocation === false, JSON.stringify(policy));
+    const cfg = await s.b.eval(`fetch('config.json', { cache: 'no-cache' }).then((r) => r.json())`);
+    check('its /config.json is what its settings say', cfg.name === "Ada's family" && cfg.hub_suggestions === false && Array.isArray(cfg.suggested_hubs) && cfg.suggested_hubs.length === 0 && cfg.version === health?.version, JSON.stringify(cfg));
+    check('the service worker takes the page over from it', await s.waitFor(`navigator.serviceWorker.getRegistration().then((r) => !!r && !!r.active)`, 30000));
+    await s.shot('web-30-own-server.png');
+    const ownCsp = await s.b.eval('window.__csp || []');
+    check('from the program: no Content Security Policy violation, no script error', ownCsp.length === 0 && s.b.errors.length === 0, [...ownCsp, ...s.b.errors].join(' | '));
+    await s.close();
+  }
 
   await collect();
   check('no Content Security Policy violation', violations.length === 0, violations.join(' | '));

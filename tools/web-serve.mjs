@@ -1,6 +1,6 @@
 // Try a built Hubchat Web (`npm run build:web`) on this machine:
 //
-//   node tools/web-serve.mjs [--dist dist-web] [--port 8787] [--host 127.0.0.1] [--suggest-hubs https://hub.example,other.example] [--hub-suggestions false]
+//   node tools/web-serve.mjs [--dist dist-web] [--port 8787] [--host 127.0.0.1] [--suggest-hubs https://hub.example,other.example] [--hub-suggestions false] [--name "Ada's family"]
 //
 // It listens on this machine only (a browser treats http://localhost as
 // secure). A phone needs HTTPS in front of it, and the hub must name the
@@ -24,7 +24,8 @@ const served = [];
 // page tries its own address); --hub-suggestions false offers none at all.
 const hubs = String(arg('suggest-hubs', '')).split(',').map((h) => h.trim()).filter(Boolean);
 const suggest = !/^(false|0)$/i.test(String(arg('hub-suggestions', 'true')));
-const server = webServer(dist, served, { name: 'Hubchat Web', suggested_hubs: hubs, hub_suggestions: suggest });
+// HUBCHAT_WEB_NAME: a label on the welcome screen
+const server = webServer(dist, served, { name: String(arg('name', '')).trim().slice(0, 48), suggested_hubs: hubs, hub_suggestions: suggest });
 server.on('error', (e) => { console.error(`can't listen on ${host}:${port}: ${e.message}`); process.exit(1); });
 server.listen(port, host, () => {
   console.log(`Hubchat Web (${dist}) on http://${host === '0.0.0.0' || host === '::' ? 'localhost' : host}:${port}`);
