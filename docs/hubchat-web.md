@@ -123,10 +123,11 @@ and the core reads it (`scan.rs`, the `rqrr` crate without its default
 features, licence `(MIT OR Apache-2.0) AND ISC`).
 
 A code on a monitor is a hard picture: small in the frame, soft, tilted, on
-a dark window with glare. `scan.rs` therefore reads a frame up to four ways,
+a dark window with glare. `scan.rs` therefore reads a frame up to five ways,
 cheapest first: as it is; smoothed, with black decided against the square
 around each pixel; the middle two thirds enlarged twice and sharpened; the
-same without sharpening. Measured on drawn photo-like frames (1080 x 1920,
+same sharpened hard (a picture well out of focus); the same without
+sharpening. Measured on drawn photo-like frames (1080 x 1920,
 noise, blur): it reads from about 5 pixels a module up, and often at 4; the
 reader alone needed about 8 once the picture was soft. The ignored test
 `scan::tests::what_the_reader_manages` prints that table. The first real

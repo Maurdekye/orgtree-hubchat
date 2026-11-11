@@ -7,7 +7,7 @@
 //! A phone pointed at a monitor gives a hard picture (user 2026-11-11
 //! 11:53Z, the first real camera): the code is small in the frame, a little
 //! soft, tilted, with the screen's pixel grid and glare. So a frame is read
-//! several ways, cheapest first, until one finds a code.
+//! up to five ways, cheapest first, until one finds a code.
 
 /// One grey picture: `w` x `h` bytes, row by row, 0 black to 255 white.
 struct Grey {
@@ -133,6 +133,13 @@ pub fn decode(width: usize, height: usize, grey: &[u8]) -> Option<String> {
     if let Some(text) = read_local(big.w, big.h, &sharp, big.w.max(big.h) / 24, 96) {
         return Some(text);
     }
+    // 4. the same, sharpened hard: a picture well out of focus (measured over 14 codes at 5.5
+    //    pixels a module and heavy blur: 11 read this way, 2 without it)
+    let sharp = sharpen(big.w, big.h, &big.px, 6, 6.0);
+    if let Some(text) = read_local(big.w, big.h, &sharp, big.w.max(big.h) / 24, 98) {
+        return Some(text);
+    }
+    // 5. the same, not sharpened
     read_local(big.w, big.h, &big.px, big.w.max(big.h) / 8, 92)
 }
 
@@ -238,6 +245,11 @@ mod tests {
         // small in the frame and well turned
         let grey = photo(LINK, 4.0, 1080, 1920, 540.0, 960.0, 15.0, 2, 10);
         assert_eq!(decode(1080, 1920, &grey).as_deref(), Some(LINK));
+        // well out of focus: only the hard sharpening reads these
+        let read_by = |link: &str| decode(1080, 1920, &photo(link, 5.5, 1080, 1920, 540.0, 900.0, 3.0, 6, 3)).is_some();
+        let codes: Vec<String> = (1..=6u64).map(|i| LINK.replace("9RRR3Y6TR2PW72AN", &format!("{:016X}", i.wrapping_mul(0x9E37_79B9_7F4A_7C15)))).collect();
+        let n = codes.iter().filter(|c| read_by(c)).count();
+        assert!(n >= 4, "{n} of 6 soft codes read");
         // the phone held sideways, close
         let grey = photo(LINK, 8.0, 1920, 1080, 960.0, 540.0, -7.0, 3, 16);
         assert_eq!(decode(1920, 1080, &grey).as_deref(), Some(LINK));

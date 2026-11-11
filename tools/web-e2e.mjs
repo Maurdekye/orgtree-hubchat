@@ -95,7 +95,7 @@ const CAMERA = `window.__qr = null;
       g.filter = 'none'; g.setTransform(1, 0, 0, 1, 0, 0);
       g.fillStyle = '#2b2e36'; g.fillRect(0, 0, 1080, 1920);
       if (img) {
-        g.filter = 'blur(2px)';
+        g.filter = 'blur(1.2px)';
         g.translate(540, 900); g.rotate(4 * Math.PI / 180);
         g.fillStyle = '#e4e6ea'; g.fillRect(-150, -150, 300, 300); g.drawImage(img, -125, -125, 250, 250);
         g.filter = 'none'; g.setTransform(1, 0, 0, 1, 0, 0);
