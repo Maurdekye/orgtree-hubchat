@@ -26,6 +26,14 @@ yet is listed under [Not there yet](#not-there-yet).
   Settings.
 - Saving the recovery words: Copy, or Download (the share sheet on an
   iPhone). On the web the words must be saved before the chat list opens.
+- Opening without a network: the app's files are kept in the browser, so
+  Hubchat starts and shows the chats it holds when the server or the
+  network is away. A message written then waits and goes when a hub is
+  reachable, as in the apps.
+- Updates: when the server has a newer build, the browser fetches it in the
+  background and the apps' update banner says "A new version of Hubchat is
+  ready." **Update** reloads into it. Until then the build that is running
+  stays whole. See [Updates and offline](#updates-and-offline).
 - One tab at a time: a second tab says "Hubchat is open in another tab or
   window" and can take over with **Use it here**.
 - On an iPhone or iPad, a browser tab only shows how to add Hubchat to the
@@ -137,6 +145,35 @@ to the compressed first load. The camera needs a secure page (HTTPS or
 localhost) and the person's permission; refused, the scan says so and the
 typed code still works.
 
+## Updates and offline
+
+A service worker keeps the app's files (`web/sw.template.js`). The build
+writes `sw.js` from that template with the list of the build's files and a
+hash of their content (`tools/web-sw.mjs`, called by `tools/web-build.mjs`
+after Vite); the cache is named after the hash.
+
+- It answers the page's own files from its cache, every navigation with
+  `index.html`, and `/config.json` from the server when it answers, else
+  from the last copy. Requests to any other address (the hubs) are not
+  touched: the worker never sees the identity and never calls a hub.
+- The page registers it as the app starts (`src/web/update.ts`), not on the
+  iPhone's "Add to Home Screen" screen, where no app runs.
+- A newer `sw.js` is fetched and its files kept, then it WAITS: it does not
+  take over a running page. The apps' update check (`src/lib/updates.ts`:
+  at start and every 6 hours) asks `update.ts`, which asks the browser to
+  look for a newer worker; with one waiting the banner shows. **Update**
+  tells the waiting worker to take over and reloads the page when it has.
+  The old cache is deleted then. Closing every Hubchat tab and opening it
+  again loads the newer build too.
+- On the phone layout the banner is on the chat list, as in the Android
+  app.
+- The first visit downloads everything once more than the app itself needs
+  at start (the parts loaded later, the icons): about 1.6 MB compressed
+  against 1.5 MB. The core is not fetched twice.
+- A server that serves the plain files must send `sw.js` and `index.html`
+  with `Cache-Control: no-cache`, or browsers keep an old build.
+  `tools/web-static.mjs` does.
+
 ## The suggested hub
 
 When someone makes a new identity, the Add hub step
@@ -219,7 +256,10 @@ the hub as `https://pc.example.ts.net:8443`.
   suggested hub, the recovery words download, a message both ways with a
   scripted peer, receipts, Settings, a second browser that links by
   scanning the first one's QR code (its camera replaced by a picture of
-  that code), a reload, and the second-tab takeover; and that
+  that code), a reload, the app's files kept by the service worker, a
+  start with the server gone, a newer build put on the server (the banner,
+  Update, the reload into it, the old cache gone), and the second-tab
+  takeover; and that
   there is no script error, no Content Security Policy violation and no
   missing file. `--width 1280 --height 800` runs the desktop layout. On
   Windows it refuses to run outside Session 0. Every browser it starts has
@@ -236,7 +276,10 @@ These answer "This isn't available in Hubchat Web yet." or are hidden:
 - The hub stream: Hubchat Web long-polls every hub (`stream_web.rs`) until
   it has a carrier over the browser's WebSocket.
 - Notifications (Web Push).
-- Working offline and the update banner (no service worker yet).
+- Settings, About has no "Check for updates" button on the web: the check
+  runs by itself.
+- "Update the Hubchat Web server", for a database written by a newer build
+  than the one served (spec, Version skew).
 - The container and its server. `tools/web-serve.mjs` is a development
   server.
 
