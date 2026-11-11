@@ -114,12 +114,13 @@ async fn serve(mut sock: TcpStream, state: Arc<Mutex<State>>, upgrades: Arc<Atom
         upgrades.fetch_add(1, Ordering::SeqCst);
         let status = state.lock().unwrap().upgrade_status;
         if status != 0 {
-            let mut st = state.lock().unwrap();
-            if st.downgrade_on_refusal {
-                st.features = vec!["sync".into()];
-                st.version = "2.4.0".into();
+            {
+                let mut st = state.lock().unwrap();
+                if st.downgrade_on_refusal {
+                    st.features = vec!["sync".into()];
+                    st.version = "2.4.0".into();
+                }
             }
-            drop(st);
             let _ = sock.read(&mut buf).await;
             let _ = sock.write_all(format!("HTTP/1.1 {status} X\r\ncontent-length: 0\r\nconnection: close\r\n\r\n").as_bytes()).await;
             return;
@@ -137,11 +138,24 @@ async fn serve(mut sock: TcpStream, state: Arc<Mutex<State>>, upgrades: Arc<Atom
     // plain HTTP: consume the head and answer by path
     let mut total = 0;
     while total < n {
-        let k = sock.read(&mut buf[..n - total]).await.unwrap_or(0);
+        let k = sock.read(&mut buf[total..n]).await.unwrap_or(0);
         if k == 0 {
             break;
         }
         total += k;
+    }
+    // what was already read may hold the whole body: only wait for the rest when the length says so
+    let have = buf[..total].to_vec();
+    let want: usize = head.to_ascii_lowercase().lines().find_map(|l| l.strip_prefix("content-length:").and_then(|v| v.trim().parse().ok())).unwrap_or(0);
+    let head_len = have.windows(4).position(|w| w == b"\r\n\r\n").map(|i| i + 4).unwrap_or(have.len());
+    let mut body_bytes = have[head_len..].to_vec();
+    while body_bytes.len() < want {
+        let mut more = vec![0u8; 8192];
+        let k = sock.read(&mut more).await.unwrap_or(0);
+        if k == 0 {
+            break;
+        }
+        body_bytes.extend_from_slice(&more[..k]);
     }
     let (status, body) = if first.contains("/healthz") {
         let st = state.lock().unwrap();
@@ -150,9 +164,7 @@ async fn serve(mut sock: TcpStream, state: Arc<Mutex<State>>, upgrades: Arc<Atom
         (200, json!({ "ok": true }))
     } else if first.contains("/api/sync") {
         http_syncs.fetch_add(1, Ordering::SeqCst);
-        let mut rest = vec![0u8; 8192];
-        let k = tokio::time::timeout(Duration::from_millis(200), sock.read(&mut rest)).await.ok().and_then(|r| r.ok()).unwrap_or(0);
-        let text = String::from_utf8_lossy(&rest[..k]).to_string();
+        let text = String::from_utf8_lossy(&body_bytes).to_string();
         let cursor = text.find('{').and_then(|i| serde_json::from_str::<Value>(&text[i..]).ok()).and_then(|v| v["cursor"].as_str().map(str::to_string));
         let st = state.lock().unwrap();
         (200, answer(&st, cursor.as_deref()))
