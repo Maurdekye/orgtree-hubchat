@@ -36,7 +36,7 @@ const HUB = { web_push: 8030, notification: { title: "Ann Example", body: "Are w
 test("a hub's push shows as the notification it describes, and sets the badge", async () => {
   const w = worker();
   await w.fire("push", { data: data(HUB) });
-  assert.deepEqual(plain(w.shown), [{ title: "Ann Example", body: "Are we still on for 3?", tag: "hc-ann.3f9c2a", icon: SCOPE + "icons/icon-192.png", data: { navigate: SCOPE + "#/chat/ann.3f9c2a" } }]);
+  assert.deepEqual(plain(w.shown), [{ title: "Ann Example", body: "Are we still on for 3?", tag: "hc-ann.3f9c2a", renotify: true, icon: SCOPE + "icons/icon-192.png", data: { navigate: SCOPE + "#/chat/ann.3f9c2a" } }]);
   assert.deepEqual(w.badges, [3]);
 });
 
@@ -44,7 +44,7 @@ test("every push shows a notification: one it cannot read, an empty one, one tha
   for (const d of [data("garbage"), null, data({ hello: 1 }), data({ web_push: 8030 }), data({ web_push: 1, notification: HUB.notification })]) {
     const w = worker();
     await w.fire("push", { data: d });
-    assert.deepEqual(plain(w.shown), [{ title: "Hubchat", body: "New message", tag: "hc-new", icon: SCOPE + "icons/icon-192.png", data: { navigate: SCOPE } }]);
+    assert.deepEqual(plain(w.shown), [{ title: "Hubchat", body: "New message", tag: "hc-new", renotify: true, icon: SCOPE + "icons/icon-192.png", data: { navigate: SCOPE } }]);
     assert.deepEqual(w.badges, []);
   }
 });
