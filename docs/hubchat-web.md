@@ -280,7 +280,9 @@ there only through the browser's own push. A hub with Web Push (Mail hub
   gives the title, the text, the tag and the address to open. Every push
   shows a notification, also one it cannot read (`Hubchat` / `New
   message`): a browser takes the subscription away from an app whose pushes
-  show nothing. Only this app's own pages are opened. A tap brings the open
+  show nothing. A chat's next message replaces its notification (the tag)
+  and alerts again (`renotify`): without it Chrome swaps the new one in
+  with no banner and no sound. Only this app's own pages are opened. A tap brings the open
   app to the front and names the chat (`hc-pending`, the apps' route), or
   opens the app at `#/chat/<address>`.
 - **While the app is open** it shows no notification itself: it reports

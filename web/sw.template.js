@@ -68,6 +68,9 @@ function notice(data) {
     options: {
       body: n && typeof n.body === "string" ? n.body : "New message",
       tag: n && typeof n.tag === "string" ? n.tag : "hc-new",
+      // a chat's next message replaces its notification (the tag); it alerts again, where a browser
+      // would otherwise swap it in silently, with no banner and no sound
+      renotify: true,
       icon: at("icons/icon-192.png"),
       data: { navigate: to },
     },
