@@ -6,8 +6,10 @@
 # front of it AND in front of the hub, for example with Tailscale on this
 # machine:
 #
-#   tailscale serve --bg --https=443  http://127.0.0.1:8080    (Hubchat Web)
-#   tailscale serve --bg --https=8443 http://127.0.0.1:7378    (the mail hub's relay-only door)
+#   Hubchat Web:
+#     tailscale serve --bg --https=443  http://127.0.0.1:8080
+#   the mail hub's relay-only door:
+#     tailscale serve --bg --https=8443 http://127.0.0.1:7378
 #
 # Port 7378 is the hub's relay-only door (HUB_PUBLIC=1 in the hub's .env). Never
 # put its main port 7370 behind an address other people can reach: it also

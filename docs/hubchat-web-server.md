@@ -80,8 +80,10 @@ no setting for them.
 With Tailscale, on the machine that runs both:
 
 ```
-tailscale serve --bg --https=443  http://127.0.0.1:8080     (Hubchat Web)
-tailscale serve --bg --https=8443 http://127.0.0.1:7378     (the mail hub's relay-only door)
+# Hubchat Web
+tailscale serve --bg --https=443  http://127.0.0.1:8080
+# the mail hub's relay-only door
+tailscale serve --bg --https=8443 http://127.0.0.1:7378
 ```
 
 Port 7378 is the standalone mail hub's **relay-only door**: the hub's API
@@ -90,10 +92,14 @@ other people can reach: it also serves the operator page, which shows all
 mail. (Orgtree's built-in hub has its door on 7371.) In the hub's `.env`:
 
 ```
-HUB_PUBLIC=1                                          (turns the door on)
-HUB_BIND=127.0.0.1                                    (the main port stays on this machine)
-HUB_PUBLIC_BIND=127.0.0.1                             (the door too: only Tailscale reaches it)
-HUB_WEB_ORIGINS=https://<machine>.<tailnet>.ts.net    (the page may call the hub)
+# turns the door on
+HUB_PUBLIC=1
+# the main port stays on this machine
+HUB_BIND=127.0.0.1
+# the door too: only Tailscale reaches it
+HUB_PUBLIC_BIND=127.0.0.1
+# the page may call the hub
+HUB_WEB_ORIGINS=https://<machine>.<tailnet>.ts.net
 ```
 
 Leave `HUB_PUBLIC_BIND` out if Hubchat apps on other devices reach the door
@@ -218,9 +224,12 @@ on port 80, only to send people on to `https://`.
 `docker compose up -d`:
 
 ```
-HUB_PUBLIC=1                              (turns the door on, port 7378)
-HUB_BIND=127.0.0.1                        (the main port stays on this machine)
-HUB_WEB_ORIGINS=https://192.168.1.200     (the page may call the hub)
+# turns the door on, port 7378
+HUB_PUBLIC=1
+# the main port stays on this machine
+HUB_BIND=127.0.0.1
+# the page may call the hub
+HUB_WEB_ORIGINS=https://192.168.1.200
 ```
 
 And Hubchat Web, started with the hub's `https://` address as its

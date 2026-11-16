@@ -326,7 +326,8 @@ Checking a draft's Hubchat Web by hand:
 
 ```
 docker load -i hubchat-web-<v>-docker-amd64.tar.gz
-docker run --rm hubchat-web:<v> version          (prints hubchat-web <v>)
+# prints: hubchat-web <v>
+docker run --rm hubchat-web:<v> version
 bash .github/ci/web/smoke.sh image hubchat-web:<v> <v> smoke-logs
 ```
 

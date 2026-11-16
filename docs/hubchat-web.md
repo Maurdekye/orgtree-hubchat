@@ -418,8 +418,10 @@ A phone needs HTTPS for the page and for the hub. With Tailscale, on the
 machine that runs both:
 
 ```
-tailscale serve --bg --https=443 http://127.0.0.1:8787     (the page)
-tailscale serve --bg --https=8443 http://127.0.0.1:7378    (the hub's door)
+# the page
+tailscale serve --bg --https=443 http://127.0.0.1:8787
+# the hub's door
+tailscale serve --bg --https=8443 http://127.0.0.1:7378
 ```
 
 Then tell the hub which page may call it: set `HUB_WEB_ORIGINS` to the
