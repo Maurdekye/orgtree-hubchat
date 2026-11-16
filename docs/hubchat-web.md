@@ -153,6 +153,37 @@ to the compressed first load. The camera needs a secure page (HTTPS or
 localhost) and the person's permission; refused, the scan says so and the
 typed code still works.
 
+### A link from an app
+
+An app names its hub in a link the way the app reaches it, which on a LAN is
+usually `http://`, and a page can only call `https://`. So when no address a
+link names is one a page can call, or none of them answers, the shell looks
+for the hub where it may also be (`second_round` in `link.rs`):
+
+1. at the same host and port over `https://`, for each `http://` address
+   the link names (a hub behind a proxy that answers both on one port);
+2. at the hubs this page's server suggests (the next section). The page
+   tells the core which they are (`hc_web_suggested_hubs`, a web-only
+   command, sent at the start and whenever the page reads `/config.json`).
+
+An address found this way counts only when the hub that answers there is the
+link's hub. A suggested hub must answer under the name the link gives its
+hub; a link that gives no name is not tried at a suggested hub at all.
+Nothing is guessed beyond these two. Failing both, the screen says what it
+said before: "This link's hub has no https:// address".
+
+The review that follows a link does the same for each hub that comes with
+the identity: one known by `http://` only is tried over `https://` at the
+same host and port before its row says it needs HTTPS. Of several addresses
+that answer, the first named is taken.
+
+An app helps from its side (`hubchat-core` `door.rs`): when it knows a hub
+by `http://` and the same hub also answers over `https://` at that host and
+port, it names the `https://` address first in the link. It can check that
+because the apps trust the certificates the device trusts (`tls.rs`). The
+link's and the bundle's formats are unchanged; an older app that receives
+such a link uses the address it can reach.
+
 ## Updates and offline
 
 A service worker keeps the app's files (`web/sw.template.js`). The build
@@ -318,7 +349,9 @@ at "Add your hub". The server decides which, in `/config.json`
 - Nothing is added without a tap. Typing an address takes the suggestions
   away; after one hub is added the others stay offered.
 - People who bring an identity back (words, a link, a key file) are offered
-  nothing: their hubs come with it.
+  nothing: their hubs come with it. A link from an app whose hub has no
+  address a page can call is completed through one of these hubs when it is
+  the link's hub ("A link from an app", above).
 - A listed entry is `https://host[:port]`, or a bare `host[:port]`, taken as
   https. At most 8 are offered. A server with no `/config.json` counts as
   "neither".
@@ -420,7 +453,11 @@ the hub as `https://pc.example.ts.net:8443`.
   with its `push-test` feature, so it may push to the test's own
   receiver), Settings, a second browser that links by
   scanning the first one's QR code (its camera replaced by a picture of
-  that code), a reload, the app's files kept by the service worker, a
+  that code), two more browsers that link through a link written as an app
+  writes it, with the hub named by `http://` only (the test hub behind an
+  HTTPS proxy with the test certificate, under a name of its own: once
+  through the hub the server suggests, once over `https://` at the same
+  host and port), a reload, the app's files kept by the service worker, a
   start with the server gone, a newer build put on the server (the banner,
   Update, the reload into it, the old cache gone), and the second-tab
   takeover; and that
