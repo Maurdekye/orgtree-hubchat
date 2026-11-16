@@ -1,0 +1,1 @@
+New: a mail hub on your own network with a certificate from your own authority now works in the apps and Hubchat Web, and the desktop log records why an update check failed and when the window stops answering.
