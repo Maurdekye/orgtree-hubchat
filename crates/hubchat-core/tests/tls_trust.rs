@@ -159,6 +159,8 @@ async fn serve(mut sock: Tls, upgrades: Arc<AtomicUsize>, http_syncs: Arc<Atomic
 async fn alone() -> tokio::sync::MutexGuard<'static, ()> {
     let guard = ONE_AT_A_TIME.lock().await;
     std::env::set_var("HUBCHAT_TLS_REREAD_MS", "40");
+    // and the device's roots are kept this long before they are read again
+    std::env::set_var("HUBCHAT_TLS_KEEP_MS", "1500");
     guard
 }
 
@@ -247,6 +249,23 @@ async fn a_ca_installed_while_hubchat_runs_counts_without_a_restart() {
     tokio::time::sleep(Duration::from_millis(80)).await;
     let health = c.healthz().await.expect("the SAME client connects once the CA is installed");
     assert_eq!(health.name, "tls-fake");
+}
+
+#[tokio::test]
+async fn a_ca_removed_from_the_device_stops_counting() {
+    let _alone = alone().await;
+    let removed = Arc::new(AtomicBool::new(false));
+    let (ca, gone) = (der("ca.pem"), removed.clone());
+    tls::set_device_roots(move || Some(if gone.load(Ordering::SeqCst) { Vec::new() } else { vec![ca.clone()] }));
+    let f = fake("hub.pem", "hub-key.pem").await;
+    client(&f).healthz().await.expect("the hub answers while the CA is on the device");
+    removed.store(true, Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(1600)).await; // longer than the roots are kept
+    // a hub this client holds no TLS session with: its certificate is checked afresh
+    let again = fake("hub.pem", "hub-key.pem").await;
+    let text = unreachable_text(client(&again).healthz().await);
+    assert!(text.contains("does not trust the hub's certificate"), "{text}");
+    assert_eq!(again.handshakes.load(Ordering::SeqCst), 0);
 }
 
 // ------------------------------------------------------------ what stays refused

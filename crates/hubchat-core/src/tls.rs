@@ -20,6 +20,10 @@
 //! 3. If the issuer is still unknown, the device is read once more (at most
 //!    every few seconds), so a CA installed while Hubchat runs counts at the
 //!    next attempt, with no restart.
+//! 4. What was read is used for ten minutes, then read again when it is next
+//!    needed, so a CA REMOVED from the device stops counting too. (A TLS
+//!    session resumed with a hub is not checked again; that is TLS's rule
+//!    for every client.)
 //!
 //! The verifier is rustls's own (webpki) throughout: names, IP addresses,
 //! dates and signatures are checked the same way for both sets of roots.
@@ -43,13 +47,14 @@ use rustls::{CertificateError, ClientConfig, DigitallySignedStruct, RootCertStor
 /// The device's trusted roots, each as DER bytes; `None` when they can't be read now.
 type Source = Arc<dyn Fn() -> Option<Vec<Vec<u8>>> + Send + Sync>;
 
-/// The least time between two looks at the device's roots after a refusal.
+/// The least time between two looks at the device's roots.
 const REREAD: Duration = Duration::from_secs(5);
+/// How long the device's roots are used before they are read again.
+const KEEP: Duration = Duration::from_secs(10 * 60);
 
-/// `REREAD`, or the test knob `HUBCHAT_TLS_REREAD_MS`.
-fn reread() -> Duration {
-    static GAP: OnceLock<Duration> = OnceLock::new();
-    *GAP.get_or_init(|| std::env::var("HUBCHAT_TLS_REREAD_MS").ok().and_then(|v| v.parse().ok()).map(Duration::from_millis).unwrap_or(REREAD))
+/// A time above, or a test's own in milliseconds (`HUBCHAT_TLS_REREAD_MS`, `HUBCHAT_TLS_KEEP_MS`).
+fn time(knob: &str, usual: Duration) -> Duration {
+    std::env::var(knob).ok().and_then(|v| v.parse().ok()).map(Duration::from_millis).unwrap_or(usual)
 }
 
 struct Device {
@@ -58,6 +63,14 @@ struct Device {
     both: Option<Arc<WebPkiServerVerifier>>,
     /// the last look at the device, read or not
     looked: Option<Instant>,
+    /// when `both` was read
+    read: Option<Instant>,
+}
+
+impl Device {
+    fn unread(source: Source) -> Self {
+        Device { source, both: None, looked: None, read: None }
+    }
 }
 
 /// The check of a hub's certificate (the module's notes say how).
@@ -65,6 +78,8 @@ struct Trust {
     provider: Arc<CryptoProvider>,
     /// the built-in public list alone
     public: Arc<WebPkiServerVerifier>,
+    reread: Duration,
+    keep: Duration,
     device: Mutex<Device>,
 }
 
@@ -111,22 +126,30 @@ fn os_store() -> Option<Vec<Vec<u8>>> {
 
 impl Trust {
     fn new() -> Self {
+        Self::with(time("HUBCHAT_TLS_REREAD_MS", REREAD), time("HUBCHAT_TLS_KEEP_MS", KEEP))
+    }
+
+    fn with(reread: Duration, keep: Duration) -> Self {
         let provider = Arc::new(rustls::crypto::ring::default_provider());
         let public = verifier(public_roots(), &provider);
-        Trust { provider, public, device: Mutex::new(Device { source: Arc::new(os_store), both: None, looked: None }) }
+        Trust { provider, public, reread, keep, device: Mutex::new(Device::unread(Arc::new(os_store))) }
     }
 
     /// The built-in list and the device's roots together. The device is read when it never was,
-    /// or `again` (the issuer is still unknown), but not more often than `reread()`.
+    /// when what was read is older than `keep`, or `again` (the issuer is still unknown); never
+    /// more often than `reread`. A device that can't be read now leaves what was read before.
     fn both(&self, again: bool) -> Option<Arc<WebPkiServerVerifier>> {
         let mut d = self.device.lock().unwrap_or_else(|e| e.into_inner());
-        let due = d.looked.is_none_or(|t| t.elapsed() >= reread());
-        if (d.both.is_none() || again) && due {
-            d.looked = Some(Instant::now());
+        let old = d.read.is_none_or(|t| t.elapsed() >= self.keep);
+        let due = d.looked.is_none_or(|t| t.elapsed() >= self.reread);
+        if (old || again) && due {
+            let now = Instant::now();
+            d.looked = Some(now);
             if let Some(found) = (d.source)() {
                 let (roots, usable) = roots_with(&found);
                 tracing::info!(found = found.len(), usable, "device certificate roots read");
                 d.both = Some(verifier(roots, &self.provider));
+                d.read = Some(now);
             }
         }
         d.both.clone()
@@ -208,7 +231,7 @@ pub(crate) fn http() -> reqwest::ClientBuilder {
 /// the store itself (Android); tests hand in their own.
 pub fn set_device_roots(source: impl Fn() -> Option<Vec<Vec<u8>>> + Send + Sync + 'static) {
     let mut d = shared().trust.device.lock().unwrap_or_else(|e| e.into_inner());
-    *d = Device { source: Arc::new(source), both: None, looked: None };
+    *d = Device::unread(Arc::new(source));
 }
 
 /// Back to the machine's own certificate store (the start's state).
@@ -220,6 +243,7 @@ pub fn reset_device_roots() {
 mod tests {
     use super::*;
     use rustls::pki_types::pem::PemObject;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn the_device_roots_are_added_to_the_built_in_list_never_instead_of_it() {
@@ -231,16 +255,34 @@ mod tests {
         assert_eq!((roots.len(), usable), (public + 1, 1), "what can't be read is left out, the rest counts");
     }
 
-    #[test]
-    fn an_unreadable_device_store_is_asked_again_only_after_the_wait() {
-        let trust = Trust::new();
-        let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    /// A `Trust` whose device hands over `roots` and counts how often it is asked.
+    fn counting(reread: Duration, keep: Duration, roots: Option<Vec<Vec<u8>>>) -> (Trust, Arc<AtomicUsize>) {
+        let (trust, reads) = (Trust::with(reread, keep), Arc::new(AtomicUsize::new(0)));
         let counted = reads.clone();
         trust.device.lock().unwrap().source = Arc::new(move || {
-            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            None
+            counted.fetch_add(1, Ordering::SeqCst);
+            roots.clone()
         });
+        (trust, reads)
+    }
+
+    #[test]
+    fn an_unreadable_device_store_is_asked_again_only_after_the_wait() {
+        let (trust, reads) = counting(Duration::from_secs(3600), KEEP, None);
         assert!(trust.both(false).is_none() && trust.both(false).is_none() && trust.both(true).is_none());
-        assert_eq!(reads.load(std::sync::atomic::Ordering::SeqCst), 1, "one look, then the wait");
+        assert_eq!(reads.load(Ordering::SeqCst), 1, "one look, then the wait");
+    }
+
+    #[test]
+    fn what_was_read_is_kept_for_a_while_then_read_again() {
+        let (trust, reads) = counting(Duration::ZERO, Duration::from_millis(150), Some(Vec::new()));
+        let first = trust.both(false).expect("read");
+        let same = trust.both(false).expect("kept");
+        assert!(Arc::ptr_eq(&first, &same) && reads.load(Ordering::SeqCst) == 1, "within the time it is kept: not asked again");
+        std::thread::sleep(Duration::from_millis(170));
+        let later = trust.both(false).expect("read again");
+        assert!(!Arc::ptr_eq(&first, &later) && reads.load(Ordering::SeqCst) == 2, "older than that: read again, so a removed CA goes");
+        let asked = trust.both(true).expect("read at once");
+        assert!(!Arc::ptr_eq(&later, &asked) && reads.load(Ordering::SeqCst) == 3, "an unknown issuer asks at once");
     }
 }
