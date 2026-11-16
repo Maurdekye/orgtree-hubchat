@@ -26,6 +26,9 @@ pub mod stream;
 #[cfg(target_arch = "wasm32")]
 #[path = "stream_web.rs"]
 pub mod stream;
+// which certificates a hub connection trusts (a browser decides that for a page)
+#[cfg(not(target_arch = "wasm32"))]
+pub mod tls;
 // Hubchat Web's files: compiled everywhere so its tests run natively; used by rt::fs in a browser
 pub mod webfs;
 pub mod questions;
