@@ -81,6 +81,10 @@ fn certificate_refused(e: &dyn std::error::Error) -> Option<String> {
             let detail = text[at..].trim();
             return Some(if detail.contains("UnknownIssuer") {
                 "this device does not trust the hub's certificate. If the hub has a certificate from an authority of its own, install that authority's certificate on this device".into()
+            } else if detail.contains("CaUsedAsEndEntity") {
+                // what a single `openssl req -x509` makes: the verifier takes no authority's own
+                // certificate as a server's, whether or not the device trusts it
+                "the hub uses a certificate authority's own certificate as its certificate (often one self-signed certificate for everything). Hubchat needs two: the authority's certificate, installed on this device, and a separate certificate for the hub, issued by that authority".into()
             } else {
                 format!("the hub's certificate was refused ({detail})")
             });
