@@ -73,13 +73,24 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           certutil.exe -store Root 'Hubchat test CA (not for real use)' | Select-String 'Subject|Cert Hash'
 
-      - name: 3. install the test CA in this runner's store (macOS, the System keychain, trusted as a root)
+      - name: 3. install the test CA in this runner's store (macOS, a keychain, trusted as a root)
         if: runner.os == 'macOS'
         run: |
-          # no person is there to answer the dialog that adding a trusted root normally shows
-          sudo security authorizationdb write com.apple.trust-settings.admin allow
-          sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$CA"
-          security find-certificate -c 'Hubchat test CA (not for real use)' /Library/Keychains/System.keychain | grep labl
+          # Adding a trusted root normally asks a person, and nobody is there. Two ways that may
+          # need no one are tried, each for a minute at most: the System keychain as root (the
+          # machine's trust settings), then this user's login keychain (the user's). The apps
+          # read both. Changing the authorization rule first is refused on these runners
+          # ("NO (-60005)", run 43864498253), so it is not tried.
+          try() { perl -e 'alarm 60; exec @ARGV' "$@"; }
+          if try sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$CA"; then
+            echo "installed in the System keychain, trusted for the machine"
+          elif try security add-trusted-cert -r trustRoot -k "$HOME/Library/Keychains/login.keychain-db" "$CA"; then
+            echo "installed in the login keychain, trusted for this user"
+          else
+            echo "::error::the test CA could not be made a trusted root on this runner without a person"
+            exit 1
+          fi
+          security find-certificate -a -c 'Hubchat test CA (not for real use)' | grep labl
 
       - name: 3. install the test CA in this runner's store (Linux, the system CA bundle)
         if: runner.os == 'Linux'
