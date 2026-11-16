@@ -1,18 +1,12 @@
 # Hubchat development invariants
 
-- 2026-11-16: Hubchat Web and the hub it calls are served over HTTPS, on a
-  LAN too, and there is no reduced plain-http mode. Reason (user 2026-11-16
-  11:18:51Z): "i would highly prefer we have notifications and camera
-  linking, those make the app's usage much cleaner". Browsers give a page
-  Web Push and the camera (also its storage and service worker) only on a
-  secure page, and an https page can't call an http hub. So `unsupported()`
-  keeps refusing a page that is not a secure context, and `page_can_reach`
-  keeps refusing an `http://` hub except on this machine. The apps on a
-  plain `http://` hub stay fine. Recorded as the reason on request (user
-  2026-11-16 11:20:29Z: "make sure this is the recorded reason for why we
-  are using https to serve the mailhub"). See docs/hubchat-web-server.md,
-  "Why HTTPS". [decided: user 2026-11-16 mc5e266a0e125, madc5827c6d47;
-  verified from source: src/web/device.ts, crates/hubchat-web/src/shell.rs]
+- 2026-11-16: Hubchat Web and its hub are HTTPS only, on a LAN too; no
+  reduced plain-http mode. Reason (user): "i would highly prefer we have
+  notifications and camera linking, those make the app's usage much
+  cleaner"; browsers give both only to a secure page, which can't call an
+  http hub. `unsupported()` and `page_can_reach` keep refusing; apps on http
+  hubs stay fine. docs/hubchat-web-server.md "Why HTTPS". [decided: user
+  2026-11-16 mc5e266a0e125; recorded on request madc5827c6d47]
 
 - 2026-11-11: Hubchat Web (`crates/hubchat-web`, `src/web`, `web/`) runs the
   SAME core as WebAssembly in a page's worker. In `hubchat-core`, tasks,
