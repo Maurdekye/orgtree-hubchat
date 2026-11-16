@@ -11,6 +11,12 @@
 //! What differs from the apps, because a page differs:
 //! - a page may only call https (spec R2.2): of the addresses a link or an
 //!   arriving identity names for a hub, only those are tried and kept;
+//! - when none of them is one a page can call, or none answers, the hub is
+//!   looked for where it may also be (`second_round`): at the same host and
+//!   port over https (a hub on a LAN that answers both there), and at the
+//!   hubs this page's server suggests, which count only under the name the
+//!   link gives its hub. An app's link names its hub by http, as the apps
+//!   use it;
 //! - a browser that has an identity does not switch to another one through
 //!   a link (coordinator 2026-11-11): it says `HAS_IDENTITY`;
 //! - the key file is text the page reads and saves (`text`, not a path).
@@ -85,10 +91,17 @@ fn reachable_hubs(list: &[String]) -> Vec<String> {
 /// What else a page tries for a hub none of whose addresses it can call (`named`): the same
 /// host and port over https for each http one, and, when the link says what its hub is called
 /// (`hub_is_named`), the hubs this page's server suggests. Likeliest first, each once.
-///
-/// Not written yet: the name the tests need, answering nothing.
-fn second_round(_named: &[String], _suggested: &[String], _hub_is_named: bool) -> Vec<String> {
-    Vec::new()
+fn second_round(named: &[String], suggested: &[String], hub_is_named: bool) -> Vec<String> {
+    let mut more: Vec<String> = Vec::new();
+    let twins = named.iter().filter(|h| reachable_form(h).is_none()).filter_map(|h| link::https_twin(h)).map(|a| a.to_string());
+    // without the hub's name a suggested hub could not be told from any other hub
+    let listed = suggested.iter().filter(|_| hub_is_named).filter_map(|h| reachable_form(h));
+    for address in twins.chain(listed) {
+        if !more.contains(&address) {
+            more.push(address);
+        }
+    }
+    more
 }
 
 impl Adoption {
@@ -159,22 +172,43 @@ impl Shell {
         })
     }
 
-    /// A link's hub under each address the link names, the likeliest first:
-    /// the likeliest a page can call that answers (as `name`, when given),
-    /// else the first one's failure. All are tried at once, `limit` each.
+    /// A link's hub under each address the link names: one a page can call that answers (as
+    /// `name`, when given). When none does, the hub where it may also be (`second_round`).
+    /// Failing both, the first address's failure, or that the link's hub has no https address.
     async fn probe_first(&self, hubs: &[String], name: Option<&str>, limit: Duration, origin: Option<&link::Reception>) -> Probe {
         if hubs.is_empty() {
             return Probe::Invalid { error: "the link names no hub".into() };
         }
-        let reach = reachable_hubs(hubs);
-        if reach.is_empty() {
-            return Probe::Invalid { error: LINK_NEEDS_HTTPS.into() };
+        let failure = match self.first_answer(&reachable_hubs(hubs), name, limit, origin).await {
+            Some(Ok(connected)) => return connected,
+            Some(Err(failure)) => failure,
+            None => Probe::Invalid { error: LINK_NEEDS_HTTPS.into() },
+        };
+        let suggested = self.suggested.lock().unwrap().clone();
+        match self.first_answer(&second_round(hubs, &suggested, name.is_some()), name, limit, origin).await {
+            Some(Ok(connected)) => connected,
+            _ => failure,
         }
-        let mut all = futures_util::future::join_all(reach.iter().map(|h| self.probe_with(h, name, limit, origin.cloned()))).await;
-        match all.iter().position(|p| matches!(p, Probe::Connected { .. })) {
-            Some(i) => all.swap_remove(i),
-            None => all.swap_remove(0),
+    }
+
+    /// The likeliest of `addresses` (the earliest named) that answers as a hub (as `name`, when
+    /// given). All are tried at once, `limit` each, and the wait ends as soon as one connected
+    /// and every likelier one has failed. `Err`: none did, with the first address's failure.
+    /// `None`: there was no address.
+    async fn first_answer(&self, addresses: &[String], name: Option<&str>, limit: Duration, origin: Option<&link::Reception>) -> Option<Result<Probe, Probe>> {
+        use futures_util::stream::{FuturesUnordered, StreamExt};
+        let mut tries: FuturesUnordered<_> =
+            addresses.iter().enumerate().map(|(i, h)| async move { (i, self.probe_with(h, name, limit, origin.cloned()).await) }).collect();
+        let mut answers: Vec<Option<Probe>> = addresses.iter().map(|_| None).collect();
+        while let Some((i, probe)) = tries.next().await {
+            answers[i] = Some(probe);
+            // the answers in from the start of the list on: the first of them that connected is the one
+            let known = answers.iter().take_while(|a| a.is_some()).count();
+            if let Some(best) = answers[..known].iter().position(|a| matches!(a, Some(Probe::Connected { .. }))) {
+                return answers[best].take().map(Ok);
+            }
         }
+        answers.into_iter().next().flatten().map(Err)
     }
 
     /// The identity a link carries just arrived. This browser's own: nothing
@@ -194,18 +228,21 @@ impl Shell {
         }
         let rows = link::review_hubs(&bundle.hubs, via, aliases);
         let probed: Vec<(HubRow, Option<link::HubKey>)> = futures_util::future::join_all(rows.into_iter().map(|(theirs, all)| async move {
-            let reach = reachable_hubs(&all);
-            if reach.is_empty() {
-                let address = all.first().cloned().unwrap_or_default();
-                return (HubRow { theirs, address, candidates: all, name: None, error: Some(NEEDS_HTTPS.into()), reachable: false }, None);
-            }
-            match self.probe_first(&reach, None, Duration::from_secs(5), Some(reception)).await {
+            // the addresses a page can call; for a hub known by http only, the same over https
+            let own = reachable_hubs(&all);
+            let reach = if own.is_empty() { second_round(&all, &[], false) } else { own.clone() };
+            match self.probe_first(&all, None, Duration::from_secs(5), Some(reception)).await {
                 Probe::Connected { url, name, version, orgs, .. } => {
                     let key = (name.clone(), version, orgs);
                     (HubRow { theirs, address: url, candidates: reach, name: Some(name), error: None, reachable: true }, Some(key))
                 }
+                // no address a page can call, and nothing answered over https at the same one
+                _ if own.is_empty() => {
+                    let address = all.first().cloned().unwrap_or_default();
+                    (HubRow { theirs, address, candidates: all, name: None, error: Some(NEEDS_HTTPS.into()), reachable: false }, None)
+                }
                 Probe::Unreachable { error, .. } | Probe::NotAHub { error, .. } | Probe::Invalid { error } => {
-                    (HubRow { theirs, address: reach[0].clone(), candidates: reach, name: None, error: Some(error), reachable: false }, None)
+                    (HubRow { theirs, address: own[0].clone(), candidates: own, name: None, error: Some(error), reachable: false }, None)
                 }
             }
         }))
@@ -443,6 +480,11 @@ mod tests {
 
     /// A hub on loopback that answers every request with /healthz of a hub called `name`.
     async fn fake_hub(name: &str) -> String {
+        fake_hub_after(name, Duration::ZERO).await
+    }
+
+    /// The same, answering only after `wait`.
+    async fn fake_hub_after(name: &str, wait: Duration) -> String {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let body = json!({ "ok": true, "name": name, "orgs": 1, "version": "2.5.1", "features": ["sync"], "max_attachment_bytes": 1000000 }).to_string();
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -454,12 +496,27 @@ mod tests {
                 tokio::spawn(async move {
                     let mut buf = [0u8; 2048];
                     let _ = s.read(&mut buf).await;
+                    tokio::time::sleep(wait).await;
                     let r = format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
                     let _ = s.write_all(r.as_bytes()).await;
                 });
             }
         });
         url
+    }
+
+    #[tokio::test]
+    async fn of_the_addresses_that_answer_the_first_named_is_taken_even_when_it_is_slower() {
+        let (sh, _) = fresh();
+        // the address a link was reached by (first) is slower than another way to the same hub
+        let (slow, quick) = (fake_hub_after("home", Duration::from_millis(400)).await, fake_hub("home").await);
+        let p = sh.call("hc_probe_link_hubs", &json!({ "hubs": [slow, quick], "name": "home" })).await.unwrap();
+        assert_eq!((p["result"].clone(), p["url"].clone()), (json!("connected"), json!(slow)), "{p}");
+        // when the first named does not answer as that hub, the next one is taken
+        let stranger = fake_hub("other-hub").await;
+        let p = sh.call("hc_probe_link_hubs", &json!({ "hubs": [stranger, quick], "name": "home" })).await.unwrap();
+        assert_eq!((p["result"].clone(), p["url"].clone()), (json!("connected"), json!(quick)), "{p}");
+        sh.shutdown();
     }
 
     #[test]
@@ -511,12 +568,12 @@ mod tests {
         assert_eq!(p["hub"], "http://100.64.0.7:7378");
         assert_eq!(p["hubs"], json!(["http://100.64.0.7:7378", "https://pc.example.ts.net:8443"]));
         assert_eq!(p["code"].as_str().unwrap().len(), 19, "{p}");
-        // a link whose hub has no https address says so, before any request
-        let none = sh.call("hc_probe_link_hubs", &json!({ "hubs": ["http://100.64.0.7:7378", "http://pc.lan:7378"], "name": "home" })).await.unwrap();
+        // a link whose hub answers at no https address says so (`.invalid`: over https at the same address neither)
+        let none = sh.call("hc_probe_link_hubs", &json!({ "hubs": ["http://tailnet-pc.invalid:7378", "http://pc.invalid:7378"], "name": "home" })).await.unwrap();
         assert_eq!(none, json!({ "result": "invalid", "error": LINK_NEEDS_HTTPS }));
         assert_eq!(sh.call("hc_probe_link_hubs", &json!({ "hubs": [], "name": null })).await.unwrap()["error"], "the link names no hub");
         // with an https address among them, that one is tried (nothing answers at .invalid)
-        let tried = sh.call("hc_probe_link_hubs", &json!({ "hubs": ["http://100.64.0.7:7378", "https://hub.invalid"], "name": null })).await.unwrap();
+        let tried = sh.call("hc_probe_link_hubs", &json!({ "hubs": ["http://tailnet-pc.invalid:7378", "https://hub.invalid"], "name": null })).await.unwrap();
         assert_eq!((tried["result"].clone(), tried["url"].clone()), (json!("unreachable"), json!("https://hub.invalid")), "{tried}");
         // and a link is not started through an address a page cannot call
         let e = sh.call("hc_link_start", &json!({ "hub": "http://100.64.0.7:7378", "deviceName": "", "code": null, "aliases": null })).await.unwrap_err();

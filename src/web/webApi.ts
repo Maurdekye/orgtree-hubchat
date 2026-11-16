@@ -246,6 +246,14 @@ export async function openCore(takeOver = false): Promise<Core | null> {
   };
 
   const base = makeApi({ invoke, listen, mediaUrl: () => null });
+  // The core is told which hubs this page's server suggests: a link from an app names its hub
+  // by http, which a page can't call, and is completed through one of these when it is that hub.
+  const tellSuggested = async () => {
+    const suggested = await suggestedHubs();
+    void invoke("hc_web_suggested_hubs", { addresses: suggested.addresses }).catch(() => { /* asked again at the next start */ });
+    return suggested;
+  };
+  void tellSuggested().catch(() => { /* no server to ask: nothing is suggested */ });
   installWebNative({
     scanQr: () => scanQr(readFrame),
     pickKeyFile: () => pickFile(".hubchat-key,text/plain"),
@@ -255,7 +263,7 @@ export async function openCore(takeOver = false): Promise<Core | null> {
       return paths;
     },
     saveKeyFileTo: () => Promise.resolve(KEY_FILE_DEST),
-    suggestedHubs,
+    suggestedHubs: tellSuggested,
     serverName,
     newerBuild,
   });

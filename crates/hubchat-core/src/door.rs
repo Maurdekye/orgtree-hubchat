@@ -90,6 +90,8 @@ pub async fn find_door(hub: &str, ips: &[IpAddr], ports: &[u16], limit: Duration
 /// the door's port if it answers there too, then `hub` itself for a second
 /// app on this device. Otherwise the hub's aliases as they are.
 /// An advertised door that answers as the same hub goes before all of them.
+/// So does the hub's own address over https, when this device knows it by
+/// http and the same hub answers there too: a browser can only use that one.
 pub async fn qr_hubs(hub: &str, hostname: Option<&str>, ips: &[IpAddr], door: &Door, limit: Duration, requests: &Discovery) -> Vec<String> {
     qr_hubs_with(hub, hostname, ips, door, limit, false, requests).await
 }
@@ -123,6 +125,15 @@ async fn qr_hubs_with(
         if (loopback || !crate::link::is_loopback_hub(a.as_str())) && same_hub(me, a.clone(), limit, requests).await {
             out.retain(|h| h != a.as_str());
             out.insert(0, a.to_string());
+        }
+    }
+    // The hub as this device knows it, over https at the same host and port. A hub on a LAN may
+    // answer both there (a proxy that tells them apart), and a browser being linked (Hubchat Web)
+    // can only use the https one. That port answered a moment ago, so this is one quick attempt.
+    if let (Some(me), Some(twin)) = (me.as_ref(), crate::link::https_twin(addr.as_str())) {
+        let of_use = loopback || !crate::link::is_loopback_hub(twin.as_str());
+        if of_use && !out.iter().any(|h| h == twin.as_str()) && same_hub(me, twin.clone(), limit, requests).await {
+            out.insert(0, twin.to_string());
         }
     }
     out

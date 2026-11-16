@@ -437,10 +437,10 @@ impl LinkUrl {
 /// A hub on a LAN may answer both on one port (a proxy that tells them
 /// apart), and a browser can only use the https one. `None` for an address
 /// that is https already, or is no address.
-///
-/// Not written yet: the name `tests` and `door.rs` need, answering nothing.
-pub fn https_twin(_address: &str) -> Option<crate::HubAddress> {
-    None
+pub fn https_twin(address: &str) -> Option<crate::HubAddress> {
+    let known = crate::HubAddress::parse(address).ok()?;
+    let rest = known.as_str().strip_prefix("http://")?;
+    crate::HubAddress::parse(&format!("https://{rest}")).ok()
 }
 
 /// True for a hub address that names the machine it is used on (localhost,

@@ -102,6 +102,9 @@ pub struct Shell {
     pub(crate) link_stop: Mutex<Option<hubchat_core::hub::CancelFlag>>,
     /// What a link brought, until the user confirms or drops it. Memory only.
     pub(crate) pending: Mutex<Option<hubchat_core::link::Bundle>>,
+    /// The hubs this page's server suggests (`hc_web_suggested_hubs`), which a link may be
+    /// completed through (`link.rs`). Memory only: the page says them again at each start.
+    pub(crate) suggested: Mutex<Vec<String>>,
 }
 
 fn must_wipe(owner: Option<&str>, has_data: bool, new: &str, brand_new: bool) -> bool {
@@ -169,6 +172,7 @@ impl Shell {
             open_chat: Mutex::new(None),
             link_stop: Mutex::new(None),
             pending: Mutex::new(None),
+            suggested: Mutex::new(Vec::new()),
         });
         match identity {
             Some(me) => shell.start_with(me)?,
@@ -463,6 +467,14 @@ impl Shell {
                         }
                     }
                 }
+                Ok(Value::Null)
+            }
+            // The hubs this page's server suggests (its /config.json, read by the page). A link
+            // whose hub has no address a page can call is tried through them (link.rs). Needs no
+            // identity: a new browser is linked before it has one.
+            "hc_web_suggested_hubs" => {
+                let addresses: Vec<String> = arg(args, "addresses")?;
+                *self.suggested.lock().unwrap() = addresses.into_iter().take(16).collect();
                 Ok(Value::Null)
             }
             // ---------------------------------------- notifications (engine_webpush)
