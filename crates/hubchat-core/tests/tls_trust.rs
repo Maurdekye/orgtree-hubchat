@@ -306,6 +306,22 @@ async fn a_trusted_ca_does_not_excuse_a_certificate_for_another_name() {
     assert_eq!(f.handshakes.load(Ordering::SeqCst), 0);
 }
 
+/// What a single `openssl req -x509` makes: one certificate that is its own authority. Someone
+/// who installed it on the device still gets no connection (the verifier takes no authority's
+/// own certificate as a server's), and the reason has to say what a hub needs instead.
+#[tokio::test]
+async fn one_self_signed_certificate_for_everything_is_refused_and_the_reason_says_what_a_hub_needs() {
+    let _alone = alone().await;
+    device_trusts(&["self-signed.pem"]);
+    let f = fake("self-signed.pem", "self-signed-key.pem").await;
+    let text = unreachable_text(client(&f).healthz().await);
+    assert!(text.contains("a certificate authority's own certificate"), "what is wrong: {text}");
+    assert!(text.contains("a separate certificate for the hub"), "what a hub needs: {text}");
+    assert!(!text.contains("CaUsedAsEndEntity") && !text.contains("OtherError"), "not the library's words: {text}");
+    assert!(!text.contains("127.0.0.1"), "no address in the reason: {text}");
+    assert_eq!(f.handshakes.load(Ordering::SeqCst), 0, "the hub saw no finished handshake");
+}
+
 #[tokio::test]
 async fn a_stream_to_an_untrusted_hub_is_not_opened() {
     let _alone = alone().await;
