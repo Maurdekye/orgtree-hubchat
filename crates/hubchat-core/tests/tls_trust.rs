@@ -12,12 +12,15 @@
 //!
 //!     cargo test -p hubchat-core --test tls_trust
 //!
-//! Two more tests read the REAL store of the machine and are ignored by
-//! default. CI runs them on a throwaway runner, the first before `ca.pem` is
-//! installed there and the second after (`.github/workflows/device-trust.yml`):
+//! Three more tests are ignored by default. Two read the REAL store of the
+//! machine: CI runs them on a throwaway runner, the first before `ca.pem` is
+//! installed there and the second after (`.github/workflows/device-trust.yml`).
+//! The third needs the internet: a public certificate passes as it always
+//! did, and the device is not asked.
 //!
 //!     cargo test -p hubchat-core --test tls_trust -- --ignored os_store_without_the_test_ca
 //!     cargo test -p hubchat-core --test tls_trust -- --ignored os_store_with_the_test_ca
+//!     cargo test -p hubchat-core --test tls_trust -- --ignored a_public_certificate_passes_and_the_device_is_not_asked
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -311,6 +314,28 @@ async fn a_stream_to_an_untrusted_hub_is_not_opened() {
     let (c, me) = (client(&f), Identity::generate("ann.fake").unwrap());
     assert!(matches!(c.sync(&me, "dev1", "test", None, false, 0, None).await, Err(Error::Unreachable(_))));
     assert_eq!((f.handshakes.load(Ordering::SeqCst), f.upgrades.load(Ordering::SeqCst)), (0, 0));
+}
+
+// ------------------------------------------------------------ a public certificate
+
+/// github.com is no hub, so the answer is "not a mail hub": the TLS handshake before it passed,
+/// on the built-in public list alone.
+#[tokio::test]
+#[ignore = "needs the internet (github.com)"]
+async fn a_public_certificate_passes_and_the_device_is_not_asked() {
+    let _alone = alone().await;
+    let reads = Arc::new(AtomicUsize::new(0));
+    let counted = reads.clone();
+    tls::set_device_roots(move || {
+        counted.fetch_add(1, Ordering::SeqCst);
+        Some(Vec::new())
+    });
+    let public = HubClient::new(HubAddress::parse("https://github.com").unwrap());
+    match public.healthz().await {
+        Err(Error::NotAHub(_)) => {}
+        other => panic!("expected an answer that is no hub's, got {:?}", other.map(|h| h.name)),
+    }
+    assert_eq!(reads.load(Ordering::SeqCst), 0, "a certificate the built-in list vouches for never makes the device be read");
 }
 
 // ------------------------------------------------------------ the machine's real store

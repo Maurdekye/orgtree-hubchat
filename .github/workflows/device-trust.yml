@@ -4,7 +4,8 @@ name: device-trust
 # (crates/hubchat-core/src/tls.rs). This is the measured check of that on each desktop
 # system, with the system's REAL certificate store, on a runner that is thrown away:
 #
-#   1. the ordinary trust tests (the device's roots are handed in by the test);
+#   1. the ordinary trust tests (the device's roots are handed in by the test), and that a
+#      public certificate (github.com) still passes without the device being asked;
 #   2. before: with the runner's store as it comes, a hub whose certificate is from the
 #      throwaway test CA (crates/hubchat-core/tests/tls/ca.pem) is refused;
 #   3. the test CA is installed in the runner's own store, the way an operator's CA is
@@ -57,6 +58,9 @@ jobs:
 
       - name: 1. the ordinary trust tests
         run: cargo test --locked -p hubchat-core --test tls_trust
+
+      - name: 1. a public certificate passes, and the device is not asked
+        run: cargo test --locked -p hubchat-core --test tls_trust -- --ignored --exact a_public_certificate_passes_and_the_device_is_not_asked
 
       - name: 2. before - the runner's own store does not hold the test CA
         run: cargo test --locked -p hubchat-core --test tls_trust -- --ignored --exact os_store_without_the_test_ca
