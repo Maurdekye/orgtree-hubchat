@@ -67,6 +67,9 @@ over HTTPS, and a page loaded over HTTPS can only call a hub over HTTPS. So:
    it the app says "This hub doesn't allow this web app yet" and shows the
    address to add.
 
+A hub that is reached only on a home or office network gets its certificate
+from an authority of your own: [On a LAN only](#on-a-lan-only).
+
 **Notifications** come from the hub, not from this server: a hub running
 Mail hub 2.5.1 or later sends them to each browser that turned them on
 (its `HUB_PUSH_CONTACT` setting is in the mail hub's `docs/OPERATIONS.md`). With an
@@ -109,7 +112,8 @@ notifications (Web Push) and linking a device with the camera. Browsers
 allow both only on a secure page, and a page loaded over HTTPS can't call a
 hub over plain HTTP. A reduced mode over plain HTTP, without those two, was
 considered and rejected. This holds on a LAN as well: there the certificate
-comes from a certificate authority of your own.
+comes from a certificate authority of your own
+([On a LAN only](#on-a-lan-only)).
 
 The decision and its reason, in the project owner's words (2026-11-16,
 11:18:51 UTC): "i would highly prefer we have notifications and camera
@@ -118,7 +122,178 @@ linking, those make the app's usage much cleaner". And at 11:20:29 UTC:
 the mailhub".
 
 The Hubchat apps are not affected: they keep working with a hub over plain
-`http://`.
+`http://`. From 1.3.8 they also accept a hub's certificate from an
+authority that is installed on the device.
+
+## On a LAN only
+
+A hub that people reach only inside a home or office network, at an address
+such as `192.168.1.200`, has no public name, and no public certificate
+authority gives a certificate for a private address. Hubchat Web needs
+HTTPS there all the same ([Why HTTPS](#why-https)). The way is a
+certificate authority of your own: you make one, give the machine a
+certificate from it, and install the authority's certificate on every
+device. Browsers then accept the machine's certificate, and so do the
+Hubchat apps from 1.3.8 on: beside the public authorities they are built
+with, they trust the ones the device trusts. (Older apps refuse it; they
+can stay on `http://`.)
+
+The example is one machine at `192.168.1.200` that runs the mail hub, with
+its relay-only door on port 7378, and Hubchat Web on `127.0.0.1:8080` (as
+under [Run it](#run-it)). Write your machine's address wherever
+`192.168.1.200` stands.
+
+**1. Make the authority and the machine's certificate.** With OpenSSL 3, in
+an empty folder:
+
+```
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+  -keyout ca-key.pem -out ca.crt -days 3650 -subj "/CN=My LAN authority" \
+  -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign"
+
+openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes \
+  -keyout hub-key.pem -out hub.csr -subj "/CN=192.168.1.200"
+printf 'subjectAltName=IP:192.168.1.200\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\n' > hub.ext
+openssl x509 -req -in hub.csr -CA ca.crt -CAkey ca-key.pem -CAcreateserial \
+  -days 800 -extfile hub.ext -out hub.pem
+```
+
+(In Git Bash on Windows, run `export MSYS_NO_PATHCONV=1` first, or the
+`-subj` values are rewritten as file paths.)
+
+- `ca.crt` is the authority's certificate, the file every device installs.
+  It is no secret.
+- `ca-key.pem` is the authority's key. Whoever holds it can make a
+  certificate those devices accept for any address, so keep it off the
+  server and out of reach. You need it again only for the next certificate.
+- `hub.pem` and `hub-key.pem` are the machine's certificate and key, for
+  the proxy. The certificate is good for the one address it names, so
+  people have to use that address. It lasts 800 days (an iPhone accepts at
+  most 825); before then, make a new one with the last three commands. The
+  devices need nothing new for it.
+- Make both: the authority, and a separate certificate for the machine.
+  One self-signed certificate for everything, which is what a single
+  `openssl req -x509` gives, is refused by the Hubchat apps even when the
+  device trusts it.
+
+**2. Put a proxy with that certificate in front of both.** For
+[Caddy](https://caddyserver.com), a file named `Caddyfile`:
+
+```
+{
+	default_sni 192.168.1.200
+}
+
+https://192.168.1.200 {
+	tls /certs/hub.pem /certs/hub-key.pem
+	reverse_proxy 127.0.0.1:8080
+}
+
+https://192.168.1.200:8443 {
+	tls /certs/hub.pem /certs/hub-key.pem
+	reverse_proxy 127.0.0.1:7378
+}
+```
+
+The first block is Hubchat Web, at `https://192.168.1.200`. The second is
+the hub, at `https://192.168.1.200:8443`: its relay-only door, never the
+main port 7370, as above. On Linux, with `hub.pem` and `hub-key.pem` in a
+folder `certs` beside that file:
+
+```
+docker run -d --name hubchat-lan-proxy --restart unless-stopped --network host \
+  -v "$PWD/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$PWD/certs:/certs:ro" caddy:2
+```
+
+`--network host` puts the proxy on the machine's own network, where it
+reaches the two ports on `127.0.0.1`. Where Docker has no such network
+(Docker Desktop on Windows or a Mac), run Caddy on the machine itself with
+the same file and the certificate's real paths. `default_sni` tells Caddy
+which certificate to show a caller that names no server, as every caller of
+a bare address does. Caddy needs it whenever its own address is not the
+certificate's, for one when Docker publishes its ports. Caddy also answers
+on port 80, only to send people on to `https://`.
+
+**3. Tell the hub and Hubchat Web.** In the hub's `.env`, followed by
+`docker compose up -d`:
+
+```
+HUB_PUBLIC=1                              (turns the door on, port 7378)
+HUB_BIND=127.0.0.1                        (the main port stays on this machine)
+HUB_WEB_ORIGINS=https://192.168.1.200     (the page may call the hub)
+```
+
+And Hubchat Web, started with the hub's `https://` address as its
+suggestion:
+
+```
+docker run -d --name hubchat-web --read-only --cap-drop ALL \
+  -p 127.0.0.1:8080:8080 -e HUBCHAT_WEB_SUGGEST_HUBS=192.168.1.200:8443 \
+  ghcr.io/maurdekye/hubchat-web:latest
+```
+
+The suggestion does two things. Someone new is offered the hub with one
+tap, and a browser that is linked from an app finds the hub's `https://`
+address through it (step 5).
+
+The door stays open to the LAN at `http://192.168.1.200:7378` for the apps
+that use it, and for Orgtree, whose own connection to a hub is not part of
+this: leave it on `http://`. Once nothing uses the door that way,
+`HUB_PUBLIC_BIND=127.0.0.1` leaves the proxy as the only way in.
+
+**4. Install `ca.crt` on each device.** Hand the file out any way you like.
+
+- **Windows:** open the file, **Install Certificate**, **Current User**,
+  then **Place all certificates in the following store** and **Trusted Root
+  Certification Authorities**. Chrome, Edge and the Hubchat app use it.
+- **macOS:** open the file to add it to the keychain, open it there, and
+  under **Trust** choose **Always Trust**.
+- **Linux:** on Debian or Ubuntu, `sudo cp ca.crt
+  /usr/local/share/ca-certificates/my-lan-authority.crt` and `sudo
+  update-ca-certificates`. That serves the Hubchat app. A browser on Linux
+  keeps a list of its own: import the file in its certificate settings.
+- **Android:** in Settings, search for **CA certificate**, choose **Install
+  anyway** and pick the file. Chrome and the Hubchat app use it. Android
+  may then show a notice that the network may be monitored: it says only
+  that an authority was added.
+- **iPhone, iPad:** open the file and allow the profile, install it under
+  **Settings › General › VPN & Device Management**, then turn it on under
+  **Settings › General › About › Certificate Trust Settings**. Without that
+  last switch Safari keeps refusing the page.
+
+A Hubchat app that is running accepts the hub at its next attempt, with no
+restart. Until the authority is installed it says "this device does not
+trust the hub's certificate".
+
+**5. Use it.**
+
+- **Hubchat Web:** people open `https://192.168.1.200` and are offered the
+  hub. On an iPhone, from the Home Screen, as above.
+- **The apps** (1.3.8 or later): add the hub as
+  `https://192.168.1.200:8443` under **Settings › Hubs › Add a hub**. An
+  app that has the hub as `http://192.168.1.200:7378` can keep it.
+- **Linking a browser from an app** ("I already use Hubchat", then the
+  app's QR code or its code) works with either. When the app has the hub
+  by its `http://` address, the browser looks for the same hub among the
+  suggested ones (step 3) and takes the `https://` address it finds. That
+  needs Hubchat Web 1.3.8 or later, whatever the app's version. A proxy
+  that answers `https://` on the very port the apps use for `http://`
+  needs no suggestion: the app and the browser both try `https://` at the
+  same address and port.
+- **Notifications** travel through the browser maker's push service, so
+  the hub machine and the device need the internet for them. Everything
+  else stays inside the LAN.
+
+**What was tried.** The certificate commands and the Caddyfile were run as
+written (with another address) in containers: Mail hub 2.5.1, Hubchat Web
+1.3.7, Caddy 2.11 and OpenSSL 3.5, called from a second container that
+trusted only that authority. The page, the hub, a request that waits 55
+seconds and the apps' WebSocket stream all went through the proxy. The
+apps' trust in a device's authority is tested on Windows, macOS, Linux and
+an Android emulator, with the authority installed by command
+(`docs/ci-release.md`). Not tried: Caddy outside a container, the install
+steps of step 4 by hand, a browser with such an authority installed, and
+an iPhone.
 
 ## Settings
 

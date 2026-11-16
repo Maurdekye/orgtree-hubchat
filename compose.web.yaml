@@ -7,10 +7,16 @@
 # machine:
 #
 #   tailscale serve --bg --https=443  http://127.0.0.1:8080    (Hubchat Web)
-#   tailscale serve --bg --https=8443 http://127.0.0.1:7370    (the mail hub)
+#   tailscale serve --bg --https=8443 http://127.0.0.1:7378    (the mail hub's relay-only door)
 #
-# and the hub must allow the page: in the hub's .env,
+# Port 7378 is the hub's relay-only door (HUB_PUBLIC=1 in the hub's .env). Never
+# put its main port 7370 behind an address other people can reach: it also
+# serves the operator page, which shows all mail. The hub must allow the page
+# too: in the hub's .env,
 #   HUB_WEB_ORIGINS=https://<this machine>.<tailnet>.ts.net
+#
+# On a home or office network without Tailscale: docs/hubchat-web-server.md,
+# "On a LAN only" (a certificate authority of your own, and a proxy).
 #
 # To run both from one file, paste the `hubchat-web` service into the mail
 # hub's compose.yaml. They share nothing: Hubchat Web never talks to the hub,

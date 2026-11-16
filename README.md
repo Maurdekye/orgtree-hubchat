@@ -99,7 +99,9 @@ docker run -d --name hubchat-web --read-only --cap-drop ALL \
 - **It needs HTTPS** in front of the page and of the hub (for example
   `tailscale serve`), and the hub must list the page's address in
   `HUB_WEB_ORIGINS` (Mail hub 2.5.0 or later). Notifications need Mail hub
-  2.5.1 or later.
+  2.5.1 or later. On a home or office network with no public name, HTTPS
+  comes from a certificate authority of your own, which browsers and the
+  Hubchat apps (1.3.8 or later) accept once it is installed on the device.
 - **How it differs from the other packages:** `orgtree-mailhub` is the mail
   hub itself (it carries the mail and holds data); `orgtree-engine` is the
   headless Orgtree engine (it runs organisations of AI agents); `hubchat-web`

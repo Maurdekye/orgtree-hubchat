@@ -94,6 +94,8 @@ Android runs only one VPN at a time. If your VPN is on, Tailscale isn't, and the
 
 **Someone else's hub:** ask whoever runs it for its address, then in Hubchat add it under **Settings › Hubs › Add a hub**. The hub's operator can read the messages that pass through it, so only use hubs run by people you trust.
 
+**An address that starts with `https://`** works when your device trusts the hub's certificate. A hub on a home or office network can have a certificate from an authority its operator made. Install that authority's certificate on your device (the operator gives you the file), and Hubchat accepts the hub with no restart. Until then it says **this device does not trust the hub's certificate**.
+
 **A hub on its own** (no Orgtree): the standalone mail hub runs with Docker. Get it from github.com/Maurdekye/orgtree-mailhub and follow its README. Turn on its relay-only door (`HUB_PUBLIC=1`, port 7378), keep its main port on that computer (`HUB_BIND=127.0.0.1`), and add the computer's address and port 7378 in Hubchat, for example `home-pc:7378`.
 
 ## 5. Port forwarding
@@ -156,7 +158,7 @@ There is no Hubchat app for iPhone or iPad. Hubchat Web is Hubchat as a web app 
 
 **Using it**
 
-1. Get the address from whoever runs it (it starts with `https://`).
+1. Get the address from whoever runs it (it starts with `https://`). If they also give you a certificate file, for a server on a home or office network, install it first as they tell you.
 2. On an iPhone or iPad, open it in Safari, tap **Share**, then **Add to Home Screen**, and open Hubchat from the Home Screen. In a Safari tab it only explains this, because an iPhone deletes a web page's data after some days unless it is on the Home Screen.
 3. Choose **Create a new identity**, or **I already use Hubchat** to link this browser to the identity on your PC or Android phone (section 6): it scans the QR code with the camera.
 4. Save your recovery words when it asks. Your identity lives in this browser only; clearing the browser's data deletes it, and the words bring it back.
@@ -174,4 +176,4 @@ docker run -d --name hubchat-web --read-only --cap-drop ALL -p 127.0.0.1:8080:80
 tailscale serve --bg --https=443 http://127.0.0.1:8080
 ```
 
-Then add the web app's address to the hub's `HUB_WEB_ORIGINS` setting, or Hubchat Web says **This hub doesn't allow this web app yet**. Every setting, and how to offer your hub with one tap: [Running Hubchat Web](https://github.com/Maurdekye/orgtree-hubchat/blob/main/docs/hubchat-web-server.md).
+Then add the web app's address to the hub's `HUB_WEB_ORIGINS` setting, or Hubchat Web says **This hub doesn't allow this web app yet**. Every setting, and how to offer your hub with one tap: [Running Hubchat Web](https://github.com/Maurdekye/orgtree-hubchat/blob/main/docs/hubchat-web-server.md). On a home or office network without Tailscale, HTTPS comes from a certificate authority of your own: the same guide, **On a LAN only**.
