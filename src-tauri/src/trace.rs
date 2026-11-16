@@ -1520,6 +1520,21 @@ mod tests {
     }
 
     #[test]
+    fn desktop_update_and_window_lines_are_kept() {
+        let l = lines(|| {
+            tracing::warn!(target: "hubchat.update", "update check failed: signature (asked: true)");
+            tracing::warn!(target: "hubchat.window", "window not answering for 15 s");
+            tracing::info!(target: "hubchat.window", "window answering again after 17 s");
+            tracing::warn!(target: "hubchat.foreign", "not allowlisted");
+        });
+        assert_eq!(l.len(), 4);
+        assert!(l[0].ends_with("hubchat.update: update check failed: signature (asked: true)"), "{l:?}");
+        assert!(l[1].ends_with("hubchat.window: window not answering for 15 s"), "{l:?}");
+        assert!(l[2].ends_with("hubchat.window: window answering again after 17 s"), "{l:?}");
+        assert!(l[3].ends_with("[dependency message withheld]"));
+    }
+
+    #[test]
     fn the_key_log_reaches_the_log_only_as_fixed_facts_in_both_modes_and_the_file_keeps_its_line() {
         use crate::keylog::{self, Fact};
         let _turn = VERBOSITY.lock().unwrap_or_else(|p| p.into_inner());

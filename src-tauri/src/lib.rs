@@ -20,6 +20,8 @@ mod media;
 mod secrets;
 mod trace;
 #[cfg(desktop)]
+mod window_watch;
+#[cfg(desktop)]
 mod tray;
 #[cfg(windows)]
 mod tray_popup;

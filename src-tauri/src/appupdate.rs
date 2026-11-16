@@ -209,6 +209,16 @@ pub fn hc_app_update_state() -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn update_failure_class_only_accepts_fixed_words() {
+        for class in ["offline", "status", "feed", "signature", "other"] {
+            assert_eq!(update_failure_class(class), class);
+        }
+        for class in ["", "Signature", "private-error-text", "offline\nsecret"] {
+            assert_eq!(update_failure_class(class), "other");
+        }
+    }
+
     fn feed(version: &str, android: bool) -> Feed {
         let mut platforms = std::collections::HashMap::new();
         platforms.insert("windows-x86_64".to_string(), Platform { url: "https://x/setup.exe".into(), signature: "w".into() });
