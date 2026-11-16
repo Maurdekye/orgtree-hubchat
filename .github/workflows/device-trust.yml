@@ -1,0 +1,88 @@
+name: device-trust
+
+# The apps trust the certificates the DEVICE trusts, beside the built-in public list
+# (crates/hubchat-core/src/tls.rs). This is the measured check of that on each desktop
+# system, with the system's REAL certificate store, on a runner that is thrown away:
+#
+#   1. the ordinary trust tests (the device's roots are handed in by the test);
+#   2. before: with the runner's store as it comes, a hub whose certificate is from the
+#      throwaway test CA (crates/hubchat-core/tests/tls/ca.pem) is refused;
+#   3. the test CA is installed in the runner's own store, the way an operator's CA is
+#      installed on a person's computer;
+#   4. after: the same hub connects (requests and the stream), and a certificate from a
+#      CA the runner does not know is still refused.
+#
+# Never run steps 3 and 4 on a machine someone uses: they change what it trusts.
+# Android has its own check, on an emulator: tools/e2e-android-trust.mjs.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['ci-test/hubchat-trust']
+
+permissions:
+  contents: read
+
+env:
+  # the toolchain of the release builds
+  RUST_TOOLCHAIN: nightly-2025-12-12
+  CA: crates/hubchat-core/tests/tls/ca.pem
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  trust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Rust ${{ env.RUST_TOOLCHAIN }}
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+          rustc -Vv
+          cargo -V
+
+      - name: Build the trust tests
+        run: cargo test --locked -p hubchat-core --test tls_trust --no-run
+
+      - name: 1. the ordinary trust tests
+        run: cargo test --locked -p hubchat-core --test tls_trust
+
+      - name: 2. before - the runner's own store does not hold the test CA
+        run: cargo test --locked -p hubchat-core --test tls_trust -- --ignored --exact os_store_without_the_test_ca
+
+      - name: 3. install the test CA in this runner's store (Windows, the machine's Trusted Root store)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          certutil.exe -addstore -f Root $env:CA.Replace('/', '\')
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          certutil.exe -store Root 'Hubchat test CA (not for real use)' | Select-String 'Subject|Cert Hash'
+
+      - name: 3. install the test CA in this runner's store (macOS, the System keychain, trusted as a root)
+        if: runner.os == 'macOS'
+        run: |
+          # no person is there to answer the dialog that adding a trusted root normally shows
+          sudo security authorizationdb write com.apple.trust-settings.admin allow
+          sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain "$CA"
+          security find-certificate -c 'Hubchat test CA (not for real use)' /Library/Keychains/System.keychain | grep labl
+
+      - name: 3. install the test CA in this runner's store (Linux, the system CA bundle)
+        if: runner.os == 'Linux'
+        run: |
+          sudo cp "$CA" /usr/local/share/ca-certificates/hubchat-test-ca.crt
+          sudo update-ca-certificates
+          grep -c 'BEGIN CERTIFICATE' /etc/ssl/certs/ca-certificates.crt
+
+      - name: 4. after - the same hub connects, another CA's certificate is still refused
+        run: cargo test --locked -p hubchat-core --test tls_trust -- --ignored --exact os_store_with_the_test_ca

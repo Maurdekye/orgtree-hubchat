@@ -135,6 +135,16 @@ makes a release.
 Throwaway-signed files can't update or install over a real Hubchat. Never publish
 them.
 
+`device-trust.yml` is a check, not a build. A push to `ci-test/hubchat-trust` (or a
+manual run) proves on Windows, macOS and Linux runners that the apps accept a hub
+whose certificate is from a certificate authority installed on the machine
+(`crates/hubchat-core/src/tls.rs`). It runs the trust tests, then two tests that read
+the runner's REAL certificate store: one before the throwaway test CA
+(`crates/hubchat-core/tests/tls/ca.pem`) is installed in that store, which must be
+refused, and one after, which must connect. It installs a CA, so it belongs on
+runners that are thrown away, never on a machine someone uses. The same check for
+Android runs on an emulator: `tools/e2e-android-trust.mjs`.
+
 The first full test (run 37927908831, 2026-10-09, building v0.1.2) took about 18
 minutes from a cold cache. The macOS build is the slowest.
 

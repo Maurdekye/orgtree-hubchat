@@ -1,5 +1,10 @@
 # Hubchat development invariants
 
+- 2026-11-16: Hub TLS trusts the built-in public roots AND the device's own
+  (a LAN hub's CA), always on: every hub connection takes its TLS from
+  hubchat-core `tls.rs`. Updates keep the public list. [decided: user
+  2026-11-16 mfe6836037810; verified: tests/tls_trust.rs]
+
 - 2026-11-16: Hubchat Web and its hub are HTTPS only, on a LAN too; no
   reduced plain-http mode. Reason (user): "i would highly prefer we have
   notifications and camera linking, those make the app's usage much
