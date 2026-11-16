@@ -28,15 +28,11 @@
 - 2026-11-06: Send cost is flat in history (user 2026-11-06 12:09Z-12:10Z "close to a full second from hubchat"). A chat change re-reads only the newest `WINDOW` (200) rows once more than that are loaded, merged by id (`src/lib/chatwindow.ts` `mergeWindow`, `readPlan`); a send (`refresh()`) does the same; opening the chat, a focus gain (once per gain), a delete (`reload()`) and a page change re-read the whole loaded range. Accepted: a late receipt on a row older than 200 shows on reopen. `Store::messages_where` reads attachments in one statement per 500 rows (`attach_queries` counts them; `store_send_scale_tests.rs`, `tools/chat-window.test.ts`). `chats()` stays O(history) in SQL (7 ms at 20k rows on a PC) and is already coalesced in `schedule`. [decided: coordinator-opus 2026-11-06 12:39Z; verified: store.ts useMessages, store.rs]
 
 - 2026-11-01: Mention kind filters: `@org:` / `@person:` / `@chat:` in the
-  composer (any case, desktop and Android) narrow the `@` hint list to
-  addresses of that kind (`activeMentionToken`'s `kind`,
-  `filterMentionContacts`' `kindFilter`, both by `kindOf`, so no kind counts
-  as person as it shows everywhere; roster kinds come stored from the hub).
-  Filter words only: a pick still inserts `@net:<address>` and nothing new
-  is sent; `@net:` and plain `@` list every kind. Hubchat only — Orgtree's
-  `@org:` keeps its inter-org meaning. [decided: user 2026-11-01 20:19Z,
-  20:22Z; verified: mentions.ts, Composer.tsx;
-  docs/mention-kind-filters.md; tools/proof-mention-kind-filters.mjs]
+  composer narrow the `@` hint list to addresses of that kind (by `kindOf`).
+  Filter words only: a pick still inserts `@net:<address>`. Hubchat only.
+  Rules and proof: docs/mention-kind-filters.md. [decided: user 2026-11-01
+  20:19Z, 20:22Z; verified: mentions.ts, Composer.tsx;
+  tools/proof-mention-kind-filters.mjs]
 - 2026-11-01: Translation between people (Mail hub 2.4.0, feature
   `translate`): the language we read in is kept like our status
   (`engine_translation.rs`: `language.mine`, `language.owed/said.<url>`, in
@@ -715,33 +711,15 @@
 
 - 2026-10-12: Incoming notification reply owners originate in the immutable Engine identity (both hub paths), never current store metadata during posting. Unavailable core/engine, stopped engine, unreadable key and initialization failures retry sealed handoffs. Serialize identity establishment and latch genuine engine readiness from cold initialization, explicit key recovery and adoption; missing/unreadable/error results never establish it. Busy/nested attachments retry, avoiding mode-callback deadlocks. A completion latch suppresses background reload of a departing key, never an intentional adoption. UUID/outbox admission remains atomic. [verified: engine_notification_reply.rs, notification_reply.rs, core.rs, android.rs, NotificationReplyPolicy.kt; docs/notification-inline-replies.md]
 
-- 2026-10-12: Saved-hub enable state is device-local and defaults enabled. Disable
-  retains identity/configuration, roster/history, pins, outbox and checkpoints;
-  it removes/cancels the runtime, not the saved hub. Explicit pins wait while
-  Automatic may use enabled alternatives. Copied network clients retain their
-  originating cancellation token; late status/clock callbacks cannot change a
-  replacement runtime. Only intentional removal unregisters. No migration16.
-  Link-start resolves retained saved policy before engine availability, including
-  lost-key recovery: a disabled saved hub refuses with or without an engine.
-  While an identity runs, saved enabled hubs require an active bound client.
-  With no identity running (the lost-key screen relinking or restoring) an
-  enabled saved hub gets a setup client like an unsaved one: no runtime exists
-  for a disable to cancel, and the switch needs a running identity (before,
-  the lost-key relink review called the user's working hubs unavailable)
-  [coordinator ruling 2026-10-14, Orgtree docket
-  phone-linking-says-existing-hubs-are-invalid-whe; `link::start_client`].
-  Received-link acknowledgement, discovery (including spawned requests) and
-  review publication retain both the originating hub token and listener attempt.
-  Each probe also honors its destination's saved policy. Bounded synchronous
-  pending-state/event publication serializes with cancellation; no late review
-  from a disabled or replaced generation.
-  Public preflight/setup probes always resolve saved policy, even without a
-  Reception. Door helpers require a Discovery context; direct and spawned
-  health requests resolve destination policy inside the origin guard. There
-  is no saved-hub diagnostic bypass; unbound test resolvers stay in fixtures.
-  [decided: user via coordinator 2026-10-12; source: store_hub_enabled.rs,
-  engine_hub_enabled.rs, hub.rs; verification gate and limits:
-  docs/hub-enable-disable.md]
+- 2026-10-12: Saved-hub enable state is device-local and defaults enabled.
+  Disable cancels the runtime and keeps everything saved; only intentional
+  removal unregisters. Every hub request, link and probe included, resolves
+  the saved hub's policy first (`link::start_client`, a `Discovery`
+  context) and carries its originating runtime's cancellation token: no
+  diagnostic bypass, nothing late into a replaced runtime. No migration16.
+  All rules, the lost-key ruling (2026-10-14) and limits:
+  docs/hub-enable-disable.md. [decided: user via coordinator 2026-10-12;
+  source: store_hub_enabled.rs, engine_hub_enabled.rs, hub.rs]
 - 2026-10-13: Removing a saved hub forgets everything its sync kept under its
   URL (`forget_hub_sync`: cursor, lazy-history start, owed chat list, clock
   offset, picture acknowledgement, roster picture owners, enabled state), and
