@@ -82,6 +82,15 @@ fn reachable_hubs(list: &[String]) -> Vec<String> {
     keep
 }
 
+/// What else a page tries for a hub none of whose addresses it can call (`named`): the same
+/// host and port over https for each http one, and, when the link says what its hub is called
+/// (`hub_is_named`), the hubs this page's server suggests. Likeliest first, each once.
+///
+/// Not written yet: the name the tests need, answering nothing.
+fn second_round(_named: &[String], _suggested: &[String], _hub_is_named: bool) -> Vec<String> {
+    Vec::new()
+}
+
 impl Adoption {
     /// The identity a link, a key QR or a key file brought, with the hubs to add.
     fn from_bundle(bundle: &Bundle, hubs: Vec<String>) -> R<Adoption> {
@@ -430,6 +439,66 @@ mod tests {
 
     fn events(seen: &Arc<std::sync::Mutex<Vec<(String, String)>>>) -> Vec<Value> {
         seen.lock().unwrap().iter().filter(|(n, _)| n == "hc-link").map(|(_, j)| serde_json::from_str(j).unwrap()).collect()
+    }
+
+    /// A hub on loopback that answers every request with /healthz of a hub called `name`.
+    async fn fake_hub(name: &str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let body = json!({ "ok": true, "name": name, "orgs": 1, "version": "2.5.1", "features": ["sync"], "max_attachment_bytes": 1000000 }).to_string();
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut s, _)) = l.accept().await else { return };
+                let body = body.clone();
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 2048];
+                    let _ = s.read(&mut buf).await;
+                    let r = format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
+                    let _ = s.write_all(r.as_bytes()).await;
+                });
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn what_else_a_page_tries_for_a_hub_it_has_no_address_for() {
+        let l = |a: &[&str]| a.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+        let named = l(&["http://192.168.1.200:7378", "http://lan-hub.invalid", "http://192.168.1.200:7378/"]);
+        let suggested = l(&["https://192.168.1.200:7379", "http://192.168.1.9:7378", "https://192.168.1.200:7378", "http://127.0.0.1:7370"]);
+        // each http address over https at the same host and port, then the suggested hubs a page can call
+        assert_eq!(
+            second_round(&named, &suggested, true),
+            l(&["https://192.168.1.200:7378", "https://lan-hub.invalid:7370", "https://192.168.1.200:7379", "http://127.0.0.1:7370"])
+        );
+        // a link that does not say what its hub is called: no suggested hub could be told from another
+        assert_eq!(second_round(&named, &suggested, false), l(&["https://192.168.1.200:7378", "https://lan-hub.invalid:7370"]));
+        // an https address has no twin
+        assert_eq!(second_round(&l(&["https://pc.example.ts.net:8443"]), &[], true), Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn a_link_that_names_only_http_is_completed_through_a_suggested_hub_of_that_name() {
+        let (sh, _) = fresh();
+        // the page's server suggests two hubs (a page may call http on its own machine)
+        let (lan, other) = (fake_hub("lan-hub").await, fake_hub("other-hub").await);
+        sh.call("hc_web_suggested_hubs", &json!({ "addresses": [other, lan] })).await.unwrap();
+        // an app's link: its hub by an http address only (.invalid: nothing answers there, over https either)
+        let link = json!(["http://lan-hub.invalid:7378"]);
+        let p = sh.call("hc_probe_link_hubs", &json!({ "hubs": link, "name": "lan-hub" })).await.unwrap();
+        assert_eq!((p["result"].clone(), p["url"].clone(), p["name"].clone()), (json!("connected"), json!(lan), json!("lan-hub")), "{p}");
+        // a link to a hub of another name is not sent to a suggested hub: it says it needs https, as before
+        let p = sh.call("hc_probe_link_hubs", &json!({ "hubs": link, "name": "home" })).await.unwrap();
+        assert_eq!(p, json!({ "result": "invalid", "error": LINK_NEEDS_HTTPS }));
+        // nor a link that does not say what its hub is called
+        let p = sh.call("hc_probe_link_hubs", &json!({ "hubs": link, "name": null })).await.unwrap();
+        assert_eq!(p, json!({ "result": "invalid", "error": LINK_NEEDS_HTTPS }));
+        // a server that suggests nothing: as before
+        sh.call("hc_web_suggested_hubs", &json!({ "addresses": [] })).await.unwrap();
+        let p = sh.call("hc_probe_link_hubs", &json!({ "hubs": link, "name": "lan-hub" })).await.unwrap();
+        assert_eq!(p, json!({ "result": "invalid", "error": LINK_NEEDS_HTTPS }));
+        sh.shutdown();
     }
 
     #[tokio::test]

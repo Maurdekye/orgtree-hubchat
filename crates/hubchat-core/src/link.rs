@@ -433,6 +433,16 @@ impl LinkUrl {
     }
 }
 
+/// The same host and port over https, for a hub known by an `http` address.
+/// A hub on a LAN may answer both on one port (a proxy that tells them
+/// apart), and a browser can only use the https one. `None` for an address
+/// that is https already, or is no address.
+///
+/// Not written yet: the name `tests` and `door.rs` need, answering nothing.
+pub fn https_twin(_address: &str) -> Option<crate::HubAddress> {
+    None
+}
+
 /// True for a hub address that names the machine it is used on (localhost,
 /// 127.0.0.0/8, ::1, 0.0.0.0): on another device it would name that device.
 pub fn is_loopback_hub(url: &str) -> bool {
@@ -652,6 +662,19 @@ pub fn merge_same_hubs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_http_address_has_an_https_twin_at_the_same_host_and_port() {
+        let twin = |a: &str| https_twin(a).map(|a| a.to_string());
+        assert_eq!(twin("http://192.168.1.200:7378").as_deref(), Some("https://192.168.1.200:7378"));
+        assert_eq!(twin(" 192.168.1.200:7378/ ").as_deref(), Some("https://192.168.1.200:7378"), "no scheme means http");
+        assert_eq!(twin("http://hub.lan").as_deref(), Some("https://hub.lan:7370"), "the port an http address without one means");
+        assert_eq!(twin("http://[fd7a::1]:7378").as_deref(), Some("https://[fd7a::1]:7378"));
+        assert_eq!(twin("http://hub.lan:7378/door").as_deref(), Some("https://hub.lan:7378/door"));
+        assert_eq!(twin("https://hub.example.com"), None, "https already");
+        assert_eq!(twin("ftp://hub.lan:21"), None);
+        assert_eq!(twin(""), None);
+    }
 
     fn bundle() -> Bundle {
         let me = Identity::generate("alex").unwrap();

@@ -283,8 +283,76 @@ mod tests {
         v.to_string()
     }
 
+    /// A hub that answers plain HTTP and HTTPS on ONE port, as a proxy that tells the two apart
+    /// does (a TLS connection starts with the byte 0x16): `plain` to the first, `tls` to the
+    /// second, each as /healthz JSON. Its certificate is `tests/tls/hub.pem`, for 127.0.0.1.
+    async fn fake_both(plain: String, tls: String) -> u16 {
+        use tokio_rustls::rustls::pki_types::pem::PemObject;
+        use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("tls");
+        let chain: Vec<CertificateDer<'static>> = CertificateDer::pem_file_iter(dir.join("hub.pem")).unwrap().map(|c| c.unwrap()).collect();
+        let key = PrivateKeyDer::from_pem_file(dir.join("hub-key.pem")).unwrap();
+        let provider = std::sync::Arc::new(tokio_rustls::rustls::crypto::ring::default_provider());
+        let config = tokio_rustls::rustls::ServerConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions().unwrap().with_no_client_auth().with_single_cert(chain, key).unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(config));
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = l.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut s, _)) = l.accept().await else { return };
+                let (plain, tls, acceptor) = (plain.clone(), tls.clone(), acceptor.clone());
+                tokio::spawn(async move {
+                    let answer = |body: &str| format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}", body.len());
+                    let mut first = [0u8; 1];
+                    if s.peek(&mut first).await.unwrap_or(0) == 0 { return }
+                    let mut buf = [0u8; 2048];
+                    if first[0] == 0x16 {
+                        let Ok(mut s) = acceptor.accept(s).await else { return };
+                        let _ = s.read(&mut buf).await;
+                        let _ = s.write_all(answer(&tls).as_bytes()).await;
+                        let _ = s.shutdown().await;
+                    } else {
+                        let _ = s.read(&mut buf).await;
+                        let _ = s.write_all(answer(&plain).as_bytes()).await;
+                    }
+                });
+            }
+        });
+        port
+    }
+
+    /// This device trusts the CA of `fake_both`'s certificate (`tests/tls/ca.pem`).
+    fn the_device_trusts_the_test_ca() {
+        use tokio_rustls::rustls::pki_types::pem::PemObject;
+        let ca = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests").join("tls").join("ca.pem");
+        let ca = tokio_rustls::rustls::pki_types::CertificateDer::from_pem_file(ca).unwrap().to_vec();
+        crate::tls::set_device_roots(move || Some(vec![ca.clone()]));
+    }
+
     const T: Duration = Duration::from_secs(2);
     const LO: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_hub_that_also_answers_over_https_at_its_address_is_named_first() {
+        the_device_trusts_the_test_ca();
+        // a hub on a LAN behind a proxy that speaks http and https on one port; this device knows it by http
+        let both = fake_both(health("lan-hub", &[], None), health("lan-hub", &[], None)).await;
+        let hub = format!("http://127.0.0.1:{both}");
+        // (the tests' hubs listen on loopback only: `true` lets such an address into the link)
+        let got = qr_hubs_with(&hub, None, &[], &Door::Unknown, T, true).await;
+        assert_eq!(got, vec![format!("https://127.0.0.1:{both}"), hub.clone()], "a browser can only use the https one: it goes first");
+        // for real, a loopback address is no use to another device, over https either
+        assert_eq!(qr_hubs(&hub, None, &[], &Door::Unknown, T).await, vec![hub.clone()]);
+        // another hub answers over https at that address: it is not this hub, so it is not named
+        let stranger = fake_both(health("lan-hub", &[], None), health("other-hub", &[], None)).await;
+        let hub = format!("http://127.0.0.1:{stranger}");
+        assert_eq!(qr_hubs_with(&hub, None, &[], &Door::Unknown, T, true).await, vec![hub.clone()]);
+        // plain http only, as most hubs are: the link is what it always was
+        let plain = fake(health("lan-hub", &[], None)).await;
+        let hub = format!("http://127.0.0.1:{plain}");
+        assert_eq!(qr_hubs_with(&hub, None, &[], &Door::Unknown, T, true).await, vec![hub.clone()]);
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn the_hub_names_its_door() {
