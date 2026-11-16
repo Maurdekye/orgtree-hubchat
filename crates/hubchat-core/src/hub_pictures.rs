@@ -4,7 +4,7 @@ use crate::pictures::{PictureRecord, MAX_WIRE_BYTES};
 #[cfg(not(target_arch = "wasm32"))]
 fn http()-> &'static reqwest::Client {
     static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
-    CLIENT.get_or_init(||reqwest::Client::builder().redirect(reqwest::redirect::Policy::none())
+    CLIENT.get_or_init(||crate::tls::http().redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(5)).timeout(Duration::from_secs(10)).build().expect("picture HTTP"))
 }
 /// A browser's client takes no settings: each request carries the limit (`WHOLE`), and

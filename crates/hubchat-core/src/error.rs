@@ -62,8 +62,30 @@ impl From<reqwest::Error> for Error {
     fn from(e: reqwest::Error) -> Self {
         if e.is_decode() {
             Error::NotAHub(e.to_string())
+        } else if let Some(why) = certificate_refused(&e) {
+            Error::Unreachable(why)
         } else {
             Error::Unreachable(e.to_string())
         }
     }
+}
+
+/// A hub certificate this device refused, said so that its owner can act on
+/// it. reqwest's own text is only "error sending request"; the reason sits
+/// further down its chain of causes, in the TLS library's words.
+fn certificate_refused(e: &dyn std::error::Error) -> Option<String> {
+    let mut cause = e.source();
+    while let Some(c) = cause {
+        let text = c.to_string();
+        if let Some(at) = text.find("invalid peer certificate") {
+            let detail = text[at..].trim();
+            return Some(if detail.contains("UnknownIssuer") {
+                "this device does not trust the hub's certificate. If the hub has a certificate from an authority of its own, install that authority's certificate on this device".into()
+            } else {
+                format!("the hub's certificate was refused ({detail})")
+            });
+        }
+        cause = c.source();
+    }
+    None
 }

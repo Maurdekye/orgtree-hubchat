@@ -257,7 +257,9 @@ impl Carrier {
         req.headers_mut().insert("sec-websocket-protocol", PROTO.parse().expect("header"));
         req.headers_mut().insert("x-org-auth", me.auth_header().parse().map_err(|_| Opening::Failed("bad_auth".into(), None))?);
         let config = WebSocketConfig::default().max_message_size(Some(MAX_ANSWER)).max_frame_size(Some(MAX_ANSWER));
-        let connect = tokio_tungstenite::connect_async_with_config(req, Some(config), false);
+        // the same trust as the requests' (`tls.rs`); a `ws://` address takes no TLS at all
+        let trust = tokio_tungstenite::Connector::Rustls(crate::tls::config());
+        let connect = tokio_tungstenite::connect_async_tls_with_config(req, Some(config), false, Some(trust));
         let mut ws = match tokio::time::timeout(OPEN_TIMEOUT, connect).await {
             Err(_) => return Err(Opening::Failed("handshake_timeout".into(), None)),
             Ok(Ok((ws, _))) => ws,

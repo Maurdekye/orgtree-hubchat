@@ -94,6 +94,9 @@ class ConnectionService : Service() {
     @JvmStatic fun setPush(on: String, distributor: String): String =
       appContext?.let { PushController.set(it, on == "1", distributor) } ?: "Hubchat is still starting."
     @JvmStatic fun refreshPush() { appContext?.let { PushController.refresh(it) } }
+    /** Called from Rust (hubchat_core::tls): the certificate authorities this device trusts.
+     *  An exception (the store can't be read) reaches Rust as "not now". */
+    @JvmStatic fun trustedRoots(): String = TrustedRoots.read()
 
     /** What the core needs before it runs without the service. */
     fun attach(ctx: Context) {

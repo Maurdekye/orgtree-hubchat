@@ -77,6 +77,15 @@ fn call(class: &GlobalRef, method: &str, args: &[&str], returns_string: bool) ->
     }
 }
 
+/// Android's certificate authorities, the system's and the ones installed on this device, for
+/// the hub connections (`hubchat_core::tls` adds them to its built-in public list). `None` while
+/// Android can't be asked or its store can't be read; the core asks again later.
+fn device_roots() -> Option<Vec<Vec<u8>>> {
+    use base64::Engine as _;
+    let listed = call(&JNI.get()?.service, "trustedRoots", &[], true)?;
+    Some(listed.lines().filter_map(|line| base64::engine::general_purpose::STANDARD.decode(line.trim()).ok()).collect())
+}
+
 /// In-app updates: may Hubchat install its own updates?
 pub fn can_install_updates() -> bool {
     JNI.get().and_then(|j| call(&j.service, "canInstallUpdates", &[], true)).as_deref() == Some("1")
@@ -537,6 +546,8 @@ fn start_core(mut env: JNIEnv, data_dir: JString) {
             service,
             secret_box,
         });
+        // before the core makes its first hub connection
+        hubchat_core::tls::set_device_roots(device_roots);
     }
     let dir = PathBuf::from(dir);
     if let Ok(c) = crate::core::init(dir.clone(), Arc::new(AndroidPlatform { dir })) {

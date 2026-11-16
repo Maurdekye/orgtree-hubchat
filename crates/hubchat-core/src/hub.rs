@@ -389,8 +389,9 @@ pub struct HubClient {
 
 impl HubClient {
     pub fn new(addr: HubAddress) -> Self {
+        // the certificates a hub may present: the public list and the device's own roots (`tls.rs`)
         #[cfg(not(target_arch = "wasm32"))]
-        let builder = reqwest::Client::builder()
+        let builder = crate::tls::http()
             .connect_timeout(Duration::from_secs(10))
             .tcp_keepalive(Duration::from_secs(30));
         // a browser owns its connections: every request carries its own time limit
