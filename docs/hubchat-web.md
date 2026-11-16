@@ -452,7 +452,6 @@ These answer "This isn't available in Hubchat Web yet." or are hidden:
   it has a carrier over the browser's WebSocket.
 - Settings, About has no "Check for updates" button on the web: the check
   runs by itself.
-- The release workflow that builds and publishes the server's image.
 
 ## Not checked on a real device
 
@@ -460,18 +459,21 @@ Headless Chromium on a PC is not an iPhone. Until someone runs it on one,
 these are unverified: the database inside a Home Screen app on iOS, the
 keyboard handling (`src/web/viewport.ts`), the safe areas around the notch
 and home bar, and start time on a phone. Firefox and Safari on a desktop
-have not been run either. No real camera has scanned a code: the browser
-test feeds the scanner a picture. The key file and the key QR code are
+have not been run either. A real camera has scanned a link's code once, in
+Chrome on an Android phone (by hand, 2026-11-11); the browser test feeds
+the scanner a picture. The key file and the key QR code are
 covered by the shell's tests only, not in a browser. Files have run only in
 Chromium: the private file system's synchronous handles and moving a file
 there have not been run in Safari. The file chooser itself is replaced in
 the browser test; a real one, the share sheet and a pasted picture have not
 been tried. The profile picture has not been tried on the web.
 
-No notification has reached a real browser yet. The browser test replaces
-the browser's subscription (its headless browser reaches no push service)
-and proves the rest with a real hub: the registration, the hub's push, its
-signature and what it decrypts to. Whether Apple's, Google's and Mozilla's
-push services accept that signature, and how an iPhone shows the
-notification, are unproven. The service worker's part is proven by running
-its script (`tools/web-sw-push.test.mjs`), not in a browser.
+Notifications have been seen by hand in Chrome on an Android phone and in
+Chrome on Windows (2026-11-13, through Google's push service; Microsoft's
+accepted the hub's push for Edge). Whether Apple's and Mozilla's push
+services accept the hub's signature, and how an iPhone shows the
+notification, are unproven. The automated browser test replaces the
+browser's subscription (its headless browser reaches no push service) and
+proves the rest with a real hub: the registration, the hub's push, its
+signature and what it decrypts to. The service worker's part is tested by
+running its script (`tools/web-sw-push.test.mjs`), not in a browser.

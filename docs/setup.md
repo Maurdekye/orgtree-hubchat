@@ -163,11 +163,11 @@ There is no Hubchat app for iPhone or iPad. Hubchat Web is Hubchat as a web app 
 
 Your key and messages stay in your browser. The server only hands out the app; it never sees them. It does control the code your browser runs, so use a server run by you or by people you trust.
 
-Not in Hubchat Web yet: files and pictures, and notifications. It has not been tried on a real iPhone.
+Files and pictures work: the paperclip opens your browser's file chooser, and a received file is kept in the browser until you open or save it. Notifications are off until you turn them on (a card on the chat list, or Settings, Notifications), and your hub must run Mail hub 2.5.1 or later to send them. Not in Hubchat Web yet: video and audio don't play in the chat (they send and download as files). It has not been tried on a real iPhone.
 
 **Running it for others**
 
-You need Docker, an `https://` address for the web app and one for your hub (Tailscale gives you both, as in section 1), and Mail hub 2.5.0 or later.
+You need Docker, an `https://` address for the web app and one for your hub (Tailscale gives you both, as in section 1), and Mail hub 2.5.0 or later (2.5.1 or later for notifications).
 
 ```text
 docker run -d --name hubchat-web --read-only --cap-drop ALL -p 127.0.0.1:8080:8080 ghcr.io/maurdekye/hubchat-web:latest

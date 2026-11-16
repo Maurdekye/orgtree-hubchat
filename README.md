@@ -98,7 +98,8 @@ docker run -d --name hubchat-web --read-only --cap-drop ALL \
   the browser talks to the mail hub directly.
 - **It needs HTTPS** in front of the page and of the hub (for example
   `tailscale serve`), and the hub must list the page's address in
-  `HUB_WEB_ORIGINS` (Mail hub 2.5.0 or later).
+  `HUB_WEB_ORIGINS` (Mail hub 2.5.0 or later). Notifications need Mail hub
+  2.5.1 or later.
 - **How it differs from the other packages:** `orgtree-mailhub` is the mail
   hub itself (it carries the mail and holds data); `orgtree-engine` is the
   headless Orgtree engine (it runs organisations of AI agents); `hubchat-web`
@@ -111,8 +112,9 @@ docker run -d --name hubchat-web --read-only --cap-drop ALL \
 Running it, its settings (port, its own HTTPS, the hubs it suggests, a name
 on the welcome screen), what it answers and how to update it:
 [docs/hubchat-web-server.md](docs/hubchat-web-server.md). What the web app can
-and can't do yet (no files or pictures, no notifications; not tried on a real
-iPhone): [docs/hubchat-web.md](docs/hubchat-web.md).
+and can't do yet (it sends files and pictures, and shows notifications from a
+hub running Mail hub 2.5.1 or later; video and audio don't play in the chat;
+not tried on a real iPhone): [docs/hubchat-web.md](docs/hubchat-web.md).
 
 ## Recommended developer team setup
 

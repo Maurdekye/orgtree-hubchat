@@ -46,7 +46,8 @@ docker compose -f compose.web.yaml up -d
 The image is one program and nothing else (no shell). It runs as a
 non-root user, writes nothing, and answers on port 8080 over plain HTTP.
 Its own health check (`hubchat-web healthcheck`) marks the container
-healthy. Tags: a version (`1.4.0`) and `latest`, the newest stable release.
+healthy. Tags: a version (`1.3.7`, the Hubchat release it came with) and
+`latest`, the newest stable release. The image is for 64-bit x86 (amd64).
 Each Hubchat release also carries the image as a file
 (`hubchat-web-<version>-docker-amd64.tar.gz`, for `docker load`) and the
 plain files (`hubchat-web-<version>-static.tar.gz`) for any web server of
@@ -64,6 +65,13 @@ over HTTPS, and a page loaded over HTTPS can only call a hub over HTTPS. So:
    page's address to `HUB_WEB_ORIGINS` (Mail hub 2.5.0 or later). Without
    it the app says "This hub doesn't allow this web app yet" and shows the
    address to add.
+
+**Notifications** come from the hub, not from this server: a hub running
+Mail hub 2.5.1 or later sends them to each browser that turned them on
+(its `HUB_PUSH_CONTACT` setting is in the mail hub's `docs/OPERATIONS.md`). With an
+older hub everything else works and the app names the hub that "needs an
+update before it can send notifications to this browser". This server has
+no setting for them.
 
 With Tailscale, on the machine that runs both:
 
