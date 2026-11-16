@@ -39,7 +39,8 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { createDecipheriv, createECDH, createHash, createPublicKey, hkdfSync, randomBytes, verify } from 'node:crypto';
 import { crc32, deflateSync } from 'node:zlib';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:http';
+import { createServer, request as httpRequest } from 'node:http';
+import { createServer as httpsServer } from 'node:https';
 import { createServer as tcpServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -147,10 +148,32 @@ const guards = [];
 let opened = 0;
 const guarded = (g) => g.read === 'denied' && g.write === 'denied' && g.stubbed;
 
-/** A browser of its own (a fresh profile: no storage, no cache), and what drives its page. */
-async function open({ w = width, h = height, ua = null, before = '' } = {}) {
+/** A hub on a LAN, as far as a browser can tell: an HTTPS proxy in front of `target` (the test
+ *  hub), with the test CA's certificate for a hub (crates/hubchat-core/tests/tls). It passes every
+ *  request on as it came, headers and all, and counts them. */
+function lanHub(target) {
+  const tls = join(here, '..', 'crates', 'hubchat-core', 'tests', 'tls');
+  const to = new URL(target);
+  const seen = { requests: 0 };
+  const server = httpsServer({ cert: readFileSync(join(tls, 'hub.pem')), key: readFileSync(join(tls, 'hub-key.pem')) }, (req, res) => {
+    seen.requests += 1;
+    const up = httpRequest({ host: to.hostname, port: to.port, method: req.method, path: req.url, headers: req.headers }, (answer) => {
+      res.writeHead(answer.statusCode, answer.headers);
+      answer.pipe(res);
+    });
+    up.on('error', () => { try { res.writeHead(502); res.end(); } catch { /* already answering */ } });
+    req.pipe(up);
+  });
+  server.on('tlsClientError', () => {});
+  return new Promise((r) => server.listen(0, '127.0.0.1', () => r({ server, seen, port: server.address().port })));
+}
+
+/** A browser of its own (a fresh profile: no storage, no cache), and what drives its page.
+ *  `names`: host-resolver rules that come before the one that refuses everything but loopback
+ *  (a name of this machine's, for section 8c); `more`: further switches. */
+async function open({ w = width, h = height, ua = null, before = '', names = '', more = [] } = {}) {
   const b = await launch({ width: w, height: h, dpr: 2, mobile: w < 900, ...(arg('browser') ? { exe: arg('browser') } : {}),
-    args: ['--mute-audio', '--disable-background-networking', '--disable-sync', '--disable-component-update', '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1', ...(ua ? ['--user-agent=' + ua] : [])] });
+    args: ['--mute-audio', '--disable-background-networking', '--disable-sync', '--disable-component-update', `--host-resolver-rules=${names ? names + ', ' : ''}MAP * ~NOTFOUND, EXCLUDE 127.0.0.1`, ...more, ...(ua ? ['--user-agent=' + ua] : [])] });
   browsers.push(b);
   const session = sessionOf(b.pid);
   console.log(`receipt: runner pid ${process.pid} session ${mySession}; browser pid ${b.pid} session ${session}; muted; throwaway profile; loopback only; clipboard denied (measured below), no OS input`);
@@ -668,6 +691,108 @@ async function main() {
   check('the scanning browser opened its camera once, and has no script error or policy violation',
     await t2.b.eval(`window.__cameraOpened === 1 && (window.__csp || []).length === 0`) && t2.b.errors.length === 0, t2.b.errors.join(' | ') + ' ' + await t2.b.eval(`JSON.stringify(window.__csp || [])`));
   await t2.close();
+
+  // ------------- 8c. a link from an APP names its hub by http; a browser completes it over https
+  // (a hub on a LAN: Orgtree docket hubchat-on-a-lan-only-hub-apps-trust-local-certi). The test hub
+  // gets what such a hub has: an HTTPS proxy in front of it with a certificate from an authority
+  // of its own, under a name of its own, `lan-hub.test`. The two browsers of this section resolve
+  // that name to this machine and accept that certificate, as a browser on the LAN accepts its
+  // operator's CA once it is installed (they reach nothing but this machine either way). Each
+  // link is written as an app writes it: the code this browser offers, the hub's name, and the
+  // hub by an http address only.
+  {
+    const lan = await lanHub(HUB);
+    const LAN = `https://lan-hub.test:${lan.port}`;
+    const onTheLan = { names: 'MAP lan-hub.test 127.0.0.1', more: ['--ignore-certificate-errors'] };
+    const suggestedBefore = { hubs: webConfig.suggested_hubs, on: webConfig.hub_suggestions };
+    /** The signed-in browser offers a new link: its code. */
+    const offer = async () => {
+      await clickText('button', 'Done', 600);
+      await clickText('button', 'Link a device', 900);
+      await waitFor(`/^[0-9A-Z]{4}(-[0-9A-Z]{4}){3}$/.test(document.querySelector('.paircode')?.innerText.trim() || '')`, 20000);
+      return b.eval(`document.querySelector('.paircode').innerText.trim()`);
+    };
+    const appLink = (code, hub, name) => `hubchat://link?code=${code}&hub=${encodeURIComponent(hub)}&name=${encodeURIComponent(name)}&role=give`;
+    /** A new browser on the LAN, at the step that takes a typed code or a pasted link. */
+    const joiner = async () => {
+      const t = await open(onTheLan);
+      await t.b.nav(origin + '/', 0);
+      await t.waitFor(`!!document.querySelector('.fork-opt')`, 60000);
+      await t.clickText('.fork-opt', 'I already use Hubchat', 800);
+      if (phone) await t.clickText('.ob-alt button', 'Type the code instead', 600);
+      else await t.clickText('.method', 'Type a code from your other device', 600);
+      await t.waitFor(`!!document.querySelector('#ob-code')`, 10000);
+      return t;
+    };
+    const paste = async (t, link) => { await t.fill('#ob-code', link, 300); await t.clickText('.ob-foot button', 'Continue', 500); };
+    const waiting = (t) => t.waitFor(`/approve/i.test(document.body.innerText) && !document.querySelector('.probe-card.bad')`, 40000);
+    /** Approved on the signed-in browser, reviewed and confirmed on the new one: what the review showed. */
+    const finish = async (t, picture) => {
+      const asked = await waitFor(`!!document.querySelector('.approve b') && /Link .+\\?/.test(document.querySelector('.approve b').innerText)`, 40000);
+      if (asked) await clickText('button.primary', 'Approve', 500);
+      const review = asked && await t.waitFor(`document.body.innerText.includes('Bring these hubs to this browser?') && [...document.querySelectorAll('input')].some((i) => i.value.includes('lan-hub.test:${lan.port}'))`, 40000);
+      const rows = await t.b.eval(`[...document.querySelectorAll('input[aria-label="Hub address"]')].map((i) => i.value).join(' | ')`).catch(() => '');
+      await t.shot(picture);
+      if (review) await t.clickText('.ob-foot button', 'Confirm', 1500);
+      const linked = review && await t.waitFor(`!document.querySelector('.fork-opt') && [...document.querySelectorAll('.crow')].some((r) => r.innerText.includes('Test Peer'))`, 60000);
+      // Settings > Hubs: the address the hub was kept under
+      let kept = '';
+      if (linked) {
+        await t.b.click('button[aria-label="Settings"]', 900);
+        await t.clickText(phone ? '.li' : '[role="tab"]', 'Hubs', 900);
+        kept = await t.b.eval(`document.body.innerText`);
+      }
+      return { asked, review, rows, linked, kept };
+    };
+
+    // (1) the page's server suggests the hub's https address (HUBCHAT_WEB_SUGGEST_HUBS); the link
+    // names an http address this browser cannot use at all
+    webConfig.suggested_hubs = [LAN];
+    webConfig.hub_suggestions = true;
+    const t3 = await joiner();
+    await paste(t3, appLink(await offer(), 'http://elsewhere.test:7378', 'another-hub'));
+    check('8c. a link to a hub that is not the suggested one still says its hub has no https address',
+      await t3.waitFor(`document.body.innerText.includes('Which address reaches your hub?') && document.body.innerText.includes('has no https:// address')`, 30000), await t3.b.eval(`document.body.innerText.slice(0, 400)`));
+    await t3.shot('web-22-link-needs-https.png');
+    if (phone) await t3.b.click('button[aria-label="Back"]', 700);
+    else await t3.clickText('.ob-foot button', 'Back', 700);
+    await t3.waitFor(`!!document.querySelector('#ob-code')`, 10000);
+    const before1 = lan.seen.requests;
+    await paste(t3, appLink(await b.eval(`document.querySelector('.paircode').innerText.trim()`), 'http://elsewhere.test:7378', 'e2ehub'));
+    check("8c. an app's link that names its hub by http only is joined through the hub the page's server suggests, when that is the link's hub",
+      await waiting(t3), await t3.b.eval(`document.body.innerText.slice(0, 400)`));
+    const one = await finish(t3, 'web-23-link-review-suggested.png');
+    check('8c. ...the review offers the hub by its https address, and after Confirm the browser has the identity and its chat',
+      one.asked && one.review && one.linked, JSON.stringify({ asked: one.asked, review: one.review, linked: one.linked, rows: one.rows }));
+    check('8c. ...and keeps the hub by its https address, not the http one',
+      one.kept.includes(`lan-hub.test:${lan.port}`) && !one.kept.includes(HUB.replace('http://', '')) && lan.seen.requests > before1, `${lan.seen.requests - before1} requests through the HTTPS proxy :: ` + one.kept.slice(0, 300).replace(/\n+/g, ' / '));
+    await t3.shot('web-24-lan-hub-kept.png');
+    check('8c. no policy violation in that browser', (await t3.b.eval(`(window.__csp || []).length`)) === 0, await t3.b.eval(`JSON.stringify(window.__csp || [])`));
+    await t3.close();
+
+    // (2) nothing is suggested; the link names http://<the hub's host>:<port>, and the same host
+    // and port answer over https (a proxy that speaks both there)
+    webConfig.suggested_hubs = [];
+    webConfig.hub_suggestions = false;
+    const t4 = await joiner();
+    const before2 = lan.seen.requests;
+    await paste(t4, appLink(await offer(), `http://lan-hub.test:${lan.port}`, 'e2ehub'));
+    check('8c. with nothing suggested, a link that names http://host:port is joined over https at the same host and port',
+      await waiting(t4), await t4.b.eval(`document.body.innerText.slice(0, 400)`));
+    const two = await finish(t4, 'web-25-link-review-same-address.png');
+    check('8c. ...the review offers that https address, and after Confirm the browser has the identity and its chat',
+      two.asked && two.review && two.linked, JSON.stringify({ asked: two.asked, review: two.review, linked: two.linked, rows: two.rows }));
+    check('8c. ...and keeps the hub by its https address',
+      two.kept.includes(`lan-hub.test:${lan.port}`) && !two.kept.includes(HUB.replace('http://', '')) && lan.seen.requests > before2, `${lan.seen.requests - before2} requests through the HTTPS proxy :: ` + two.kept.slice(0, 300).replace(/\n+/g, ' / '));
+    check('8c. that browser has no script error or policy violation',
+      (await t4.b.eval(`(window.__csp || []).length`)) === 0 && t4.b.errors.length === 0, t4.b.errors.join(' | ') + ' ' + await t4.b.eval(`JSON.stringify(window.__csp || [])`));
+    await t4.close();
+    webConfig.suggested_hubs = suggestedBefore.hubs;
+    webConfig.hub_suggestions = suggestedBefore.on;
+    lan.server.close();
+    lan.server.closeAllConnections();
+  }
+
   await clickText('button', 'Done', 600);
   if (phone) { await b.click('button[aria-label="Back"]', 600); await b.click('button[aria-label="Back"]', 600); await clickText('.crow', 'Test Peer', 1000); }
   else await b.key('Escape', 0, 600);
