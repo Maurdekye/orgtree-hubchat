@@ -1,0 +1,1 @@
+New: Hubchat Web, Hubchat as a web app for an iPhone or any browser, run from a small server of your own. Chats with a question waiting for your answer are now marked in the chat list and in the Windows taskbar.
