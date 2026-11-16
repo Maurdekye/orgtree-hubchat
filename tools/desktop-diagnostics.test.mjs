@@ -2,32 +2,30 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import path from "node:path";
 const require = createRequire(path.resolve(process.env.HUBCHAT_DEPENDENCY_ROOT || ".", "package.json"));
-const { build } = require("esbuild");
+const ts = require("typescript");
 
 async function page(entry, { android = false, web = false } = {}) {
   const calls = [], timers = [], listeners = new Map();
   const document = { visibilityState: "visible", addEventListener: (n, f) => listeners.set(n, f) };
   const fixture = { calls, check: async () => null, androidCheck: async () => null };
-  const result = await build({
-    entryPoints: [entry], bundle: true, write: false, format: "cjs", platform: "node",
-    plugins: [{ name: "native-fixture", setup(b) {
-      b.onResolve({ filter: /^(react|.*\/api|.*\/native|@tauri-apps\/.*)$/ }, a => ({ path: a.path, namespace: "fixture" }));
-      b.onLoad({ filter: /.*/, namespace: "fixture" }, ({ path: p }) => ({ contents:
-        p === "react" ? "export const useSyncExternalStore = () => {};" :
-        p === "@tauri-apps/api/core" ? "export const invoke = (c, a) => { fixture.calls.push([c, a]); return Promise.reject('ignored'); };" :
-        p === "@tauri-apps/api/app" ? "export const getIdentifier = async () => 'dev.hubchat';" :
-        p === "@tauri-apps/plugin-updater" ? "export const check = () => fixture.check();" :
-        p.endsWith("/api") ? `export const isTauri = true, isWeb = ${web}; export const api = { appUpdateCheck: () => fixture.androidCheck() };` :
-        p.endsWith("/native") ? "export const errText = e => e instanceof Error ? e.message : String(e); export const webUpdate = () => fixture.check();" :
-        "export const relaunch = async () => {};"
-      }));
-    } }],
-  });
+  const source = ts.transpileModule(readFileSync(entry, "utf8"), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const modules = {
+    react: { useSyncExternalStore() {} },
+    "@tauri-apps/api/core": { invoke: (cmd, args) => { calls.push([cmd, args]); return Promise.reject("ignored"); } },
+    "@tauri-apps/api/app": { getIdentifier: async () => "dev.hubchat" },
+    "@tauri-apps/plugin-updater": { check: () => fixture.check() },
+    "../api": { isTauri: true, isWeb: web, api: { appUpdateCheck: () => fixture.androidCheck() } },
+    "./native": { errText: e => e instanceof Error ? e.message : String(e), webUpdate: () => fixture.check() },
+  };
   const module = { exports: {} };
-  vm.runInNewContext(result.outputFiles[0].text, {
+  vm.runInNewContext(source, {
+    require: name => { assert.ok(name in modules, `unexpected dependency: ${name}`); return modules[name]; },
     module, exports: module.exports, fixture, document, Error,
     localStorage: { getItem: () => "0" },
     setInterval: (f, ms) => { timers.push({ f, ms }); return timers.length; },
