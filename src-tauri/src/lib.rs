@@ -22,6 +22,8 @@ mod trace;
 #[cfg(desktop)]
 mod window_watch;
 #[cfg(desktop)]
+mod window_beat;
+#[cfg(desktop)]
 mod tray;
 #[cfg(windows)]
 mod tray_popup;
@@ -570,6 +572,10 @@ pub fn run() {
             commands::hc_close_dm,
             commands::hc_open_dm,
             trace::hc_log_info,
+            #[cfg(desktop)]
+            appupdate::log_update_check_failed,
+            #[cfg(desktop)]
+            window_beat::ui_beat,
             trace::hc_set_verbose_logging,
             trace::hc_open_logs_folder,
             ];
@@ -596,6 +602,7 @@ pub fn run() {
                 // first, so a panic anywhere after this leaves a report
                 crash::install(&dir, &app.package_info().version.to_string());
                 trace::init(&dir, &diagnostics::logs(&dir));
+                app.manage(window_beat::start());
                 #[cfg(windows)]
                 if let Some(window) = app.get_webview_window("main") {
                     // Preserve the native resource mask for Task Manager.

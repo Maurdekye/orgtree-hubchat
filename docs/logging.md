@@ -83,11 +83,22 @@ WARNING  [2026-10-12 01:36:53.512044] T42 RQ1a2b3c4d ui RESPONSE hub:90ab12cd PO
   text is free text we did not write and can hold a URL, a host, a path or a
   header value; only warnings and errors are kept at all. Hubchat's own events
   are the targets `hubchat_lib`, `hubchat_core`, `call`, `wire`, `cmd` and
-  `keylog`.
+  `keylog`, `hubchat.update` and `hubchat.window`.
 
 ## What is logged
 
 Always (verbose off):
+
+On desktop (Windows, macOS and Linux), `update check failed: <class> (asked:
+<true|false>)` records one failed check as `signature`, `status`, `feed`,
+`offline` or `other`; `asked` says whether someone requested it. The window
+watch records `window not answering for <T> s` at 15, 60, 300 and 900 seconds
+without a visible-page beat, once per threshold, then `window answering again
+after <N> s` on recovery. Hidden windows pause the watch; a watcher tick gap
+over 20 seconds resets it silently to avoid reporting suspend as a freeze.
+These lines contain fixed words and numbers only, never the underlying error
+text or chat content. Hubchat Web is excluded. Android: not logged (no file log
+on Android).
 
 - startup (`hubchat starting`: pid, version, build, OS, log file name without
   its folder) and shutdown; the verbose state;
@@ -304,5 +315,6 @@ keeps its start-time name.
 - Hub calls other than JSON posts, deletes and the health probe (history,
   conversations, roster and devices GETs, uploads, downloads) are not wrapped in
   `diag::Wire`; their failures are logged by the callers as kinds.
-- The renderer does not write to the log.
+- The renderer does not write arbitrary text to the log. Desktop update checks
+  send only a fixed failure class and an asked flag; page beats send visibility.
 - Measured results and what was not measured: see the hand-in for the landing.

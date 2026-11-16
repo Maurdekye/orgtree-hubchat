@@ -11,8 +11,19 @@
 //   permission to install apps).
 // In the browser mock, `?update=1` pretends version 0.2.0 is out.
 import { useSyncExternalStore } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { api, isTauri, isWeb, type AppUpdate } from "../api";
 import { errText, webUpdate } from "./native";
+
+/** Fixed diagnostic words only; never copy the error's text into a log. */
+export function updateFailureClass(err: unknown): "offline" | "status" | "feed" | "signature" | "other" {
+  const text = errText(err).toLowerCase();
+  if (["signature", "minisign", "verify"].some((s) => text.includes(s))) return "signature";
+  if (text.includes("status code") || /\b[45]\d\d\b/.test(text)) return "status";
+  if (["deserialize", "parse", "json", "invalid type", "missing field"].some((s) => text.includes(s))) return "feed";
+  if (["error sending request", "connect", "dns", "timed out", "timeout", "network", "unreachable", "os error"].some((s) => text.includes(s))) return "offline";
+  return "other";
+}
 
 export interface Available { version: string; install: () => Promise<void> }
 
@@ -215,6 +226,9 @@ export function checkForUpdate(quiet = false): Promise<Available | null> {
       if (check.k === "checking") setCheck(a ? { k: "idle" } : { k: "none" }); else emit();
       return a;
     } catch (e) {
+      if (isTauri && !isWeb && platform === "desktop") {
+        void invoke("log_update_check_failed", { class: updateFailureClass(e), asked }).catch(() => {});
+      }
       const msg = errText(e);
       if (check.k === "checking") setCheck(asked ? { k: "error", msg } : before);
       throw msg;

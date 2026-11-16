@@ -11,6 +11,21 @@ use tauri::AppHandle;
 
 type R<T> = Result<T, String>;
 
+/// IPC is untrusted: only these fixed words may reach the desktop log.
+#[cfg(any(desktop, test))]
+fn update_failure_class(class: &str) -> &'static str {
+    match class {
+        "offline" => "offline", "status" => "status", "feed" => "feed",
+        "signature" => "signature", _ => "other",
+    }
+}
+
+#[cfg(desktop)]
+#[tauri::command]
+pub fn log_update_check_failed(class: String, asked: bool) {
+    tracing::warn!(target: "hubchat.update", "update check failed: {} (asked: {})", update_failure_class(&class), asked);
+}
+
 /// An update the person can install.
 #[derive(Serialize, Clone)]
 pub struct AppUpdate {

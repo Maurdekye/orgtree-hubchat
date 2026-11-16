@@ -823,3 +823,8 @@
 - 2026-10-31: The image viewer zooms only the picture: it takes the touches (`touch-action: none`), pinch/pan/double tap (desktop Ctrl+wheel, double click) move a CSS transform, and `resetPageZoom` pins the viewport meta to scale 1 on open and close, so closing a zoomed image never leaves the app zoomed. A gesture's end is not a closing tap. Gotcha: nested `resetPageZoom` calls must restore the ORIGINAL meta once. Contract, proof and limits (jsdom only; the Android-viewport check is the integrator's): `docs/image-viewer.md`. [decided: user 2026-10-31; verified from source: AttImage.tsx, pinchmath.ts, images.css]
 
 - 2026-11-11: `sync` rides the hub stream when /healthz lists `stream`, else long poll; same cursor; native only. docs/hub-stream.md
+
+- 2026-11-16: Desktop diagnostics use only fixed update-failure classes and
+  window-watch phrases/seconds (hubchat.update/window). Web and Android are
+  excluded; Android still has no file log. [decided: coordinator mc2088b1e930f;
+  verified: window_watch.rs, tools/desktop-diagnostics.test.mjs; docs/logging.md]

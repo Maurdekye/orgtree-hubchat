@@ -199,6 +199,7 @@ const WITHHELD: &str = "[dependency message withheld]";
 /// fixed targets the helpers use). Anything else is a dependency, whether it
 /// reached the subscriber as a tracing event or through the `log` bridge.
 fn ours_target(target: &str) -> bool {
+    if matches!(target, "hubchat.update" | "hubchat.window") { return true; }
     let root = target.split("::").next().unwrap_or(target);
     matches!(root, "call" | "wire" | "cmd" | "keylog" | "hubchat" | "hubchat_lib" | "hubchat_core")
 }

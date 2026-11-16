@@ -1,3 +1,59 @@
+use std::time::{Duration, Instant};
+
+const MARKS: [u64; 4] = [15, 60, 300, 900];
+
+/// A pure clock-driven state machine. Only fixed phrases and elapsed seconds leave it.
+pub struct WindowWatch {
+    last_beat: Option<Instant>,
+    visible: bool,
+    episode_started: Option<Instant>,
+    logged_marks: [bool; 4],
+    last_tick: Instant,
+}
+
+impl WindowWatch {
+    pub fn new(now: Instant) -> Self {
+        Self { last_beat: None, visible: false, episode_started: None, logged_marks: [false; 4], last_tick: now }
+    }
+
+    fn clear(&mut self) {
+        self.episode_started = None;
+        self.logged_marks = [false; 4];
+    }
+
+    pub fn beat(&mut self, now: Instant, visible: bool) -> Option<String> {
+        self.visible = visible;
+        let line = if visible {
+            self.last_beat = Some(now);
+            self.episode_started.filter(|_| self.logged_marks.iter().any(|v| *v))
+                .map(|start| format!("window answering again after {} s", now.duration_since(start).as_secs()))
+        } else { None };
+        self.clear();
+        line
+    }
+
+    pub fn tick(&mut self, now: Instant) -> Vec<String> {
+        let gap = now.duration_since(self.last_tick);
+        self.last_tick = now;
+        if gap > Duration::from_secs(20) {
+            if self.last_beat.is_some() { self.last_beat = Some(now); }
+            self.clear();
+            return Vec::new();
+        }
+        let Some(last) = self.last_beat.filter(|_| self.visible) else { return Vec::new(); };
+        let elapsed = now.duration_since(last).as_secs();
+        let mut lines = Vec::new();
+        for (i, mark) in MARKS.iter().enumerate() {
+            if elapsed >= *mark && !self.logged_marks[i] {
+                self.episode_started.get_or_insert(last);
+                self.logged_marks[i] = true;
+                lines.push(format!("window not answering for {mark} s"));
+            }
+        }
+        lines
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
