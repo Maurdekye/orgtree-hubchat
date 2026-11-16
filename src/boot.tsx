@@ -31,10 +31,12 @@ export async function boot() {
     installApi(mockApi);
   }
   let platform: "desktop" | "android" = "desktop";
-  try { platform = (await api.state()).platform; } catch { /* App shows the error */ }
+  try {
+    platform = (await api.state()).platform;
+    startBeats(platform);
+  } catch { /* App shows the error; don't guess whether this is desktop. */ }
   platformStyles(platform);
   if (isTauri && platform === "desktop") startTray();
-  startBeats(platform);
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
       <App />
