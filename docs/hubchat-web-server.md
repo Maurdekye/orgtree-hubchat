@@ -102,6 +102,24 @@ Home Screen**, and open Hubchat from there. (In a Safari tab the app only
 explains this: an iPhone deletes a web page's storage after some days
 unless it is on the Home Screen.)
 
+### Why HTTPS
+
+The hub is served over HTTPS for browsers so that Hubchat Web keeps
+notifications (Web Push) and linking a device with the camera. Browsers
+allow both only on a secure page, and a page loaded over HTTPS can't call a
+hub over plain HTTP. A reduced mode over plain HTTP, without those two, was
+considered and rejected. This holds on a LAN as well: there the certificate
+comes from a certificate authority of your own.
+
+The decision and its reason, in the project owner's words (2026-11-16,
+11:18:51 UTC): "i would highly prefer we have notifications and camera
+linking, those make the app's usage much cleaner". And at 11:20:29 UTC:
+"make sure this is the recorded reason for why we are using https to serve
+the mailhub".
+
+The Hubchat apps are not affected: they keep working with a hub over plain
+`http://`.
+
 ## Settings
 
 All in the environment. A setting that makes no sense stops the server at
