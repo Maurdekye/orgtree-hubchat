@@ -168,7 +168,8 @@
   org the Orgtree install on this PC hosts as a button that starts the
   registered Orgtree.exe with exactly `--orgtree-taskbar=org:<slug>`
   (Orgtree's taskbar entry point; no shell, network or Orgtree token). Local =
-  the address is listed in `%APPDATA%\Orgtree v2\data\local-orgs.json` AND an
+  the address is listed in `local-orgs.json` in Orgtree's data root (a moved
+  root via `data-location.json`, docs/orgtree-org-link.md) AND an
   Orgtree Uninstall entry names an existing Orgtree.exe; the program comes from
   the registry, never the listing, and open takes only a slug listed now.
   Android, other orgs and the conversation header keep the plain chip. A failed

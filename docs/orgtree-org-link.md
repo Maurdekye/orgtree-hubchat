@@ -28,10 +28,16 @@ named Contact info; the coordinator kept the header plain).
 ## How it knows
 
 Orgtree's engine keeps `local-orgs.json` in its data root,
-`%APPDATA%\Orgtree v2\data`: `{"v":1,"orgs":[{"slug","name","address"}]}`, the
+`%APPDATA%\Orgtree v2\data` by default. Orgtree's Move data setting can put that
+root elsewhere and then writes `%APPDATA%\Orgtree v2\data-location.json`
+(`{"version":1,"dataRoot":"<absolute path>",...}`); Hubchat follows a version-1
+file with an absolute `dataRoot` and otherwise reads the default (`data_root`;
+user 2026-11-18: a grey item link after a move). The listing is
+`{"v":1,"orgs":[{"slug","name","address"}]}`, the
 active orgs that have a hub address, nothing secret, rewritten whenever that
 list changes (Orgtree `local_orgs.rs`). `src-tauri/src/local_orgtree.rs`
-(Windows only) reads it:
+(Windows only) reads it. When Orgtree takes links but listed no orgs, a chip's
+hint says "Orgtree on this PC didn't list its orgs" instead of naming another PC:
 
 - An entry counts only with an Orgtree slug (lowercase letters, digits and
   single hyphens, none at either end, at most 128 characters) and an address.
