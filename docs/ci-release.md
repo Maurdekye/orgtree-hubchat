@@ -41,7 +41,7 @@ automatically.
    - `src-tauri/tauri.conf.json`;
    - the browser mock's version in `src/lib/native.ts`.
    - Android's `bundle.android.versionCode` in `src-tauri/tauri.conf.json`
-     (`major * 1000000 + minor * 1000 + patch`; 1.3.8 uses `1003008`) and the
+     (`major * 1000000 + minor * 1000 + patch`; 1.3.9 uses `1003009`) and the
      matching versionCode / versionName fallbacks in
      `src-tauri/gen/android/app/build.gradle.kts`.
      Tauri regenerates the ignored `app/tauri.properties` during an Android
