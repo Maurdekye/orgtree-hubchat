@@ -2,7 +2,8 @@
 //! org" badge opens a local org in Orgtree).
 //!
 //! Orgtree's engine keeps `local-orgs.json` in its data root,
-//! `%APPDATA%\Orgtree v2\data`: `{"v":1,"orgs":[{"slug","name","address"}]}`,
+//! `%APPDATA%\Orgtree v2\data` unless Orgtree's Move data put it elsewhere
+//! (data-location.json, `data_root`): `{"v":1,"orgs":[{"slug","name","address"}]}`,
 //! the orgs it hosts that have a hub address, nothing secret. A contact is
 //! local only when its address is listed there AND an Orgtree install is
 //! registered. Opening starts that registered `Orgtree.exe` with exactly one
@@ -170,9 +171,31 @@ fn uninstall_entries() -> Vec<Uninstall> {
     entries
 }
 
-/// local-orgs.json of a release Orgtree, under the roaming app data folder.
+/// Orgtree's pointer to a moved data root (its Move data setting), next to
+/// the default root: `{"version":1,"dataRoot":"<absolute path>",...}`.
+const LOCATION: &str = "data-location.json";
+/// Far more than a real pointer file; a larger one is not read.
+const MAX_LOCATION_BYTES: u64 = 64 * 1024;
+
+/// A release Orgtree's data root: the absolute `dataRoot` of a version-1
+/// data-location.json, else the default `%APPDATA%\Orgtree v2\data`
+/// (user 2026-11-18: after a move the default root has no listing).
+pub fn data_root(roaming: &Path) -> PathBuf {
+    let app = roaming.join("Orgtree v2");
+    let moved = std::fs::metadata(app.join(LOCATION))
+        .ok()
+        .filter(|meta| meta.is_file() && meta.len() <= MAX_LOCATION_BYTES)
+        .and_then(|_| std::fs::read(app.join(LOCATION)).ok())
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .filter(|v| v.get("version").and_then(|n| n.as_u64()) == Some(1))
+        .and_then(|v| v.get("dataRoot").and_then(|r| r.as_str()).map(PathBuf::from))
+        .filter(|root| root.is_absolute());
+    moved.unwrap_or_else(|| app.join("data"))
+}
+
+/// local-orgs.json of a release Orgtree, in its data root.
 fn listing(roaming: &Path) -> Vec<LocalOrg> {
-    let path = roaming.join("Orgtree v2").join("data").join(FILE);
+    let path = data_root(roaming).join(FILE);
     match std::fs::metadata(&path) {
         Ok(meta) if meta.is_file() && meta.len() <= MAX_BYTES => std::fs::read(&path).map(|b| parse(&b)).unwrap_or_default(),
         _ => Vec::new(),

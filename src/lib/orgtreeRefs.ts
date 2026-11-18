@@ -103,6 +103,9 @@ export interface OrefContext {
   nodes: { slug: string | null; name: string } | null;
   /** a display name for an org slug of this PC, else the slug */
   orgName: (org: string) => string;
+  /** this PC's Orgtree takes links but listed no orgs (user 2026-11-18):
+   *  every hint says so instead of naming another PC */
+  unlisted?: boolean;
 }
 
 /** The rules, decided by the user 2026-11-08 m7c183781895c (Q1-Q4):
@@ -124,6 +127,7 @@ export function orefContext(o: {
     opens: (slug) => o.desktop && o.links && thisPc && slugs.has(slug),
     nodes: org ? { slug: local?.slug ?? null, name: local?.name || o.peerName } : null,
     orgName: (slug) => o.orgs.find((x) => x.slug === slug)?.name || slug,
+    unlisted: o.desktop && o.links && o.orgs.length === 0,
   };
 }
 
@@ -154,6 +158,10 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ESC[c]!);
 
 /** The hint on a chip that cannot open here (accepted copy, Q5). */
 export const notHere = (org: string) => `Opens in Orgtree on the PC that runs ${org}`;
+/** The hint when this PC's Orgtree takes links but listed no orgs: its
+ *  local-orgs.json is missing or empty, so nothing can be matched here. */
+export const NOT_LISTED = "Orgtree on this PC didn't list its orgs";
+const hint = (ctx: OrefContext, org: string) => (ctx.unlisted ? NOT_LISTED : notHere(org));
 
 /** One chip's facts: what it shows, its token, and whether it opens. */
 export interface OrefChip {
@@ -173,7 +181,7 @@ export function tokenChip(ref: Oref, ctx: OrefContext): OrefChip {
   const open = ctx.opens(ref.org);
   const mark = ref.kind === "agent" || ref.kind === "project" ? "node" : ref.kind;
   return { mark, token: ref.token, org: ref.org, hidden: ref.token.slice(0, ref.token.length - ref.id.length), id: ref.id, open,
-    title: open ? `${KIND_WORD[ref.kind]} ${ref.org}/${ref.rest} · Open in Orgtree` : notHere(ctx.orgName(ref.org)) };
+    title: open ? `${KIND_WORD[ref.kind]} ${ref.org}/${ref.rest} · Open in Orgtree` : hint(ctx, ctx.orgName(ref.org)) };
 }
 
 /** A bare `@name` in a message that has an org (null otherwise: plain text). */
@@ -182,7 +190,7 @@ export function nodeChip(name: string, ctx: OrefContext): OrefChip | null {
   if (!n) return null;
   const open = !!n.slug && ctx.opens(n.slug);
   return { mark: "node", token: n.slug ? `@agent:${n.slug}/${name}` : null, org: n.slug, hidden: "@", id: name, open,
-    title: open ? `${KIND_WORD.node} ${n.slug}/${name} · Open in Orgtree` : notHere(n.slug ? ctx.orgName(n.slug) : n.name) };
+    title: open ? `${KIND_WORD.node} ${n.slug}/${name} · Open in Orgtree` : hint(ctx, n.slug ? ctx.orgName(n.slug) : n.name) };
 }
 
 /** The chip as markup for md.ts. Sanitized after this like everything else;
@@ -214,7 +222,7 @@ export function orgMenuEntry(token: string | undefined, ctx: OrefContext): { lab
   const ref = token ? parseOref(token) : null;
   const name = ref ? ctx.orgName(ref.org) : ctx.nodes?.name || "this org";
   const org = ref && ctx.opens(ref.org) ? ref.org : null;
-  return { label: `Open ${name} in Orgtree`, org, title: org ? "" : notHere(name) };
+  return { label: `Open ${name} in Orgtree`, org, title: org ? "" : hint(ctx, name) };
 }
 
 /** A click on a chip: the org and token to open, or null when it cannot open
