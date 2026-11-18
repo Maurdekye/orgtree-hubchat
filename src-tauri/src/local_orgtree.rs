@@ -322,6 +322,52 @@ mod tests {
         }
     }
 
+    /// A scratch roaming folder: `Orgtree v2` with an optional
+    /// data-location.json, and the listing written under `listed_in`.
+    fn roaming_with(name: &str, location: Option<&str>, listed_in: &[&str]) -> PathBuf {
+        let roaming = std::env::temp_dir().join(format!("hubchat-local-orgs-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&roaming);
+        let app = roaming.join("Orgtree v2");
+        std::fs::create_dir_all(&app).unwrap();
+        if let Some(text) = location {
+            std::fs::write(app.join("data-location.json"), text.replace("{root}", &roaming.join("moved").display().to_string().replace('\\', "\\\\"))).unwrap();
+        }
+        for dir in listed_in {
+            let d = roaming.join(dir);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join(FILE), LISTING).unwrap();
+        }
+        roaming
+    }
+
+    /// Orgtree's Move data (data-location.json, version 1) puts local-orgs.json
+    /// in the new data root; the old one keeps no copy (user 2026-11-18: an
+    /// item link to an org on this PC was grey). Contact info's Orgtree org
+    /// badge (`local_orgs`, `open`) and every chip (`link_here`) read this one
+    /// listing.
+    #[test]
+    fn a_moved_data_root_is_followed() {
+        let r = roaming_with("moved", Some(r#"{"version":1,"dataRoot":"{root}","previousRoot":"x"}"#), &["moved"]);
+        assert_eq!(listing(&r).len(), 2, "the listing in the moved data root");
+        let _ = std::fs::remove_dir_all(&r);
+    }
+
+    /// Without a usable data-location.json the default data root is read.
+    #[test]
+    fn the_default_data_root_is_read_without_a_usable_location() {
+        for (name, location) in [
+            ("none", None),
+            ("damaged", Some("{not json")),
+            ("v2", Some(r#"{"version":2,"dataRoot":"{root}"}"#)),
+            ("relative", Some(r#"{"version":1,"dataRoot":"moved"}"#)),
+            ("number", Some(r#"{"version":1,"dataRoot":7}"#)),
+        ] {
+            let r = roaming_with(name, location, &["Orgtree v2/data"]);
+            assert_eq!(listing(&r).len(), 2, "{name}");
+            let _ = std::fs::remove_dir_all(&r);
+        }
+    }
+
     #[test]
     fn parse_reads_the_listing() {
         assert_eq!(parse(LISTING.as_bytes()), vec![

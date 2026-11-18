@@ -136,3 +136,17 @@ test("the menu entry opens just the org, or says why it cannot (user mb6a4bdb7c9
     { label: "Open Their Alpha in Orgtree", org: null, title: "Opens in Orgtree on the PC that runs Their Alpha" });
   assert.equal(orgMenuEntry("@item:alpha/x", ctx({ links: false })).org, null);
 });
+
+test("an Orgtree here that listed no orgs says so, not another PC (user 2026-11-18)", () => {
+  // Orgtree is installed and takes links, but Hubchat found no local-orgs.json
+  // (or an empty one): nothing opens, and every hint says why
+  const none = ctx({ orgs: [] });
+  const why = "Orgtree on this PC didn't list its orgs";
+  const item = tokenChip(parseOref("@item:orgtree/fresh-item")!, none);
+  assert.deepEqual([item.open, item.title], [false, why]);
+  assert.equal(nodeChip("luna", none)!.title, why);
+  assert.deepEqual(orgMenuEntry("@item:orgtree/fresh-item", none), { label: "Open orgtree in Orgtree", org: null, title: why });
+  // control: no Orgtree that takes links keeps the other-PC hint; a listed PC still names that PC
+  assert.equal(tokenChip(parseOref("@item:beta/x")!, ctx({ orgs: [], links: false })).title, "Opens in Orgtree on the PC that runs beta");
+  assert.equal(tokenChip(parseOref("@doc:beta/notes")!, ctx()).title, "Opens in Orgtree on the PC that runs beta");
+});
