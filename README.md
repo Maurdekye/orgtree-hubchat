@@ -71,12 +71,17 @@ Get the latest release from the
   blocks the first open. On macOS 15 or later, try to open it once, then go to
   **System Settings › Privacy & Security** and click **Open Anyway**. On macOS
   14 or earlier, right-click the app and choose **Open**.
-- **Linux (prototype, 64-bit):** `Hubchat_<version>_amd64.AppImage` (run
-  `chmod +x` on it first; it needs FUSE 2, `sudo apt install libfuse2`, or
-  `libfuse2t64` on Ubuntu 24.04 and later) or `Hubchat_<version>_amd64.deb`
-  (`sudo apt install ./Hubchat_<version>_amd64.deb`). This build hasn't been
-  tried on a real Linux PC yet. Hubchat keeps your identity key in the desktop
-  keyring (GNOME Keyring or KWallet).
+- **Linux (prototype, 64-bit):** On x86_64, download
+  `Hubchat_<version>_amd64.AppImage` or `Hubchat_<version>_amd64.deb`.
+  On arm64, download `Hubchat_<version>_aarch64.AppImage` or
+  `Hubchat_<version>_arm64.deb`. Run `chmod +x` on the AppImage first.
+  For normal AppImage launches on Ubuntu, install FUSE 2 with
+  `sudo apt install libfuse2` (`libfuse2t64` on Ubuntu 24.04 and later).
+  On a system without FUSE, such as SteamOS on a Steam Frame, start the AppImage
+  with `APPIMAGE_EXTRACT_AND_RUN=1` in its environment. In Steam, set the launch
+  options to `APPIMAGE_EXTRACT_AND_RUN=1 %command%`. Install a downloaded
+  .deb with `sudo apt install ./<filename>.deb`. Hubchat keeps your identity
+  key in the desktop keyring (GNOME Keyring or KWallet).
 - **iPhone, iPad, or any device with none of the above:** there is no app to
   download. Someone runs [Hubchat Web](#hubchat-web) and you open its address
   in your browser.

@@ -10,6 +10,7 @@ automatically.
 | Windows | `build-windows.yml` | windows-2025 | `Hubchat_<v>_x64-setup.exe` (+ `.sig`) |
 | macOS (Apple Silicon and Intel) | `build-macos.yml` | macos-15 | `Hubchat_<v>_universal.dmg`, `Hubchat_<v>_universal.app.tar.gz` (+ `.sig`) |
 | Linux (x86_64) | `build-linux.yml` | ubuntu-22.04 | `Hubchat_<v>_amd64.AppImage` (+ `.sig`), `Hubchat_<v>_amd64.deb` (+ `.sig`) |
+| Linux (arm64) | `build-linux.yml` | ubuntu-22.04-arm | `Hubchat_<v>_aarch64.AppImage` (+ `.sig`), `Hubchat_<v>_arm64.deb` (+ `.sig`) |
 | Android (arm64) | `build-android.yml` | ubuntu-24.04 | `Hubchat_<v>_arm64.apk` (+ `.sig`) and the same file as `Hubchat-android.apk` |
 | Hubchat Web | `build-web.yml` | ubuntu-24.04 | `hubchat-web-<v>-static.tar.gz`, `hubchat-web-<v>-docker-amd64.tar.gz`, `build-info-web.json` |
 | all | `release.yml` | ubuntu-24.04 | `latest.json` (the updater feed), `SHA256SUMS.txt` |
@@ -76,8 +77,8 @@ cd check-v<v> && sha256sum -c SHA256SUMS.txt
 ```
 
 - `latest.json` has one entry per platform: `windows-x86_64`, `darwin-aarch64`,
-  `darwin-x86_64`, `linux-x86_64`, `linux-x86_64-deb` and `android-aarch64` (the
-  versioned APK; desktop updaters ignore it). Each URL points at this release, and
+  `darwin-x86_64`, `linux-x86_64`, `linux-x86_64-deb`, `linux-aarch64`,
+  `linux-aarch64-deb` and `android-aarch64` (the versioned APK; desktop updaters ignore it). Each URL points at this release, and
   each signature equals the matching `.sig` file.
 - Install the Windows setup and the APK on a test machine or phone if the release
   changes anything risky.
@@ -249,7 +250,10 @@ hand-made ones did.
 - **Linux (Ubuntu)**:
   - AppImage: `chmod +x Hubchat_<v>_amd64.AppImage` and run it. It needs FUSE 2
     (`sudo apt install libfuse2` on 22.04, `libfuse2t64` on 24.04 and later). It
-    updates itself.
+    updates itself. The arm64 AppImage is `Hubchat_<v>_aarch64.AppImage`. On a
+    system without FUSE, such as SteamOS on a Steam Frame, start it with
+    `APPIMAGE_EXTRACT_AND_RUN=1` in its environment. In Steam, set the launch
+    options to `APPIMAGE_EXTRACT_AND_RUN=1 %command%`.
   - .deb: `sudo apt install ./Hubchat_<v>_amd64.deb`. Updates ask for your
     password, because they reinstall the package.
   - Hubchat keeps its identity key in the desktop keyring (GNOME Keyring or
