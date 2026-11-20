@@ -552,4 +552,155 @@ mod tests {
         assert!(link_for(&listing, false, "alpha-works", None).is_err(), "an Orgtree before 4.5.9");
         assert!(link_for(&listing, true, "alpha-works", Some("@item:gamma/x")).is_err(), "the token names another org");
     }
+
+    // ------------------------------------------------------------ Linux
+
+    /// A scratch home: mimeapps.list in .config and entries in
+    /// .local/share/applications, as given, plus a program that exists.
+    /// Returns the home, its folders, and the program spelled with forward
+    /// slashes (an absolute path on the machine running the test).
+    fn linux_home(name: &str, mimeapps: Option<&str>, entries: &[(&str, &str)]) -> (PathBuf, linux::Dirs, String) {
+        let home = std::env::temp_dir().join(format!("hubchat-linux-orgtree-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let apps = home.join(".local").join("share").join("applications");
+        std::fs::create_dir_all(&apps).unwrap();
+        std::fs::create_dir_all(home.join(".config")).unwrap();
+        let program = home.join("Applications").join("Orgtree.AppImage");
+        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        std::fs::write(&program, b"x").unwrap();
+        let program = program.display().to_string().replace('\\', "/");
+        if let Some(text) = mimeapps {
+            std::fs::write(home.join(".config").join("mimeapps.list"), text).unwrap();
+        }
+        for (id, text) in entries {
+            std::fs::write(apps.join(id), text.replace("{program}", &program)).unwrap();
+        }
+        let dirs = linux::dirs(&home, |_| None);
+        (home, dirs, program)
+    }
+
+    const OURS: &str = "[Default Applications]\nx-scheme-handler/orgtree=dev.orgtree.link.desktop;\n";
+    const LINK: &str = "dev.orgtree.link.desktop";
+
+    fn entry(exec: &str, version: Option<&str>) -> String {
+        let version = version.map(|v| format!("X-Orgtree-Version={v}\n")).unwrap_or_default();
+        format!("[Desktop Entry]\nType=Application\nName=Orgtree link\nNoDisplay=true\nExec={exec}\nMimeType=x-scheme-handler/orgtree;\n{version}")
+    }
+
+    #[test]
+    fn linux_folders_follow_the_xdg_variables() {
+        let home = Path::new("/home/u");
+        let plain = linux::dirs(home, |_| None);
+        assert_eq!(plain.config, home.join(".config"));
+        assert_eq!(plain.data[0], home.join(".local").join("share"));
+        let abs = std::env::temp_dir();
+        let moved = linux::dirs(home, |name| match name {
+            "XDG_CONFIG_HOME" => Some(abs.join("cfg").display().to_string()),
+            "XDG_DATA_HOME" => Some("relative/ignored".into()),
+            _ => None,
+        });
+        assert_eq!(moved.config, abs.join("cfg"));
+        assert_eq!(moved.data[0], home.join(".local").join("share"), "a relative value is ignored");
+    }
+
+    #[test]
+    fn linux_default_handler_is_the_first_id_of_the_default_applications_value() {
+        assert_eq!(linux::default_handler(OURS).as_deref(), Some(LINK));
+        let mixed = "[Added Associations]\nx-scheme-handler/orgtree=added.desktop;\n\n[Default Applications]\ntext/html=firefox.desktop\nx-scheme-handler/orgtree = orgtree.desktop;other.desktop;\n";
+        assert_eq!(linux::default_handler(mixed).as_deref(), Some("orgtree.desktop"));
+        for none in ["", "[Default Applications]\nx-scheme-handler/orgtree=\n", "[Added Associations]\nx-scheme-handler/orgtree=a.desktop\n",
+                     "[Default Applications]\nx-scheme-handler/orgtree=../evil.desktop\n", "[Default Applications]\nx-scheme-handler/orgtree=sub/a.desktop\n",
+                     "[Default Applications]\nx-scheme-handler/orgtree=notadesktopfile\n"] {
+            assert_eq!(linux::default_handler(none), None, "{none:?}");
+        }
+    }
+
+    #[test]
+    fn linux_exec_program_is_the_first_argument_after_env() {
+        for (exec, program) in [
+            (r#""/home/u/Applications/Orgtree.AppImage" %u"#, "/home/u/Applications/Orgtree.AppImage"),
+            (r#"env APPIMAGE_EXTRACT_AND_RUN=1 "/home/u/My Apps/Orgtree.AppImage" %u"#, "/home/u/My Apps/Orgtree.AppImage"),
+            ("env APPIMAGE_EXTRACT_AND_RUN=1 /home/steamos/Applications/Orgtree.AppImage %U", "/home/steamos/Applications/Orgtree.AppImage"),
+            ("/usr/bin/env A=1 B=2 /opt/Orgtree/orgtree %u", "/opt/Orgtree/orgtree"),
+            ("/opt/Orgtree/orgtree", "/opt/Orgtree/orgtree"),
+            // Orgtree's own quoting of " ` $ \ and % (its desktopExecArg)
+            (r#""/a/\\$x\\`y\\"z\\\\w/50%%.AppImage" %u"#, r#"/a/$x`y"z\w/50%.AppImage"#),
+        ] {
+            assert_eq!(linux::exec_program(exec), Some(PathBuf::from(program)), "{exec}");
+        }
+        for none in ["", "   ", "env A=1", r#""/unterminated %u"#, "%u", r"/a/b\"] {
+            assert_eq!(linux::exec_program(none), None, "{none:?}");
+        }
+    }
+
+    /// The entry Orgtree 4.6.6 writes, as the default: links open.
+    #[test]
+    fn linux_orgtrees_own_entry_as_the_default_is_the_handler() {
+        let ours = entry(r#"env APPIMAGE_EXTRACT_AND_RUN=1 "{program}" %u"#, Some("4.6.6"));
+        let (home, dirs, program) = linux_home("ours", Some(OURS), &[(LINK, &ours)]);
+        let handler = linux::handler(&dirs, |p| p.exists()).expect("the handler");
+        assert_eq!(handler, linux::Handler { program: PathBuf::from(&program), version: Some("4.6.6".into()) });
+        assert!(linux::takes(&handler));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A launcher the user made the default counts too: it names no version.
+    #[test]
+    fn linux_another_default_handler_counts_without_a_version() {
+        let list = "[Default Applications]\nx-scheme-handler/orgtree=orgtree.desktop\n";
+        let theirs = entry("env APPIMAGE_EXTRACT_AND_RUN=1 {program} %U", None);
+        let (home, dirs, _) = linux_home("theirs", Some(list), &[("orgtree.desktop", &theirs)]);
+        let handler = linux::handler(&dirs, |p| p.exists()).expect("the handler");
+        assert_eq!(handler.version, None);
+        assert!(linux::takes(&handler));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn linux_without_a_usable_default_nothing_opens_links() {
+        let good = entry(r#""{program}" %u"#, Some("4.6.6"));
+        let no_mime = good.replace("MimeType=x-scheme-handler/orgtree;\n", "MimeType=text/html;\n");
+        let relative = entry("orgtree %u", Some("4.6.6"));
+        let cases: [(&str, Option<&str>, Vec<(&str, &str)>, bool); 6] = [
+            ("no mimeapps.list", None, vec![(LINK, &good)], true),
+            ("no default for the scheme", Some("[Default Applications]\ntext/html=firefox.desktop\n"), vec![(LINK, &good)], true),
+            ("the default entry is missing", Some(OURS), vec![], true),
+            ("the entry is not for the scheme", Some(OURS), vec![(LINK, &no_mime)], true),
+            ("the program is gone", Some(OURS), vec![(LINK, &good)], false),
+            ("a relative program", Some(OURS), vec![(LINK, &relative)], true),
+        ];
+        for (n, (why, list, entries, program_exists)) in cases.into_iter().enumerate() {
+            let (home, dirs, _) = linux_home(&format!("none{n}"), list, &entries);
+            assert_eq!(linux::handler(&dirs, |p| program_exists && p.exists()), None, "{why}");
+            let _ = std::fs::remove_dir_all(&home);
+        }
+    }
+
+    /// An entry that names an Orgtree older than 4.5.9 does not take links.
+    #[test]
+    fn linux_a_named_version_must_take_links() {
+        let h = |version: Option<&str>| linux::Handler { program: PathBuf::from("/x"), version: version.map(str::to_string) };
+        assert!(linux::takes(&h(Some("4.6.6"))) && linux::takes(&h(Some("4.6.6-frame.1"))) && linux::takes(&h(None)));
+        assert!(!linux::takes(&h(Some("4.5.8"))) && !linux::takes(&h(Some("garbage"))));
+    }
+
+    /// The old place for the user's defaults, beside the user's entries.
+    #[test]
+    fn linux_the_old_mimeapps_place_is_read_after_the_config_one() {
+        let good = entry(r#""{program}" %u"#, None);
+        let (home, dirs, _) = linux_home("old", None, &[(LINK, &good), ("mimeapps.list", OURS)]);
+        assert!(linux::handler(&dirs, |p| p.exists()).is_some());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// On Linux the listing is under the config folder: the same reader.
+    #[test]
+    fn linux_listing_is_read_under_the_config_folder() {
+        let (home, dirs, _) = linux_home("listing", None, &[]);
+        let data = dirs.config.join("Orgtree v2").join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(data.join(FILE), LISTING).unwrap();
+        assert_eq!(listing(&dirs.config).len(), 2);
+        let _ = std::fs::remove_dir_all(&home);
+    }
 }
