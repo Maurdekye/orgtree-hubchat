@@ -1017,8 +1017,8 @@ pub fn hc_open_app(what: String) -> R<bool> {
 }
 
 /// The orgs the Orgtree install on this PC hosts (local_orgtree.rs):
-/// Contact info shows their "Orgtree org" badge as a link. Windows only;
-/// elsewhere, and without a registered Orgtree, none.
+/// Contact info shows their "Orgtree org" badge as a link. Windows and
+/// Linux; elsewhere, and without a registered Orgtree, none.
 #[tauri::command]
 pub fn hc_local_orgtree_orgs(app: tauri::AppHandle) -> R<serde_json::Value> {
     #[cfg(windows)]
@@ -1026,7 +1026,12 @@ pub fn hc_local_orgtree_orgs(app: tauri::AppHandle) -> R<serde_json::Value> {
         use tauri::Manager;
         app.path().data_dir().map(|roaming| crate::local_orgtree::local_orgs(&roaming)).unwrap_or_default()
     };
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    let orgs = {
+        use tauri::Manager;
+        app.path().config_dir().map(|config| crate::local_orgtree::linux::local_orgs(&config)).unwrap_or_default()
+    };
+    #[cfg(not(any(windows, target_os = "linux")))]
     let orgs: Vec<serde_json::Value> = {
         let _ = app;
         Vec::new()
@@ -1034,7 +1039,25 @@ pub fn hc_local_orgtree_orgs(app: tauri::AppHandle) -> R<serde_json::Value> {
     serde_json::to_value(orgs).map_err(s)
 }
 
+/// Linux: open an org, or one target in it, through an orgtree:// link the
+/// system opener hands to Orgtree's registered handler (local_orgtree.rs,
+/// `linux`). The link is built natively from checked parts.
+#[cfg(target_os = "linux")]
+fn open_orgtree_link_linux(app: &tauri::AppHandle, org: &str, token: Option<&str>) -> R<()> {
+    use tauri::Manager;
+    use tauri_plugin_opener::OpenerExt;
+    let config = app.path().config_dir().map_err(|_| "Orgtree isn't on this device".to_string())?;
+    let url = crate::local_orgtree::linux::link_here(&config, org, token)?;
+    let opened = app.opener().open_url(url, None::<&str>).map_err(|_| "Orgtree could not be opened".to_string());
+    match &opened {
+        Ok(()) => tracing::info!("opened an orgtree:// link"),
+        Err(_) => tracing::warn!("an orgtree:// link could not be opened"),
+    }
+    opened
+}
+
 /// Start (or bring forward) the registered Orgtree on one of those orgs.
+/// On Linux the org opens through an orgtree://org/<slug> link instead.
 #[tauri::command]
 pub fn hc_open_orgtree_org(app: tauri::AppHandle, slug: String) -> R<()> {
     #[cfg(windows)]
@@ -1043,7 +1066,11 @@ pub fn hc_open_orgtree_org(app: tauri::AppHandle, slug: String) -> R<()> {
         let roaming = app.path().data_dir().map_err(|_| "Orgtree isn't on this PC".to_string())?;
         crate::local_orgtree::open(&roaming, &slug)
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        open_orgtree_link_linux(&app, &slug, None)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = (app, slug);
         Err("Orgtree isn't on this device".into())
@@ -1059,7 +1086,11 @@ pub fn hc_orgtree_links() -> R<bool> {
     {
         Ok(crate::local_orgtree::links_supported())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        Ok(crate::local_orgtree::linux::links_supported())
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         Ok(false)
     }
@@ -1083,7 +1114,11 @@ pub fn hc_open_orgtree_link(app: tauri::AppHandle, org: String, token: Option<St
         }
         opened
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        open_orgtree_link_linux(&app, &org, token.as_deref())
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = (app, org, token);
         Err("Orgtree isn't on this device".into())

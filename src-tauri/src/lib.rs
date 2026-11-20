@@ -14,7 +14,7 @@ mod crash;
 mod diagnostics;
 mod keylog;
 mod link;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 mod local_orgtree;
 mod media;
 mod secrets;

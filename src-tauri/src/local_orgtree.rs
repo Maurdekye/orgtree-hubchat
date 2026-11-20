@@ -11,6 +11,10 @@
 //! point: a running Orgtree opens or focuses that org through its single
 //! instance, a stopped one starts and opens it. No network, no Orgtree token,
 //! no shell; the program comes from the registry, never from the file.
+//!
+//! Linux (`linux` below): the install is the orgtree:// handler xdg-open
+//! would use, and the badge opens the org through an orgtree:// link.
+#![cfg_attr(not(windows), allow(dead_code))]
 
 use std::path::{Path, PathBuf};
 
@@ -124,6 +128,7 @@ pub fn launch_args(slug: &str) -> Option<Vec<String>> {
 /// Start `exe` on an org and let it go: no shell, no waiting, no pipes.
 /// Orgtree outlives Hubchat; its single instance takes the request over
 /// when it is already running.
+#[cfg(windows)]
 pub fn launch(exe: &Path, slug: &str) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
@@ -143,9 +148,11 @@ pub fn launch(exe: &Path, slug: &str) -> Result<(), String> {
     command.spawn().map(drop).map_err(|_| "Orgtree could not be started".to_string())
 }
 
+#[cfg(windows)]
 const UNINSTALL: &str = r"Software\Microsoft\Windows\CurrentVersion\Uninstall";
 
 /// Orgtree's Uninstall entries for this user and this machine (both views).
+#[cfg(windows)]
 fn uninstall_entries() -> Vec<Uninstall> {
     use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY};
     use winreg::RegKey;
@@ -204,6 +211,7 @@ fn listing(roaming: &Path) -> Vec<LocalOrg> {
 
 /// The orgs this PC's Orgtree hosts, when an Orgtree install is registered;
 /// none otherwise (a listing an uninstalled Orgtree left behind included).
+#[cfg(windows)]
 pub fn local_orgs(roaming: &Path) -> Vec<LocalOrg> {
     if orgtree_exe(&uninstall_entries(), Path::is_file).is_none() {
         return Vec::new();
@@ -212,6 +220,7 @@ pub fn local_orgs(roaming: &Path) -> Vec<LocalOrg> {
 }
 
 /// Start the registered Orgtree on an org its listing holds now.
+#[cfg(windows)]
 pub fn open(roaming: &Path, slug: &str) -> Result<(), String> {
     if !listing(roaming).iter().any(|org| org.slug == slug) {
         return Err("That org isn't on this PC's Orgtree".into());
@@ -303,6 +312,7 @@ pub fn link_for(listing: &[LocalOrg], takes: bool, org: &str, token: Option<&str
 
 /// orgtree:// is registered for this user (Orgtree claims it at start).
 /// Without it Windows would offer to look for an app instead of opening one.
+#[cfg(windows)]
 fn scheme_registered() -> bool {
     use winreg::enums::HKEY_CLASSES_ROOT;
     use winreg::RegKey;
@@ -314,13 +324,195 @@ fn scheme_registered() -> bool {
 
 /// This PC's Orgtree opens orgtree:// links: installed, 4.5.9 or later, and
 /// the scheme registered.
+#[cfg(windows)]
 pub fn links_supported() -> bool {
     orgtree_version(&uninstall_entries(), Path::is_file).is_some_and(|v| takes_links(&v)) && scheme_registered()
 }
 
 /// The link for a chip, checked against this PC now.
+#[cfg(windows)]
 pub fn link_here(roaming: &Path, org: &str, token: Option<&str>) -> Result<String, String> {
     link_for(&listing(roaming), links_supported(), org, token)
+}
+
+// ---------------------------------------------------------------- Linux
+//
+// Linux has no Uninstall registry (user 2026-11-20 m5b5128333307: chips were
+// grey on a Steam Frame). There the Orgtree install is found the way
+// xdg-open would find it: the default handler of x-scheme-handler/orgtree in
+// mimeapps.list, a .desktop entry whose Exec program exists. Orgtree 4.6.6
+// writes both (its docs/rust-engine/orgtree-links.md): the entry
+// dev.orgtree.link.desktop with X-Orgtree-Version. Any other handler the
+// user set counts too; a version is checked only when the entry gives one.
+// Its data root is `Orgtree v2` under the config folder, not the data one.
+// Everything here is path logic, built on Windows too so its tests run there.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub mod linux {
+    use std::path::{Path, PathBuf};
+
+    pub const SCHEME_MIME: &str = "x-scheme-handler/orgtree";
+    /// Far more than a real mimeapps.list or .desktop entry.
+    const MAX_BYTES: u64 = 256 * 1024;
+
+    /// The XDG folders a handler is looked up in.
+    #[derive(Debug, Clone)]
+    pub struct Dirs {
+        /// `$XDG_CONFIG_HOME`, else `~/.config`: mimeapps.list and `Orgtree v2`.
+        pub config: PathBuf,
+        /// `$XDG_DATA_HOME`, else `~/.local/share`, then `$XDG_DATA_DIRS`.
+        pub data: Vec<PathBuf>,
+    }
+
+    /// The folders for `home`, from the XDG variables `var` gives (absolute
+    /// values only, as the specification says).
+    pub fn dirs(home: &Path, var: impl Fn(&str) -> Option<String>) -> Dirs {
+        let abs = |name: &str| var(name).map(PathBuf::from).filter(|p| p.is_absolute());
+        let mut data = vec![abs("XDG_DATA_HOME").unwrap_or_else(|| home.join(".local").join("share"))];
+        let system = var("XDG_DATA_DIRS").filter(|s| !s.is_empty()).unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+        data.extend(system.split(':').map(PathBuf::from).filter(|p| p.is_absolute()));
+        Dirs { config: abs("XDG_CONFIG_HOME").unwrap_or_else(|| home.join(".config")), data }
+    }
+
+    fn read_small(path: &Path) -> Option<String> {
+        let meta = std::fs::metadata(path).ok()?;
+        (meta.is_file() && meta.len() <= MAX_BYTES).then(|| std::fs::read_to_string(path).ok()).flatten()
+    }
+
+    /// The value of `key` in `[section]` of a desktop-style file.
+    fn value<'a>(text: &'a str, section: &str, key: &str) -> Option<&'a str> {
+        let mut inside = false;
+        for line in text.lines().map(str::trim) {
+            if line.starts_with('[') {
+                inside = line == section;
+            } else if inside {
+                if let Some((k, v)) = line.split_once('=') {
+                    if k.trim() == key {
+                        return Some(v.trim());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// The scheme's default handler in a mimeapps.list: the first desktop id
+    /// of its `[Default Applications]` value, a plain file name.
+    pub fn default_handler(mimeapps: &str) -> Option<String> {
+        let id = value(mimeapps, "[Default Applications]", SCHEME_MIME)?.split(';').next()?.trim();
+        (id.ends_with(".desktop") && !id.contains(['/', '\\']) && !id.starts_with('.')).then(|| id.to_string())
+    }
+
+    /// The program an Exec value starts: its first argument, after an `env`
+    /// with its assignments. Quoting and escapes as the Desktop Entry
+    /// specification gives them; None for anything unterminated or empty.
+    pub fn exec_program(exec: &str) -> Option<PathBuf> {
+        // the string-value escapes first (\\ is one backslash), then the arguments
+        let mut text = String::new();
+        let mut chars = exec.chars();
+        while let Some(c) = chars.next() {
+            if c != '\\' {
+                text.push(c);
+                continue;
+            }
+            match chars.next()? {
+                's' => text.push(' '),
+                'n' | 'r' | 't' => return None,
+                other => text.push(other),
+            }
+        }
+        let mut args: Vec<String> = Vec::new();
+        let mut chars = text.chars().peekable();
+        while args.len() < 16 {
+            while chars.peek().is_some_and(|c| *c == ' ') {
+                chars.next();
+            }
+            let Some(first) = chars.peek().copied() else { break };
+            let mut arg = String::new();
+            if first == '"' {
+                chars.next();
+                loop {
+                    match chars.next()? {
+                        '"' => break,
+                        '\\' => arg.push(chars.next()?),
+                        c => arg.push(c),
+                    }
+                }
+            } else {
+                while let Some(c) = chars.peek().copied().filter(|c| *c != ' ') {
+                    arg.push(c);
+                    chars.next();
+                }
+            }
+            args.push(arg.replace("%%", "%"));
+        }
+        let mut args = args.into_iter().peekable();
+        if args.peek().is_some_and(|a| a == "env" || a == "/usr/bin/env" || a == "/bin/env") {
+            args.next();
+            while args.peek().is_some_and(|a| !a.starts_with('/') && a.contains('=')) {
+                args.next();
+            }
+        }
+        args.next().filter(|p| !p.is_empty() && !p.starts_with('%')).map(PathBuf::from)
+    }
+
+    /// What opens orgtree:// links on this computer.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Handler {
+        /// Checked to exist; the system opener starts it, never Hubchat.
+        #[allow(dead_code)]
+        pub program: PathBuf,
+        /// `X-Orgtree-Version`, when the entry is one Orgtree wrote.
+        pub version: Option<String>,
+    }
+
+    /// The handler xdg-open would use: the default named in the user's
+    /// mimeapps.list (the config folder's, then the old place beside the
+    /// user's entries), found in the first applications folder that has it.
+    /// It must be an entry for the scheme whose program is an absolute path
+    /// to something that exists.
+    pub fn handler(dirs: &Dirs, exists: impl Fn(&Path) -> bool) -> Option<Handler> {
+        let lists = [dirs.config.join("mimeapps.list"), dirs.data.first()?.join("applications").join("mimeapps.list")];
+        let id = lists.iter().find_map(|list| read_small(list).and_then(|text| default_handler(&text)))?;
+        let entry = dirs.data.iter().find_map(|d| read_small(&d.join("applications").join(&id)))?;
+        const ENTRY: &str = "[Desktop Entry]";
+        if !value(&entry, ENTRY, "MimeType")?.split(';').any(|m| m.trim() == SCHEME_MIME) {
+            return None;
+        }
+        let program = exec_program(value(&entry, ENTRY, "Exec")?)?;
+        if !program.is_absolute() || !exists(&program) {
+            return None;
+        }
+        let version = value(&entry, ENTRY, "X-Orgtree-Version").filter(|v| !v.is_empty()).map(str::to_string);
+        Some(Handler { program, version })
+    }
+
+    /// The handler opens links: any version it names is 4.5.9 or later.
+    pub fn takes(handler: &Handler) -> bool {
+        handler.version.as_deref().is_none_or(super::takes_links)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn here() -> Option<Handler> {
+        let home = PathBuf::from(std::env::var_os("HOME")?);
+        handler(&dirs(&home, |name| std::env::var(name).ok()), |p| p.exists())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn links_supported() -> bool {
+        here().is_some_and(|h| takes(&h))
+    }
+
+    /// The orgs this computer's Orgtree hosts, when a handler opens them.
+    #[cfg(target_os = "linux")]
+    pub fn local_orgs(config: &Path) -> Vec<super::LocalOrg> {
+        if links_supported() { super::listing(config) } else { Vec::new() }
+    }
+
+    /// The link for a chip, or for an org alone, checked against this computer now.
+    #[cfg(target_os = "linux")]
+    pub fn link_here(config: &Path, org: &str, token: Option<&str>) -> Result<String, String> {
+        super::link_for(&super::listing(config), links_supported(), org, token)
+    }
 }
 
 #[cfg(test)]
@@ -458,6 +650,7 @@ mod tests {
 
     /// A stand-in Orgtree.exe, compiled here, records its arguments; `launch`
     /// starts it as Hubchat starts the registered Orgtree.
+    #[cfg(windows)]
     #[test]
     fn launch_hands_orgtree_exactly_the_taskbar_target() {
         let dir = std::env::temp_dir().join(format!("hubchat-local-orgtree-{}", std::process::id()));
@@ -582,7 +775,7 @@ mod tests {
     const OURS: &str = "[Default Applications]\nx-scheme-handler/orgtree=dev.orgtree.link.desktop;\n";
     const LINK: &str = "dev.orgtree.link.desktop";
 
-    fn entry(exec: &str, version: Option<&str>) -> String {
+    fn desktop_entry(exec: &str, version: Option<&str>) -> String {
         let version = version.map(|v| format!("X-Orgtree-Version={v}\n")).unwrap_or_default();
         format!("[Desktop Entry]\nType=Application\nName=Orgtree link\nNoDisplay=true\nExec={exec}\nMimeType=x-scheme-handler/orgtree;\n{version}")
     }
@@ -636,7 +829,7 @@ mod tests {
     /// The entry Orgtree 4.6.6 writes, as the default: links open.
     #[test]
     fn linux_orgtrees_own_entry_as_the_default_is_the_handler() {
-        let ours = entry(r#"env APPIMAGE_EXTRACT_AND_RUN=1 "{program}" %u"#, Some("4.6.6"));
+        let ours = desktop_entry(r#"env APPIMAGE_EXTRACT_AND_RUN=1 "{program}" %u"#, Some("4.6.6"));
         let (home, dirs, program) = linux_home("ours", Some(OURS), &[(LINK, &ours)]);
         let handler = linux::handler(&dirs, |p| p.exists()).expect("the handler");
         assert_eq!(handler, linux::Handler { program: PathBuf::from(&program), version: Some("4.6.6".into()) });
@@ -648,7 +841,7 @@ mod tests {
     #[test]
     fn linux_another_default_handler_counts_without_a_version() {
         let list = "[Default Applications]\nx-scheme-handler/orgtree=orgtree.desktop\n";
-        let theirs = entry("env APPIMAGE_EXTRACT_AND_RUN=1 {program} %U", None);
+        let theirs = desktop_entry("env APPIMAGE_EXTRACT_AND_RUN=1 {program} %U", None);
         let (home, dirs, _) = linux_home("theirs", Some(list), &[("orgtree.desktop", &theirs)]);
         let handler = linux::handler(&dirs, |p| p.exists()).expect("the handler");
         assert_eq!(handler.version, None);
@@ -658,9 +851,9 @@ mod tests {
 
     #[test]
     fn linux_without_a_usable_default_nothing_opens_links() {
-        let good = entry(r#""{program}" %u"#, Some("4.6.6"));
+        let good = desktop_entry(r#""{program}" %u"#, Some("4.6.6"));
         let no_mime = good.replace("MimeType=x-scheme-handler/orgtree;\n", "MimeType=text/html;\n");
-        let relative = entry("orgtree %u", Some("4.6.6"));
+        let relative = desktop_entry("orgtree %u", Some("4.6.6"));
         let cases: [(&str, Option<&str>, Vec<(&str, &str)>, bool); 6] = [
             ("no mimeapps.list", None, vec![(LINK, &good)], true),
             ("no default for the scheme", Some("[Default Applications]\ntext/html=firefox.desktop\n"), vec![(LINK, &good)], true),
@@ -687,7 +880,7 @@ mod tests {
     /// The old place for the user's defaults, beside the user's entries.
     #[test]
     fn linux_the_old_mimeapps_place_is_read_after_the_config_one() {
-        let good = entry(r#""{program}" %u"#, None);
+        let good = desktop_entry(r#""{program}" %u"#, None);
         let (home, dirs, _) = linux_home("old", None, &[(LINK, &good), ("mimeapps.list", OURS)]);
         assert!(linux::handler(&dirs, |p| p.exists()).is_some());
         let _ = std::fs::remove_dir_all(&home);
