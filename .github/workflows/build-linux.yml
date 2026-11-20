@@ -1,4 +1,4 @@
-# Hubchat for Linux (x86_64): AppImage (+ updater signature) and .deb.
+# Hubchat for Linux (x86_64 and arm64): AppImage (+ updater signature) and .deb.
 # Called by release.yml; a push to ci-test/hubchat-linux runs it alone.
 name: build-linux
 
@@ -27,8 +27,23 @@ env:
 
 jobs:
   build:
+    name: build (${{ matrix.updater_arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            appimage_arch: amd64
+            deb_arch: amd64
+            updater_arch: x86_64
+            artifact: hubchat-linux
+          - runner: ubuntu-22.04-arm
+            appimage_arch: aarch64
+            deb_arch: arm64
+            updater_arch: aarch64
+            artifact: hubchat-linux-arm64
     # 22.04 (glibc 2.35): what is built here also runs on 24.04 and newer
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -71,9 +86,9 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: hubchat-linux-cargo-ubuntu-22.04-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
+          key: hubchat-linux-cargo-${{ matrix.runner }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            hubchat-linux-cargo-ubuntu-22.04-${{ env.RUST_TOOLCHAIN }}-
+            hubchat-linux-cargo-${{ matrix.runner }}-${{ env.RUST_TOOLCHAIN }}-
 
       - name: npm ci
         run: npm ci
@@ -105,16 +120,17 @@ jobs:
           out="$RUNNER_TEMP/hubchat-linux"
           mkdir -p "$out"
           ls -la "$b/appimage" "$b/deb"
-          app="Hubchat_${v}_amd64.AppImage"
-          deb="Hubchat_${v}_amd64.deb"
-          # .deb installs update from their own entry (the updater looks for
-          # linux-x86_64-deb first, then linux-x86_64 = the AppImage)
+          app="Hubchat_${v}_${{ matrix.appimage_arch }}.AppImage"
+          deb="Hubchat_${v}_${{ matrix.deb_arch }}.deb"
+          # On x86_64 and aarch64, the updater checks the -deb entry first for
+          # .deb installs. The unsuffixed entry is the AppImage.
           cp "$b/appimage/$app" "$b/appimage/$app.sig" "$b/deb/$deb" "$b/deb/$deb.sig" "$out/"
           jq -n --arg asset "$app" --rawfile sig "$out/$app.sig" \
-            '{"linux-x86_64": {asset: $asset, signature: $sig}}' > "$out/updater-linux-x86_64.json"
+            '{"linux-${{ matrix.updater_arch }}": {asset: $asset, signature: $sig}}' > "$out/updater-linux-${{ matrix.updater_arch }}.json"
           jq -n --arg asset "$deb" --rawfile sig "$out/$deb.sig" \
-            '{"linux-x86_64-deb": {asset: $asset, signature: $sig}}' > "$out/updater-linux-x86_64-deb.json"
+            '{"linux-${{ matrix.updater_arch }}-deb": {asset: $asset, signature: $sig}}' > "$out/updater-linux-${{ matrix.updater_arch }}-deb.json"
           cat "$out"/updater-*.json
+          file "$out/$app"
           chmod +x "$out/$app"
           ( cd "$out" && sha256sum * )
           echo "dir=$out" >> "$GITHUB_OUTPUT"
@@ -132,6 +148,10 @@ jobs:
         run: |
           .github/ci/linux/smoke.sh appimage "${{ steps.assets.outputs.dir }}/${{ steps.assets.outputs.app }}"
 
+      - name: Launch smoke (AppImage, no FUSE)
+        run: |
+          APPIMAGE_EXTRACT_AND_RUN=1 .github/ci/linux/smoke.sh appimage-nofuse "${{ steps.assets.outputs.dir }}/${{ steps.assets.outputs.app }}"
+
       - name: Launch smoke (.deb installed)
         run: |
           sudo apt-get install -y "${{ steps.assets.outputs.dir }}/${{ steps.assets.outputs.deb }}"
@@ -145,7 +165,7 @@ jobs:
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: hubchat-linux
+          name: ${{ matrix.artifact }}
           path: ${{ steps.assets.outputs.dir }}/*
           if-no-files-found: error
           retention-days: 14
