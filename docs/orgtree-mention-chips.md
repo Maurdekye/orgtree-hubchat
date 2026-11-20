@@ -49,6 +49,19 @@ the contract both apps follow.
   prereleases included, and `orgtree://` is registered (`HKCR\orgtree`). On
   any other Windows set-up, the click could only bring up Windows' "look for
   an app" prompt.
+- **Linux** (from 1.3.10, user 2026-11-20; `local_orgtree.rs`, `linux`). There
+  is no registry, so the install is the handler `xdg-open` would use: the
+  default for `x-scheme-handler/orgtree` in `mimeapps.list` (the config
+  folder's, then the old place beside the user's entries), whose `.desktop`
+  entry is for the scheme and whose `Exec` program is an absolute path that
+  exists. Orgtree 4.6.6 or later writes both at start
+  (`dev.orgtree.link.desktop`, with `X-Orgtree-Version`); a handler the user
+  set counts too, and a version is checked only when the entry names one. The
+  listing is read from `Orgtree v2` under the config folder
+  (`~/.config/Orgtree v2/data`, or the moved data root). A chip and the
+  Orgtree org badge both open through the system opener; on Linux the badge
+  uses `orgtree://org/<slug>`, not a program start. The path logic is
+  unit-tested with temporary folders; it has not been seen on a device.
 
 ## How it is built
 
