@@ -733,6 +733,8 @@ export function SettingsModal({ tab, setTab, onClose, onOpenChat }: { tab: SetTa
   const snap = useSnap();
   const hubBad = snap.state?.hubs.some((h) => h.state === "disconnected" || h.state === "refused");
   const dlg = useDialogFocus();
+  // Quit Hubchat: a page has no process to quit
+  const web = useWeb();
   const [profileDraft, setProfileDraft] = useState<ProfileDraft | null>(null);
   // the section list is a tab list, as Orgtree's SettingsTabs: the open section is announced as selected, one tab
   // stop for the list, and arrows, Home and End move between sections (symmetry audit ux08 S4)
@@ -760,6 +762,10 @@ export function SettingsModal({ tab, setTab, onClose, onOpenChat }: { tab: SetTa
               </button>
             ))}
           </div>
+          {web ? null : <>
+            <div className="sep" role="separator" />
+            <button type="button" onClick={() => { api.quit().catch((e) => toast(errText(e))); }}><Icon name="logout" />Quit Hubchat</button>
+          </>}
         </nav>
         <div className="set-main">
           <div className="modal-h"><h3>{TABS.find((t) => t[0] === tab)![1]}</h3><button className="icon-btn" onClick={onClose} title="Close (Esc)" aria-label="Close"><Icon name="close" /></button></div>

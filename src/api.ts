@@ -577,6 +577,8 @@ export const makeApi = ({ invoke, listen, mediaUrl }: Transport) => ({
   /** Whether closing the window quits Hubchat (otherwise it stays in the tray). */
   exitOnClose: () => invoke<boolean>("hc_exit_on_close"),
   setExitOnClose: (on: boolean) => invoke<boolean>("hc_set_exit_on_close", { on }),
+  /** Quit Hubchat (desktop), as the tray's Quit Hubchat does. */
+  quit: () => invoke<void>("hc_quit"),
   /** A click in the tray asks the updater for something (lib/tray.ts). */
   onTray: (f: (a: TrayAsk) => void): Promise<UnlistenFn> => listen<TrayAsk>("hc-tray", (e) => f(e.payload)),
   /** A setting was changed in the tray: read it again. */

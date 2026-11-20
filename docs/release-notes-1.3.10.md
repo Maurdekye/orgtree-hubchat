@@ -24,3 +24,7 @@ Hubchat 1.3.10 adds a Linux build for 64-bit ARM (such as a Steam Frame), and Or
 ## Orgtree links on Linux
 
 - **Links open on Linux.** With Orgtree 4.6.6 or later on the same computer, Orgtree mentions in messages light up and open in Orgtree, and Contact info's Orgtree org badge opens the org. Before, they always showed grey on Linux.
+
+## Quit
+
+- **Quit Hubchat in Settings.** On a desktop, Settings now ends with Quit Hubchat, which quits as the tray's entry does. Use it where no tray shows, such as a Steam Frame's overlay.

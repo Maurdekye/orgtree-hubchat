@@ -22,7 +22,7 @@ keeps the same menu state and actions. The code is `src-tauri/src/tray.rs` (the 
 | Notifications › Show notifications, Show message text, Play a sound | The three switches of Settings › Notifications. The last two are greyed while notifications are off. "Show notifications" covers message notifications and the notices of files that couldn't be sent or downloaded. | the core's store |
 | Crash reports… | Says how many crash reports there are, what they can contain, that Hubchat sends none, and offers Open folder. | `diagnostics/crash-reports` in the app data folder |
 | Restart Hubchat | Restarts Hubchat. It comes back on screen if the window was showing, and hidden in the tray if not. | |
-| Quit Hubchat | Quits, as before. | |
+| Quit Hubchat | Quits, as before. Settings has the same entry, last in its section list under a separator, for a desktop that shows no tray (a Steam Frame's overlay): no question, the same quit (`hc_quit`). | |
 
 ## Keeping every place truthful
 

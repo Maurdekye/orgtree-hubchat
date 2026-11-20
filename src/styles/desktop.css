@@ -217,6 +217,7 @@
 .set-nav button.on { background: var(--panel-2); color: var(--ink-strong); font-weight: 600; }
 .set-nav button.on::before { content: ""; position: absolute; left: -10px; top: 9px; bottom: 9px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
 .set-nav button.on .ic { color: var(--accent-text); }
+.set-nav .sep { height: 1px; background: var(--line-soft); margin: 6px 12px; flex: none; }
 .set-nav .warnmark { margin-left: auto; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
 .set-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .set-main .modal-h { padding: 18px 14px 6px 28px; }

@@ -531,6 +531,8 @@ pub fn run() {
             tray::hc_exit_on_close,
             #[cfg(desktop)]
             tray::hc_set_exit_on_close,
+            #[cfg(desktop)]
+            tray::hc_quit,
             #[cfg(windows)]
             tray_popup::hc_tray_popup_snapshot,
             #[cfg(windows)]

@@ -369,7 +369,7 @@ pub(crate) fn on_menu(app: &AppHandle, id: &str) {
         }
         "crash-reports" => show_crash_reports(app),
         "restart" => restart(app),
-        "quit" => app.exit(0),
+        "quit" => quit(app),
         _ => {}
     }
 }
@@ -525,6 +525,18 @@ pub fn hc_set_autostart(app: AppHandle, on: bool) -> R<bool> {
     #[cfg(windows)]
     crate::tray_popup::refresh(&app);
     result
+}
+
+/// Quit Hubchat: the tray's entry and the one in Settings (`hc_quit`) are this.
+fn quit(app: &AppHandle) {
+    app.exit(0);
+}
+
+/// Settings: Quit Hubchat, for a desktop that shows no tray (a Steam Frame's
+/// overlay). The same quit as the tray's.
+#[tauri::command]
+pub fn hc_quit(app: AppHandle) {
+    quit(&app);
 }
 
 /// Settings › General: whether closing the window quits Hubchat.

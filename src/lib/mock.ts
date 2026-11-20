@@ -970,6 +970,7 @@ export const mockApi: Api = {
   setAutostart: async (on) => { localStorage.setItem("hubchat.mock.autostart", on ? "1" : "0"); return on; },
   exitOnClose: async () => localStorage.getItem("hubchat.mock.exit_on_close") === "1",
   setExitOnClose: async (on) => { localStorage.setItem("hubchat.mock.exit_on_close", on ? "1" : "0"); return on; },
+  quit: async () => { toast("[Quits Hubchat]"); },
   onTray: async () => () => {},
   onSettingsChanged: async () => () => {},
   filePreview: async (source, name) => {
