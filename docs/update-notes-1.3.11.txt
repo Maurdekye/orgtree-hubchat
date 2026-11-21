@@ -1,0 +1,1 @@
+New: Orgtree on Linux (4.6.8 or later) sees desktop Hubchat, and its links to people open in Hubchat.
