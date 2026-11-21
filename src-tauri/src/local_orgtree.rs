@@ -617,6 +617,7 @@ mod tests {
         Uninstall { display_name: name.into(), display_icon: icon.into(), install_location: location.into(), ..Default::default() }
     }
 
+    #[cfg(windows)]
     #[test]
     fn the_registered_orgtree_is_found_by_its_uninstall_entry() {
         let exe = PathBuf::from(r"C:\Program Files\Orgtree\Orgtree.exe");
@@ -691,6 +692,7 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
     #[test]
     fn the_version_is_the_registered_orgtrees_own() {
         let exe = PathBuf::from(r"C:\Program Files\Orgtree\Orgtree.exe");
