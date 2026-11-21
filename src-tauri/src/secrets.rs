@@ -259,12 +259,6 @@ pub(crate) mod posix_trust {
 
     pub(crate) const MAX_KEY_BYTES: i64 = 4096;
 
-    // Guarantee every valid `Identity` (`"<id> <secret>"`) fits within `MAX_KEY_BYTES`.
-    const _: () = assert!(
-        (hubchat_core::recovery::MAX_ID_LEN + 1 + hubchat_core::identity::MAX_SECRET_LEN)
-            <= MAX_KEY_BYTES as usize
-    );
-
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub(crate) struct StatInfo {
         pub is_dir: bool,
@@ -537,6 +531,11 @@ pub(crate) mod linux_policy {
             }
             SecretServiceState::Absent => {
                 let encoded = encode(me);
+                if encoded.as_str().is_empty()
+                    || (encoded.as_str().len() as i64) > super::posix_trust::MAX_KEY_BYTES
+                {
+                    return Err("identity key exceeds the permissions-only file size limit".into());
+                }
                 b.file_save(encoded.as_str())?;
                 Ok(SaveOutcome {
                     storage: KeyStorage::FilePermissionsOnly,
@@ -2541,6 +2540,26 @@ mod tests {
         assert!(forgot.keyring_cleared);
         assert!(forgot.residual_plaintext);
         assert!(forgot.facts.contains(&Fact::KeyFileCleanupFailed));
+    }
+
+    #[test]
+    fn m7_file_fallback_enforces_single_size_limit_while_keyring_keeps_1_3_11_acceptance() {
+        use linux_policy::*;
+        // 2049-byte secret fits inside MAX_KEY_BYTES (4096) on both keyring and file fallback.
+        let legacy_2049 = Identity::from_parts("alex", &"a".repeat(2049)).unwrap();
+        let b_file = FakeBackend::new(SecretServiceState::Absent);
+        assert_eq!(save_staged_with(&b_file, &legacy_2049).unwrap().storage, KeyStorage::FilePermissionsOnly);
+        assert!(matches!(load_with(&b_file).loaded, PolicyLoaded::Found { storage: KeyStorage::FilePermissionsOnly, .. }));
+
+        // >4096-byte encoded identity still works on keyring (1.3.11 parity),
+        // and is refused at fallback-save time BEFORE touching the existing file.
+        let huge = Identity::from_parts("alex", &"b".repeat(5000)).unwrap();
+        let b_kr = FakeBackend::new(SecretServiceState::Present);
+        assert_eq!(save_staged_with(&b_kr, &huge).unwrap().storage, KeyStorage::Keyring);
+
+        let before = b_file.file.borrow().clone();
+        assert!(save_staged_with(&b_file, &huge).is_err(), "oversized identity must be refused on file fallback");
+        assert_eq!(*b_file.file.borrow(), before, "existing fallback file must stay untouched when oversized save is refused");
     }
 }
 

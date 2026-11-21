@@ -946,22 +946,6 @@ pub fn hc_open_url<RT: tauri::Runtime>(app: tauri::AppHandle<RT>, url: String) -
     }
 }
 
-/// Open a local file path with the system default app. On Linux, restores
-/// Hubchat's pre-reexec launching environment so Gamescope overrides do not leak.
-#[tauri::command]
-pub fn hc_open_file<RT: tauri::Runtime>(app: tauri::AppHandle<RT>, path: String) -> R<()> {
-    #[cfg(target_os = "linux")]
-    {
-        let _ = app;
-        crate::linux_gamescope::open_external_path(std::path::Path::new(&path))
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        use tauri_plugin_opener::OpenerExt;
-        app.opener().open_path(path, None::<&str>).map_err(s)
-    }
-}
-
 /// The recovery words as a text file (user 19:08Z). `dest` is the save
 /// dialog's choice on desktop; without it (Android) the file goes to the
 /// shared Downloads. Saving counts as "saved". Returns where it went.

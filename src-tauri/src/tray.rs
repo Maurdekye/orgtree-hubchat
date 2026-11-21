@@ -33,6 +33,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Emitter, Manager, Wry};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+#[cfg(not(target_os = "linux"))]
 use tauri_plugin_opener::OpenerExt;
 
 use crate::core;
@@ -458,6 +459,12 @@ fn show_crash_reports(app: &AppHandle) {
         .show(move |open| {
             if open {
                 let _ = std::fs::create_dir_all(&folder);
+                #[cfg(target_os = "linux")]
+                {
+                    let _ = &handle;
+                    let _ = crate::linux_gamescope::open_external_path(&folder);
+                }
+                #[cfg(not(target_os = "linux"))]
                 let _ = handle.opener().open_path(folder.to_string_lossy().into_owned(), None::<&str>);
             }
         });

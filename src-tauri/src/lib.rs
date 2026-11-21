@@ -519,7 +519,6 @@ pub fn run() {
             commands::hc_take_pending_chat,
             commands::hc_open_attachment,
             commands::hc_open_url,
-            commands::hc_open_file,
             media::hc_attachment_preview,
             media::hc_file_preview,
             clip::hc_clipboard_text,
