@@ -839,3 +839,9 @@
   window-watch phrases/seconds (hubchat.update/window). Web and Android are
   excluded; Android still has no file log. [decided: coordinator mc2088b1e930f;
   verified: window_watch.rs, tools/desktop-diagnostics.test.mjs; docs/logging.md]
+
+- 2026-11-21: Linux SteamOS automation: self-install `dev.orgtree.hubchat.desktop`
+  + icon (`linux_scheme.rs`, `X-Hubchat-Version=`), Gamescope re-exec before GTK
+  (`linux_gamescope.rs`), and 0700/0600 file key fallback only on confirmed
+  Secret Service absence (`secrets.rs`, `core.rs`, `Settings.tsx`). [decided:
+  user mcf5eec9b9660; docs/steamos-steam-frame.md]

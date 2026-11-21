@@ -1,11 +1,12 @@
-# Linux `hubchat://` scheme handler
+# Linux desktop entries and `hubchat://` scheme handler
 
 On Windows, Hubchat registers `hubchat://` in `HKCU\Software\Classes\hubchat`
 at start (`src-tauri/src/lib.rs` `register_scheme`). Linux has no equivalent
-call for an AppImage, so at each desktop start on Linux Hubchat writes two
-per-user files (`src-tauri/src/linux_scheme.rs`, mirroring Orgtree's
-`apps/desktop/main/orgtree-link-linux.ts`; user rulings 2026-11-21
-`m705e9611b564`, `mcfbe866f5243`):
+call for an AppImage, so at each desktop start on Linux Hubchat manages its
+per-user desktop integration (`src-tauri/src/linux_scheme.rs`, mirroring
+Orgtree's `apps/desktop/main/orgtree-link-linux.ts`; user rulings 2026-11-21
+`m705e9611b564`, `mcfbe866f5243`, and docket
+`steamos-steam-frame-automate-the-install-workaro`):
 
 - `$XDG_DATA_HOME/applications/dev.orgtree.hubchat.link.desktop` (default
   `~/.local/share/applications`):
@@ -22,10 +23,25 @@ per-user files (`src-tauri/src/linux_scheme.rs`, mirroring Orgtree's
     (type2-runtime `fedfad5`) does not delete the running app's extraction
     folder when the link-forwarding second launch exits.
   - Byte-compared before writing and rewritten atomically only when changed.
+- `$XDG_DATA_HOME/applications/dev.orgtree.hubchat.desktop` and
+  `$XDG_DATA_HOME/icons/hicolor/128x128/apps/dev.orgtree.hubchat.png` (AppImage
+  or `HUBCHAT_LAUNCHER` launches only; `.deb` packages supply their own
+  system desktop file):
+  - Created if absent, and updated/repaired only when the existing file is a
+    regular file marked with `X-Hubchat-Version=` under `[Desktop Entry]`.
+  - Uses the same extract-mode `env APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1`
+    and bare-path rules (or `HUBCHAT_LAUNCHER` when valid).
+  - Hand-written `dev.orgtree.hubchat.desktop` files without
+    `X-Hubchat-Version=`, entries under other filenames, and existing icons are
+    never overwritten. An icon write failure never blocks link registration.
 - `$XDG_CONFIG_HOME/mimeapps.list` (default `~/.config/mimeapps.list`):
   - Sets `x-scheme-handler/hubchat=dev.orgtree.hubchat.link.desktop;` under
     `[Default Applications]` only when no default exists for the scheme or it
     is already ours. Any other default is left untouched byte for byte.
+
+See [SteamOS and Steam Frame](steamos-steam-frame.md) for the Gamescope re-exec
+and permissions-only key fallback used on SteamOS systems without FUSE or
+Secret Service.
 
 ## Launcher opt-in (`HUBCHAT_LAUNCHER`)
 
@@ -57,8 +73,9 @@ Hubchat writes nothing when:
   unavailable, or `$HOME` is set to a different folder (such as CI smoke runs);
 - the resolved program path is relative or contains control characters.
 
-Hubchat never reads, modifies, or deletes any other `.desktop` file (including
-a hand-written `dev.orgtree.hubchat.desktop`).
+Hubchat never modifies or deletes any other `.desktop` file, nor any
+hand-written `dev.orgtree.hubchat.desktop` that does not carry
+`X-Hubchat-Version=`.
 
 ## Verification
 
