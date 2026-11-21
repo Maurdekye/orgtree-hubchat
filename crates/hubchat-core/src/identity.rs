@@ -22,6 +22,11 @@ impl std::fmt::Debug for Identity {
     }
 }
 
+/// Maximum UTF-8 byte length of an identity secret. Keeps `"<id> <secret>"`
+/// (with `id <= MAX_ID_LEN`) well inside the 4 KiB key-file limit on every
+/// platform so no accepted import can become unreadable on restart.
+pub const MAX_SECRET_LEN: usize = 2048;
+
 impl Identity {
     /// A brand-new identity with a fresh 128-bit secret (what the recovery words carry).
     pub fn generate(id: &str) -> Result<Self> {
@@ -33,7 +38,10 @@ impl Identity {
     /// Restore an identity from its id and secret (linking, recovery).
     pub fn from_parts(id: &str, secret: &str) -> Result<Self> {
         validate_id(id)?;
-        if secret.len() < 32 || secret.chars().any(char::is_whitespace) {
+        if secret.len() < 32
+            || secret.len() > MAX_SECRET_LEN
+            || secret.chars().any(|c| c.is_whitespace() || c.is_control())
+        {
             return Err(Error::Invalid("secret key is malformed".into()));
         }
         Ok(Self {

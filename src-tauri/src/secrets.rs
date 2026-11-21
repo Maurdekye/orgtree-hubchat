@@ -172,6 +172,12 @@ pub(crate) mod posix_trust {
 
     pub(crate) const MAX_KEY_BYTES: i64 = 4096;
 
+    // Guarantee every valid `Identity` (`"<id> <secret>"`) fits within `MAX_KEY_BYTES`.
+    const _: () = assert!(
+        (hubchat_core::recovery::MAX_ID_LEN + 1 + hubchat_core::identity::MAX_SECRET_LEN)
+            <= MAX_KEY_BYTES as usize
+    );
+
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub(crate) struct StatInfo {
         pub is_dir: bool,
@@ -1198,6 +1204,9 @@ mod linux_file {
         xdg_data_env: Option<&OsStr>,
         account_home: Option<&Path>,
     ) -> Result<(), String> {
+        if text.is_empty() || (text.len() as i64) > MAX_KEY_BYTES {
+            return Err("key payload size is out of bounds".into());
+        }
         let uid = euid();
         check_env_roots_with(uid, home_env, xdg_data_env, account_home)?;
         let (dir_fd, _) = open_dir_trusted(uid, dir, true, false)?
