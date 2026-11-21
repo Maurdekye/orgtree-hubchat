@@ -360,4 +360,48 @@ mod tests {
             None
         );
     }
+
+    // Round 1 review RED tests: M11 (PID-scoped marker, original-env snapshot for external openers).
+
+    #[test]
+    fn m11_stale_marker_from_other_pid_does_not_skip_reexec_and_plan_records_orig_env() {
+        // A child / subsequent Hubchat process inheriting another PID's marker must NOT
+        // skip re-exec when its display environment needs different overrides.
+        let other_pid = format!("{}", std::process::id().wrapping_add(10_000));
+        let inherited = env_of(&[
+            ("XDG_CURRENT_DESKTOP", "gamescope"),
+            ("WAYLAND_DISPLAY", "wayland-0"),
+            (REEXEC_MARKER, &other_pid),
+        ]);
+        let plan = plan_reexec(inherited)
+            .expect("marker from a different PID must not suppress re-exec on a changed display");
+        assert!(
+            plan.set.iter().any(|(k, _)| *k == "HUBCHAT_GAMESCOPE_ORIG_ENV"),
+            "plan must snapshot original env for external openers: {plan:?}"
+        );
+        let pid_str = std::process::id().to_string();
+        assert!(
+            plan.set.iter().any(|(k, v)| *k == REEXEC_MARKER && AsRef::<str>::as_ref(v) == pid_str),
+            "re-exec marker must carry the current PID: {plan:?}"
+        );
+    }
+
+    #[test]
+    fn m11_external_openers_route_through_gamescope_env_restoration_on_linux() {
+        let commands_rs = include_str!("commands.rs");
+        let trace_rs = include_str!("trace.rs");
+        let native_ts = include_str!("../../src/lib/native.ts");
+        assert!(
+            commands_rs.contains("linux_gamescope::open_external"),
+            "commands.rs must use linux_gamescope::open_external on Linux"
+        );
+        assert!(
+            trace_rs.contains("linux_gamescope::open_external"),
+            "trace.rs must use linux_gamescope::open_external on Linux"
+        );
+        assert!(
+            !native_ts.contains("@tauri-apps/plugin-opener"),
+            "native.ts must route external URL/file opens through backend commands so Linux restores launching env"
+        );
+    }
 }
