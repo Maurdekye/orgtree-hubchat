@@ -82,6 +82,9 @@ fn hex_decode(s: &str) -> Option<Vec<u8>> {
 /// `KEY=+<hex>` entries separated by `;`. Values exceeding `MAX_ORIG_VAL_BYTES`
 /// are omitted so the snapshot stays strictly bounded well below Linux's
 /// 128 KiB `MAX_ARG_STRLEN` exec limit.
+/// Known Low (accepted): if an original value of a managed graphics variable
+/// exceeds `MAX_ORIG_VAL_BYTES` (256 bytes) and is omitted here, an external
+/// child launched by Hubchat can inherit Hubchat's override for that variable.
 pub fn encode_orig_env(env: &impl Fn(&str) -> Option<String>) -> String {
     let mut parts = Vec::with_capacity(MANAGED_VARS.len());
     for &k in &MANAGED_VARS {

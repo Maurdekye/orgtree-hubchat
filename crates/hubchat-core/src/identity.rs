@@ -31,6 +31,9 @@ impl Identity {
     }
 
     /// Restore an identity from its id and secret (linking, recovery).
+    /// Known Low (accepted compatibility exception vs 1.3.11): `c.is_control()`
+    /// rejects manually formed non-whitespace control characters in secrets;
+    /// shipped generators and recovery phrases emit printable hex only.
     pub fn from_parts(id: &str, secret: &str) -> Result<Self> {
         validate_id(id)?;
         if secret.len() < 32 || secret.chars().any(|c| c.is_whitespace() || c.is_control()) {
