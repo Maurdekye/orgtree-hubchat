@@ -2817,35 +2817,35 @@ mod linux_file_tests {
 
         // M5: root-owned system symlink (e.g. /var/run -> /run or /lib -> usr/lib) must be
         // traversed cleanly even when openat(O_DIRECTORY|O_NOFOLLOW) returns ENOTDIR on Linux.
-        let sys_link_child = [
+        let sys_links: Vec<&Path> = [
             Path::new("/var/run"),
             Path::new("/bin"),
             Path::new("/lib"),
         ]
         .into_iter()
-        .find_map(|p| {
-            let meta = std::fs::symlink_metadata(p).ok()?;
-            if !meta.file_type().is_symlink() {
-                return None;
-            }
-            // Pick a child directory inside the symlinked system root so the symlink is an ancestor.
-            let entries = std::fs::read_dir(p).ok()?;
-            for entry in entries.flatten() {
-                if entry.file_type().is_ok_and(|t| t.is_dir()) {
-                    return Some(p.join(entry.file_name()));
-                }
-            }
-            Some(p.join("nonexistent-child-for-ancestor-walk"))
-        });
-        if let Some(sys_path) = sys_link_child {
+        .filter(|p| {
+            std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink())
+                && std::fs::read_link(p).is_ok_and(|target| {
+                    !target
+                        .components()
+                        .any(|c| matches!(c, std::path::Component::ParentDir))
+                })
+        })
+        .collect();
+        for sys_link in sys_links {
             // Walking through a root-owned system symlink to a missing leaf returns Ok(None), NOT Err(ENOTDIR).
-            let probe_path = sys_path.join("hubchat-nonexistent-leaf-check");
-            let res = linux_file::load_with_env(&probe_path, home, None, pw.as_deref());
-            assert!(
-                res.is_ok(),
-                "root-owned system symlink ancestor {} must be accepted, got {res:?}",
-                probe_path.display()
-            );
+            let probe_path = sys_link.join("hubchat-nonexistent-leaf-check");
+            match linux_file::load_with_env(&probe_path, home, None, pw.as_deref()) {
+                Ok(None) => {}
+                Ok(Some(_)) => panic!(
+                    "unexpected key found under nonexistent path {}",
+                    probe_path.display()
+                ),
+                Err(err) => panic!(
+                    "root-owned system symlink ancestor {} must be accepted, got err: {err}",
+                    probe_path.display()
+                ),
+            }
         }
 
         let _ = std::fs::remove_dir_all(&base);
