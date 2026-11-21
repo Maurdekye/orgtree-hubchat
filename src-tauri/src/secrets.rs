@@ -2847,6 +2847,33 @@ mod tests {
             Err("EIO"),
         ]));
     }
+
+    // Round 3 final bounded RED tests:
+    // 2. M6 Medium: post-dispatch keyring error maps to Uncertain (keeps staging), never NotPublished.
+    // 6. M8 Medium: non-ENOENT stat / canonical key listing counts as possible presence.
+
+    #[test]
+    fn r3_m6_keyring_post_dispatch_error_returns_uncertain() {
+        use linux_policy::*;
+        let me = Identity::generate("alex").unwrap();
+        let b = FakeBackend::new(SecretServiceState::Present);
+        *b.keyring_save_err.borrow_mut() = Some("Secret Service D-Bus reply lost".into());
+        let err = save_staged_with(&b, &me).err().expect("keyring error must fail");
+        assert!(
+            matches!(err, SaveStageError::Uncertain(_)),
+            "M6 Medium: ambiguous post-dispatch keyring error must return Uncertain so staging is preserved, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn r3_m8_entries_listing_treats_canonical_key_as_present() {
+        use posix_trust::entries_may_have_temp;
+        use std::ffi::OsString;
+        assert!(
+            entries_may_have_temp::<()>(vec![Ok(OsString::from("identity.key"))]),
+            "M8 Medium: directory listing containing canonical identity.key must report presence even if stat failed"
+        );
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -3183,6 +3210,121 @@ mod linux_file_tests {
             FallbackCleanup::Removed
         );
         assert!(linux_file::load_with_env(&dir_match, home, None, pw.as_deref()).unwrap().is_none());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn r3_m8_eacces_stat_and_retained_live_pid_temp_report_residual() {
+        let base = temp_dir("r3-m8");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let me = Identity::generate("deck").unwrap();
+        let pw = crate::linux_scheme::account_home();
+        let home = pw.as_deref().map(|p| p.as_os_str());
+
+        // 1. Readable (0400) non-searchable store dir with canonical identity.key:
+        // read_dir succeeds while symlink_metadata(identity.key) returns EACCES -> exists_hint MUST be true!
+        let dir_eacces = base.join("eacces");
+        linux_file::save_with_env(&dir_eacces, encode(&me).as_str(), home, None, pw.as_deref()).unwrap();
+        let store_eacces = dir_eacces.join(linux_file::STORE_DIR);
+        std::fs::set_permissions(&store_eacces, std::fs::Permissions::from_mode(0o400)).unwrap();
+        let hint = linux_file::exists_hint(&dir_eacces);
+        std::fs::set_permissions(&store_eacces, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(hint, "M8 Medium: non-ENOENT stat failure on identity.key must report possible presence");
+
+        // 2. No canonical identity.key, only a live-PID temp file retained by dead_pids_only sweep:
+        // forget_matching_with_env MUST return Residual, never NoneExisted!
+        let dir_live_tmp = base.join("live-tmp");
+        let store_live = dir_live_tmp.join(linux_file::STORE_DIR);
+        std::fs::create_dir_all(&store_live).unwrap();
+        std::fs::set_permissions(&dir_live_tmp, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::set_permissions(&store_live, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let live_tmp = store_live.join(format!(".identity.key.{}.0.deadbeefcafebabe.tmp", std::process::id()));
+        std::fs::write(&live_tmp, encode(&me).as_str()).unwrap();
+        std::fs::set_permissions(&live_tmp, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        let cleanup = linux_file::forget_matching_with_env(
+            &dir_live_tmp,
+            &[&me.address()],
+            false,
+            home,
+            None,
+            pw.as_deref(),
+        )
+        .unwrap();
+        assert_eq!(
+            cleanup,
+            FallbackCleanup::Residual,
+            "M8 Medium: retained live-PID temporary file must return Residual, never NoneExisted"
+        );
+        assert!(live_tmp.exists(), "live-PID temp file must remain untouched");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn r3_h2_best_effort_cleanup_is_nonblocking_under_store_lock() {
+        use std::os::unix::io::AsRawFd;
+        use std::time::Duration;
+
+        let base = temp_dir("r3-h2-nb");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let me = Identity::generate("deck").unwrap();
+        let pw = crate::linux_scheme::account_home();
+        let home = pw.as_deref().map(|p| p.as_os_str());
+
+        let dir = base.join("app");
+        linux_file::save_with_env(&dir, encode(&me).as_str(), home, None, pw.as_deref()).unwrap();
+        let store_path = dir.join(linux_file::STORE_DIR);
+
+        // Hold an independent exclusive flock on identity-store/ (simulating a suspended peer).
+        let lock_file = std::fs::File::open(&store_path).unwrap();
+        assert_eq!(unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_EX) }, 0);
+
+        let dir_cl = dir.clone();
+        let addr_cl = me.address();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            let pw_t = crate::linux_scheme::account_home();
+            let home_t = pw_t.as_deref().map(|p| p.as_os_str());
+            let res = linux_file::forget_matching_with_env(
+                &dir_cl,
+                &[addr_cl.as_str()],
+                false,
+                home_t,
+                None,
+                pw_t.as_deref(),
+            );
+            let _ = tx.send(res);
+        });
+
+        let got = rx.recv_timeout(Duration::from_millis(500));
+        unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_UN) };
+        drop(lock_file);
+        handle.join().unwrap();
+
+        let res = got
+            .expect("H2 Medium: best-effort cleanup must not block on a held store lock")
+            .unwrap();
+        assert_eq!(res, FallbackCleanup::Residual, "contention must report Residual and leave file untouched");
+        assert!(store_path.join(linux_file::KEY_FILE).exists());
+
+        // Once the lock is free, cleanup succeeds cleanly.
+        assert_eq!(
+            linux_file::forget_matching_with_env(
+                &dir,
+                &[&me.address()],
+                false,
+                home,
+                None,
+                pw.as_deref(),
+            )
+            .unwrap(),
+            FallbackCleanup::Removed
+        );
+        assert!(!store_path.join(linux_file::KEY_FILE).exists());
 
         let _ = std::fs::remove_dir_all(&base);
     }
