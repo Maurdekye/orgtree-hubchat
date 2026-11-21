@@ -902,13 +902,58 @@ pub async fn hc_open_attachment<RT: tauri::Runtime>(
         use tauri_plugin_opener::OpenerExt;
         let _ = name;
         if path.starts_with("content://") {
+            #[cfg(target_os = "linux")]
+            return crate::linux_gamescope::open_external_url(&path);
+            #[cfg(not(target_os = "linux"))]
             return app.opener().open_url(path, None::<&str>).map_err(s);
         }
         if reveal {
             app.opener().reveal_item_in_dir(&path).map_err(s)
         } else {
+            #[cfg(target_os = "linux")]
+            {
+                let _ = app;
+                crate::linux_gamescope::open_external_path(std::path::Path::new(&path))
+            }
+            #[cfg(not(target_os = "linux"))]
             app.opener().open_path(path, None::<&str>).map_err(s)
         }
+    }
+}
+
+/// Open an http(s) URL in the system browser. On Linux, restores Hubchat's
+/// pre-reexec launching environment so Gamescope WebKit overrides do not leak.
+#[tauri::command]
+pub fn hc_open_url<RT: tauri::Runtime>(app: tauri::AppHandle<RT>, url: String) -> R<()> {
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return Err("only http(s) links can be opened".into());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app;
+        crate::linux_gamescope::open_external_url(&url)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        app.opener().open_url(url, None::<&str>).map_err(s)
+    }
+}
+
+/// Open a local file path with the system default app. On Linux, restores
+/// Hubchat's pre-reexec launching environment so Gamescope overrides do not leak.
+#[tauri::command]
+pub fn hc_open_file<RT: tauri::Runtime>(app: tauri::AppHandle<RT>, path: String) -> R<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app;
+        crate::linux_gamescope::open_external_path(std::path::Path::new(&path))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        app.opener().open_path(path, None::<&str>).map_err(s)
     }
 }
 
@@ -1049,10 +1094,10 @@ pub fn hc_local_orgtree_orgs(app: tauri::AppHandle) -> R<serde_json::Value> {
 #[cfg(target_os = "linux")]
 fn open_orgtree_link_linux(app: &tauri::AppHandle, org: &str, token: Option<&str>) -> R<()> {
     use tauri::Manager;
-    use tauri_plugin_opener::OpenerExt;
     let config = app.path().config_dir().map_err(|_| "Orgtree isn't on this device".to_string())?;
     let url = crate::local_orgtree::linux::link_here(&config, org, token)?;
-    let opened = app.opener().open_url(url, None::<&str>).map_err(|_| "Orgtree could not be opened".to_string());
+    let opened = crate::linux_gamescope::open_external_url(&url)
+        .map_err(|_| "Orgtree could not be opened".to_string());
     match &opened {
         Ok(()) => tracing::info!("opened an orgtree:// link"),
         Err(_) => tracing::warn!("an orgtree:// link could not be opened"),

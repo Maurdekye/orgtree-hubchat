@@ -1123,10 +1123,18 @@ pub fn hc_set_verbose_logging(on: bool) -> Result<LogInfo, String> {
 /// Settings › Developer › Open logs folder.
 #[tauri::command]
 pub fn hc_open_logs_folder(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri_plugin_opener::OpenerExt;
     let dir = LOG_DIR.get().ok_or_else(|| "Logging is not running on this device.".to_string())?;
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app;
+        crate::linux_gamescope::open_external_path(dir)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        use tauri_plugin_opener::OpenerExt;
+        app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())
+    }
 }
 
 #[cfg(test)]

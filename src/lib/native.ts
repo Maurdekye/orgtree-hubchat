@@ -67,8 +67,8 @@ export async function pickFiles(): Promise<string[]> {
 export async function openFile(path: string): Promise<void> {
   if (isWeb) throw NOT_ON_WEB;
   if (!isTauri) { toast("Opening " + path.split(/[\\/]/).pop()); return; }
-  const { openPath } = await import("@tauri-apps/plugin-opener");
-  await openPath(path);
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke<void>("hc_open_file", { path });
 }
 
 /** A downloaded attachment, through the core (on Android local_path may be a
@@ -159,8 +159,8 @@ export const exitOnClose = {
 export async function openLink(url: string): Promise<void> {
   if (!/^https?:\/\//i.test(url)) return;
   if (!isTauri) { window.open(url, "_blank", "noopener"); return; }
-  const { openUrl } = await import("@tauri-apps/plugin-opener");
-  await openUrl(url);
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke<void>("hc_open_url", { url });
 }
 
 export async function copyText(text: string, confirm?: string): Promise<void> {
