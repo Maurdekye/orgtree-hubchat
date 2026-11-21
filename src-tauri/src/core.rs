@@ -1456,6 +1456,7 @@ mod key_tests {
     struct FakeSecrets {
         mode: Cell<Mode>,
         keyring: RefCell<Option<Identity>>,
+        backup: RefCell<Option<Identity>>,
         file: RefCell<Option<Identity>>,
         save_err: RefCell<Option<SaveStageError>>,
         forget_keyring_err: RefCell<Option<String>>,
@@ -1469,6 +1470,7 @@ mod key_tests {
             Self {
                 mode: Cell::new(mode),
                 keyring: RefCell::new(None),
+                backup: RefCell::new(None),
                 file: RefCell::new(None),
                 save_err: RefCell::new(None),
                 forget_keyring_err: RefCell::new(None),
@@ -1497,7 +1499,13 @@ mod key_tests {
                             }
                         }
                     }
-                    None => Loaded::Missing,
+                    None => match self.backup.borrow().as_ref() {
+                        Some(id) => Loaded::Restored {
+                            identity: Identity::from_parts(id.id(), id.secret()).unwrap(),
+                            storage: KeyStorage::Keyring,
+                        },
+                        None => Loaded::Missing,
+                    },
                 },
                 Mode::FileOnly => match self.file.borrow().as_ref() {
                     Some(id) => Loaded::Found {
@@ -2170,6 +2178,175 @@ mod key_tests {
 
         drop(store_unc);
         let _ = std::fs::remove_dir_all(&dir_unc);
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Round 3 final bounded RED tests:
+    // 1. M6 High: recovery recomputes wipe against current owner inside tx.
+    // 3. H4 High: signed-out cleanup requires durable sign-out record and protects owned/staged files.
+    // 4. H3 High: wiped-installation marker survives later adoption and sign-out.
+    // 5. H3 Medium (Windows): forgotten DPAPI backup is deleted, not restored or refreshed.
+
+    #[test]
+    fn r3_m6_recovery_recomputes_wipe_against_current_owner() {
+        let dir = temp_dir("r3-m6-wipe");
+        let store = Store::open(&dir.join("hubchat.sqlite3")).unwrap();
+        let alice = Identity::generate("alice").unwrap();
+        let bob = Identity::generate("bob").unwrap();
+        let secrets = FakeSecrets::new(Mode::Keyring);
+
+        // B's first adoption starts on an empty store (wipe = false) and exits before commit.
+        let pending_bob = PendingAdoption {
+            address: bob.address(),
+            wipe: false,
+            meta: vec![("profile.name".into(), "Bob".into())],
+        };
+        store
+            .set_meta(META_ADOPTING, &serde_json::to_string(&pending_bob).unwrap())
+            .unwrap();
+
+        // Another wallet with A starts in the ownerless store, claims ownership, and writes chats/drafts/hubs.
+        *secrets.keyring.borrow_mut() = Some(Identity::from_parts(alice.id(), alice.secret()).unwrap());
+        let plan_a = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert_eq!(plan_a.start.as_ref().map(|(id, _)| id.address()), Some(alice.address()));
+        store.set_meta("identity.address", &alice.address()).unwrap();
+        store.add_hub("http://alice-hub:7370", "t0").unwrap();
+        store.set_draft("carol.333333", "Alice's private draft").unwrap();
+        store
+            .queue_outgoing(
+                &hubchat_core::store::NewOutgoing {
+                    id: "msg-alice-1".into(),
+                    peer: "carol.333333".into(),
+                    body: "Alice's private message".into(),
+                    kind: None,
+                    reply_to: None,
+                    attachments: vec![],
+                },
+                "2026-11-21T23:00:00Z",
+            )
+            .unwrap();
+        assert!(store.message("msg-alice-1").unwrap().is_some());
+
+        // B returns: recovery MUST recompute wipe against current owner A inside the tx
+        // so B never inherits A's messages, drafts, or hubs.
+        *secrets.keyring.borrow_mut() = Some(Identity::from_parts(bob.id(), bob.secret()).unwrap());
+        let plan_b = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert_eq!(plan_b.start.as_ref().map(|(id, _)| id.address()), Some(bob.address()));
+        assert_eq!(store.meta("identity.address").unwrap().as_deref(), Some(bob.address().as_str()));
+        assert!(store.meta(META_ADOPTING).unwrap().is_none());
+        assert!(store.hubs().unwrap().is_empty(), "M6 High: Alice's hubs must be wiped when B recovers");
+        assert!(store.draft("carol.333333").unwrap().is_none(), "M6 High: Alice's drafts must be wiped when B recovers");
+        assert!(store.message("msg-alice-1").unwrap().is_none(), "M6 High: Alice's messages must be wiped when B recovers");
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn r3_h4_cleanup_requires_signed_out_record_and_protects_owned_and_staged_files() {
+        let dir = temp_dir("r3-h4");
+        let store = Store::open(&dir.join("hubchat.sqlite3")).unwrap();
+        let alice = Identity::generate("alice").unwrap();
+        let bob = Identity::generate("bob").unwrap();
+        let secrets = FakeSecrets::new(Mode::FileOnly);
+
+        // Case A: Alice owns the local profile; an earlier keyring session failed to delete
+        // Alice's fallback file (NOT a sign-out!). Later the current wallet is empty (LostKey)
+        // while the path is removable: startup MUST preserve Alice's VR fallback file!
+        lifecycle_adopt(&dir, &store, &secrets, &alice, true, &[], || {}).unwrap();
+        secrets.mode.set(Mode::Keyring);
+        secrets.file_cleanup_fails.set(true);
+        let (_, residual) = lifecycle_adopt(&dir, &store, &secrets, &alice, false, &[], || {}).unwrap();
+        assert!(residual);
+
+        *secrets.keyring.borrow_mut() = None;
+        secrets.file_cleanup_fails.set(false);
+        let lost = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert!(lost.start.is_none());
+        assert!(lost.key_lost.is_some());
+        assert!(
+            secrets.file.borrow().is_some(),
+            "H4 High: owned profile with empty wallet must NOT delete Alice's VR fallback file"
+        );
+
+        // Case B: Sign-out fails fallback cleanup; later Bob's adoption is staged and publishes
+        // Bob's fallback file before exiting; next launch in an empty wallet MUST NOT delete Bob's file!
+        secrets.file_cleanup_fails.set(true);
+        let commit = lifecycle_forget_begin(&store, &secrets, Some(&alice.address())).unwrap();
+        lifecycle_forget_finish(&store, &commit).unwrap();
+        let pending_bob = PendingAdoption {
+            address: bob.address(),
+            wipe: false,
+            meta: vec![],
+        };
+        store
+            .set_meta(META_ADOPTING, &serde_json::to_string(&pending_bob).unwrap())
+            .unwrap();
+        *secrets.file.borrow_mut() = Some(Identity::from_parts(bob.id(), bob.secret()).unwrap());
+
+        secrets.file_cleanup_fails.set(false);
+        let empty = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert!(empty.start.is_none());
+        assert!(
+            secrets.file.borrow().as_ref().map(|id| id.address()) == Some(bob.address()),
+            "H4 High: pending adoption B's newly published fallback file must be protected from old sign-out cleanup"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn r3_h3_wiped_legacy_profile_never_accepts_un_readopted_key_after_later_signout() {
+        let dir = temp_dir("r3-h3-wiped");
+        let store = Store::open(&dir.join("hubchat.sqlite3")).unwrap();
+        let alice = Identity::generate("alice").unwrap();
+        let bob = Identity::generate("bob").unwrap();
+        let secrets = FakeSecrets::new(Mode::FileOnly);
+
+        // Legacy ownerless profile (device.id without identity.address) runs Start over.
+        store.set_meta("device.id", "hc-legacy-0001").unwrap();
+        let c1 = lifecycle_forget_begin(&store, &secrets, None).unwrap();
+        lifecycle_forget_finish(&store, &c1).unwrap();
+
+        // User adopts Bob, then later signs out of Bob.
+        secrets.mode.set(Mode::Keyring);
+        lifecycle_adopt(&dir, &store, &secrets, &bob, true, &[], || {}).unwrap();
+        let c2 = lifecycle_forget_begin(&store, &secrets, Some(&bob.address())).unwrap();
+        lifecycle_forget_finish(&store, &c2).unwrap();
+
+        // Older wallet holding un-readopted Alice returns: wiped installation MUST NOT auto-accept Alice.
+        *secrets.keyring.borrow_mut() = Some(Identity::from_parts(alice.id(), alice.secret()).unwrap());
+        let plan = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert!(
+            plan.start.is_none(),
+            "H3 High: previously wiped installation must never accept an un-readopted identity after later sign-out"
+        );
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn r3_h3_forgotten_backup_is_deleted_not_restored() {
+        let dir = temp_dir("r3-h3-win-backup");
+        let store = Store::open(&dir.join("hubchat.sqlite3")).unwrap();
+        let alice = Identity::generate("alice").unwrap();
+        let secrets = FakeSecrets::new(Mode::Keyring);
+
+        // Alice was forgotten while her DPAPI backup remained on disk and Credential Manager is empty.
+        lifecycle_adopt(&dir, &store, &secrets, &alice, true, &[], || {}).unwrap();
+        let c = lifecycle_forget_begin(&store, &secrets, Some(&alice.address())).unwrap();
+        lifecycle_forget_finish(&store, &c).unwrap();
+        *secrets.keyring.borrow_mut() = None;
+        *secrets.backup.borrow_mut() = Some(Identity::from_parts(alice.id(), alice.secret()).unwrap());
+
+        let plan = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert!(plan.start.is_none(), "H3 Medium: forgotten backup must not sign back in");
+        assert!(secrets.keyring.borrow().is_none(), "H3 Medium: forgotten backup must not be restored to main keyring");
+        assert!(secrets.backup.borrow().is_none(), "H3 Medium: forgotten matching backup must be deleted");
+
         drop(store);
         let _ = std::fs::remove_dir_all(&dir);
     }
