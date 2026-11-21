@@ -36,6 +36,12 @@ pub const MANAGED_VARS: [&str; 4] = [
     "WEBKIT_DISABLE_DMABUF_RENDERER",
 ];
 
+/// Hard ceiling per captured managed variable and for the combined snapshot env
+/// var so `HUBCHAT_GAMESCOPE_ORIG_ENV` can never approach Linux's 128 KiB
+/// per-string `MAX_ARG_STRLEN` exec limit (even on the re-exec failure path).
+const MAX_ORIG_VAL_BYTES: usize = 256;
+const MAX_ORIG_ENV_BYTES: usize = 2560;
+
 static REEXEC_FAILURE: OnceLock<String> = OnceLock::new();
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,16 +79,21 @@ fn hex_decode(s: &str) -> Option<Vec<u8>> {
 }
 
 /// Snapshot the launching values of `MANAGED_VARS` into `KEY=-` (unset) or
-/// `KEY=+<hex>` entries separated by `;`.
+/// `KEY=+<hex>` entries separated by `;`. Values exceeding `MAX_ORIG_VAL_BYTES`
+/// are omitted so the snapshot stays strictly bounded well below Linux's
+/// 128 KiB `MAX_ARG_STRLEN` exec limit.
 pub fn encode_orig_env(env: &impl Fn(&str) -> Option<String>) -> String {
-    MANAGED_VARS
-        .iter()
-        .map(|&k| match env(k) {
-            Some(v) => format!("{k}=+{}", hex_encode(v.as_bytes())),
-            None => format!("{k}=-"),
-        })
-        .collect::<Vec<_>>()
-        .join(";")
+    let mut parts = Vec::with_capacity(MANAGED_VARS.len());
+    for &k in &MANAGED_VARS {
+        match env(k) {
+            Some(v) if v.len() <= MAX_ORIG_VAL_BYTES => {
+                parts.push(format!("{k}=+{}", hex_encode(v.as_bytes())));
+            }
+            Some(_) => {}
+            None => parts.push(format!("{k}=-")),
+        }
+    }
+    parts.join(";")
 }
 
 /// Decode a snapshot produced by `encode_orig_env` back into `(key, Option<val>)`.
@@ -141,9 +152,9 @@ pub fn plan_reexec_for_pid(pid: u32, env: impl Fn(&str) -> Option<String>) -> Op
         return None;
     }
 
-    // Preserve any already-captured original launching env across deliberate restarts.
+    // Preserve any already-captured bounded launching env across deliberate restarts.
     let orig = env(ORIG_ENV_VAR)
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty() && s.len() <= MAX_ORIG_ENV_BYTES)
         .unwrap_or_else(|| encode_orig_env(&env));
     set.push((ORIG_ENV_VAR, orig));
     set.push((REEXEC_MARKER, pid_str));

@@ -67,8 +67,8 @@ export async function pickFiles(): Promise<string[]> {
 export async function openFile(path: string): Promise<void> {
   if (isWeb) throw NOT_ON_WEB;
   if (!isTauri) { toast("Opening " + path.split(/[\\/]/).pop()); return; }
-  const { invoke } = await import("@tauri-apps/api/core");
-  await invoke<void>("hc_open_file", { path });
+  const { openPath } = await import("@tauri-apps/plugin-opener");
+  await openPath(path);
 }
 
 /** A downloaded attachment, through the core (on Android local_path may be a
