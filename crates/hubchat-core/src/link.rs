@@ -950,4 +950,11 @@ mod tests {
         let old = r#"{"id":"alex","secret":"s","name":"Alex","hubs":[]}"#;
         assert!(!serde_json::from_str::<Bundle>(old).unwrap().recovery_saved);
     }
+
+    #[test]
+    fn bundle_import_rejects_oversized_secret_before_adoption() {
+        let mut b = bundle();
+        b.secret = "a".repeat(4097);
+        assert!(b.identity().is_err());
+    }
 }
