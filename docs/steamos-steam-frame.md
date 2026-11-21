@@ -55,14 +55,14 @@ In sessions where Hubchat confirms no Secret Service is owned or activatable (or
 
 If a Secret Service later becomes available (for example, booting into SteamOS Desktop Mode where KWallet runs, or starting a private `ksecretd`):
 
-- Hubchat uses the Secret Service exclusively and does **not** silently read or auto-migrate the permissions-only key file.
+- Hubchat signs in from the Secret Service exclusively and never uses or auto-migrates the permissions-only key file to sign in.
 - Before starting or cleaning up any fallback file, Hubchat compares the keyring identity against this device's recorded local owner:
   - **Keyring has no key, or holds a different identity than this device's local chats:** Hubchat deletes **neither** key, keeps your local chats intact, and shows the lost-key screen so you decide.
     - **Restoring or linking your identity** (recovery words, Link a device, key QR, or key file) saves the key into the Secret Service first, commits the new owner, and then removes the old permissions-only file on a best-effort basis.
-    - **Starting over** or **signing out** wipes local data and records a forget tombstone in the local store so an older keyring identity cannot silently sign back in when Secret Service returns (once reachable, Hubchat deletes the forgotten keyring entry and clears the tombstone).
+    - **Starting over** or **signing out** wipes local data and records a durable forget tombstone in the local store so an older keyring identity from any wallet cannot silently sign back in until you explicitly adopt it again (once a wallet holding the forgotten identity is reachable, Hubchat removes that entry from it).
     - **Closing Hubchat without making changes** leaves both the keyring entry and the permissions-only file untouched so VR mode continues working.
-  - **Keyring holds the matching identity for this device's local chats:** Hubchat starts with the keyring and removes the matching permissions-only file (never deleting a file belonging to a different identity).
-- **If removing a stale permissions-only file fails:** the committed keyring save, startup, or sign-out still finishes, Hubchat notes the remaining plaintext copy in **Settings › Privacy** and **Settings › Devices**, and cleanup retries on the next start.
+  - **Keyring holds the matching identity for this device's local chats:** Hubchat starts with the keyring and checks under an exclusive directory lock whether a leftover permissions-only file matches that same identity before removing it (never deleting a file belonging to a different identity).
+- **If removing a stale permissions-only file fails:** the committed keyring save, startup, or sign-out still finishes, Hubchat notes the remaining plaintext copy in **Settings › Privacy** and **Settings › Devices**, and cleanup retries on the next start (including signed-out starts).
 
 ### Optional private KWallet wrapper
 
