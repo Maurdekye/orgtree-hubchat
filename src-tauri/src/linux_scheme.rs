@@ -58,6 +58,8 @@ pub struct Inputs<'a> {
     pub xdg_config_home: Option<&'a str>,
     pub appimage: Option<&'a str>,
     pub appdir: Option<&'a str>,
+    /// Optional `HUBCHAT_LAUNCHER` opt-in wrapper script path.
+    pub launcher: Option<&'a str>,
 }
 
 /// One program path as a Desktop Entry `Exec` argument. Plain paths matching
@@ -255,6 +257,13 @@ fn claim_default(file: &Path) -> std::io::Result<DefaultStatus> {
 /// is already ours. Skips `.test` builds, missing or foreign `HOME`, and
 /// non-absolute or control-character program paths.
 pub fn register_in(inputs: &Inputs<'_>) -> std::io::Result<RegisterResult> {
+    register_in_with(inputs, |_| false)
+}
+
+pub fn register_in_with(
+    inputs: &Inputs<'_>,
+    _is_executable_file: impl Fn(&Path) -> bool,
+) -> std::io::Result<RegisterResult> {
     let skipped = RegisterResult { entry: EntryStatus::Skipped, default: DefaultStatus::Skipped };
     if inputs.identifier.ends_with(".test") {
         return Ok(skipped);
@@ -367,6 +376,7 @@ pub fn register(app: &tauri::AppHandle) {
         xdg_config_home: xdg_config_home.as_deref(),
         appimage: appimage.as_deref(),
         appdir: appdir.as_deref(),
+        launcher: None,
     };
     match register_in(&inputs) {
         Ok(res) => match &res.default {
@@ -429,6 +439,7 @@ mod tests {
                 xdg_config_home: None,
                 appimage: Some("/home/u/Applications/Hubchat.AppImage"),
                 appdir: Some("/tmp/.mount_HubchAbCdEf"),
+                launcher: None,
             }
         }
     }
@@ -702,5 +713,94 @@ mod tests {
             assert_eq!(register_in(&i4).unwrap(), skipped, "{bad:?}");
             assert!(std::fs::read_dir(&h4.dir).unwrap().next().is_none());
         }
+    }
+
+    #[test]
+    fn launcher_opt_in_uses_bare_or_quoted_launcher_with_no_cleanup() {
+        let h = TestHome::new("launcher-ok");
+        // First write the direct AppImage form, then switch to HUBCHAT_LAUNCHER.
+        let mut base = h.inputs();
+        base.appimage = Some("/home/steamos/.local/opt/hubchat/hubchat");
+        base.appdir = Some("/tmp/appimage_extracted_fedfad5");
+        assert_eq!(
+            register_in_with(&base, |_| true).unwrap(),
+            RegisterResult { entry: EntryStatus::Written, default: DefaultStatus::Set }
+        );
+
+        let launcher = "/home/steamos/.local/opt/hubchat/launch-hubchat";
+        let mut with_launcher = base.clone();
+        with_launcher.launcher = Some(launcher);
+        let is_exec = |p: &Path| p == Path::new(launcher);
+        assert_eq!(
+            register_in_with(&with_launcher, is_exec).unwrap(),
+            RegisterResult { entry: EntryStatus::Written, default: DefaultStatus::Ours }
+        );
+        let text = std::fs::read_to_string(&h.entry).unwrap();
+        assert!(
+            text.contains(
+                "\nExec=env NO_CLEANUP=1 /home/steamos/.local/opt/hubchat/launch-hubchat %u\n"
+            ),
+            "{text}"
+        );
+        assert_eq!(
+            register_in_with(&with_launcher, is_exec).unwrap(),
+            RegisterResult { entry: EntryStatus::Current, default: DefaultStatus::Ours }
+        );
+
+        // A launcher path needing quotes follows the same Desktop Entry quoting rules.
+        let spaced = "/home/u/My Scripts/launch hubchat";
+        let mut with_spaced = base;
+        with_spaced.launcher = Some(spaced);
+        assert_eq!(
+            register_in_with(&with_spaced, |p| p == Path::new(spaced)).unwrap(),
+            RegisterResult { entry: EntryStatus::Written, default: DefaultStatus::Ours }
+        );
+        let text = std::fs::read_to_string(&h.entry).unwrap();
+        assert!(
+            text.contains("\nExec=env NO_CLEANUP=1 \"/home/u/My Scripts/launch hubchat\" %u\n"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn invalid_missing_or_non_executable_launcher_falls_back_to_appimage() {
+        let cases: [(&str, Option<&str>, bool); 6] = [
+            ("unset", None, true),
+            ("empty", Some(""), true),
+            ("relative", Some("launch-hubchat"), true),
+            ("control char", Some("/opt/hubchat/launch\nsh"), true),
+            ("missing", Some("/home/steamos/.local/opt/hubchat/missing-launcher"), false),
+            ("non-executable or dir", Some("/home/steamos/.local/opt/hubchat/not-exec"), false),
+        ];
+        for (idx, (why, launcher, exec_ok)) in cases.into_iter().enumerate() {
+            let h = TestHome::new(&format!("launcher-fb-{idx}"));
+            let mut inp = h.inputs();
+            inp.appimage = Some("/home/steamos/.local/opt/hubchat/hubchat");
+            inp.appdir = Some("/tmp/appimage_extracted_fedfad5");
+            inp.launcher = launcher;
+            assert_eq!(
+                register_in_with(&inp, |_| exec_ok).unwrap(),
+                RegisterResult { entry: EntryStatus::Written, default: DefaultStatus::Set },
+                "{why}"
+            );
+            let text = std::fs::read_to_string(&h.entry).unwrap();
+            assert!(
+                text.contains(
+                    "\nExec=env APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1 /home/steamos/.local/opt/hubchat/hubchat %u\n"
+                ),
+                "{why}: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn launcher_opt_in_still_respects_test_and_foreign_home_guards() {
+        let skipped = RegisterResult { entry: EntryStatus::Skipped, default: DefaultStatus::Skipped };
+        let h = TestHome::new("launcher-guard");
+        let mut inp = h.inputs();
+        inp.identifier = "dev.orgtree.hubchat.test";
+        inp.launcher = Some("/home/steamos/.local/opt/hubchat/launch-hubchat");
+        assert_eq!(register_in_with(&inp, |_| true).unwrap(), skipped);
+        assert!(std::fs::read_dir(&h.dir).unwrap().next().is_none());
     }
 }
