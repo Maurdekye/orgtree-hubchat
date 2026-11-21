@@ -1893,6 +1893,49 @@ mod tests {
         *b.file.borrow_mut() = Err("unsafe permissions".into());
         assert!(matches!(load_with(&b).loaded, PolicyLoaded::Unreadable));
     }
+
+    // Round 1 review RED tests: H1 (missing bus hints must still try session discovery),
+    // L15 (indeterminate probe must not claim Secret Service is available).
+
+    #[test]
+    fn h1_missing_bus_hints_still_invokes_session_discovery() {
+        // Without DBUS_SESSION_BUS_ADDRESS or $XDG_RUNTIME_DIR/bus, X11 session discovery
+        // can still locate a usable Secret Service bus and MUST NOT short-circuit to Absent.
+        let mut probed = false;
+        let state = classify_dbus_probe(BusEnv::Missing { runtime_bus_exists: Some(false) }, || {
+            probed = true;
+            Ok((true, None))
+        });
+        assert!(probed, "discovery probe must actually run when address hints are missing");
+        assert_eq!(state, SecretServiceState::Present);
+    }
+
+    #[test]
+    fn l15_indeterminate_probe_log_reports_indeterminate_not_available() {
+        use linux_policy::*;
+        let stale = Identity::generate("stale").unwrap();
+        let b = FakeBackend::new(SecretServiceState::Indeterminate);
+        *b.file.borrow_mut() = Ok(Some(encode(&stale).as_str().to_string()));
+
+        // Keyring Missing under Indeterminate probe: must not claim Secret Service "is available".
+        let out_missing = load_with(&b);
+        assert!(matches!(out_missing.loaded, PolicyLoaded::Missing));
+        assert!(
+            !out_missing.log_line.contains("Secret Service is available"),
+            "log line mislabeled indeterminate probe as available: {}",
+            out_missing.log_line
+        );
+
+        // Keyring Failed under Indeterminate probe: must not claim Secret Service "is available".
+        *b.keyring.borrow_mut() = Err("bus timed out".into());
+        let out_failed = load_with(&b);
+        assert!(matches!(out_failed.loaded, PolicyLoaded::Unreadable));
+        assert!(
+            !out_failed.log_line.contains("Secret Service is available"),
+            "log line mislabeled indeterminate probe as available: {}",
+            out_failed.log_line
+        );
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -2124,6 +2167,82 @@ mod linux_file_tests {
         assert_eq!(mode_of(&store), 0o700);
         assert_eq!(mode_of(&store.join(linux_file::KEY_FILE)), 0o600);
         let _ = std::fs::remove_dir_all(&*dir);
+    }
+
+    #[test]
+    fn m5_m8_l16_system_symlink_temp_sweep_hardlink_forget_and_unresolved_account_home() {
+        let base = temp_dir("m5m8l16");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let me = Identity::generate("deck").unwrap();
+        let pw = crate::linux_scheme::account_home();
+        let home = pw.as_deref().map(|p| p.as_os_str());
+
+        // M8: interrupted temporary plaintext file must be removed by forget_with_env.
+        let dir_tmp = base.join("tmp-leftover");
+        linux_file::save_with_env(&dir_tmp, encode(&me).as_str(), home, None, pw.as_deref()).unwrap();
+        let orphan_tmp = dir_tmp
+            .join(linux_file::STORE_DIR)
+            .join(".identity.key.999999.0.0123456789abcdef.tmp");
+        std::fs::write(&orphan_tmp, encode(&me).as_str()).unwrap();
+        std::fs::set_permissions(&orphan_tmp, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(linux_file::forget_with_env(&dir_tmp, home, None, pw.as_deref()).unwrap());
+        assert!(!orphan_tmp.exists(), "forget must sweep interrupted temp plaintext files");
+
+        // M8: multiply-linked key file (nlink > 1) must be refused by forget_with_env too.
+        let dir_hl = base.join("forget-hl");
+        linux_file::save_with_env(&dir_hl, encode(&me).as_str(), home, None, pw.as_deref()).unwrap();
+        let key_hl = dir_hl.join(linux_file::STORE_DIR).join(linux_file::KEY_FILE);
+        std::fs::hard_link(&key_hl, base.join("extra-link")).unwrap();
+        assert!(
+            linux_file::forget_with_env(&dir_hl, home, None, pw.as_deref()).is_err(),
+            "forget must reject multiply-linked key file"
+        );
+
+        // L16: unresolved account_home (None) must fail closed even if HOME is euid-owned.
+        let alt_home = base.join("alt-home");
+        std::fs::create_dir_all(&alt_home).unwrap();
+        std::fs::set_permissions(&alt_home, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let dir_l16 = base.join("l16");
+        assert!(
+            linux_file::save_with_env(&dir_l16, encode(&me).as_str(), Some(alt_home.as_os_str()), None, None).is_err(),
+            "unresolved account_home must fail closed rather than trusting an arbitrary euid-owned HOME"
+        );
+
+        // M5: root-owned system symlink (e.g. /var/run -> /run or /lib -> usr/lib) must be
+        // traversed cleanly even when openat(O_DIRECTORY|O_NOFOLLOW) returns ENOTDIR on Linux.
+        let sys_link_child = [
+            Path::new("/var/run"),
+            Path::new("/bin"),
+            Path::new("/lib"),
+        ]
+        .into_iter()
+        .find_map(|p| {
+            let meta = std::fs::symlink_metadata(p).ok()?;
+            if !meta.file_type().is_symlink() {
+                return None;
+            }
+            // Pick a child directory inside the symlinked system root so the symlink is an ancestor.
+            let entries = std::fs::read_dir(p).ok()?;
+            for entry in entries.flatten() {
+                if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                    return Some(p.join(entry.file_name()));
+                }
+            }
+            Some(p.join("nonexistent-child-for-ancestor-walk"))
+        });
+        if let Some(sys_path) = sys_link_child {
+            // Walking through a root-owned system symlink to a missing leaf returns Ok(None), NOT Err(ENOTDIR).
+            let probe_path = sys_path.join("hubchat-nonexistent-leaf-check");
+            let res = linux_file::load_with_env(&probe_path, home, None, pw.as_deref());
+            assert!(
+                res.is_ok(),
+                "root-owned system symlink ancestor {} must be accepted, got {res:?}",
+                probe_path.display()
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
 
