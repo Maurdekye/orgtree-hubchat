@@ -22,6 +22,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const LINK_ENTRY: &str = "dev.orgtree.hubchat.link.desktop";
 pub const LINK_MIME: &str = "x-scheme-handler/hubchat";
+pub const APP_ENTRY: &str = "dev.orgtree.hubchat.desktop";
+pub const APP_ICON_NAME: &str = "dev.orgtree.hubchat";
 const DEFAULTS: &str = "[Default Applications]";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +31,27 @@ pub enum EntryStatus {
     Written,
     Current,
     Skipped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AppEntryStatus {
+    Written,
+    Current,
+    Other,
+    Skipped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IconStatus {
+    Written,
+    Exists,
+    Skipped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppEntryResult {
+    pub entry: AppEntryStatus,
+    pub icon: IconStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -317,6 +340,20 @@ pub fn register_in_with(
         entry: if current { EntryStatus::Current } else { EntryStatus::Written },
         default,
     })
+}
+
+/// Full text of `dev.orgtree.hubchat.desktop`.
+pub fn app_entry_text(_exec: &str, _version: &str) -> String {
+    String::new()
+}
+
+/// Self-install or repair Hubchat's visible `dev.orgtree.hubchat.desktop` and
+/// icon on Linux (Requests 2+3). Stubbed for the red test commit.
+pub fn register_app_in_with(
+    _inputs: &Inputs<'_>,
+    _is_executable_file: impl Fn(&Path) -> bool,
+) -> std::io::Result<AppEntryResult> {
+    Ok(AppEntryResult { entry: AppEntryStatus::Skipped, icon: IconStatus::Skipped })
 }
 
 /// The account's real home directory from the system password database
@@ -839,5 +876,201 @@ mod tests {
         assert!(!is_executable_regular_file(&h.dir));
         assert!(!is_executable_regular_file(&h.dir.join("missing")));
         assert!(account_home().is_some());
+    }
+
+    // Requests 2+3: visible dev.orgtree.hubchat.desktop + icon + extract-mode env
+
+    #[test]
+    fn visible_app_entry_text_carries_required_fields_without_nodisplay_or_mimetype() {
+        let extracted = app_entry_text(
+            "env APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1 /home/steamos/.local/opt/hubchat/hubchat",
+            "1.3.12",
+        );
+        assert_eq!(
+            extracted,
+            "[Desktop Entry]\nType=Application\nName=Hubchat\nComment=Chat on an Orgtree mail hub\n\
+             Exec=env APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1 /home/steamos/.local/opt/hubchat/hubchat\n\
+             Icon=dev.orgtree.hubchat\nTerminal=false\nCategories=Network;InstantMessaging;\n\
+             StartupWMClass=hubchat\nX-Hubchat-Version=1.3.12\n"
+        );
+        assert!(!extracted.contains("NoDisplay="));
+        assert!(!extracted.contains("MimeType="));
+    }
+
+    #[test]
+    fn visible_app_entry_and_icon_created_on_extracted_appimage_then_noop_and_repaired() {
+        let h = TestHome::new("app-extract");
+        let app_file = h.apps.join(APP_ENTRY);
+        let icon_file = h.dir.join(".local/share/icons/hicolor/128x128/apps/dev.orgtree.hubchat.png");
+
+        let mut inp = h.inputs();
+        inp.version = "1.3.12";
+        inp.appimage = Some("/home/steamos/.local/opt/hubchat/hubchat");
+        inp.appdir = Some("/tmp/appimage_extracted_fedfad5");
+        inp.exec_path = "/tmp/appimage_extracted_fedfad5/usr/bin/hubchat";
+
+        assert_eq!(
+            register_app_in_with(&inp, |_| false).unwrap(),
+            AppEntryResult { entry: AppEntryStatus::Written, icon: IconStatus::Written }
+        );
+        let text = std::fs::read_to_string(&app_file).unwrap();
+        assert!(text.contains(
+            "\nExec=env APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1 /home/steamos/.local/opt/hubchat/hubchat\n"
+        ));
+        assert!(!text.contains("appimage_extracted_"));
+        let icon_bytes = std::fs::read(&icon_file).unwrap();
+        assert!(icon_bytes.starts_with(b"\x89PNG\r\n\x1a\n"), "valid PNG icon installed");
+
+        // Second start is a no-op.
+        assert_eq!(
+            register_app_in_with(&inp, |_| false).unwrap(),
+            AppEntryResult { entry: AppEntryStatus::Current, icon: IconStatus::Exists }
+        );
+
+        // Update / moved AppImage / missing NO_CLEANUP repairs our managed entry and preserves icon.
+        let mut moved = inp.clone();
+        moved.version = "1.3.13";
+        moved.appimage = Some("/home/steamos/Applications/Hubchat.AppImage");
+        assert_eq!(
+            register_app_in_with(&moved, |_| false).unwrap(),
+            AppEntryResult { entry: AppEntryStatus::Written, icon: IconStatus::Exists }
+        );
+        let updated = std::fs::read_to_string(&app_file).unwrap();
+        assert!(updated.contains(
+            "\nExec=env APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1 /home/steamos/Applications/Hubchat.AppImage\n"
+        ));
+        assert!(updated.contains("\nX-Hubchat-Version=1.3.13\n"));
+    }
+
+    #[test]
+    fn visible_app_entry_honors_hubchat_launcher_and_mounted_appimage() {
+        let h = TestHome::new("app-launcher");
+        let app_file = h.apps.join(APP_ENTRY);
+
+        // FUSE-mounted AppImage writes plain bare Exec without extract flags.
+        let mut mounted = h.inputs();
+        mounted.appimage = Some("/home/u/Applications/Hubchat.AppImage");
+        mounted.appdir = Some("/tmp/.mount_HubchAbCdEf");
+        assert_eq!(
+            register_app_in_with(&mounted, |_| false).unwrap(),
+            AppEntryResult { entry: AppEntryStatus::Written, icon: IconStatus::Written }
+        );
+        let text = std::fs::read_to_string(&app_file).unwrap();
+        assert!(text.contains("\nExec=/home/u/Applications/Hubchat.AppImage\n"), "{text}");
+
+        // Valid HUBCHAT_LAUNCHER wins over AppImage and carries NO_CLEANUP=1.
+        let launcher = "/home/steamos/.local/opt/hubchat/launch-hubchat";
+        let mut with_launcher = mounted.clone();
+        with_launcher.appdir = Some("/tmp/appimage_extracted_fedfad5");
+        with_launcher.launcher = Some(launcher);
+        assert_eq!(
+            register_app_in_with(&with_launcher, |p| p == Path::new(launcher)).unwrap(),
+            AppEntryResult { entry: AppEntryStatus::Written, icon: IconStatus::Exists }
+        );
+        let text = std::fs::read_to_string(&app_file).unwrap();
+        assert!(
+            text.contains("\nExec=env NO_CLEANUP=1 /home/steamos/.local/opt/hubchat/launch-hubchat\n"),
+            "{text}"
+        );
+
+        // Invalid/missing HUBCHAT_LAUNCHER falls back to extract-mode AppImage.
+        let mut bad_launcher = with_launcher;
+        bad_launcher.launcher = Some("/home/steamos/missing-launcher");
+        assert_eq!(
+            register_app_in_with(&bad_launcher, |_| false).unwrap(),
+            AppEntryResult { entry: AppEntryStatus::Written, icon: IconStatus::Exists }
+        );
+        let text = std::fs::read_to_string(&app_file).unwrap();
+        assert!(
+            text.contains(
+                "\nExec=env APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1 /home/u/Applications/Hubchat.AppImage\n"
+            ),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn visible_app_entry_preserves_handwritten_entry_custom_icon_and_other_files() {
+        let h = TestHome::new("app-handwritten");
+        std::fs::create_dir_all(&h.apps).unwrap();
+        let app_file = h.apps.join(APP_ENTRY);
+        let handwritten = "[Desktop Entry]\nType=Application\nName=Hubchat\n\
+            Exec=/home/steamos/.local/opt/hubchat/launch-hubchat\nIcon=/home/steamos/.local/opt/hubchat/hubchat.png\n";
+        std::fs::write(&app_file, handwritten).unwrap();
+
+        let mut inp = h.inputs();
+        inp.appdir = Some("/tmp/appimage_extracted_fedfad5");
+        assert_eq!(
+            register_app_in_with(&inp, |_| false).unwrap(),
+            AppEntryResult { entry: AppEntryStatus::Other, icon: IconStatus::Skipped }
+        );
+        assert_eq!(std::fs::read_to_string(&app_file).unwrap(), handwritten);
+        assert!(!h.dir.join(".local/share/icons").exists());
+
+        // Commented or other-section X-Hubchat-Version= does not claim ownership.
+        let tricky = "[Desktop Entry]\nType=Application\nName=Hubchat\n# X-Hubchat-Version=1.3.11\n\
+            Exec=/opt/custom\n\n[Other]\nX-Hubchat-Version=1.3.11\n";
+        std::fs::write(&app_file, tricky).unwrap();
+        assert_eq!(
+            register_app_in_with(&inp, |_| false).unwrap(),
+            AppEntryResult { entry: AppEntryStatus::Other, icon: IconStatus::Skipped }
+        );
+        assert_eq!(std::fs::read_to_string(&app_file).unwrap(), tricky);
+
+        // When our entry is created, an existing custom icon is preserved byte-for-byte.
+        std::fs::remove_file(&app_file).unwrap();
+        let icon_file = h.dir.join(".local/share/icons/hicolor/128x128/apps/dev.orgtree.hubchat.png");
+        std::fs::create_dir_all(icon_file.parent().unwrap()).unwrap();
+        std::fs::write(&icon_file, b"custom-icon").unwrap();
+        assert_eq!(
+            register_app_in_with(&inp, |_| false).unwrap(),
+            AppEntryResult { entry: AppEntryStatus::Written, icon: IconStatus::Exists }
+        );
+        assert_eq!(std::fs::read(&icon_file).unwrap(), b"custom-icon");
+    }
+
+    #[test]
+    fn visible_app_entry_skips_deb_test_and_foreign_home_and_survives_icon_failure() {
+        let skipped = AppEntryResult { entry: AppEntryStatus::Skipped, icon: IconStatus::Skipped };
+
+        // Installed .deb (no APPIMAGE, no valid HUBCHAT_LAUNCHER) does not write a duplicate menu entry.
+        let h_deb = TestHome::new("app-deb");
+        let mut deb = h_deb.inputs();
+        deb.appimage = None;
+        deb.appdir = None;
+        deb.exec_path = "/usr/bin/hubchat";
+        assert_eq!(register_app_in_with(&deb, |_| false).unwrap(), skipped);
+        assert!(std::fs::read_dir(&h_deb.dir).unwrap().next().is_none());
+
+        // .test build skipped.
+        let h_test = TestHome::new("app-test");
+        let mut t = h_test.inputs();
+        t.identifier = "dev.orgtree.hubchat.test";
+        assert_eq!(register_app_in_with(&t, |_| true).unwrap(), skipped);
+
+        // Foreign HOME skipped.
+        let h_home = TestHome::new("app-foreign-home");
+        let foreign = h_home.dir.join("other");
+        let foreign_s = foreign.to_string_lossy().into_owned();
+        let mut fh = h_home.inputs();
+        fh.env_home = Some(&foreign_s);
+        assert_eq!(register_app_in_with(&fh, |_| true).unwrap(), skipped);
+
+        // Failed optional icon write still writes visible desktop entry and leaves link registration working.
+        let h_fail = TestHome::new("app-icon-fail");
+        let icons_blocker = h_fail.dir.join(".local/share/icons");
+        std::fs::create_dir_all(icons_blocker.parent().unwrap()).unwrap();
+        std::fs::write(&icons_blocker, b"blocker").unwrap();
+        let mut fail_inp = h_fail.inputs();
+        fail_inp.appdir = Some("/tmp/appimage_extracted_fedfad5");
+        assert_eq!(
+            register_app_in_with(&fail_inp, |_| false).unwrap(),
+            AppEntryResult { entry: AppEntryStatus::Written, icon: IconStatus::Skipped }
+        );
+        assert!(h_fail.apps.join(APP_ENTRY).is_file());
+        assert_eq!(
+            register_in_with(&fail_inp, |_| false).unwrap(),
+            RegisterResult { entry: EntryStatus::Written, default: DefaultStatus::Set }
+        );
     }
 }
