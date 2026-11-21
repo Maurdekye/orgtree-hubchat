@@ -198,6 +198,27 @@ fn must_wipe(owner: Option<&str>, has_data: bool, new: &str, brand_new: bool) ->
     has_data && owner.map_or(brand_new, |o| o != new)
 }
 
+/// Whether an identity loaded from `storage` may start against the local store.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+enum LoadedDecision {
+    Accept,
+    /// Permissions-only fallback file disagrees with local store owner: show LostKey.
+    RejectMismatch { owner: Option<String> },
+    /// Permissions-only fallback file exists with no local identity data: ignore orphan.
+    IgnoreOrphan,
+}
+
+#[allow(dead_code)]
+fn decide_loaded_identity(
+    _storage: crate::secrets::KeyStorage,
+    _identity_addr: &str,
+    _store_owner: Option<&str>,
+    _had_identity: bool,
+) -> LoadedDecision {
+    LoadedDecision::Accept
+}
+
 struct ShellHost {
     staging: PathBuf,
     app: OnceLock<AppHandle>,
@@ -810,7 +831,8 @@ fn rand_u16() -> u16 {
 
 #[cfg(test)]
 mod key_tests {
-    use super::must_wipe;
+    use super::{decide_loaded_identity, must_wipe, LoadedDecision};
+    use crate::secrets::KeyStorage;
 
     #[test]
     fn a_new_identity_never_inherits_another_identitys_local_data() {
@@ -826,6 +848,37 @@ mod key_tests {
         // can't be its owner; one brought here may be, so it is kept
         assert!(must_wipe(None, true, "pat.222222", true));
         assert!(!must_wipe(None, true, "alex.111111", false));
+    }
+
+    #[test]
+    fn permissions_only_fallback_never_revives_forgotten_identity_or_attaches_to_other_chats() {
+        // Matching recorded owner -> accepted.
+        assert_eq!(
+            decide_loaded_identity(KeyStorage::FilePermissionsOnly, "alex.111111", Some("alex.111111"), true),
+            LoadedDecision::Accept
+        );
+        // Different recorded owner -> refused with LostKey for recorded owner.
+        assert_eq!(
+            decide_loaded_identity(KeyStorage::FilePermissionsOnly, "alex.111111", Some("pat.222222"), true),
+            LoadedDecision::RejectMismatch {
+                owner: Some("pat.222222".into())
+            }
+        );
+        // Existing local data with unknown owner -> refused with LostKey.
+        assert_eq!(
+            decide_loaded_identity(KeyStorage::FilePermissionsOnly, "alex.111111", None, true),
+            LoadedDecision::RejectMismatch { owner: None }
+        );
+        // Fresh/wiped store (after sign-out or Start over) -> orphan ignored, never revived.
+        assert_eq!(
+            decide_loaded_identity(KeyStorage::FilePermissionsOnly, "alex.111111", None, false),
+            LoadedDecision::IgnoreOrphan
+        );
+        // Keyring keeps its existing behavior.
+        assert_eq!(
+            decide_loaded_identity(KeyStorage::Keyring, "alex.111111", None, false),
+            LoadedDecision::Accept
+        );
     }
 }
 

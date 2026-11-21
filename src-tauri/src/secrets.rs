@@ -33,6 +33,130 @@ fn decode(s: &str) -> Option<Identity> {
     Identity::from_parts(id, secret).ok()
 }
 
+/// Where this device's active identity key is stored.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyStorage {
+    /// OS key store (Credential Manager, macOS Keychain, Linux Secret Service, Android Keystore).
+    Keyring,
+    /// Linux-only fallback when no Secret Service exists: a private file protected
+    /// only by user file permissions (0700 dir, 0600 file).
+    #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+    FilePermissionsOnly,
+}
+
+/// Whether a Linux Secret Service (`org.freedesktop.secrets`) is reachable.
+#[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SecretServiceState {
+    /// Owned on the session bus or listed as activatable.
+    Present,
+    /// Confirmed absent (no session bus, or bus confirmed neither owned nor activatable).
+    Absent,
+    /// Could not determine (bus error or timeout); fail closed and preserve keyring behavior.
+    Indeterminate,
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BusEnv {
+    Configured,
+    Disabled { runtime_bus_exists: bool },
+    Missing { runtime_bus_exists: Option<bool> },
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[allow(dead_code)]
+pub(crate) fn classify_dbus_probe(
+    bus_env: BusEnv,
+    probe: impl FnOnce() -> Result<(bool, Option<Vec<String>>), ()>,
+) -> SecretServiceState {
+    let _ = (bus_env, probe);
+    SecretServiceState::Present
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[allow(dead_code)]
+pub(crate) mod posix_trust {
+    use std::path::Path;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) struct StatInfo {
+        pub is_dir: bool,
+        pub is_reg: bool,
+        pub is_symlink: bool,
+        pub uid: u32,
+        pub mode: u32,
+        pub nlink: u64,
+        pub size: i64,
+    }
+
+    pub(crate) const MAX_KEY_BYTES: i64 = 4096;
+
+    pub(crate) fn validate_clean_absolute(_path: &Path) -> Result<(), &'static str> {
+        Ok(())
+    }
+
+    pub(crate) fn judge_ancestor(_euid: u32, _st: StatInfo) -> Result<(), &'static str> {
+        Ok(())
+    }
+
+    pub(crate) fn judge_app_dir(_euid: u32, _st: StatInfo) -> Result<(), &'static str> {
+        Ok(())
+    }
+
+    pub(crate) fn judge_store_dir(_euid: u32, _st: StatInfo) -> Result<(), &'static str> {
+        Ok(())
+    }
+
+    pub(crate) fn judge_key_file(_euid: u32, _st: StatInfo) -> Result<(), &'static str> {
+        Ok(())
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[allow(dead_code)]
+pub(crate) mod linux_policy {
+    use super::{KeyStorage, Main, SecretServiceState};
+    use hubchat_core::Identity;
+
+    pub(crate) enum PolicyLoaded {
+        Found { identity: Identity, storage: KeyStorage },
+        Missing,
+        Unreadable,
+    }
+
+    pub(crate) trait Backend {
+        fn probe(&self) -> SecretServiceState;
+        fn keyring_load(&self) -> Main;
+        fn keyring_save(&self, me: &Identity) -> Result<(), String>;
+        fn keyring_forget(&self) -> Result<(), String>;
+        fn file_load(&self) -> Result<Option<String>, String>;
+        fn file_save(&self, encoded: &str) -> Result<(), String>;
+        fn file_forget(&self) -> Result<(), String>;
+    }
+
+    pub(crate) fn load_with(b: &impl Backend) -> PolicyLoaded {
+        match b.keyring_load() {
+            Main::Found(identity) => PolicyLoaded::Found {
+                identity,
+                storage: KeyStorage::Keyring,
+            },
+            Main::Missing(_) => PolicyLoaded::Missing,
+            Main::Failed(_) => PolicyLoaded::Unreadable,
+        }
+    }
+
+    pub(crate) fn save_with(b: &impl Backend, me: &Identity) -> Result<KeyStorage, String> {
+        b.keyring_save(me)?;
+        Ok(KeyStorage::Keyring)
+    }
+
+    pub(crate) fn forget_with(b: &impl Backend) -> Result<(), String> {
+        b.keyring_forget()
+    }
+}
+
 /// What start-up found.
 pub enum Loaded {
     Found(Identity),
@@ -381,6 +505,312 @@ mod tests {
         assert!(keep_backup(&dir, &me).unwrap().0.starts_with("the backup didn't open"));
         assert_eq!(backup::load(&dir).unwrap().as_deref(), Some(encode(&me).as_str()));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dbus_probe_confirms_absence_only_when_no_bus_or_not_owned_and_not_activatable() {
+        // No session bus configured and no $XDG_RUNTIME_DIR/bus -> confirmed absent.
+        assert_eq!(
+            classify_dbus_probe(BusEnv::Missing { runtime_bus_exists: Some(false) }, || {
+                panic!("must not connect when no session bus exists")
+            }),
+            SecretServiceState::Absent
+        );
+        // Chromium DBUS_SESSION_BUS_ADDRESS=disabled: without $XDG_RUNTIME_DIR/bus -> absent.
+        assert_eq!(
+            classify_dbus_probe(BusEnv::Disabled { runtime_bus_exists: false }, || {
+                panic!("must not connect when bus is disabled without runtime bus")
+            }),
+            SecretServiceState::Absent
+        );
+        // DBUS_SESSION_BUS_ADDRESS=disabled: WITH an existing runtime bus -> fail closed.
+        assert_eq!(
+            classify_dbus_probe(BusEnv::Disabled { runtime_bus_exists: true }, || Ok((false, Some(vec![])))),
+            SecretServiceState::Indeterminate
+        );
+        // $XDG_RUNTIME_DIR/bus stat error (e.g. permission denied) -> fail closed.
+        assert_eq!(
+            classify_dbus_probe(BusEnv::Missing { runtime_bus_exists: None }, || Ok((false, Some(vec![])))),
+            SecretServiceState::Indeterminate
+        );
+        // Configured bus: NameHasOwner=true -> Present.
+        assert_eq!(
+            classify_dbus_probe(BusEnv::Configured, || Ok((true, None))),
+            SecretServiceState::Present
+        );
+        // Configured bus: idle but activatable org.freedesktop.secrets -> Present.
+        assert_eq!(
+            classify_dbus_probe(BusEnv::Configured, || {
+                Ok((false, Some(vec!["org.freedesktop.Notifications".into(), "org.freedesktop.secrets".into()])))
+            }),
+            SecretServiceState::Present
+        );
+        // Configured bus: neither owned nor activatable (Steam Frame VR bus) -> Absent.
+        assert_eq!(
+            classify_dbus_probe(BusEnv::Configured, || {
+                Ok((false, Some(vec!["org.freedesktop.Notifications".into()])))
+            }),
+            SecretServiceState::Absent
+        );
+        // Configured bus: connect or query error / timeout -> Indeterminate (fail closed).
+        assert_eq!(
+            classify_dbus_probe(BusEnv::Configured, || Err(())),
+            SecretServiceState::Indeterminate
+        );
+        // Runtime bus exists, connect fails -> Indeterminate (fail closed).
+        assert_eq!(
+            classify_dbus_probe(BusEnv::Missing { runtime_bus_exists: Some(true) }, || Err(())),
+            SecretServiceState::Indeterminate
+        );
+    }
+
+    #[test]
+    fn posix_trust_enforces_user_owned_0700_dir_0600_file_ancestors_links_and_types() {
+        use posix_trust::*;
+        let euid = 1000;
+        let dir_ok = |uid, mode| StatInfo {
+            is_dir: true,
+            is_reg: false,
+            is_symlink: false,
+            uid,
+            mode,
+            nlink: 2,
+            size: 4096,
+        };
+        let file_ok = |uid, mode, nlink, size| StatInfo {
+            is_dir: false,
+            is_reg: true,
+            is_symlink: false,
+            uid,
+            mode,
+            nlink,
+            size,
+        };
+
+        assert!(validate_clean_absolute(Path::new("/home/deck/.local/share/dev.orgtree.hubchat")).is_ok());
+        assert!(validate_clean_absolute(Path::new("relative/dir")).is_err());
+        assert!(validate_clean_absolute(Path::new("/home/deck/../other/.local/share")).is_err());
+
+        // Ancestors: root 0755, root sticky /tmp 01777, euid 0755/0700 ok;
+        // foreign uid, non-sticky 0777/0775, euid 0775/0777 rejected.
+        assert!(judge_ancestor(euid, dir_ok(0, 0o755)).is_ok());
+        assert!(judge_ancestor(euid, dir_ok(0, 0o1777)).is_ok());
+        assert!(judge_ancestor(euid, dir_ok(euid, 0o755)).is_ok());
+        assert!(judge_ancestor(euid, dir_ok(euid, 0o700)).is_ok());
+        assert!(judge_ancestor(euid, dir_ok(1001, 0o755)).is_err());
+        assert!(judge_ancestor(euid, dir_ok(0, 0o777)).is_err());
+        assert!(judge_ancestor(euid, dir_ok(0, 0o775)).is_err());
+        assert!(judge_ancestor(euid, dir_ok(euid, 0o775)).is_err());
+        assert!(judge_ancestor(euid, dir_ok(euid, 0o777)).is_err());
+
+        // App dir: must be euid-owned dir, not group/world-writable.
+        assert!(judge_app_dir(euid, dir_ok(euid, 0o700)).is_ok());
+        assert!(judge_app_dir(euid, dir_ok(euid, 0o755)).is_ok());
+        assert!(judge_app_dir(euid, dir_ok(0, 0o1777)).is_err());
+        assert!(judge_app_dir(euid, dir_ok(0, 0o755)).is_err());
+        assert!(judge_app_dir(euid, dir_ok(1001, 0o700)).is_err());
+        assert!(judge_app_dir(euid, dir_ok(euid, 0o775)).is_err());
+
+        // Key store subdir: strictly euid-owned 0700 dir.
+        assert!(judge_store_dir(euid, dir_ok(euid, 0o700)).is_ok());
+        assert!(judge_store_dir(euid, dir_ok(euid, 0o755)).is_err());
+        assert!(judge_store_dir(euid, dir_ok(euid, 0o750)).is_err());
+        assert!(judge_store_dir(euid, dir_ok(euid, 0o770)).is_err());
+        assert!(judge_store_dir(euid, dir_ok(0, 0o700)).is_err());
+        assert!(judge_store_dir(euid, file_ok(euid, 0o700, 1, 0)).is_err());
+
+        // Key file: regular, euid-owned, no group/other bits, nlink==1, bounded size.
+        assert!(judge_key_file(euid, file_ok(euid, 0o600, 1, 128)).is_ok());
+        assert!(judge_key_file(euid, file_ok(euid, 0o400, 1, 128)).is_ok());
+        assert!(judge_key_file(euid, file_ok(euid, 0o640, 1, 128)).is_err());
+        assert!(judge_key_file(euid, file_ok(euid, 0o644, 1, 128)).is_err());
+        assert!(judge_key_file(euid, file_ok(euid, 0o600, 2, 128)).is_err());
+        assert!(judge_key_file(euid, file_ok(1001, 0o600, 1, 128)).is_err());
+        assert!(judge_key_file(euid, file_ok(euid, 0o600, 1, MAX_KEY_BYTES + 1)).is_err());
+        // FIFO / non-regular object rejected.
+        assert!(judge_key_file(
+            euid,
+            StatInfo {
+                is_dir: false,
+                is_reg: false,
+                is_symlink: false,
+                uid: euid,
+                mode: 0o600,
+                nlink: 1,
+                size: 0,
+            }
+        )
+        .is_err());
+    }
+
+    struct FakeBackend {
+        probe: std::cell::Cell<SecretServiceState>,
+        keyring: std::cell::RefCell<Result<Option<String>, String>>,
+        keyring_save_err: std::cell::RefCell<Option<String>>,
+        keyring_forget_err: std::cell::RefCell<Option<String>>,
+        file: std::cell::RefCell<Result<Option<String>, String>>,
+        file_save_err: std::cell::RefCell<Option<String>>,
+        file_forget_err: std::cell::RefCell<Option<String>>,
+        file_reads: std::cell::Cell<usize>,
+        file_writes: std::cell::Cell<usize>,
+        keyring_writes: std::cell::Cell<usize>,
+    }
+
+    impl FakeBackend {
+        fn new(probe: SecretServiceState) -> Self {
+            Self {
+                probe: std::cell::Cell::new(probe),
+                keyring: std::cell::RefCell::new(Ok(None)),
+                keyring_save_err: std::cell::RefCell::new(None),
+                keyring_forget_err: std::cell::RefCell::new(None),
+                file: std::cell::RefCell::new(Ok(None)),
+                file_save_err: std::cell::RefCell::new(None),
+                file_forget_err: std::cell::RefCell::new(None),
+                file_reads: std::cell::Cell::new(0),
+                file_writes: std::cell::Cell::new(0),
+                keyring_writes: std::cell::Cell::new(0),
+            }
+        }
+    }
+
+    impl linux_policy::Backend for FakeBackend {
+        fn probe(&self) -> SecretServiceState {
+            self.probe.get()
+        }
+        fn keyring_load(&self) -> Main {
+            match self.keyring.borrow().as_ref() {
+                Ok(Some(s)) => decode(s).map_or_else(|| Main::Missing("damaged".into()), Main::Found),
+                Ok(None) => Main::Missing("no key in keyring".into()),
+                Err(e) => Main::Failed(e.clone()),
+            }
+        }
+        fn keyring_save(&self, me: &Identity) -> Result<(), String> {
+            self.keyring_writes.set(self.keyring_writes.get() + 1);
+            if let Some(e) = self.keyring_save_err.borrow().as_ref() {
+                return Err(e.clone());
+            }
+            *self.keyring.borrow_mut() = Ok(Some(encode(me)));
+            Ok(())
+        }
+        fn keyring_forget(&self) -> Result<(), String> {
+            if let Some(e) = self.keyring_forget_err.borrow().as_ref() {
+                return Err(e.clone());
+            }
+            *self.keyring.borrow_mut() = Ok(None);
+            Ok(())
+        }
+        fn file_load(&self) -> Result<Option<String>, String> {
+            self.file_reads.set(self.file_reads.get() + 1);
+            self.file.borrow().clone()
+        }
+        fn file_save(&self, encoded: &str) -> Result<(), String> {
+            self.file_writes.set(self.file_writes.get() + 1);
+            if let Some(e) = self.file_save_err.borrow().as_ref() {
+                return Err(e.clone());
+            }
+            *self.file.borrow_mut() = Ok(Some(encoded.to_string()));
+            Ok(())
+        }
+        fn file_forget(&self) -> Result<(), String> {
+            if let Some(e) = self.file_forget_err.borrow().as_ref() {
+                return Err(e.clone());
+            }
+            *self.file.borrow_mut() = Ok(None);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn linux_policy_never_uses_file_when_secret_service_is_present_or_indeterminate() {
+        use linux_policy::*;
+        let stale = Identity::generate("stale").unwrap();
+        let fresh = Identity::generate("fresh").unwrap();
+
+        for state in [SecretServiceState::Present, SecretServiceState::Indeterminate] {
+            // 1. Keyring NoEntry + older fallback file -> Missing (file NEVER read)
+            let b = FakeBackend::new(state);
+            *b.file.borrow_mut() = Ok(Some(encode(&stale)));
+            assert!(matches!(load_with(&b), PolicyLoaded::Missing), "state={state:?}");
+            assert_eq!(b.file_reads.get(), 0, "must not read file when state={state:?}");
+
+            // 2. Keyring locked / denied / timeout / bus error + older fallback file -> Unreadable
+            *b.keyring.borrow_mut() = Err("collection locked".into());
+            assert!(matches!(load_with(&b), PolicyLoaded::Unreadable), "state={state:?}");
+            assert_eq!(b.file_reads.get(), 0);
+
+            // 3. Keyring damaged credential + older fallback file -> Missing
+            *b.keyring.borrow_mut() = Ok(Some("not-a-key".into()));
+            assert!(matches!(load_with(&b), PolicyLoaded::Missing), "state={state:?}");
+            assert_eq!(b.file_reads.get(), 0);
+
+            // 4. Keyring save failure -> Err (NEVER falls back to file)
+            *b.keyring_save_err.borrow_mut() = Some("unlock denied".into());
+            assert!(save_with(&b, &fresh).is_err(), "state={state:?}");
+            assert_eq!(b.file_writes.get(), 0);
+
+            // 5. Keyring forget failure -> Err (preserves keyring error)
+            *b.keyring_forget_err.borrow_mut() = Some("bus timeout".into());
+            assert!(forget_with(&b).is_err(), "state={state:?}");
+        }
+    }
+
+    #[test]
+    fn linux_policy_uses_file_only_when_secret_service_is_confirmed_absent_and_handles_appearance() {
+        use linux_policy::*;
+        let alice = Identity::generate("alice").unwrap();
+        let b = FakeBackend::new(SecretServiceState::Absent);
+
+        // Save under Absent -> file storage, never touches keyring.
+        assert_eq!(save_with(&b, &alice).unwrap(), KeyStorage::FilePermissionsOnly);
+        assert_eq!(b.keyring_writes.get(), 0);
+        assert_eq!(b.file_writes.get(), 1);
+
+        // Load under Absent -> Found from FilePermissionsOnly.
+        match load_with(&b) {
+            PolicyLoaded::Found { identity, storage } => {
+                assert_eq!(storage, KeyStorage::FilePermissionsOnly);
+                assert_eq!(identity.id(), alice.id());
+                assert_eq!(identity.secret(), alice.secret());
+            }
+            _ => panic!("expected Found from FilePermissionsOnly"),
+        }
+
+        // Secret Service appears later -> load does NOT silently read or auto-migrate the file;
+        // returns Missing (LostKey screen with chats intact), keeping file untouched until user acts.
+        b.probe.set(SecretServiceState::Present);
+        let reads_before = b.file_reads.get();
+        assert!(matches!(load_with(&b), PolicyLoaded::Missing));
+        assert_eq!(b.file_reads.get(), reads_before);
+        assert!(b.file.borrow().as_ref().unwrap().is_some(), "file preserved until user acts");
+
+        // User restores Alice into Secret Service -> saved in keyring AND stale file removed!
+        assert_eq!(save_with(&b, &alice).unwrap(), KeyStorage::Keyring);
+        assert_eq!(*b.file.borrow(), Ok(None), "stale fallback file must be removed on keyring save");
+
+        // If Secret Service later disappears again -> stale file is gone, returns Missing.
+        b.probe.set(SecretServiceState::Absent);
+        assert!(matches!(load_with(&b), PolicyLoaded::Missing));
+
+        // Save under Absent, then forget under Absent -> succeeds without keyring and removes file.
+        assert_eq!(save_with(&b, &alice).unwrap(), KeyStorage::FilePermissionsOnly);
+        forget_with(&b).unwrap();
+        assert_eq!(*b.file.borrow(), Ok(None));
+        assert!(matches!(load_with(&b), PolicyLoaded::Missing));
+
+        // Forget under Present removes BOTH keyring and any leftover fallback file.
+        b.probe.set(SecretServiceState::Present);
+        *b.keyring.borrow_mut() = Ok(Some(encode(&alice)));
+        *b.file.borrow_mut() = Ok(Some(encode(&alice)));
+        forget_with(&b).unwrap();
+        assert_eq!(*b.keyring.borrow(), Ok(None));
+        assert_eq!(*b.file.borrow(), Ok(None));
+
+        // Corrupt or untrusted file under Absent -> Missing / Unreadable.
+        b.probe.set(SecretServiceState::Absent);
+        *b.file.borrow_mut() = Ok(Some("corrupt".into()));
+        assert!(matches!(load_with(&b), PolicyLoaded::Missing));
+        *b.file.borrow_mut() = Err("unsafe permissions".into());
+        assert!(matches!(load_with(&b), PolicyLoaded::Unreadable));
     }
 }
 
