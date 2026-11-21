@@ -265,7 +265,10 @@ pub(crate) mod posix_trust {
         if (st.mode & 0o7177) != 0 {
             return Err("key file permissions are accessible to other users");
         }
-        if st.nlink != 1 {
+        if st.nlink == 0 {
+            return Err("key file was unlinked during open");
+        }
+        if st.nlink > 1 {
             return Err("key file must not have additional hard links");
         }
         if st.size < 0 || st.size > MAX_KEY_BYTES {
@@ -1132,27 +1135,40 @@ mod linux_file {
             return Ok(None);
         };
         let key_name = CString::new(KEY_FILE).unwrap();
-        let fd = unsafe {
-            libc::openat(
-                store_fd.as_raw_fd(),
-                key_name.as_ptr(),
-                libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
-            )
+        const MAX_REPLACE_RETRIES: usize = 32;
+        let key_fd = {
+            let mut opened = None;
+            for _ in 0..MAX_REPLACE_RETRIES {
+                let fd = unsafe {
+                    libc::openat(
+                        store_fd.as_raw_fd(),
+                        key_name.as_ptr(),
+                        libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
+                    )
+                };
+                if fd < 0 {
+                    let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+                    if errno == libc::ENOENT {
+                        return Ok(None);
+                    }
+                    if errno == libc::ELOOP {
+                        return Err("key file cannot be a symbolic link".into());
+                    }
+                    return Err("could not open key file".into());
+                }
+                // SAFETY: `fd` is a freshly opened valid descriptor.
+                let cand = unsafe { OwnedFd::from_raw_fd(fd) };
+                let st = fstat_fd(cand.as_raw_fd())?;
+                if st.is_reg && st.nlink == 0 {
+                    // Replaced by a concurrent atomic rename or unlinked between openat and fstat.
+                    continue;
+                }
+                judge_key_file(uid, st).map_err(str::to_string)?;
+                opened = Some(cand);
+                break;
+            }
+            opened.ok_or_else(|| "key file changed concurrently".to_string())?
         };
-        if fd < 0 {
-            let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
-            if errno == libc::ENOENT {
-                return Ok(None);
-            }
-            if errno == libc::ELOOP {
-                return Err("key file cannot be a symbolic link".into());
-            }
-            return Err("could not open key file".into());
-        }
-        // SAFETY: `fd` is a freshly opened valid descriptor.
-        let key_fd = unsafe { OwnedFd::from_raw_fd(fd) };
-        let st = fstat_fd(key_fd.as_raw_fd())?;
-        judge_key_file(uid, st).map_err(str::to_string)?;
 
         let mut file = std::fs::File::from(key_fd);
         let mut buf = Vec::new();
@@ -1190,8 +1206,18 @@ mod linux_file {
             .ok_or_else(|| "could not prepare key store directory".to_string())?;
 
         let key_name = CString::new(KEY_FILE).unwrap();
-        if let Some(existing) = fstatat_nofollow(store_fd.as_raw_fd(), &key_name)? {
-            judge_key_file(uid, existing).map_err(str::to_string)?;
+        const MAX_REPLACE_RETRIES: usize = 32;
+        for attempt in 0..MAX_REPLACE_RETRIES {
+            match fstatat_nofollow(store_fd.as_raw_fd(), &key_name)? {
+                None => break,
+                Some(existing) if existing.is_reg && existing.nlink == 0 && attempt + 1 < MAX_REPLACE_RETRIES => {
+                    continue;
+                }
+                Some(existing) => {
+                    judge_key_file(uid, existing).map_err(str::to_string)?;
+                    break;
+                }
+            }
         }
 
         let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
@@ -1633,6 +1659,7 @@ mod tests {
         assert!(judge_key_file(euid, file_ok(euid, 0o4600, 1, 128)).is_err());
         assert!(judge_key_file(euid, file_ok(euid, 0o640, 1, 128)).is_err());
         assert!(judge_key_file(euid, file_ok(euid, 0o644, 1, 128)).is_err());
+        assert!(judge_key_file(euid, file_ok(euid, 0o600, 0, 128)).is_err());
         assert!(judge_key_file(euid, file_ok(euid, 0o600, 2, 128)).is_err());
         assert!(judge_key_file(euid, file_ok(1001, 0o600, 1, 128)).is_err());
         assert!(judge_key_file(euid, file_ok(euid, 0o600, 1, MAX_KEY_BYTES + 1)).is_err());
