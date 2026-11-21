@@ -458,8 +458,10 @@ fn rename_noreplace(src: &Path, dest: &Path) -> std::io::Result<()> {
 /// Publish a brand-new file with atomic no-replace semantics: on Linux prefers
 /// `renameat2(RENAME_NOREPLACE)` from a complete synced temp file, falling back
 /// to `hard_link`. Returns `Ok(false)` without touching `file` if another writer
-/// created `file` first or if the filesystem supports neither atomic primitive
-/// (never writing partial bytes directly into the visible final pathname).
+/// created `file` first.
+/// Known Low (accepted): on filesystems supporting neither `RENAME_NOREPLACE`
+/// nor hard links, first install conservatively skips publication rather than
+/// writing partial bytes directly into the visible final pathname.
 fn write_no_replace(file: &Path, bytes: &[u8]) -> std::io::Result<bool> {
     #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
     let mut guard = write_temp_exclusive(file, bytes)?;
@@ -617,19 +619,28 @@ fn recover_displaced_entry(displaced: &Path, dest: &Path, our_bytes: &[u8]) {
     // Only attempt to swap the displaced manual file back if `dest` still holds
     // our just-written bytes. If a newer third edit arrived at `dest`, or if
     // rollback fails, leave BOTH files in place and NEVER unlink the displaced file.
+    // Known Low (accepted): in that rare concurrent-repair race, the displaced
+    // manual edit can remain preserved under the temporary filename (`displaced`),
+    // and this exceptional rollback path reads competing paths directly without
+    // the ordinary snapshot size/type guard.
     if std::fs::read(dest).is_ok_and(|cur| cur == our_bytes) && rename_exchange(displaced, dest).is_ok() {
         if std::fs::read(displaced).is_ok_and(|back| back == our_bytes) {
             let _ = std::fs::remove_file(displaced);
             return;
         }
     }
-    tracing::warn!("Hubchat desktop entry changed during repair; preserved both files without deleting displaced entry");
+    tracing::warn!(
+        path = %displaced.display(),
+        "Hubchat desktop entry changed during repair; preserved both files without deleting displaced entry"
+    );
 }
 
 /// Replace an existing managed entry only if its inode, timestamps, and bytes
 /// are unchanged right up to publication. On Linux uses `renameat2(RENAME_EXCHANGE)`,
 /// disarms cleanup before inspecting the displaced file so a concurrent manual
-/// edit is never unlinked, and skips repair if the filesystem lacks atomic exchange.
+/// edit is never unlinked.
+/// Known Low (accepted): filesystems lacking `RENAME_EXCHANGE` conservatively
+/// skip repair rather than falling back to a non-atomic overwrite.
 fn replace_if_unchanged(dest: &Path, expected: &FileSnap, bytes: &[u8]) -> std::io::Result<bool> {
     let mut guard = write_temp_exclusive(dest, bytes)?;
     run_test_before_publish(dest);
