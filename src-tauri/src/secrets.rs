@@ -2279,6 +2279,46 @@ mod tests {
             out_failed.log_line
         );
     }
+
+    // Round 1 review RED tests: H2 (keyring load must not delete fallback file before owner match),
+    // H4 (keyring save/forget commit point succeeds even if best-effort fallback cleanup fails).
+
+    #[test]
+    fn h2_keyring_load_does_not_unlink_fallback_file_before_owner_check() {
+        use linux_policy::*;
+        let alice = Identity::generate("alice").unwrap();
+        let bob = Identity::generate("bob").unwrap();
+        let b = FakeBackend::new(SecretServiceState::Present);
+        *b.keyring.borrow_mut() = Ok(Some(encode(&alice).as_str().to_string()));
+        *b.file.borrow_mut() = Ok(Some(encode(&bob).as_str().to_string()));
+
+        let out = load_with(&b);
+        assert!(matches!(out.loaded, PolicyLoaded::Found { storage: KeyStorage::Keyring, .. }));
+        assert!(
+            b.file.borrow().as_ref().unwrap().is_some(),
+            "H2: load_with must NOT delete fallback file before core verifies owner & address match"
+        );
+    }
+
+    #[test]
+    fn h4_keyring_save_and_forget_succeed_when_fallback_cleanup_fails() {
+        use linux_policy::*;
+        let alice = Identity::generate("alice").unwrap();
+        let b = FakeBackend::new(SecretServiceState::Present);
+        *b.file.borrow_mut() = Ok(Some(encode(&alice).as_str().to_string()));
+        *b.file_forget_err.borrow_mut() = Some("symlinked XDG data dir".into());
+
+        // Keyring save commits; fallback cleanup failure must NOT fail save_with.
+        assert!(
+            save_with(&b, &alice).is_ok(),
+            "H4: keyring save must succeed when best-effort fallback cleanup fails"
+        );
+        // Keyring forget commits; fallback cleanup failure must NOT fail forget_with.
+        assert!(
+            forget_with(&b).is_ok(),
+            "H4: keyring forget must succeed when best-effort fallback cleanup fails"
+        );
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]

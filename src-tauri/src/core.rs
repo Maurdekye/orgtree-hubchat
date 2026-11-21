@@ -1009,6 +1009,17 @@ mod key_tests {
         drop(store);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn h2_returning_keyring_with_different_identity_is_rejected_not_started() {
+        // Desktop wallet holds Alice while local store belongs to Bob -> must refuse, not start Alice!
+        assert_eq!(
+            decide_loaded_identity(KeyStorage::Keyring, "alice.111111", Some("bob.222222"), true),
+            LoadedDecision::RejectMismatch {
+                owner: Some("bob.222222".into())
+            }
+        );
+    }
 }
 
 #[cfg(test)]
