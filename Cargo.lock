@@ -1933,6 +1933,7 @@ dependencies = [
  "image",
  "jni 0.21.1",
  "keyring",
+ "libc",
  "log",
  "minisign-verify",
  "png 0.17.16",

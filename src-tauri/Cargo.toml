@@ -67,6 +67,7 @@ png = "0.17"
 # GNOME Keyring / KWallet); without a backend keyring keeps it only in memory.
 [target.'cfg(target_os = "linux")'.dependencies]
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 image = { version = "0.25", default-features = false, features = ["png", "ico"] }

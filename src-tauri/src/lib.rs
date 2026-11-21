@@ -636,6 +636,8 @@ pub fn run() {
                 tray::build(app.handle())?;
                 #[cfg(windows)]
                 desktop::register_scheme(app.handle());
+                #[cfg(target_os = "linux")]
+                linux_scheme::register(app.handle());
                 let first = desktop::first_start_of_version(
                     &app.path().app_data_dir()?,
                     &app.package_info().version.to_string(),
