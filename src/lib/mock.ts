@@ -80,6 +80,7 @@ const st: State = {
   me: onboarding || lostKey ? null : { ...ALEX },
   key_lost: lostKey ? { address: lostKey === "unknown" ? null : ALEX.address, unreadable: lostKey === "unreadable" } : null,
   key_restored: params.get("keyrestored") === "1",
+  key_storage: params.get("keystorage") === "file" ? "file_permissions_only" : "keyring",
   recovery_saved: false,
   read_receipts: true,
   status: "auto",
