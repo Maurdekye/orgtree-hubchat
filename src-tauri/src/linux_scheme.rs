@@ -1900,4 +1900,38 @@ mod tests {
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
         assert_eq!(std::fs::read(&colliding).unwrap(), b"keep-preexisting-tmp");
     }
+
+    #[test]
+    fn m12_repair_aborts_on_disappearance_and_semicolon_xdg_data_dirs_stays_intact() {
+        // 1. Linux XDG_DATA_DIRS with a literal ';' in a POSIX path splits on ':' only.
+        let dirs = system_data_dirs(Some("/opt/a;b/share:/usr/share"), Path::new("/home/u/.local/share"));
+        assert_eq!(dirs, vec![PathBuf::from("/opt/a;b/share"), PathBuf::from("/usr/share")]);
+
+        // 2. If a managed desktop entry disappears between snapshot and publish, repair aborts
+        // and leaves the destination absent rather than recreating it.
+        let h = TestHome::new("m12-disappear");
+        let app_path = h.apps.join(APP_ENTRY);
+        let mut inp = h.inputs();
+        inp.version = "1.3.12";
+        inp.appimage = Some("/home/steamos/.local/opt/hubchat/hubchat");
+        inp.appdir = Some("/tmp/appimage_extracted_fedfad5");
+        inp.exec_path = "/tmp/appimage_extracted_fedfad5/usr/bin/hubchat";
+        assert_eq!(register_app_in_with(&inp, |_| false).unwrap().entry, AppEntryStatus::Written);
+
+        let mut next = inp.clone();
+        next.version = "1.3.13";
+        let app_clone = app_path.clone();
+        TEST_BEFORE_PUBLISH.with(|c| {
+            *c.borrow_mut() = Some(Box::new(move |dest| {
+                if dest == app_clone {
+                    std::fs::remove_file(&app_clone).unwrap();
+                }
+            }));
+        });
+        let res = register_app_in_with(&next, |_| false).unwrap();
+        TEST_BEFORE_PUBLISH.with(|c| *c.borrow_mut() = None);
+        assert_eq!(res, AppEntryResult { entry: AppEntryStatus::Other, icon: IconStatus::Skipped });
+        assert!(!app_path.exists(), "aborted repair must not recreate a concurrently removed file");
+        assert_eq!(std::fs::read_dir(&h.apps).unwrap().count(), 0, "temp file cleaned on abort");
+    }
 }
