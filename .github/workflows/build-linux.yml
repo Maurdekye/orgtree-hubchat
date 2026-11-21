@@ -224,7 +224,21 @@ jobs:
           rt="$RUNNER_TEMP/rt-discoverable-bus"
           rm -rf "$rt"
           mkdir -m 0700 -p "$rt"
-          dbus-daemon --session --address="unix:path=$rt/bus" --fork --print-pid > "$rt/pid"
+          cat > "$rt/session.conf" <<EOF
+          <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+           "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+          <busconfig>
+            <type>session</type>
+            <listen>unix:path=$rt/bus</listen>
+            <standard_session_servicedirs/>
+            <policy context="default">
+              <allow send_destination="*" eavesdrop="true"/>
+              <allow eavesdrop="true"/>
+              <allow own="*"/>
+            </policy>
+          </busconfig>
+          EOF
+          dbus-daemon --config-file="$rt/session.conf" --fork --print-pid > "$rt/pid"
           trap 'kill "$(cat "$rt/pid")" 2>/dev/null || true' EXIT
           env -u DBUS_SESSION_BUS_ADDRESS -u DISPLAY XDG_RUNTIME_DIR="$rt" HUBCHAT_KEYRING_EXPECT=fail \
             cargo test --locked -p hubchat --lib linux_keyring -- --ignored --nocapture
