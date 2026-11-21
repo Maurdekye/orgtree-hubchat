@@ -24,13 +24,21 @@ pub enum Fact {
     StoreHasNoKey,
     /// The key store did not answer; it may still hold the key.
     StoreDidNotAnswer,
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     BackupWritten,
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     BackupNotWritten,
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     RestoredFromBackup,
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     PutBackInStore,
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     StoreRefusedItBack,
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     BackupDamaged,
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     NoBackup,
+    #[cfg_attr(target_os = "linux", allow(dead_code))]
     BackupUnreadable,
     #[cfg_attr(not(target_os = "android"), allow(dead_code))] // only Android has push cleanup
     PushCleanupFailed,

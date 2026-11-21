@@ -333,6 +333,7 @@ fn claim_default(file: &Path) -> std::io::Result<DefaultStatus> {
 /// `.desktop` entry and claiming the default only when no default exists or it
 /// is already ours. Skips `.test` builds, missing or foreign `HOME`, and
 /// non-absolute or control-character program paths.
+#[cfg(test)]
 pub fn register_in(inputs: &Inputs<'_>) -> std::io::Result<RegisterResult> {
     register_in_with(inputs, |_| false)
 }
