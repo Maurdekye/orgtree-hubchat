@@ -2272,6 +2272,24 @@ mod tests {
         Store::open_refusing_newer(&dir.path().join("new.db")).unwrap();
     }
 
+    #[test]
+    fn h3_h4_store_wipe_preserves_device_key_lifecycle_meta() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(&dir.path().join("hubchat.sqlite3")).unwrap();
+        s.set_meta("identity.address", "alice.111111").unwrap();
+        s.set_meta("profile.name", "Alice").unwrap();
+        s.set_meta("key.forgotten", r#"[{"address":"alice.111111","at":"2026-11-21T00:00:00Z"}]"#).unwrap();
+        s.set_meta("key.file_cleanup_pending", "yes").unwrap();
+        s.wipe().unwrap();
+        assert_eq!(s.meta("identity.address").unwrap(), None);
+        assert_eq!(s.meta("profile.name").unwrap(), None);
+        assert_eq!(
+            s.meta("key.forgotten").unwrap().as_deref(),
+            Some(r#"[{"address":"alice.111111","at":"2026-11-21T00:00:00Z"}]"#)
+        );
+        assert_eq!(s.meta("key.file_cleanup_pending").unwrap().as_deref(), Some("yes"));
+    }
+
     /// Migration 17 (moved from tests/hub_removal.rs): a real version-16
     /// store fetches each saved hub's whole directory once more, so contacts
     /// a removal of the same address dropped come back without the user
