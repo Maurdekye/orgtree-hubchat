@@ -174,6 +174,8 @@ pub struct Core {
     host: Arc<ShellHost>,
     /// Set while this device had an identity but its key can't be found.
     key_lost: Mutex<Option<KeyLost>>,
+    /// Where this device's active identity key is stored (None when signed out / lost).
+    key_storage: Mutex<Option<crate::secrets::KeyStorage>>,
     identity_load: hubchat_core::notification_reply::IdentityLoader,
     #[cfg(windows)]
     shortcut_projection: Mutex<Option<(String, Vec<hubchat_core::store::ShortcutContact>)>>,
@@ -200,7 +202,6 @@ fn must_wipe(owner: Option<&str>, has_data: bool, new: &str, brand_new: bool) ->
 
 /// Whether an identity loaded from `storage` may start against the local store.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(dead_code)]
 enum LoadedDecision {
     Accept,
     /// Permissions-only fallback file disagrees with local store owner: show LostKey.
@@ -209,14 +210,23 @@ enum LoadedDecision {
     IgnoreOrphan,
 }
 
-#[allow(dead_code)]
 fn decide_loaded_identity(
-    _storage: crate::secrets::KeyStorage,
-    _identity_addr: &str,
-    _store_owner: Option<&str>,
-    _had_identity: bool,
+    storage: crate::secrets::KeyStorage,
+    identity_addr: &str,
+    store_owner: Option<&str>,
+    had_identity: bool,
 ) -> LoadedDecision {
-    LoadedDecision::Accept
+    if storage != crate::secrets::KeyStorage::FilePermissionsOnly {
+        return LoadedDecision::Accept;
+    }
+    match store_owner {
+        Some(owner) if owner == identity_addr => LoadedDecision::Accept,
+        Some(owner) => LoadedDecision::RejectMismatch {
+            owner: Some(owner.to_owned()),
+        },
+        None if had_identity => LoadedDecision::RejectMismatch { owner: None },
+        None => LoadedDecision::IgnoreOrphan,
+    }
 }
 
 struct ShellHost {
@@ -379,6 +389,8 @@ pub fn init(dir: PathBuf, platform: Arc<dyn Platform>) -> Result<&'static Core, 
         c.finish_startup()?;
         return Ok(c);
     }
+    #[cfg(target_os = "linux")]
+    crate::secrets::ensure_private_app_dir(&dir);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let store = Arc::new(Store::open(&dir.join("hubchat.sqlite3")).map_err(|e| e.to_string())?);
     let (tx, rx) = std::sync::mpsc::channel();
@@ -417,6 +429,7 @@ pub fn init(dir: PathBuf, platform: Arc<dyn Platform>) -> Result<&'static Core, 
         rt,
         host,
         key_lost: Mutex::new(None),
+        key_storage: Mutex::new(None),
         identity_load: Default::default(),
         #[cfg(windows)]
         shortcut_projection: Mutex::new(None),
@@ -650,15 +663,48 @@ impl Core {
 
     fn load_key_inner(&self) -> Result<bool, String> {
         let unreadable = match crate::secrets::load_identity(&self.dir) {
-            Loaded::Found(me) => return self.start_with(me).map(|_| true),
-            Loaded::Restored(me) => {
+            Loaded::Found { identity: me, storage } => {
+                let owner = self.store.meta("identity.address").ok().flatten();
+                match decide_loaded_identity(storage, &me.address(), owner.as_deref(), self.had_identity()) {
+                    LoadedDecision::Accept => {
+                        return self.start_with(me, storage).map(|_| true);
+                    }
+                    LoadedDecision::RejectMismatch { owner } => {
+                        keylog::note(
+                            &self.dir,
+                            "permissions-only key file holds a different identity than this device's data; refused",
+                            &[Fact::KeyFileOwnerMismatch],
+                        );
+                        *self.key_storage.lock().unwrap() = None;
+                        *self.key_lost.lock().unwrap() = Some(KeyLost {
+                            address: owner,
+                            unreadable: false,
+                        });
+                        self.host.platform.status("Set up Hubchat to connect");
+                        return Ok(false);
+                    }
+                    LoadedDecision::IgnoreOrphan => {
+                        keylog::note(
+                            &self.dir,
+                            "permissions-only key file ignored without local identity data",
+                            &[Fact::KeyFileOrphanIgnored],
+                        );
+                        *self.key_storage.lock().unwrap() = None;
+                        *self.key_lost.lock().unwrap() = None;
+                        self.host.platform.status("Set up Hubchat to connect");
+                        return Ok(false);
+                    }
+                }
+            }
+            Loaded::Restored { identity: me, storage } => {
                 // the UI says so once (dismissed: key_restored_seen)
                 self.store.set_meta("key.restored", "yes").map_err(|e| e.to_string())?;
-                return self.start_with(me).map(|_| true);
+                return self.start_with(me, storage).map(|_| true);
             }
             Loaded::Missing => false,
             Loaded::Unreadable => true,
         };
+        *self.key_storage.lock().unwrap() = None;
         *self.key_lost.lock().unwrap() = self.had_identity().then(|| KeyLost {
             address: self.store.meta("identity.address").ok().flatten(),
             unreadable,
@@ -668,14 +714,20 @@ impl Core {
         Ok(false)
     }
 
-    fn start_with(&self, me: Identity) -> Result<(), String> {
+    fn start_with(&self, me: Identity, storage: crate::secrets::KeyStorage) -> Result<(), String> {
         self.note_owner(&me);
         *self.key_lost.lock().unwrap() = None;
-        self.start_engine(me)
+        self.start_engine(me)?;
+        *self.key_storage.lock().unwrap() = Some(storage);
+        Ok(())
     }
 
     pub fn key_lost(&self) -> Option<KeyLost> {
         self.key_lost.lock().unwrap().clone()
+    }
+
+    pub fn key_storage(&self) -> Option<crate::secrets::KeyStorage> {
+        *self.key_storage.lock().unwrap()
     }
 
     /// The local data belongs to an identity: it ran here (device.id is made
@@ -713,6 +765,7 @@ impl Core {
         self.forget_push();
         crate::secrets::forget_identity(&self.dir)?;
         self.store.wipe().map_err(|e| e.to_string())?;
+        *self.key_storage.lock().unwrap() = None;
         *self.key_lost.lock().unwrap() = None;
         keylog::note(&self.dir, "started over: the local data of the lost identity was removed", &[Fact::StartedOver]);
         Ok(())
@@ -728,6 +781,7 @@ impl Core {
         let Some(e) = self.engine.lock().unwrap().take() else {
             return Ok(());
         };
+        *self.key_storage.lock().unwrap() = None;
         self.host.platform.shortcuts_changed();
         #[cfg(windows)]
         if let Some(app) = self.host.app.get() { crate::tray_recent::reset(app); }
@@ -761,15 +815,20 @@ impl Core {
         let owner = self.store.meta("identity.address").ok().flatten();
         if must_wipe(owner.as_deref(), self.had_identity(), &me.address(), brand_new) {
             self.forget_push();
+            crate::secrets::forget_fallback_file(&self.dir)?;
             self.store.wipe().map_err(|e| e.to_string())?;
+            *self.key_storage.lock().unwrap() = None;
             keylog::note(&self.dir, "another identity's local data was removed before taking this one", &[Fact::OtherLocalDataRemoved]);
         }
         for (k, v) in meta {
             self.store.set_meta(k, v).map_err(|e| e.to_string())?;
         }
-        crate::secrets::save_identity(&self.dir, &me)?;
+        let storage = crate::secrets::save_identity(&self.dir, &me)?;
+        self.store
+            .set_meta("identity.address", &me.address())
+            .map_err(|e| e.to_string())?;
         keylog::note(&self.dir, if brand_new { "key saved: a new identity" } else { "key saved: an identity brought to this device" }, &[if brand_new { Fact::KeySavedNew } else { Fact::KeySavedBrought }]);
-        self.start_with(me)?;
+        self.start_with(me, storage)?;
         Ok(())
     }
 
@@ -879,6 +938,76 @@ mod key_tests {
             decide_loaded_identity(KeyStorage::Keyring, "alex.111111", None, false),
             LoadedDecision::Accept
         );
+    }
+
+    #[test]
+    fn store_owner_lifecycle_across_recovery_profile_switch_and_sign_out() {
+        let dir = std::env::temp_dir().join(format!("hubchat-core-owner-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = super::Store::open(&dir.join("hubchat.sqlite3")).unwrap();
+
+        let owner_of = |s: &super::Store| s.meta("identity.address").ok().flatten();
+        let had_of = |s: &super::Store| {
+            let has = |k: &str| s.meta(k).ok().flatten().is_some_and(|v| !v.is_empty());
+            has("device.id") || has("identity.address")
+        };
+
+        // 1. Fresh store: an orphan fallback file is ignored.
+        assert_eq!(
+            decide_loaded_identity(
+                KeyStorage::FilePermissionsOnly,
+                "alex.111111",
+                owner_of(&store).as_deref(),
+                had_of(&store),
+            ),
+            LoadedDecision::IgnoreOrphan
+        );
+
+        // 2. Adopt Alice: store records owner; restart with Alice succeeds;
+        // a stale fallback holding Bob is refused instead of attaching to Alice's chats.
+        store.set_meta("identity.address", "alex.111111").unwrap();
+        store.set_meta("device.id", "hc-20261121000000-1234").unwrap();
+        assert_eq!(
+            decide_loaded_identity(
+                KeyStorage::FilePermissionsOnly,
+                "alex.111111",
+                owner_of(&store).as_deref(),
+                had_of(&store),
+            ),
+            LoadedDecision::Accept
+        );
+        assert_eq!(
+            decide_loaded_identity(
+                KeyStorage::FilePermissionsOnly,
+                "bob.222222",
+                owner_of(&store).as_deref(),
+                had_of(&store),
+            ),
+            LoadedDecision::RejectMismatch {
+                owner: Some("alex.111111".into()),
+            }
+        );
+
+        // 3. Recovery of same identity keeps local data; switching to Bob wipes first.
+        assert!(!must_wipe(owner_of(&store).as_deref(), had_of(&store), "alex.111111", false));
+        assert!(must_wipe(owner_of(&store).as_deref(), had_of(&store), "bob.222222", false));
+
+        // 4. Sign-out / Start over wipes store: a stale fallback holding Alice cannot revive.
+        store.wipe().unwrap();
+        assert!(!had_of(&store));
+        assert_eq!(
+            decide_loaded_identity(
+                KeyStorage::FilePermissionsOnly,
+                "alex.111111",
+                owner_of(&store).as_deref(),
+                had_of(&store),
+            ),
+            LoadedDecision::IgnoreOrphan
+        );
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

@@ -605,6 +605,8 @@ pub fn run() {
                     std::process::exit(0);
                 }
                 let dir = app.path().app_data_dir()?;
+                #[cfg(target_os = "linux")]
+                secrets::ensure_private_app_dir(&dir);
                 // first, so a panic anywhere after this leaves a report
                 crash::install(&dir, &app.package_info().version.to_string());
                 trace::init(&dir, &diagnostics::logs(&dir));

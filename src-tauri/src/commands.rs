@@ -81,6 +81,9 @@ pub struct State {
     key_lost: Option<core::KeyLost>,
     /// The key was restored from Hubchat's backup; say so once.
     key_restored: bool,
+    /// Where the active identity key is kept on this device.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key_storage: Option<crate::secrets::KeyStorage>,
 }
 
 fn meta(c: &Core, k: &str) -> String {
@@ -112,6 +115,7 @@ pub fn hc_state() -> R<State> {
         hubs: engine.map(|e| e.hub_statuses()).unwrap_or_default(),
         key_lost: c.key_lost(),
         key_restored: meta(c, "key.restored") == "yes",
+        key_storage: c.key_storage(),
         platform: if cfg!(target_os = "android") {
             "android"
         } else {
