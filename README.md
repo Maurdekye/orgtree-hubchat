@@ -78,10 +78,13 @@ Get the latest release from the
   For normal AppImage launches on Ubuntu, install FUSE 2 with
   `sudo apt install libfuse2` (`libfuse2t64` on Ubuntu 24.04 and later).
   On a system without FUSE, such as SteamOS on a Steam Frame, start the AppImage
-  with `APPIMAGE_EXTRACT_AND_RUN=1` in its environment. In Steam, set the launch
-  options to `APPIMAGE_EXTRACT_AND_RUN=1 %command%`. Install a downloaded
-  .deb with `sudo apt install ./<filename>.deb`. Hubchat keeps your identity
-  key in the desktop keyring (GNOME Keyring or KWallet).
+  once with `APPIMAGE_EXTRACT_AND_RUN=1` in its environment (or Steam launch
+  options `APPIMAGE_EXTRACT_AND_RUN=1 %command%`); see the
+  [SteamOS and Steam Frame guide](docs/steamos-steam-frame.md). Install a
+  downloaded `.deb` with `sudo apt install ./<filename>.deb`. Hubchat keeps your
+  identity key in the desktop Secret Service keyring (GNOME Keyring or KWallet),
+  falling back to a user-only `0600` file only when no Secret Service is
+  available on the session.
 - **iPhone, iPad, or any device with none of the above:** there is no app to
   download. Someone runs [Hubchat Web](#hubchat-web) and you open its address
   in your browser.
