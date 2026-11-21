@@ -80,6 +80,7 @@ pub struct Inputs<'a> {
     pub exec_path: &'a str,
     pub env_home: Option<&'a str>,
     pub xdg_data_home: Option<&'a str>,
+    pub xdg_data_dirs: Option<&'a str>,
     pub xdg_config_home: Option<&'a str>,
     pub appimage: Option<&'a str>,
     pub appdir: Option<&'a str>,
@@ -553,6 +554,7 @@ pub fn register(app: &tauri::AppHandle) {
         .unwrap_or_default();
     let env_home = std::env::var("HOME").ok();
     let xdg_data_home = std::env::var("XDG_DATA_HOME").ok();
+    let xdg_data_dirs = std::env::var("XDG_DATA_DIRS").ok();
     let xdg_config_home = std::env::var("XDG_CONFIG_HOME").ok();
     let appimage = std::env::var("APPIMAGE").ok();
     let appdir = std::env::var("APPDIR").ok();
@@ -565,6 +567,7 @@ pub fn register(app: &tauri::AppHandle) {
         exec_path: &exec_path,
         env_home: env_home.as_deref(),
         xdg_data_home: xdg_data_home.as_deref(),
+        xdg_data_dirs: xdg_data_dirs.as_deref(),
         xdg_config_home: xdg_config_home.as_deref(),
         appimage: appimage.as_deref(),
         appdir: appdir.as_deref(),
@@ -615,6 +618,8 @@ mod tests {
         entry: PathBuf,
         mime: PathBuf,
         dir_str: String,
+        sys_data: PathBuf,
+        sys_data_str: String,
     }
 
     impl TestHome {
@@ -631,7 +636,9 @@ mod tests {
             let entry = apps.join(LINK_ENTRY);
             let mime = dir.join(".config").join("mimeapps.list");
             let dir_str = dir.to_string_lossy().into_owned();
-            Self { dir, apps, entry, mime, dir_str }
+            let sys_data = dir.join("sys-data");
+            let sys_data_str = sys_data.to_string_lossy().into_owned();
+            Self { dir, apps, entry, mime, dir_str, sys_data, sys_data_str }
         }
 
         fn inputs<'a>(&'a self) -> Inputs<'a> {
@@ -642,6 +649,7 @@ mod tests {
                 exec_path: "/tmp/.mount_HubchAbCdEf/usr/bin/hubchat",
                 env_home: Some(&self.dir_str),
                 xdg_data_home: None,
+                xdg_data_dirs: Some(&self.sys_data_str),
                 xdg_config_home: None,
                 appimage: Some("/home/u/Applications/Hubchat.AppImage"),
                 appdir: Some("/tmp/.mount_HubchAbCdEf"),
@@ -1259,5 +1267,110 @@ mod tests {
         );
         assert!(std::fs::symlink_metadata(&icon_link).unwrap().file_type().is_symlink());
         assert_eq!(std::fs::read(&icon_target).unwrap(), b"keep-me");
+    }
+
+    // Round 1 review RED tests: M9 (HUBCHAT_LAUNCHER extract mode), M10 (AppImage exe ownership),
+    // M12 (system-entry shadowing, concurrent write no-replace / repair guard, temp collision).
+
+    #[test]
+    fn m9_hubchat_launcher_preserves_detected_extract_mode() {
+        let h = TestHome::new("m9-launcher-extract");
+        let launcher = "/home/steamos/.local/opt/hubchat/launch-hubchat";
+        let mut inp = h.inputs();
+        inp.version = "1.3.12";
+        inp.appimage = Some("/home/steamos/.local/opt/hubchat/hubchat");
+        inp.appdir = Some("/tmp/appimage_extracted_fedfad5");
+        inp.exec_path = "/tmp/appimage_extracted_fedfad5/usr/bin/hubchat";
+        inp.launcher = Some(launcher);
+
+        assert_eq!(
+            register_app_in_with(&inp, |p| p == Path::new(launcher)).unwrap().entry,
+            AppEntryStatus::Written
+        );
+        let app_text = std::fs::read_to_string(h.apps.join(APP_ENTRY)).unwrap();
+        assert!(
+            app_text.contains(
+                "\nExec=env APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1 /home/steamos/.local/opt/hubchat/launch-hubchat\n"
+            ),
+            "visible entry must preserve detected extract mode for HUBCHAT_LAUNCHER: {app_text}"
+        );
+
+        assert_eq!(
+            register_in_with(&inp, |p| p == Path::new(launcher)).unwrap().entry,
+            EntryStatus::Written
+        );
+        let link_text = std::fs::read_to_string(&h.entry).unwrap();
+        assert!(
+            link_text.contains(
+                "\nExec=env APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1 /home/steamos/.local/opt/hubchat/launch-hubchat %u\n"
+            ),
+            "link entry must preserve detected extract mode for HUBCHAT_LAUNCHER: {link_text}"
+        );
+    }
+
+    #[test]
+    fn m10_native_install_inheriting_foreign_appimage_never_registers_parent_appimage() {
+        let h = TestHome::new("m10-foreign");
+        let mut inp = h.inputs();
+        inp.exec_path = "/usr/bin/hubchat";
+        inp.appimage = Some("/home/u/Applications/OtherApp.AppImage");
+        inp.appdir = Some("/tmp/appimage_extracted_deadbeef");
+
+        // Visible entry must skip (native install must not register parent's AppImage).
+        assert_eq!(
+            register_app_in_with(&inp, |_| false).unwrap(),
+            AppEntryResult { entry: AppEntryStatus::Skipped, icon: IconStatus::Skipped }
+        );
+        assert!(!h.apps.join(APP_ENTRY).exists());
+
+        // Link handler must register our own native executable without extract-mode flags.
+        assert_eq!(
+            register_in_with(&inp, |_| false).unwrap(),
+            RegisterResult { entry: EntryStatus::Written, default: DefaultStatus::Set }
+        );
+        let link_text = std::fs::read_to_string(&h.entry).unwrap();
+        assert!(link_text.contains("\nExec=/usr/bin/hubchat %u\n"), "{link_text}");
+        assert!(!link_text.contains("OtherApp"), "{link_text}");
+        assert!(!link_text.contains("APPIMAGE_EXTRACT_AND_RUN"), "{link_text}");
+
+        // Broad spoofed APPDIR ("/", "/usr") must not claim ownership of /usr/bin/hubchat.
+        for spoof in ["/", "/usr"] {
+            let hs = TestHome::new("m10-spoof");
+            let mut si = hs.inputs();
+            si.exec_path = "/usr/bin/hubchat";
+            si.appimage = Some("/home/u/Other.AppImage");
+            si.appdir = Some(spoof);
+            assert_eq!(
+                register_app_in_with(&si, |_| false).unwrap(),
+                AppEntryResult { entry: AppEntryStatus::Skipped, icon: IconStatus::Skipped },
+                "spoof={spoof}"
+            );
+            assert_eq!(register_in_with(&si, |_| false).unwrap().entry, EntryStatus::Written);
+            let txt = std::fs::read_to_string(&hs.entry).unwrap();
+            assert!(txt.contains("\nExec=/usr/bin/hubchat %u\n"), "spoof={spoof}: {txt}");
+        }
+    }
+
+    #[test]
+    fn m12_system_desktop_entry_under_xdg_data_dirs_is_not_shadowed() {
+        let h = TestHome::new("m12-sys");
+        let sys_apps = h.sys_data.join("applications");
+        std::fs::create_dir_all(&sys_apps).unwrap();
+        std::fs::write(
+            sys_apps.join(APP_ENTRY),
+            "[Desktop Entry]\nType=Application\nName=Hubchat\nExec=/usr/bin/hubchat\n",
+        )
+        .unwrap();
+        let mut inp = h.inputs();
+        inp.appimage = Some("/home/steamos/.local/opt/hubchat/hubchat");
+        inp.appdir = Some("/tmp/appimage_extracted_fedfad5");
+        inp.exec_path = "/tmp/appimage_extracted_fedfad5/usr/bin/hubchat";
+
+        assert_eq!(
+            register_app_in_with(&inp, |_| false).unwrap(),
+            AppEntryResult { entry: AppEntryStatus::Other, icon: IconStatus::Skipped }
+        );
+        assert!(!h.apps.join(APP_ENTRY).exists());
+        assert!(!h.dir.join(".local/share/icons").exists());
     }
 }
