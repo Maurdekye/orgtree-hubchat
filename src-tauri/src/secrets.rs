@@ -238,8 +238,8 @@ pub(crate) mod posix_trust {
         Ok(())
     }
 
-    /// The dedicated key-store subdirectory must be strictly `0700` and owned
-    /// by the effective user.
+    /// The dedicated key-store subdirectory must be strictly `0700` (no
+    /// group/other or special bits) and owned by the effective user.
     pub(crate) fn judge_store_dir(euid: u32, st: StatInfo) -> Result<(), &'static str> {
         if !st.is_dir || st.is_symlink {
             return Err("key store directory is not a real directory");
@@ -247,14 +247,14 @@ pub(crate) mod posix_trust {
         if st.uid != euid {
             return Err("key store directory is not owned by the effective user");
         }
-        if (st.mode & 0o777) != 0o700 {
+        if (st.mode & 0o7777) != 0o700 {
             return Err("key store directory must have 0700 permissions");
         }
         Ok(())
     }
 
     /// The key file must be a regular file owned by the effective user, with
-    /// no group/other permissions, no hard links, and bounded size.
+    /// no group/other/exec/special permissions, no hard links, and bounded size.
     pub(crate) fn judge_key_file(euid: u32, st: StatInfo) -> Result<(), &'static str> {
         if !st.is_reg || st.is_symlink || st.is_dir {
             return Err("key path is not a regular file");
@@ -262,7 +262,7 @@ pub(crate) mod posix_trust {
         if st.uid != euid {
             return Err("key file is not owned by the effective user");
         }
-        if (st.mode & 0o077) != 0 {
+        if (st.mode & 0o7177) != 0 {
             return Err("key file permissions are accessible to other users");
         }
         if st.nlink != 1 {
@@ -757,7 +757,6 @@ mod linux_dbus {
     use std::path::Path;
     use std::time::Duration;
 
-    use dbus::blocking::stdintf::org_freedesktop_dbus::DBus;
     use dbus::blocking::Connection;
 
     use super::{classify_dbus_probe, BusEnv, SecretServiceState, SECRETS_BUS_NAME};
@@ -791,10 +790,15 @@ mod linux_dbus {
         classify_dbus_probe(current_bus_env(), || {
             let conn = Connection::new_session().map_err(|_| ())?;
             let proxy = conn.with_proxy("org.freedesktop.DBus", "/org/freedesktop/DBus", PROBE_TIMEOUT);
-            if proxy.name_has_owner(SECRETS_BUS_NAME).map_err(|_| ())? {
+            let (owned,): (bool,) = proxy
+                .method_call("org.freedesktop.DBus", "NameHasOwner", (SECRETS_BUS_NAME,))
+                .map_err(|_| ())?;
+            if owned {
                 return Ok((true, None));
             }
-            let activatable = proxy.list_activatable_names().map_err(|_| ())?;
+            let (activatable,): (Vec<String>,) = proxy
+                .method_call("org.freedesktop.DBus", "ListActivatableNames", ())
+                .map_err(|_| ())?;
             Ok((false, Some(activatable)))
         })
     }
@@ -1053,6 +1057,8 @@ mod linux_file {
                 if !crate::linux_scheme::same_folder(Path::new(home), pw_home) {
                     return Err("HOME does not match the effective user's account home".into());
                 }
+            } else {
+                let _ = open_dir_trusted(uid, Path::new(home), false, true)?;
             }
         }
         if let Some(xdg) = xdg_data_env.filter(|v| !v.is_empty()) {
@@ -1216,7 +1222,7 @@ mod linux_file {
         };
 
         let tmp_st = fstat_fd(tmp_fd.as_raw_fd())?;
-        if !tmp_st.is_reg || tmp_st.uid != uid || (tmp_st.mode & 0o777) != 0o600 || tmp_st.nlink != 1 {
+        if !tmp_st.is_reg || tmp_st.uid != uid || (tmp_st.mode & 0o7777) != 0o600 || tmp_st.nlink != 1 {
             return Err("temporary key file did not get exclusive 0600 permissions".into());
         }
 
@@ -1611,17 +1617,20 @@ mod tests {
         assert!(judge_app_dir(euid, dir_ok(1001, 0o700)).is_err());
         assert!(judge_app_dir(euid, dir_ok(euid, 0o775)).is_err());
 
-        // Key store subdir: strictly euid-owned 0700 dir.
+        // Key store subdir: strictly euid-owned 0700 dir (no group/other or special bits).
         assert!(judge_store_dir(euid, dir_ok(euid, 0o700)).is_ok());
+        assert!(judge_store_dir(euid, dir_ok(euid, 0o2700)).is_err());
         assert!(judge_store_dir(euid, dir_ok(euid, 0o755)).is_err());
         assert!(judge_store_dir(euid, dir_ok(euid, 0o750)).is_err());
         assert!(judge_store_dir(euid, dir_ok(euid, 0o770)).is_err());
         assert!(judge_store_dir(euid, dir_ok(0, 0o700)).is_err());
         assert!(judge_store_dir(euid, file_ok(euid, 0o700, 1, 0)).is_err());
 
-        // Key file: regular, euid-owned, no group/other bits, nlink==1, bounded size.
+        // Key file: regular, euid-owned, no group/other/exec/special bits, nlink==1, bounded size.
         assert!(judge_key_file(euid, file_ok(euid, 0o600, 1, 128)).is_ok());
         assert!(judge_key_file(euid, file_ok(euid, 0o400, 1, 128)).is_ok());
+        assert!(judge_key_file(euid, file_ok(euid, 0o700, 1, 128)).is_err());
+        assert!(judge_key_file(euid, file_ok(euid, 0o4600, 1, 128)).is_err());
         assert!(judge_key_file(euid, file_ok(euid, 0o640, 1, 128)).is_err());
         assert!(judge_key_file(euid, file_ok(euid, 0o644, 1, 128)).is_err());
         assert!(judge_key_file(euid, file_ok(euid, 0o600, 2, 128)).is_err());
