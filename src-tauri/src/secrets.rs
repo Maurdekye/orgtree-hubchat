@@ -13,7 +13,9 @@ use std::path::Path;
 
 use hubchat_core::Identity;
 
-use crate::keylog::{self, Fact};
+use crate::keylog;
+#[cfg(any(not(target_os = "linux"), test))]
+use crate::keylog::Fact;
 
 #[cfg(desktop)]
 const SERVICE: &str = "dev.orgtree.hubchat";
@@ -93,22 +95,34 @@ pub struct SaveResult {
 
 /// Failure from `save_identity_staged`, distinguishing a guaranteed non-write
 /// (caller may discard adoption staging) from an uncertain post-publication
-/// error such as a directory-sync failure after `renameat` (caller must keep
-/// adoption staging so the next launch can recover).
+/// error such as a directory-sync failure after `renameat` or a lost keyring
+/// reply after `set_password` dispatch (caller must keep adoption staging so
+/// the next launch can recover).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SaveStageError {
     NotPublished(String),
-    #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+    #[cfg_attr(not(any(desktop, test)), allow(dead_code))]
     Uncertain(String),
 }
 
 impl SaveStageError {
-    #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+    #[cfg_attr(not(any(desktop, test)), allow(dead_code))]
     pub fn into_message(self) -> String {
         match self {
             Self::NotPublished(e) | Self::Uncertain(e) => e,
         }
     }
+}
+
+/// Identity of a specific Linux permissions-only fallback file captured when
+/// sign-out cleanup fails, so a later signed-out retry never deletes a newer
+/// credential file published after sign-out (H4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FallbackFileStamp {
+    pub dev: u64,
+    pub ino: u64,
+    pub mtime_sec: i64,
+    pub mtime_nsec: i64,
 }
 
 /// Result of forgetting this device's identity key.
@@ -373,16 +387,36 @@ pub(crate) mod posix_trust {
         }
     }
 
-    /// Inspect directory entry results for leftover temporary key files.
-    /// Any per-entry read error returns `true` (fail closed so cleanup runs/flags residual, M8).
+    /// Non-`ENOENT` metadata lookup failure (e.g. `EACCES` on a readable,
+    /// non-searchable directory) counts as possible presence (M8).
+    pub(crate) fn key_stat_may_exist(res: Result<(), std::io::ErrorKind>) -> bool {
+        !matches!(res, Err(std::io::ErrorKind::NotFound))
+    }
+
+    /// Classify the outcome of sweeping temporary files when `identity.key` is
+    /// absent (`ENOENT`): any retained candidate (e.g. live-PID temporary file)
+    /// MUST return `Residual`, never `NoneExisted` (M8).
+    pub(crate) fn classify_enoent_sweep(removed: bool, retained: bool) -> super::FallbackCleanup {
+        if retained {
+            super::FallbackCleanup::Residual
+        } else if removed {
+            super::FallbackCleanup::Removed
+        } else {
+            super::FallbackCleanup::NoneExisted
+        }
+    }
+
+    /// Inspect directory entry results for leftover temporary key files or the
+    /// canonical key file. Any per-entry read error returns `true` (fail closed
+    /// so cleanup runs or flags residual, M8).
     pub(crate) fn entries_may_have_temp<E>(
         entries: impl IntoIterator<Item = Result<std::ffi::OsString, E>>,
     ) -> bool {
         entries.into_iter().any(|res| match res {
             Err(_) => true,
-            Ok(name) => name
-                .to_str()
-                .is_some_and(|n| n.starts_with(".identity.key.") && n.ends_with(".tmp")),
+            Ok(name) => name.to_str().is_some_and(|n| {
+                n == "identity.key" || (n.starts_with(".identity.key.") && n.ends_with(".tmp"))
+            }),
         })
     }
 
@@ -413,7 +447,10 @@ pub(crate) mod posix_trust {
 
 #[cfg(any(target_os = "linux", test))]
 pub(crate) mod linux_policy {
-    use super::{decode, encode, FallbackCleanup, KeyStorage, Main, SaveStageError, SecretServiceState, SecretText};
+    use super::{
+        decode, encode, FallbackCleanup, FallbackFileStamp, KeyStorage, Main, SaveStageError,
+        SecretServiceState, SecretText,
+    };
     use crate::keylog::Fact;
     use hubchat_core::Identity;
 
@@ -432,15 +469,22 @@ pub(crate) mod linux_policy {
     pub(crate) trait Backend {
         fn probe(&self) -> SecretServiceState;
         fn keyring_load(&self) -> Main;
-        fn keyring_save(&self, me: &Identity) -> Result<(), String>;
+        fn keyring_save(&self, me: &Identity) -> Result<(), SaveStageError>;
         /// Returns `Ok(true)` iff a keyring credential actually existed and was deleted (`NoEntry` -> `Ok(false)`).
         fn keyring_forget(&self) -> Result<bool, String>;
         fn file_load(&self) -> Result<Option<SecretText>, String>;
         fn file_save(&self, encoded: &str) -> Result<(), SaveStageError>;
         /// Returns `Ok(true)` if a fallback file was removed, `Ok(false)` if none existed.
         fn file_forget(&self) -> Result<bool, String>;
-        /// Single-step locked validation + inode-bound removal of a matching fallback file (H2).
-        fn file_forget_matching(&self, allowed_addrs: &[&str], allow_any: bool) -> Result<FallbackCleanup, String>;
+        /// Single-step non-blocking locked validation + inode-bound removal of a
+        /// matching fallback file (H2 + H4 + M8).
+        fn file_forget_matching(
+            &self,
+            allowed_addrs: &[&str],
+            allow_any: bool,
+            expected_stamp: Option<FallbackFileStamp>,
+            not_newer_than_sec: Option<i64>,
+        ) -> Result<FallbackCleanup, String>;
         fn file_exists_hint(&self) -> bool {
             false
         }
@@ -570,7 +614,7 @@ pub(crate) mod linux_policy {
     pub(crate) fn save_staged_with(b: &impl Backend, me: &Identity) -> Result<SaveOutcome, SaveStageError> {
         match b.probe() {
             SecretServiceState::Present | SecretServiceState::Indeterminate => {
-                b.keyring_save(me).map_err(SaveStageError::NotPublished)?;
+                b.keyring_save(me)?;
                 Ok(SaveOutcome {
                     storage: KeyStorage::Keyring,
                     residual_plaintext: false,
@@ -671,6 +715,8 @@ pub(crate) mod linux_policy {
         b: &impl Backend,
         allowed_addrs: &[&str],
         allow_any: bool,
+        expected_stamp: Option<FallbackFileStamp>,
+        not_newer_than_sec: Option<i64>,
     ) -> CleanupOutcome {
         if !b.file_exists_hint() {
             return CleanupOutcome {
@@ -679,7 +725,7 @@ pub(crate) mod linux_policy {
                 facts: vec![],
             };
         }
-        match b.file_forget_matching(allowed_addrs, allow_any) {
+        match b.file_forget_matching(allowed_addrs, allow_any, expected_stamp, not_newer_than_sec) {
             Ok(FallbackCleanup::Removed) => CleanupOutcome {
                 status: FallbackCleanup::Removed,
                 log_line: Some("stale permissions-only key file removed".into()),
@@ -706,64 +752,190 @@ pub(crate) mod linux_policy {
     }
 }
 
-/// The key, from the main copy or else the backup (start-up and Try again).
-#[cfg(not(target_os = "linux"))]
-pub fn load_identity(dir: &Path) -> Loaded {
-    // The key log file keeps the full line (the stores' own words); the normal
-    // log gets only the facts (keylog::Fact).
-    let (why, failed, main) = match load_main(dir) {
-        Main::Found(me) => {
-            let (backup, facts) = match keep_backup(dir, &me) {
-                Some((text, fact)) => (format!("; {text}"), vec![Fact::KeyFound, fact]),
-                None => (String::new(), vec![Fact::KeyFound]),
-            };
-            keylog::note(dir, &format!("key found in {STORE}{backup}"), &facts);
-            return Loaded::Found {
-                identity: me,
-                storage: KeyStorage::Keyring,
-            };
-        }
-        Main::Missing(why) => (why, false, Fact::StoreHasNoKey),
-        Main::Failed(why) => (why, true, Fact::StoreDidNotAnswer),
-    };
-    match backup::load(dir) {
-        Ok(Some(text)) => {
-            if let Some(me) = decode(text.as_str()) {
-                let (back, fact) = match save_main(dir, &me) {
-                    Ok(()) => (format!("put back into {STORE}"), Fact::PutBackInStore),
-                    Err(e) => (
-                        format!("{STORE} refused it back ({e}); running from the backup"),
-                        Fact::StoreRefusedItBack,
-                    ),
-                };
-                keylog::note(
-                    dir,
-                    &format!("{why}; key restored from Hubchat's backup, {back}"),
-                    &[main, Fact::RestoredFromBackup, fact],
-                );
-                return Loaded::Restored {
-                    identity: me,
-                    storage: KeyStorage::Keyring,
+#[cfg(any(not(target_os = "linux"), test))]
+pub(crate) mod backup_policy {
+    use super::{decode, encode, KeyStorage, Loaded, Main, SaveStageError, SecretText, STORE};
+    use crate::keylog::Fact;
+    use hubchat_core::Identity;
+
+    pub(crate) trait BackupBackend {
+        fn load_main(&self) -> Main;
+        fn save_main(&self, me: &Identity) -> Result<(), SaveStageError>;
+        fn forget_main(&self) -> Result<bool, String>;
+        fn backup_load(&self) -> Result<Option<SecretText>, String>;
+        fn backup_save(&self, encoded: &str) -> Result<(), String>;
+        fn backup_forget(&self) -> Result<(), String>;
+        fn should_create_backup_if_missing(&self) -> bool;
+    }
+
+    pub(crate) struct BackupLoadOutcome {
+        pub loaded: Loaded,
+        pub log: Option<(String, Vec<Fact>)>,
+    }
+
+    /// Read-only load (H3): reads main store or DPAPI backup WITHOUT refreshing
+    /// the backup or restoring into the main store yet, so `core` checks forget
+    /// tombstones and ownership BEFORE any write side effects occur.
+    pub(crate) fn load_readonly(b: &impl BackupBackend) -> BackupLoadOutcome {
+        let (why, failed, main) = match b.load_main() {
+            Main::Found(me) => {
+                return BackupLoadOutcome {
+                    loaded: Loaded::Found {
+                        identity: me,
+                        storage: KeyStorage::Keyring,
+                    },
+                    log: None,
                 };
             }
-            keylog::note(
-                dir,
-                &format!("{why}; Hubchat's backup is damaged"),
-                &[main, Fact::BackupDamaged],
-            );
+            Main::Missing(why) => (why, false, Fact::StoreHasNoKey),
+            Main::Failed(why) => (why, true, Fact::StoreDidNotAnswer),
+        };
+        match b.backup_load() {
+            Ok(Some(text)) => {
+                if let Some(me) = decode(text.as_str()) {
+                    return BackupLoadOutcome {
+                        loaded: Loaded::Restored {
+                            identity: me,
+                            storage: KeyStorage::Keyring,
+                        },
+                        log: None,
+                    };
+                }
+                BackupLoadOutcome {
+                    loaded: if failed { Loaded::Unreadable } else { Loaded::Missing },
+                    log: Some((
+                        format!("{why}; Hubchat's backup is damaged"),
+                        vec![main, Fact::BackupDamaged],
+                    )),
+                }
+            }
+            Ok(None) => BackupLoadOutcome {
+                loaded: if failed { Loaded::Unreadable } else { Loaded::Missing },
+                log: Some((format!("{why}; no backup"), vec![main, Fact::NoBackup])),
+            },
+            Err(e) => BackupLoadOutcome {
+                loaded: if failed { Loaded::Unreadable } else { Loaded::Missing },
+                log: Some((
+                    format!("{why}; the backup didn't open ({e})"),
+                    vec![main, Fact::BackupUnreadable],
+                )),
+            },
         }
-        Ok(None) => keylog::note(dir, &format!("{why}; no backup"), &[main, Fact::NoBackup]),
-        Err(e) => keylog::note(
-            dir,
-            &format!("{why}; the backup didn't open ({e})"),
-            &[main, Fact::BackupUnreadable],
-        ),
     }
-    if failed {
-        Loaded::Unreadable
-    } else {
-        Loaded::Missing
+
+    /// Finalize an ACCEPTED or RECOVERED identity after `core` verified it is
+    /// neither forgotten nor mismatched: refresh the backup (for a main-store
+    /// hit) or put the backup back into the main store (for a backup restore).
+    pub(crate) fn confirm_loaded(
+        b: &impl BackupBackend,
+        me: &Identity,
+        restored: bool,
+    ) -> (String, Vec<Fact>) {
+        if !restored {
+            let encoded = encode(me);
+            let found = match b.backup_load() {
+                Ok(Some(text)) if text.as_str().trim() == encoded.as_str() => None,
+                Ok(Some(_)) => Some("the backup held another key".to_string()),
+                Ok(None) if b.should_create_backup_if_missing() => {
+                    Some("there was no backup".to_string())
+                }
+                Ok(None) => None,
+                Err(e) => Some(format!("the backup didn't open ({e})")),
+            };
+            let Some(found) = found else {
+                return (format!("key found in {STORE}"), vec![Fact::KeyFound]);
+            };
+            let (text, fact) = match b.backup_save(encoded.as_str()) {
+                Ok(()) => (format!("{found}; a new one was written"), Fact::BackupWritten),
+                Err(e) => {
+                    let msg = match b.backup_forget() {
+                        Ok(()) => format!("{found}; the backup couldn't be written ({e}), so there is none"),
+                        Err(f) => format!("{found}; the backup couldn't be written ({e}) nor the old one removed ({f})"),
+                    };
+                    (msg, Fact::BackupNotWritten)
+                }
+            };
+            return (format!("key found in {STORE}; {text}"), vec![Fact::KeyFound, fact]);
+        }
+        let (back, fact) = match b.save_main(me) {
+            Ok(()) => (format!("put back into {STORE}"), Fact::PutBackInStore),
+            Err(e) => (
+                format!(
+                    "{STORE} refused it back ({}); running from the backup",
+                    e.into_message()
+                ),
+                Fact::StoreRefusedItBack,
+            ),
+        };
+        (
+            format!("key restored from Hubchat's backup, {back}"),
+            vec![Fact::RestoredFromBackup, fact],
+        )
     }
+
+    /// Remove a forgotten identity from the main store AND delete the backup
+    /// if it matches `forgotten_addr` (or `"*"`), leaving any other identity's
+    /// backup untouched (H3).
+    pub(crate) fn forget_forgotten(
+        b: &impl BackupBackend,
+        forgotten_addr: &str,
+    ) -> Result<bool, String> {
+        let main_res = b.forget_main();
+        let mut backup_cleared = false;
+        if let Ok(Some(text)) = b.backup_load() {
+            let matches = forgotten_addr == "*"
+                || decode(text.as_str()).is_some_and(|id| id.address() == forgotten_addr);
+            if matches {
+                b.backup_forget()?;
+                backup_cleared = true;
+            }
+        }
+        let main_cleared = main_res?;
+        Ok(main_cleared || backup_cleared)
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+struct RealBackupBackend<'a> {
+    dir: &'a Path,
+}
+
+#[cfg(not(target_os = "linux"))]
+impl backup_policy::BackupBackend for RealBackupBackend<'_> {
+    fn load_main(&self) -> Main {
+        load_main(self.dir)
+    }
+    fn save_main(&self, me: &Identity) -> Result<(), SaveStageError> {
+        save_main(self.dir, me)
+    }
+    fn forget_main(&self) -> Result<bool, String> {
+        forget_main(self.dir)
+    }
+    fn backup_load(&self) -> Result<Option<SecretText>, String> {
+        backup::load(self.dir)
+    }
+    fn backup_save(&self, encoded: &str) -> Result<(), String> {
+        backup::save(self.dir, encoded)
+    }
+    fn backup_forget(&self) -> Result<(), String> {
+        backup::forget(self.dir)
+    }
+    fn should_create_backup_if_missing(&self) -> bool {
+        cfg!(windows)
+    }
+}
+
+/// The key, from the main copy or else the backup (start-up and Try again).
+/// Read-only on load: backup refresh / Credential Manager restore run only in
+/// `confirm_loaded_keyring` AFTER `core` checks tombstones and ownership (H3).
+#[cfg(not(target_os = "linux"))]
+pub fn load_identity(dir: &Path) -> Loaded {
+    let backend = RealBackupBackend { dir };
+    let out = backup_policy::load_readonly(&backend);
+    if let Some((line, facts)) = out.log {
+        keylog::note(dir, &line, &facts);
+    }
+    out.loaded
 }
 
 /// Linux: probe Secret Service on the session D-Bus; only when confirmed absent,
@@ -780,11 +952,27 @@ pub fn load_identity(dir: &Path) -> Loaded {
     }
 }
 
+/// Finalize a loaded keyring identity after `core` verified it is neither
+/// forgotten nor mismatched: refreshes/restores Windows DPAPI backup (H3).
+/// No-op on Linux.
+pub fn confirm_loaded_keyring(dir: &Path, me: &Identity, restored: bool) {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let backend = RealBackupBackend { dir };
+        let (line, facts) = backup_policy::confirm_loaded(&backend, me, restored);
+        keylog::note(dir, &line, &facts);
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = (dir, me, restored);
+    }
+}
+
 /// Keep the key: the main copy must take it; the backup follows where there
 /// is one (if it can't, there is no backup, and the key log says why).
 #[cfg(not(target_os = "linux"))]
 pub fn save_identity_staged(dir: &Path, me: &Identity) -> Result<KeyStorage, SaveStageError> {
-    save_main(dir, me).map_err(SaveStageError::NotPublished)?;
+    save_main(dir, me)?;
     if let Err(e) = write_backup(dir, me) {
         keylog::note(dir, &e, &[Fact::BackupNotWritten]);
     }
@@ -840,21 +1028,58 @@ pub fn forget_identity(dir: &Path) -> Result<ForgetResult, String> {
     })
 }
 
-/// Delete only the OS keyring/main credential entry (without touching any Linux
-/// fallback file). Used when a returning keyring entry matches a forget tombstone (H3).
-/// Returns `Ok(true)` iff an entry actually existed and was removed (`NoEntry` -> `Ok(false)`).
-pub fn forget_keyring_only(dir: &Path) -> Result<bool, String> {
-    forget_main(dir)
+/// Delete a forgotten identity from the OS keyring/main store — and on
+/// non-Linux platforms delete any matching DPAPI backup — without touching any
+/// Linux fallback file or another identity's backup (H3).
+/// Returns `Ok(true)` iff an entry or matching backup actually existed and was removed.
+pub fn forget_forgotten_keyring(dir: &Path, forgotten_addr: &str) -> Result<bool, String> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let backend = RealBackupBackend { dir };
+        backup_policy::forget_forgotten(&backend, forgotten_addr)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = forgotten_addr;
+        forget_main(dir)
+    }
 }
 
-/// Best-effort cleanup of a Linux permissions-only fallback file after `core`
-/// confirms the keyring identity being started or adopted (H2 + H4). No-op
-/// on non-Linux platforms.
-pub fn cleanup_fallback_file(dir: &Path, allowed_addrs: &[&str], allow_any: bool) -> FallbackCleanup {
+/// Capture the current `(dev, ino, mtime)` identity of the Linux fallback file
+/// (if stat-able), so a failed sign-out retry later refuses to delete a newer
+/// credential file published after sign-out (H4).
+pub fn fallback_file_stamp(dir: &Path) -> Option<FallbackFileStamp> {
+    #[cfg(target_os = "linux")]
+    {
+        linux_file::fallback_file_stamp(dir)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = dir;
+        None
+    }
+}
+
+/// Best-effort non-blocking cleanup of a Linux permissions-only fallback file
+/// after `core` confirms the keyring identity or a durable sign-out target
+/// (H2 + H4 + M8). No-op on non-Linux platforms.
+pub fn cleanup_fallback_file(
+    dir: &Path,
+    allowed_addrs: &[&str],
+    allow_any: bool,
+    expected_stamp: Option<FallbackFileStamp>,
+    not_newer_than_sec: Option<i64>,
+) -> FallbackCleanup {
     #[cfg(target_os = "linux")]
     {
         let backend = LinuxBackend { dir };
-        let out = linux_policy::cleanup_fallback_with(&backend, allowed_addrs, allow_any);
+        let out = linux_policy::cleanup_fallback_with(
+            &backend,
+            allowed_addrs,
+            allow_any,
+            expected_stamp,
+            not_newer_than_sec,
+        );
         if let Some(line) = out.log_line {
             keylog::note(dir, &line, &out.facts);
         }
@@ -862,7 +1087,7 @@ pub fn cleanup_fallback_file(dir: &Path, allowed_addrs: &[&str], allow_any: bool
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (dir, allowed_addrs, allow_any);
+        let _ = (dir, allowed_addrs, allow_any, expected_stamp, not_newer_than_sec);
         FallbackCleanup::NoneExisted
     }
 }
@@ -884,9 +1109,8 @@ pub fn ensure_private_app_dir(dir: &Path) {
 /// While the main copy has the key, the backup holds that same key or none:
 /// an older Hubchat made none, and one left from another identity (when a
 /// new key's backup couldn't be written) must never come back in its place.
-/// Says what it did, for the key log: the file's line and the fact the normal
-/// log may repeat.
-#[cfg(not(target_os = "linux"))]
+/// Kept as a direct helper for Windows backup unit tests.
+#[cfg(all(test, windows))]
 fn keep_backup(dir: &Path, me: &Identity) -> Option<(String, Fact)> {
     let encoded = encode(me);
     let found = match backup::load(dir) {
@@ -949,12 +1173,29 @@ fn classify(r: keyring::Result<String>) -> Main {
     }
 }
 
+/// Classify a `keyring::Entry::set_password` error after dispatch to the OS
+/// key store: client-side argument errors guarantee nothing was published
+/// (`NotPublished`), whereas any backend/D-Bus/platform failure may have
+/// already persisted the entry (e.g. a lost Secret Service reply) and maps to
+/// `Uncertain` so `core` preserves adoption staging (M6).
+#[cfg(any(desktop, test))]
+pub(crate) fn classify_keyring_save_error(err: keyring::Error) -> SaveStageError {
+    let msg = err.to_string();
+    match err {
+        keyring::Error::TooLong(_, _)
+        | keyring::Error::Invalid(_, _)
+        | keyring::Error::BadEncoding(_) => SaveStageError::NotPublished(msg),
+        _ => SaveStageError::Uncertain(msg),
+    }
+}
+
 #[cfg(desktop)]
-fn save_main(dir: &Path, me: &Identity) -> Result<(), String> {
+fn save_main(dir: &Path, me: &Identity) -> Result<(), SaveStageError> {
     let encoded = encode(me);
-    entry(dir)?
+    entry(dir)
+        .map_err(SaveStageError::NotPublished)?
         .set_password(encoded.as_str())
-        .map_err(|e| e.to_string())
+        .map_err(classify_keyring_save_error)
 }
 
 #[cfg(desktop)]
@@ -984,13 +1225,14 @@ fn load_main(dir: &Path) -> Main {
 }
 
 #[cfg(target_os = "android")]
-fn save_main(dir: &Path, me: &Identity) -> Result<(), String> {
+fn save_main(dir: &Path, me: &Identity) -> Result<(), SaveStageError> {
     let encoded = encode(me);
     let sealed = crate::android::seal(encoded.as_str())
-        .ok_or("the Android Keystore refused to seal the key")?;
+        .ok_or_else(|| SaveStageError::NotPublished("the Android Keystore refused to seal the key".into()))?;
     let tmp = dir.join("identity.sealed.tmp");
-    std::fs::write(&tmp, sealed).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, dir.join("identity.sealed")).map_err(|e| e.to_string())
+    std::fs::write(&tmp, sealed).map_err(|e| SaveStageError::NotPublished(e.to_string()))?;
+    std::fs::rename(&tmp, dir.join("identity.sealed"))
+        .map_err(|e| SaveStageError::NotPublished(e.to_string()))
 }
 
 #[cfg(target_os = "android")]
@@ -1017,7 +1259,7 @@ impl linux_policy::Backend for LinuxBackend<'_> {
     fn keyring_load(&self) -> Main {
         load_main(self.dir)
     }
-    fn keyring_save(&self, me: &Identity) -> Result<(), String> {
+    fn keyring_save(&self, me: &Identity) -> Result<(), SaveStageError> {
         save_main(self.dir, me)
     }
     fn keyring_forget(&self) -> Result<bool, String> {
@@ -1036,8 +1278,16 @@ impl linux_policy::Backend for LinuxBackend<'_> {
         &self,
         allowed_addrs: &[&str],
         allow_any: bool,
+        expected_stamp: Option<FallbackFileStamp>,
+        not_newer_than_sec: Option<i64>,
     ) -> Result<FallbackCleanup, String> {
-        linux_file::forget_matching(self.dir, allowed_addrs, allow_any)
+        linux_file::forget_matching(
+            self.dir,
+            allowed_addrs,
+            allow_any,
+            expected_stamp,
+            not_newer_than_sec,
+        )
     }
     fn file_exists_hint(&self) -> bool {
         linux_file::exists_hint(self.dir)
@@ -1144,10 +1394,11 @@ mod linux_file {
     use rand::RngCore;
 
     use super::posix_trust::{
-        check_readdir_null_errno, entries_may_have_temp, judge_ancestor, judge_app_dir,
-        judge_key_file, judge_store_dir, validate_clean_absolute, StatInfo, MAX_KEY_BYTES,
+        check_readdir_null_errno, classify_enoent_sweep, entries_may_have_temp, judge_ancestor,
+        judge_app_dir, judge_key_file, judge_store_dir, key_stat_may_exist, validate_clean_absolute,
+        StatInfo, MAX_KEY_BYTES,
     };
-    use super::{decode, wipe_bytes, FallbackCleanup, SaveStageError, SecretText};
+    use super::{decode, wipe_bytes, FallbackCleanup, FallbackFileStamp, SaveStageError, SecretText};
 
     pub(super) const STORE_DIR: &str = "identity-store";
     pub(super) const KEY_FILE: &str = "identity.key";
@@ -1157,8 +1408,12 @@ mod linux_file {
 
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
-    /// Advisory exclusive lock on `identity-store/` coordinating Hubchat writers
-    /// and atomic validate-then-unlink cleanup across processes and threads (H2).
+    /// Advisory exclusive lock (`flock`) on `identity-store/` coordinating
+    /// cooperating Hubchat writers and validate-then-unlink cleanup across
+    /// processes and threads (H2).
+    /// Known Low (accepted): because `flock` is advisory, an uncooperative
+    /// writer that ignores this lock still has a final pathname-check-to-unlink
+    /// TOCTOU window.
     struct StoreLock(RawFd);
 
     impl StoreLock {
@@ -1171,6 +1426,26 @@ mod linux_file {
                 let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
                 if errno == libc::EINTR {
                     continue;
+                }
+                return Err(format!("could not lock key store directory (errno {errno})"));
+            }
+        }
+
+        /// Non-blocking lock acquisition for best-effort cleanup (H2 Medium):
+        /// returns `Ok(None)` immediately on contention (`EWOULDBLOCK`/`EAGAIN`)
+        /// so a suspended peer holding the lock never stalls a healthy wallet.
+        fn try_acquire(fd: RawFd) -> Result<Option<Self>, String> {
+            loop {
+                let rc = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+                if rc == 0 {
+                    return Ok(Some(Self(fd)));
+                }
+                let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+                if errno == libc::EINTR {
+                    continue;
+                }
+                if errno == libc::EWOULDBLOCK || errno == libc::EAGAIN {
+                    return Ok(None);
                 }
                 return Err(format!("could not lock key store directory (errno {errno})"));
             }
@@ -1223,11 +1498,20 @@ mod linux_file {
         pid_part.parse::<i32>().ok()
     }
 
+    struct SweepOutcome {
+        removed: bool,
+        /// True when any `.identity.key.*.tmp` candidate was intentionally
+        /// left in place (e.g. owned by a live PID or unparseable temp name),
+        /// so callers never report `NoneExisted` while plaintext remains (M8).
+        retained: bool,
+    }
+
     /// Sweep interrupted `.identity.key.*.tmp` files inside `store_fd` using
     /// `fdopendir(dup(store_fd))` + `fstatat(AT_SYMLINK_NOFOLLOW)` + `unlinkat`.
     /// When `dead_pids_only` is true, leaves temps owned by live processes
-    /// (including concurrent threads in this process) untouched.
-    fn sweep_temp_files(store_fd: RawFd, uid: u32, dead_pids_only: bool) -> Result<bool, String> {
+    /// (including concurrent threads in this process) untouched and marks
+    /// `retained = true`.
+    fn sweep_temp_files(store_fd: RawFd, uid: u32, dead_pids_only: bool) -> Result<SweepOutcome, String> {
         use std::ffi::CStr;
         let dup_fd = unsafe { libc::fcntl(store_fd, libc::F_DUPFD_CLOEXEC, 0) };
         if dup_fd < 0 {
@@ -1241,6 +1525,7 @@ mod linux_file {
         // `DirStream` now owns `dup_fd` via `closedir`.
         let stream = DirStream(dirp);
         let mut candidates: Vec<CString> = Vec::new();
+        let mut retained = false;
         loop {
             // POSIX readdir(3): clear errno before each call so NULL + errno != 0
             // is distinguished from genuine end-of-directory (M8).
@@ -1254,7 +1539,13 @@ mod linux_file {
                 break;
             }
             let c_name = unsafe { CStr::from_ptr((*ent).d_name.as_ptr()) };
+            let raw_bytes = c_name.to_bytes();
             let Ok(name_str) = c_name.to_str() else {
+                if raw_bytes.starts_with(TMP_PREFIX.as_bytes())
+                    && raw_bytes.ends_with(TMP_SUFFIX.as_bytes())
+                {
+                    retained = true;
+                }
                 continue;
             };
             if !(name_str.starts_with(TMP_PREFIX) && name_str.ends_with(TMP_SUFFIX)) {
@@ -1262,9 +1553,11 @@ mod linux_file {
             }
             if dead_pids_only {
                 let Some(pid) = parse_tmp_pid(name_str) else {
+                    retained = true;
                     continue;
                 };
                 if !pid_is_dead(pid) {
+                    retained = true;
                     continue;
                 }
             }
@@ -1290,7 +1583,7 @@ mod linux_file {
                 removed = true;
             }
         }
-        Ok(removed)
+        Ok(SweepOutcome { removed, retained })
     }
 
     fn euid() -> u32 {
@@ -1316,6 +1609,15 @@ mod linux_file {
         }
     }
 
+    fn stat_to_stamp(st: &libc::stat) -> FallbackFileStamp {
+        FallbackFileStamp {
+            dev: st.st_dev as u64,
+            ino: st.st_ino as u64,
+            mtime_sec: st.st_mtime as i64,
+            mtime_nsec: st.st_mtime_nsec as i64,
+        }
+    }
+
     fn fstat_fd(fd: RawFd) -> Result<StatInfo, String> {
         let mut st: libc::stat = unsafe { std::mem::zeroed() };
         let rc = unsafe { libc::fstat(fd, &mut st) };
@@ -1325,13 +1627,13 @@ mod linux_file {
         Ok(stat_to_info(&st))
     }
 
-    fn fstat_id(fd: RawFd) -> Result<(StatInfo, u64, u64), String> {
+    fn fstat_stamp(fd: RawFd) -> Result<(StatInfo, FallbackFileStamp), String> {
         let mut st: libc::stat = unsafe { std::mem::zeroed() };
         let rc = unsafe { libc::fstat(fd, &mut st) };
         if rc != 0 {
             return Err("fstat failed".into());
         }
-        Ok((stat_to_info(&st), st.st_dev as u64, st.st_ino as u64))
+        Ok((stat_to_info(&st), stat_to_stamp(&st)))
     }
 
     fn fstatat_nofollow(dir_fd: RawFd, name: &CString) -> Result<Option<StatInfo>, String> {
@@ -1347,7 +1649,10 @@ mod linux_file {
         Ok(Some(stat_to_info(&st)))
     }
 
-    fn fstatat_id_nofollow(dir_fd: RawFd, name: &CString) -> Result<Option<(StatInfo, u64, u64)>, String> {
+    fn fstatat_stamp_nofollow(
+        dir_fd: RawFd,
+        name: &CString,
+    ) -> Result<Option<(StatInfo, FallbackFileStamp)>, String> {
         let mut st: libc::stat = unsafe { std::mem::zeroed() };
         let rc = unsafe { libc::fstatat(dir_fd, name.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW) };
         if rc != 0 {
@@ -1357,7 +1662,7 @@ mod linux_file {
             }
             return Err("fstatat failed".into());
         }
-        Ok(Some((stat_to_info(&st), st.st_dev as u64, st.st_ino as u64)))
+        Ok(Some((stat_to_info(&st), stat_to_stamp(&st))))
     }
 
     fn open_root() -> Result<(OwnedFd, StatInfo), String> {
@@ -1629,7 +1934,7 @@ mod linux_file {
         let Some(store_fd) = open_store_dir(dir_fd.as_raw_fd(), uid, false)? else {
             return Ok(None);
         };
-        if sweep_temp_files(store_fd.as_raw_fd(), uid, true)? {
+        if sweep_temp_files(store_fd.as_raw_fd(), uid, true)?.removed {
             fsync_dir(store_fd.as_raw_fd())?;
         }
         let key_name = CString::new(KEY_FILE).unwrap();
@@ -1822,8 +2127,11 @@ mod linux_file {
         let Some(store_fd) = open_store_dir(dir_fd.as_raw_fd(), uid, false)? else {
             return Ok(false);
         };
-        let _lock = StoreLock::acquire(store_fd.as_raw_fd())?;
-        let mut removed_any = sweep_temp_files(store_fd.as_raw_fd(), uid, false)?;
+        let Some(_lock) = StoreLock::try_acquire(store_fd.as_raw_fd())? else {
+            return Err("key store directory is locked by another session".into());
+        };
+        let sweep = sweep_temp_files(store_fd.as_raw_fd(), uid, false)?;
+        let mut removed_any = sweep.removed;
         let key_name = CString::new(KEY_FILE).unwrap();
         if let Some(st) = fstatat_nofollow(store_fd.as_raw_fd(), &key_name)? {
             if !st.is_reg || st.is_symlink || st.uid != uid {
@@ -1845,28 +2153,33 @@ mod linux_file {
         if removed_any {
             fsync_dir(store_fd.as_raw_fd())?;
         }
+        if sweep.retained {
+            return Err("temporary key file remains in key store".into());
+        }
         Ok(removed_any)
     }
 
-    /// Single-step locked validation and inode-bound removal of a fallback key
-    /// file (H2). Holds `StoreLock` across open, decode, `(dev, ino)` check,
-    /// `unlinkat`, and `fsync_dir` so a concurrent writer publishing another
-    /// identity cannot have its file deleted between validation and removal.
+    /// Single-step non-blocking locked validation and inode-bound removal of a
+    /// fallback key file (H2 + H4 + M8).
+    ///
+    /// Uses non-blocking `StoreLock::try_acquire` so lock contention from a
+    /// suspended peer returns `FallbackCleanup::Residual` immediately instead of
+    /// stalling a healthy keyring wallet. Enforces optional `expected_stamp` /
+    /// `not_newer_than_sec` bounds so a signed-out retry never removes a newer
+    /// credential file published after sign-out.
+    /// Known Low (accepted): `StoreLock` is advisory (`flock`), so against an
+    /// uncooperative writer that ignores the lock a final pathname-check-to-unlink
+    /// TOCTOU window remains.
     pub(super) fn forget_matching_with_env(
         dir: &Path,
         allowed_addrs: &[&str],
         allow_any: bool,
+        expected_stamp: Option<FallbackFileStamp>,
+        not_newer_than_sec: Option<i64>,
         home_env: Option<&OsStr>,
         xdg_data_env: Option<&OsStr>,
         account_home: Option<&Path>,
     ) -> Result<FallbackCleanup, String> {
-        if allow_any {
-            return Ok(if forget_with_env(dir, home_env, xdg_data_env, account_home)? {
-                FallbackCleanup::Removed
-            } else {
-                FallbackCleanup::NoneExisted
-            });
-        }
         let uid = euid();
         check_env_roots_with(uid, home_env, xdg_data_env, account_home)?;
         let Some((dir_fd, _)) = open_dir_trusted(uid, dir, false, false)? else {
@@ -1875,7 +2188,9 @@ mod linux_file {
         let Some(store_fd) = open_store_dir(dir_fd.as_raw_fd(), uid, false)? else {
             return Ok(FallbackCleanup::NoneExisted);
         };
-        let _lock = StoreLock::acquire(store_fd.as_raw_fd())?;
+        let Some(_lock) = StoreLock::try_acquire(store_fd.as_raw_fd())? else {
+            return Ok(FallbackCleanup::Residual);
+        };
 
         let key_name = CString::new(KEY_FILE).unwrap();
         let fd = unsafe {
@@ -1889,12 +2204,12 @@ mod linux_file {
             let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
             if errno == libc::ENOENT {
                 // No canonical key file; sweep only dead-PID interrupted temps.
-                let swept = sweep_temp_files(store_fd.as_raw_fd(), uid, true)?;
-                if swept {
+                // Any retained live-PID candidate MUST return Residual, never NoneExisted (M8).
+                let sweep = sweep_temp_files(store_fd.as_raw_fd(), uid, true)?;
+                if sweep.removed {
                     fsync_dir(store_fd.as_raw_fd())?;
-                    return Ok(FallbackCleanup::Removed);
                 }
-                return Ok(FallbackCleanup::NoneExisted);
+                return Ok(classify_enoent_sweep(sweep.removed, sweep.retained));
             }
             if errno == libc::ELOOP {
                 return Err("key file cannot be a symbolic link".into());
@@ -1903,22 +2218,42 @@ mod linux_file {
         }
         // SAFETY: `fd` is a freshly opened valid descriptor.
         let key_fd = unsafe { OwnedFd::from_raw_fd(fd) };
-        let (key_st, key_dev, key_ino) = fstat_id(key_fd.as_raw_fd())?;
+        let (key_st, key_stamp) = fstat_stamp(key_fd.as_raw_fd())?;
         judge_key_file(uid, key_st).map_err(str::to_string)?;
-        let text = read_key_fd(key_fd)?;
-        let matches_allowed = decode(text.as_str())
-            .is_some_and(|id| allowed_addrs.contains(&id.address().as_str()));
-        if !matches_allowed {
-            return Ok(FallbackCleanup::Residual);
+
+        if let Some(exp) = expected_stamp {
+            if key_stamp != exp {
+                return Ok(FallbackCleanup::Residual);
+            }
+        } else if let Some(max_sec) = not_newer_than_sec {
+            if key_stamp.mtime_sec > max_sec {
+                return Ok(FallbackCleanup::Residual);
+            }
         }
 
-        // Bind unlink to the exact `(dev, ino)` inode we validated (protects even
-        // against an uncooperative non-locking writer replacing `identity.key`).
-        let Some((cur_st, cur_dev, cur_ino)) = fstatat_id_nofollow(store_fd.as_raw_fd(), &key_name)? else {
-            return Ok(FallbackCleanup::NoneExisted);
+        if !allow_any {
+            let text = read_key_fd(key_fd)?;
+            let matches_allowed = decode(text.as_str())
+                .is_some_and(|id| allowed_addrs.contains(&id.address().as_str()));
+            if !matches_allowed {
+                return Ok(FallbackCleanup::Residual);
+            }
+        } else {
+            drop(key_fd);
+        }
+
+        // Bind unlink to the exact `(dev, ino)` inode validated above under the
+        // advisory directory lock (known Low: uncooperative non-locking writers
+        // still retain a final check-to-unlink window).
+        let Some((cur_st, cur_stamp)) = fstatat_stamp_nofollow(store_fd.as_raw_fd(), &key_name)? else {
+            let sweep = sweep_temp_files(store_fd.as_raw_fd(), uid, true)?;
+            if sweep.removed {
+                fsync_dir(store_fd.as_raw_fd())?;
+            }
+            return Ok(classify_enoent_sweep(sweep.removed, sweep.retained));
         };
-        if cur_dev != key_dev
-            || cur_ino != key_ino
+        if cur_stamp.dev != key_stamp.dev
+            || cur_stamp.ino != key_stamp.ino
             || !cur_st.is_reg
             || cur_st.is_symlink
             || cur_st.uid != uid
@@ -1934,9 +2269,24 @@ mod linux_file {
                 return Err("could not remove key file".into());
             }
         }
-        let _ = sweep_temp_files(store_fd.as_raw_fd(), uid, false)?;
+        let sweep = sweep_temp_files(store_fd.as_raw_fd(), uid, true)?;
         fsync_dir(store_fd.as_raw_fd())?;
-        Ok(FallbackCleanup::Removed)
+        Ok(if sweep.retained {
+            FallbackCleanup::Residual
+        } else {
+            FallbackCleanup::Removed
+        })
+    }
+
+    pub(super) fn fallback_file_stamp(dir: &Path) -> Option<FallbackFileStamp> {
+        use std::os::unix::fs::MetadataExt;
+        let meta = std::fs::symlink_metadata(dir.join(STORE_DIR).join(KEY_FILE)).ok()?;
+        Some(FallbackFileStamp {
+            dev: meta.dev(),
+            ino: meta.ino(),
+            mtime_sec: meta.mtime(),
+            mtime_nsec: meta.mtime_nsec(),
+        })
     }
 
     pub(super) fn load(dir: &Path) -> Result<Option<SecretText>, String> {
@@ -1964,6 +2314,8 @@ mod linux_file {
         dir: &Path,
         allowed_addrs: &[&str],
         allow_any: bool,
+        expected_stamp: Option<FallbackFileStamp>,
+        not_newer_than_sec: Option<i64>,
     ) -> Result<FallbackCleanup, String> {
         let home = std::env::var_os("HOME");
         let xdg = std::env::var_os("XDG_DATA_HOME");
@@ -1972,6 +2324,8 @@ mod linux_file {
             dir,
             allowed_addrs,
             allow_any,
+            expected_stamp,
+            not_newer_than_sec,
             home.as_deref(),
             xdg.as_deref(),
             pw.as_deref(),
@@ -1980,8 +2334,9 @@ mod linux_file {
 
     /// Lightweight presence hint for the key log and cleanup fast-path (never
     /// reads key bytes). Returns `true` if `identity.key` or any interrupted
-    /// `.identity.key.*.tmp` exists inside `identity-store/`, or if the store
-    /// directory exists and cannot be completely scanned (M8).
+    /// `.identity.key.*.tmp` exists inside `identity-store/`, if `symlink_metadata`
+    /// fails with a non-`ENOENT` error (e.g. `EACCES`), or if the store directory
+    /// exists and cannot be completely scanned (M8).
     pub(super) fn exists_hint(dir: &Path) -> bool {
         let store = dir.join(STORE_DIR);
         match std::fs::symlink_metadata(&store) {
@@ -1990,7 +2345,11 @@ mod linux_file {
             Ok(meta) if !meta.is_dir() => return true,
             Ok(_) => {}
         }
-        if std::fs::symlink_metadata(store.join(KEY_FILE)).is_ok() {
+        if key_stat_may_exist(
+            std::fs::symlink_metadata(store.join(KEY_FILE))
+                .map(|_| ())
+                .map_err(|e| e.kind()),
+        ) {
             return true;
         }
         match std::fs::read_dir(&store) {
@@ -2471,10 +2830,10 @@ mod tests {
                 Err(e) => Main::Failed(e.clone()),
             }
         }
-        fn keyring_save(&self, me: &Identity) -> Result<(), String> {
+        fn keyring_save(&self, me: &Identity) -> Result<(), SaveStageError> {
             self.keyring_writes.set(self.keyring_writes.get() + 1);
             if let Some(e) = self.keyring_save_err.borrow().as_ref() {
-                return Err(e.clone());
+                return Err(SaveStageError::Uncertain(e.clone()));
             }
             *self.keyring.borrow_mut() = Ok(Some(encode(me).as_str().to_string()));
             Ok(())
@@ -2515,6 +2874,8 @@ mod tests {
             &self,
             allowed_addrs: &[&str],
             allow_any: bool,
+            _expected_stamp: Option<FallbackFileStamp>,
+            _not_newer_than_sec: Option<i64>,
         ) -> Result<FallbackCleanup, String> {
             if let Some(e) = self.file_forget_err.borrow().as_ref() {
                 return Err(e.clone());
@@ -2657,13 +3018,13 @@ mod tests {
         assert!(b.file.borrow().as_ref().unwrap().is_some(), "load_with must not unlink fallback file");
 
         // Post-owner-check cleanup refuses to delete a mismatched identity file (H2)...
-        let mismatch = cleanup_fallback_with(&b, &[&alice.address()], false);
+        let mismatch = cleanup_fallback_with(&b, &[&alice.address()], false, None, None);
         assert_eq!(mismatch.status, FallbackCleanup::Residual);
         assert!(b.file.borrow().as_ref().unwrap().is_some(), "mismatched fallback file must stay intact");
 
         // ...and removes a fallback file whose address matches the active keyring identity!
         *b.file.borrow_mut() = Ok(Some(encode(&alice).as_str().to_string()));
-        let matched = cleanup_fallback_with(&b, &[&alice.address()], false);
+        let matched = cleanup_fallback_with(&b, &[&alice.address()], false, None, None);
         assert_eq!(matched.status, FallbackCleanup::Removed);
         assert!(matched.facts.contains(&Fact::KeyFileRemoved));
         assert_eq!(*b.file.borrow(), Ok(None));
@@ -2867,12 +3228,138 @@ mod tests {
 
     #[test]
     fn r3_m8_entries_listing_treats_canonical_key_as_present() {
-        use posix_trust::entries_may_have_temp;
+        use posix_trust::{classify_enoent_sweep, entries_may_have_temp, key_stat_may_exist};
         use std::ffi::OsString;
+        use std::io::ErrorKind;
+
         assert!(
             entries_may_have_temp::<()>(vec![Ok(OsString::from("identity.key"))]),
             "M8 Medium: directory listing containing canonical identity.key must report presence even if stat failed"
         );
+        assert!(!key_stat_may_exist(Err(ErrorKind::NotFound)));
+        assert!(key_stat_may_exist(Err(ErrorKind::PermissionDenied)));
+        assert!(key_stat_may_exist(Ok(())));
+        assert_eq!(classify_enoent_sweep(false, true), FallbackCleanup::Residual);
+        assert_eq!(classify_enoent_sweep(true, true), FallbackCleanup::Residual);
+        assert_eq!(classify_enoent_sweep(true, false), FallbackCleanup::Removed);
+        assert_eq!(classify_enoent_sweep(false, false), FallbackCleanup::NoneExisted);
+    }
+
+    #[test]
+    fn r3_m6_classify_keyring_save_error_distinguishes_pre_vs_post_dispatch() {
+        // Pre-dispatch argument errors guarantee nothing was published -> NotPublished.
+        assert!(matches!(
+            classify_keyring_save_error(keyring::Error::Invalid("user".into(), "bad".into())),
+            SaveStageError::NotPublished(_)
+        ));
+        assert!(matches!(
+            classify_keyring_save_error(keyring::Error::TooLong("pw".into(), 10)),
+            SaveStageError::NotPublished(_)
+        ));
+        // Ambiguous post-dispatch backend/transport errors -> Uncertain (preserve staging).
+        let io_err: Box<dyn std::error::Error + Send + Sync> =
+            Box::new(std::io::Error::new(std::io::ErrorKind::TimedOut, "D-Bus reply lost"));
+        assert!(matches!(
+            classify_keyring_save_error(keyring::Error::PlatformFailure(io_err)),
+            SaveStageError::Uncertain(_)
+        ));
+        let acc_err: Box<dyn std::error::Error + Send + Sync> =
+            Box::new(std::io::Error::new(std::io::ErrorKind::Other, "collection locked"));
+        assert!(matches!(
+            classify_keyring_save_error(keyring::Error::NoStorageAccess(acc_err)),
+            SaveStageError::Uncertain(_)
+        ));
+    }
+
+    #[test]
+    fn r3_h3_backup_policy_never_refreshes_or_restores_before_confirm() {
+        use backup_policy::*;
+        use std::cell::{Cell, RefCell};
+
+        struct FakeBackup {
+            main: RefCell<Option<String>>,
+            backup: RefCell<Option<String>>,
+            main_writes: Cell<usize>,
+            backup_writes: Cell<usize>,
+        }
+        impl BackupBackend for FakeBackup {
+            fn load_main(&self) -> Main {
+                match self.main.borrow().as_ref() {
+                    Some(s) => decode(s).map_or_else(|| Main::Missing("damaged".into()), Main::Found),
+                    None => Main::Missing("no key".into()),
+                }
+            }
+            fn save_main(&self, me: &Identity) -> Result<(), SaveStageError> {
+                self.main_writes.set(self.main_writes.get() + 1);
+                *self.main.borrow_mut() = Some(encode(me).as_str().to_string());
+                Ok(())
+            }
+            fn forget_main(&self) -> Result<bool, String> {
+                let had = self.main.borrow().is_some();
+                *self.main.borrow_mut() = None;
+                Ok(had)
+            }
+            fn backup_load(&self) -> Result<Option<SecretText>, String> {
+                Ok(self.backup.borrow().as_ref().map(|s| SecretText::new(s.clone())))
+            }
+            fn backup_save(&self, encoded: &str) -> Result<(), String> {
+                self.backup_writes.set(self.backup_writes.get() + 1);
+                *self.backup.borrow_mut() = Some(encoded.to_string());
+                Ok(())
+            }
+            fn backup_forget(&self) -> Result<(), String> {
+                *self.backup.borrow_mut() = None;
+                Ok(())
+            }
+            fn should_create_backup_if_missing(&self) -> bool {
+                true
+            }
+        }
+
+        let alice = Identity::generate("alice").unwrap();
+        let bob = Identity::generate("bob").unwrap();
+
+        // 1. Forgotten A reappears in Credential Manager: load_readonly MUST NOT write DPAPI backup!
+        let b1 = FakeBackup {
+            main: RefCell::new(Some(encode(&alice).as_str().to_string())),
+            backup: RefCell::new(None),
+            main_writes: Cell::new(0),
+            backup_writes: Cell::new(0),
+        };
+        assert!(matches!(load_readonly(&b1).loaded, Loaded::Found { .. }));
+        assert_eq!(b1.backup_writes.get(), 0, "load_readonly must not write backup before tombstone check");
+        assert!(b1.backup.borrow().is_none());
+        assert!(forget_forgotten(&b1, &alice.address()).unwrap());
+        assert!(b1.main.borrow().is_none());
+
+        // 2. Credential Manager empty, forgotten A sits in DPAPI backup: load_readonly MUST NOT
+        // restore A into Credential Manager; forget_forgotten deletes the matching backup!
+        let b2 = FakeBackup {
+            main: RefCell::new(None),
+            backup: RefCell::new(Some(encode(&alice).as_str().to_string())),
+            main_writes: Cell::new(0),
+            backup_writes: Cell::new(0),
+        };
+        assert!(matches!(load_readonly(&b2).loaded, Loaded::Restored { .. }));
+        assert_eq!(b2.main_writes.get(), 0, "load_readonly must not restore backup before tombstone check");
+        assert!(b2.main.borrow().is_none());
+        assert!(forget_forgotten(&b2, &alice.address()).unwrap());
+        assert!(b2.backup.borrow().is_none(), "forgotten matching backup must be deleted");
+        assert!(b2.main.borrow().is_none());
+
+        // 3. Another identity's backup (Bob) is NOT deleted when forgetting Alice;
+        // and confirm_loaded writes/restores backup ONLY after acceptance.
+        let b3 = FakeBackup {
+            main: RefCell::new(Some(encode(&alice).as_str().to_string())),
+            backup: RefCell::new(Some(encode(&bob).as_str().to_string())),
+            main_writes: Cell::new(0),
+            backup_writes: Cell::new(0),
+        };
+        assert!(forget_forgotten(&b3, &alice.address()).unwrap());
+        assert!(b3.main.borrow().is_none());
+        assert!(b3.backup.borrow().is_some(), "non-matching backup of Bob must stay intact");
+        let _ = confirm_loaded(&b3, &bob, true);
+        assert_eq!(b3.main_writes.get(), 1, "confirm_loaded restores accepted backup into main store");
     }
 }
 
@@ -3184,11 +3671,14 @@ mod linux_file_tests {
         let other = Identity::generate("other").unwrap();
         let dir_match = base.join("h2-match");
         linux_file::save_with_env(&dir_match, encode(&other).as_str(), home, None, pw.as_deref()).unwrap();
+        let old_stamp = linux_file::fallback_file_stamp(&dir_match).unwrap();
         assert_eq!(
             linux_file::forget_matching_with_env(
                 &dir_match,
                 &[&me.address()],
                 false,
+                None,
+                None,
                 home,
                 None,
                 pw.as_deref(),
@@ -3197,11 +3687,34 @@ mod linux_file_tests {
             FallbackCleanup::Residual
         );
         assert!(linux_file::load_with_env(&dir_match, home, None, pw.as_deref()).unwrap().is_some());
+        // H4: if a newer file replaced the stamped file, signed-out retry with the old stamp refuses deletion!
+        linux_file::save_with_env(&dir_match, encode(&other).as_str(), home, None, pw.as_deref()).unwrap();
+        let new_stamp = linux_file::fallback_file_stamp(&dir_match).unwrap();
+        if new_stamp != old_stamp {
+            assert_eq!(
+                linux_file::forget_matching_with_env(
+                    &dir_match,
+                    &[&other.address()],
+                    true,
+                    Some(old_stamp),
+                    None,
+                    home,
+                    None,
+                    pw.as_deref(),
+                )
+                .unwrap(),
+                FallbackCleanup::Residual,
+                "H4: stale file stamp must never delete a newly published credential file"
+            );
+            assert!(linux_file::load_with_env(&dir_match, home, None, pw.as_deref()).unwrap().is_some());
+        }
         assert_eq!(
             linux_file::forget_matching_with_env(
                 &dir_match,
                 &[&other.address()],
                 false,
+                Some(new_stamp),
+                None,
                 home,
                 None,
                 pw.as_deref(),
@@ -3248,6 +3761,8 @@ mod linux_file_tests {
             &dir_live_tmp,
             &[&me.address()],
             false,
+            None,
+            None,
             home,
             None,
             pw.as_deref(),
@@ -3289,15 +3804,27 @@ mod linux_file_tests {
         let handle = std::thread::spawn(move || {
             let pw_t = crate::linux_scheme::account_home();
             let home_t = pw_t.as_deref().map(|p| p.as_os_str());
-            let res = linux_file::forget_matching_with_env(
+            let r_match = linux_file::forget_matching_with_env(
                 &dir_cl,
                 &[addr_cl.as_str()],
                 false,
+                None,
+                None,
                 home_t,
                 None,
                 pw_t.as_deref(),
             );
-            let _ = tx.send(res);
+            let r_any = linux_file::forget_matching_with_env(
+                &dir_cl,
+                &[],
+                true,
+                None,
+                None,
+                home_t,
+                None,
+                pw_t.as_deref(),
+            );
+            let _ = tx.send((r_match, r_any));
         });
 
         let got = rx.recv_timeout(Duration::from_millis(500));
@@ -3305,10 +3832,10 @@ mod linux_file_tests {
         drop(lock_file);
         handle.join().unwrap();
 
-        let res = got
-            .expect("H2 Medium: best-effort cleanup must not block on a held store lock")
-            .unwrap();
-        assert_eq!(res, FallbackCleanup::Residual, "contention must report Residual and leave file untouched");
+        let (r_match, r_any) =
+            got.expect("H2 Medium: best-effort cleanup must not block on a held store lock");
+        assert_eq!(r_match.unwrap(), FallbackCleanup::Residual, "contention must report Residual and leave file untouched");
+        assert_eq!(r_any.unwrap(), FallbackCleanup::Residual, "wildcard cleanup contention must also be non-blocking");
         assert!(store_path.join(linux_file::KEY_FILE).exists());
 
         // Once the lock is free, cleanup succeeds cleanly.
@@ -3317,6 +3844,8 @@ mod linux_file_tests {
                 &dir,
                 &[&me.address()],
                 false,
+                None,
+                None,
                 home,
                 None,
                 pw.as_deref(),
@@ -3433,7 +3962,7 @@ mod linux_keyring {
                 assert_eq!(back.secret(), me.secret());
                 assert!(key_path.exists(), "H2: load_identity must leave fallback file untouched");
                 assert_eq!(
-                    cleanup_fallback_file(&dir, &[&me.address()], false),
+                    cleanup_fallback_file(&dir, &[&me.address()], false, None, None),
                     FallbackCleanup::Residual,
                     "H2: cleanup must not delete a different identity's fallback file"
                 );
@@ -3441,7 +3970,7 @@ mod linux_keyring {
                 // Matching fallback file IS removed by cleanup_fallback_file.
                 linux_file::save(&dir, encode(&me).as_str()).unwrap();
                 assert_eq!(
-                    cleanup_fallback_file(&dir, &[&me.address()], false),
+                    cleanup_fallback_file(&dir, &[&me.address()], false, None, None),
                     FallbackCleanup::Removed
                 );
                 assert!(!key_path.exists());
