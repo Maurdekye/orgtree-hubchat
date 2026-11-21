@@ -15,6 +15,8 @@ mod diagnostics;
 mod keylog;
 mod link;
 #[cfg(any(target_os = "linux", test))]
+pub mod linux_gamescope;
+#[cfg(any(target_os = "linux", test))]
 mod linux_scheme;
 #[cfg(any(windows, target_os = "linux"))]
 mod local_orgtree;
