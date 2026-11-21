@@ -206,11 +206,16 @@ fn own_appimage<'a>(
 fn system_data_dirs(raw: Option<&str>, data_home: &Path) -> Vec<PathBuf> {
     let entries: Vec<&str> = match raw.filter(|s| !s.is_empty()) {
         Some(val) => {
-            let is_win_list = val.contains(';')
-                || (val.len() >= 3
-                    && val.as_bytes()[0].is_ascii_alphabetic()
-                    && val.as_bytes()[1] == b':'
-                    && matches!(val.as_bytes()[2], b'\\' | b'/'));
+            // On Linux XDG_DATA_DIRS is strictly colon-delimited; ';' is a valid
+            // filename character, never a path-list separator. Only Windows host
+            // test fixtures use ';' with drive-letter paths (e.g. C:\...).
+            #[cfg(unix)]
+            let is_win_list = false;
+            #[cfg(not(unix))]
+            let is_win_list = val.len() >= 3
+                && val.as_bytes()[0].is_ascii_alphabetic()
+                && val.as_bytes()[1] == b':'
+                && matches!(val.as_bytes()[2], b'\\' | b'/');
             if is_win_list {
                 val.split(';').collect()
             } else {
@@ -223,7 +228,10 @@ fn system_data_dirs(raw: Option<&str>, data_home: &Path) -> Vec<PathBuf> {
         .into_iter()
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
-        .filter(|p| p.is_absolute() && !same_folder(p, data_home))
+        .filter(|p| {
+            let abs = p.is_absolute() || p.to_str().is_some_and(|s| s.starts_with('/'));
+            abs && !same_folder(p, data_home)
+        })
         .collect()
 }
 
@@ -422,45 +430,56 @@ fn is_hardlink_unsupported(err: &std::io::Error) -> bool {
     }
 }
 
-/// Publish a brand-new file with no-replace semantics (`hard_link` from an
-/// exclusive temp file, falling back to `create_new` on filesystems without
-/// hard-link support). Returns `Ok(false)` without touching `file` if another
-/// writer created `file` first.
+#[cfg(target_os = "linux")]
+fn rename_noreplace(src: &Path, dest: &Path) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let csrc = CString::new(src.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "NUL in path"))?;
+    let cdest = CString::new(dest.as_os_str().as_bytes())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "NUL in path"))?;
+    let rc = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            csrc.as_ptr(),
+            libc::AT_FDCWD,
+            cdest.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// Publish a brand-new file with atomic no-replace semantics: on Linux prefers
+/// `renameat2(RENAME_NOREPLACE)` from a complete synced temp file, falling back
+/// to `hard_link`. Returns `Ok(false)` without touching `file` if another writer
+/// created `file` first or if the filesystem supports neither atomic primitive
+/// (never writing partial bytes directly into the visible final pathname).
 fn write_no_replace(file: &Path, bytes: &[u8]) -> std::io::Result<bool> {
-    use std::io::Write;
-    let guard = write_temp_exclusive(file, bytes)?;
+    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+    let mut guard = write_temp_exclusive(file, bytes)?;
     run_test_before_publish(file);
+    #[cfg(target_os = "linux")]
+    {
+        match rename_noreplace(guard.path(), file) {
+            Ok(()) => {
+                guard.disarm();
+                return Ok(true);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
+            Err(e) if matches!(e.raw_os_error(), Some(libc::ENOSYS | libc::EINVAL | libc::EOPNOTSUPP)) => {}
+            Err(e) => return Err(e),
+        }
+    }
     match std::fs::hard_link(guard.path(), file) {
         Ok(()) => Ok(true),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
-        Err(e) if is_hardlink_unsupported(&e) => {
-            drop(guard);
-            let mut opts = std::fs::OpenOptions::new();
-            opts.write(true).create_new(true);
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::OpenOptionsExt;
-                opts.mode(0o644);
-                #[cfg(target_os = "linux")]
-                opts.custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC);
-            }
-            let mut f = match opts.open(file) {
-                Ok(f) => f,
-                Err(open_err) if open_err.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
-                Err(open_err) => return Err(open_err),
-            };
-            let mut dest_guard = OwnedTempFile { path: file.to_path_buf(), armed: true };
-            f.write_all(bytes)?;
-            f.flush()?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                f.set_permissions(std::fs::Permissions::from_mode(0o644))?;
-            }
-            f.sync_all()?;
-            dest_guard.disarm();
-            Ok(true)
-        }
+        Err(e) if is_hardlink_unsupported(&e) => Ok(false),
         Err(e) => Err(e),
     }
 }
@@ -593,50 +612,69 @@ fn rename_exchange(a: &Path, b: &Path) -> std::io::Result<()> {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn recover_displaced_entry(displaced: &Path, dest: &Path, our_bytes: &[u8]) {
+    // Only attempt to swap the displaced manual file back if `dest` still holds
+    // our just-written bytes. If a newer third edit arrived at `dest`, or if
+    // rollback fails, leave BOTH files in place and NEVER unlink the displaced file.
+    if std::fs::read(dest).is_ok_and(|cur| cur == our_bytes) && rename_exchange(displaced, dest).is_ok() {
+        if std::fs::read(displaced).is_ok_and(|back| back == our_bytes) {
+            let _ = std::fs::remove_file(displaced);
+            return;
+        }
+    }
+    tracing::warn!("Hubchat desktop entry changed during repair; preserved both files without deleting displaced entry");
+}
+
 /// Replace an existing managed entry only if its inode, timestamps, and bytes
-/// are unchanged right up to publication. On Linux uses `renameat2(RENAME_EXCHANGE)`
-/// and restores the previous inode if a concurrent change occurred mid-swap.
+/// are unchanged right up to publication. On Linux uses `renameat2(RENAME_EXCHANGE)`,
+/// disarms cleanup before inspecting the displaced file so a concurrent manual
+/// edit is never unlinked, and skips repair if the filesystem lacks atomic exchange.
 fn replace_if_unchanged(dest: &Path, expected: &FileSnap, bytes: &[u8]) -> std::io::Result<bool> {
     let mut guard = write_temp_exclusive(dest, bytes)?;
     run_test_before_publish(dest);
     match read_existing_entry(dest)? {
-        ExistingEntry::Missing => match std::fs::hard_link(guard.path(), dest) {
-            Ok(()) => Ok(true),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
-            Err(e) => Err(e),
-        },
-        ExistingEntry::Untrusted => Ok(false),
-        ExistingEntry::Regular(cur) if cur != *expected => Ok(false),
+        ExistingEntry::Missing | ExistingEntry::Untrusted => {
+            tracing::info!("Hubchat desktop entry changed or vanished before repair; leaving destination untouched");
+            Ok(false)
+        }
+        ExistingEntry::Regular(cur) if cur != *expected => {
+            tracing::info!("Hubchat desktop entry changed before repair; leaving destination untouched");
+            Ok(false)
+        }
         ExistingEntry::Regular(_) => {
             #[cfg(target_os = "linux")]
             {
                 match rename_exchange(guard.path(), dest) {
                     Ok(()) => {
-                        // `guard.path()` now points to whatever inode was at `dest` at the exact swap instant.
+                        // `guard.path()` now points to whatever inode was at `dest` at the exact
+                        // swap instant. Disarm BEFORE inspecting so a displaced manual file is
+                        // NEVER unlinked on rollback failure, error, or panic.
+                        guard.disarm();
                         let swapped_ok = matches!(
                             read_existing_entry(guard.path()),
                             Ok(ExistingEntry::Regular(ref old)) if old.same_after_exchange(expected)
                         );
                         if swapped_ok {
-                            // `guard` drop unlinks the old managed inode.
+                            let _ = std::fs::remove_file(guard.path());
                             return Ok(true);
                         }
-                        // Concurrent user/installer edit snuck in before the swap: put it right back!
-                        if rename_exchange(guard.path(), dest).is_ok() {
-                            return Ok(false);
-                        }
-                        if std::fs::rename(guard.path(), dest).is_ok() {
-                            guard.disarm();
-                        }
+                        recover_displaced_entry(guard.path(), dest, bytes);
                         return Ok(false);
                     }
-                    Err(e) if matches!(e.raw_os_error(), Some(libc::ENOSYS | libc::EINVAL | libc::EOPNOTSUPP)) => {}
+                    Err(e) if matches!(e.raw_os_error(), Some(libc::ENOSYS | libc::EINVAL | libc::EOPNOTSUPP)) => {
+                        tracing::info!("filesystem does not support atomic desktop entry exchange; skipping repair");
+                        return Ok(false);
+                    }
                     Err(e) => return Err(e),
                 }
             }
-            std::fs::rename(guard.path(), dest)?;
-            guard.disarm();
-            Ok(true)
+            #[cfg(not(target_os = "linux"))]
+            {
+                std::fs::rename(guard.path(), dest)?;
+                guard.disarm();
+                Ok(true)
+            }
         }
     }
 }
@@ -1933,5 +1971,33 @@ mod tests {
         assert_eq!(res, AppEntryResult { entry: AppEntryStatus::Other, icon: IconStatus::Skipped });
         assert!(!app_path.exists(), "aborted repair must not recreate a concurrently removed file");
         assert_eq!(std::fs::read_dir(&h.apps).unwrap().count(), 0, "temp file cleaned on abort");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn m12_linux_recover_displaced_entry_never_deletes_user_edit() {
+        let h = TestHome::new("m12-recover");
+        std::fs::create_dir_all(&h.apps).unwrap();
+        let our_bytes = b"[Desktop Entry]\nName=Hubchat\nX-Hubchat-Version=1.3.13\n";
+        let manual_v1 = b"[Desktop Entry]\nName=ManualV1\nExec=/opt/v1\n";
+        let manual_v2 = b"[Desktop Entry]\nName=ManualV2\nExec=/opt/v2\n";
+
+        // 1. When dest still holds our_bytes, rollback swaps manual_v1 back and unlinks our temp.
+        let dest1 = h.apps.join("case1.desktop");
+        let disp1 = h.apps.join("case1.tmp");
+        std::fs::write(&dest1, our_bytes).unwrap();
+        std::fs::write(&disp1, manual_v1).unwrap();
+        recover_displaced_entry(&disp1, &dest1, our_bytes);
+        assert_eq!(std::fs::read(&dest1).unwrap(), manual_v1);
+        assert!(!disp1.exists());
+
+        // 2. When dest already holds a newer third edit (manual_v2), BOTH files stay untouched!
+        let dest2 = h.apps.join("case2.desktop");
+        let disp2 = h.apps.join("case2.tmp");
+        std::fs::write(&dest2, manual_v2).unwrap();
+        std::fs::write(&disp2, manual_v1).unwrap();
+        recover_displaced_entry(&disp2, &dest2, our_bytes);
+        assert_eq!(std::fs::read(&dest2).unwrap(), manual_v2);
+        assert_eq!(std::fs::read(&disp2).unwrap(), manual_v1);
     }
 }
