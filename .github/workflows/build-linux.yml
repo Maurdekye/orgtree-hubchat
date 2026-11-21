@@ -211,7 +211,8 @@ jobs:
         run: |
           # the app embeds the web UI at compile time; a stub is enough here
           mkdir -p dist && echo '<!doctype html><title>stub</title>' > dist/index.html
-          cargo test --locked -p hubchat --lib -- linux_scheme linux_gamescope secrets::tests secrets::linux_file_tests core::key_tests
+          cargo test --locked -p hubchat-core --lib
+          cargo test --locked -p hubchat --lib
 
       - name: No D-Bus session -> permissions-only 0700/0600 file fallback
         run: |
