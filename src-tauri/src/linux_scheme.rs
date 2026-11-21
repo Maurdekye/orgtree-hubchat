@@ -262,7 +262,7 @@ pub fn register_in(inputs: &Inputs<'_>) -> std::io::Result<RegisterResult> {
 
 pub fn register_in_with(
     inputs: &Inputs<'_>,
-    _is_executable_file: impl Fn(&Path) -> bool,
+    is_executable_file: impl Fn(&Path) -> bool,
 ) -> std::io::Result<RegisterResult> {
     let skipped = RegisterResult { entry: EntryStatus::Skipped, default: DefaultStatus::Skipped };
     if inputs.identifier.ends_with(".test") {
@@ -277,18 +277,29 @@ pub fn register_in_with(
         }
     }
 
-    let program = inputs
-        .appimage
+    let exec = if let Some(arg) = inputs
+        .launcher
         .filter(|s| !s.is_empty())
-        .unwrap_or(inputs.exec_path);
-    let Some(arg) = desktop_exec_arg(program) else {
-        return Ok(skipped);
-    };
-    let extracted = appimage_extracted(inputs.appimage, inputs.appdir);
-    let exec = if extracted {
-        format!("env APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1 {arg} %u")
+        .and_then(|launcher| {
+            let arg = desktop_exec_arg(launcher)?;
+            is_executable_file(Path::new(launcher)).then_some(arg)
+        })
+    {
+        format!("env NO_CLEANUP=1 {arg} %u")
     } else {
-        format!("{arg} %u")
+        let program = inputs
+            .appimage
+            .filter(|s| !s.is_empty())
+            .unwrap_or(inputs.exec_path);
+        let Some(arg) = desktop_exec_arg(program) else {
+            return Ok(skipped);
+        };
+        let extracted = appimage_extracted(inputs.appimage, inputs.appdir);
+        if extracted {
+            format!("env APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1 {arg} %u")
+        } else {
+            format!("{arg} %u")
+        }
     };
 
     let data_home = xdg_dir(inputs.xdg_data_home, home.join(".local").join("share"));
@@ -352,6 +363,12 @@ fn account_home() -> Option<PathBuf> {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn is_executable_regular_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && (m.permissions().mode() & 0o111 != 0))
+}
+
 /// Register `hubchat://` at desktop start on Linux.
 #[cfg(target_os = "linux")]
 pub fn register(app: &tauri::AppHandle) {
@@ -365,6 +382,7 @@ pub fn register(app: &tauri::AppHandle) {
     let xdg_config_home = std::env::var("XDG_CONFIG_HOME").ok();
     let appimage = std::env::var("APPIMAGE").ok();
     let appdir = std::env::var("APPDIR").ok();
+    let launcher = std::env::var("HUBCHAT_LAUNCHER").ok();
     let version = app.package_info().version.to_string();
     let inputs = Inputs {
         identifier: app.config().identifier.as_str(),
@@ -376,9 +394,9 @@ pub fn register(app: &tauri::AppHandle) {
         xdg_config_home: xdg_config_home.as_deref(),
         appimage: appimage.as_deref(),
         appdir: appdir.as_deref(),
-        launcher: None,
+        launcher: launcher.as_deref(),
     };
-    match register_in(&inputs) {
+    match register_in_with(&inputs, is_executable_regular_file) {
         Ok(res) => match &res.default {
             DefaultStatus::Other(other) => {
                 tracing::info!(other = %other, "hubchat:// default belongs to another entry; left alone");
@@ -802,5 +820,24 @@ mod tests {
         inp.launcher = Some("/home/steamos/.local/opt/hubchat/launch-hubchat");
         assert_eq!(register_in_with(&inp, |_| true).unwrap(), skipped);
         assert!(std::fs::read_dir(&h.dir).unwrap().next().is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_executable_predicate_and_account_home_work_on_linux() {
+        use std::os::unix::fs::PermissionsExt;
+        let h = TestHome::new("linux-exec");
+        let exec_file = h.dir.join("launch-hubchat");
+        std::fs::write(&exec_file, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&exec_file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let plain_file = h.dir.join("not-exec");
+        std::fs::write(&plain_file, "data").unwrap();
+        std::fs::set_permissions(&plain_file, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(is_executable_regular_file(&exec_file));
+        assert!(!is_executable_regular_file(&plain_file));
+        assert!(!is_executable_regular_file(&h.dir));
+        assert!(!is_executable_regular_file(&h.dir.join("missing")));
+        assert!(account_home().is_some());
     }
 }
