@@ -84,6 +84,10 @@ pub struct State {
     /// Where the active identity key is kept on this device.
     #[serde(skip_serializing_if = "Option::is_none")]
     key_storage: Option<crate::secrets::KeyStorage>,
+    /// True when a Linux permissions-only fallback key file remains on disk
+    /// after a keyring save/load/forget (cleanup retries at the next start).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    key_file_residual: bool,
 }
 
 fn meta(c: &Core, k: &str) -> String {
@@ -116,6 +120,7 @@ pub fn hc_state() -> R<State> {
         key_lost: c.key_lost(),
         key_restored: meta(c, "key.restored") == "yes",
         key_storage: c.key_storage(),
+        key_file_residual: c.key_file_residual(),
         platform: if cfg!(target_os = "android") {
             "android"
         } else {

@@ -960,15 +960,69 @@ impl Store {
         })
     }
 
-    /// Forget everything (switching to another identity): messages, files'
-    /// records, hubs, directory, drafts and settings.
+    /// Forget this identity's local data (switching to another identity,
+    /// signing out, or starting over): messages, files' records, hubs,
+    /// directory, drafts and settings. Preserves device-level key-lifecycle
+    /// metadata (`key.forgotten` tombstones and `key.file_cleanup_pending`) so
+    /// a temporarily unreachable keyring cannot revive a forgotten identity or
+    /// lose track of a pending fallback-file cleanup.
     pub fn wipe(&self) -> Result<()> {
         self.with(|c| {
-            c.execute_batch(
+            let tx = c.transaction()?;
+            tx.execute_batch(
                 "DELETE FROM attachments; DELETE FROM messages; DELETE FROM roster; DELETE FROM hubs;
-                 DELETE FROM drafts; DELETE FROM notification_replies; DELETE FROM meta; DELETE FROM closed_dms;
-                 DELETE FROM draft_answers; DELETE FROM reply_links;",
-            )
+                 DELETE FROM drafts; DELETE FROM notification_replies;
+                 DELETE FROM meta WHERE key NOT IN ('key.forgotten', 'key.file_cleanup_pending');
+                 DELETE FROM closed_dms; DELETE FROM draft_answers; DELETE FROM reply_links;",
+            )?;
+            tx.commit()
+        })
+    }
+
+    /// Atomically commit a newly adopted (or recovered) identity into the local
+    /// store: optionally wipe the previous identity's data, write profile/setup
+    /// metadata and `identity.address`, clear staged-adoption markers, and
+    /// update the `key.forgotten` tombstone list in one transaction.
+    pub fn commit_adopted_identity(
+        &self,
+        wipe: bool,
+        address: &str,
+        meta: &[(&str, &str)],
+        forgotten_json: Option<&str>,
+    ) -> Result<()> {
+        self.with(|c| {
+            let tx = c.transaction()?;
+            if wipe {
+                tx.execute_batch(
+                    "DELETE FROM attachments; DELETE FROM messages; DELETE FROM roster; DELETE FROM hubs;
+                     DELETE FROM drafts; DELETE FROM notification_replies;
+                     DELETE FROM meta WHERE key NOT IN ('key.forgotten', 'key.file_cleanup_pending');
+                     DELETE FROM closed_dms; DELETE FROM draft_answers; DELETE FROM reply_links;",
+                )?;
+            }
+            for (k, v) in meta {
+                tx.execute(
+                    "INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    [k, v],
+                )?;
+            }
+            tx.execute(
+                "INSERT INTO meta(key,value) VALUES('identity.address',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                [address],
+            )?;
+            tx.execute("DELETE FROM meta WHERE key IN ('key.adopting', 'key.adopting.wipe')", [])?;
+            match forgotten_json {
+                Some(json) if !json.is_empty() => {
+                    tx.execute(
+                        "INSERT INTO meta(key,value) VALUES('key.forgotten',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                        [json],
+                    )?;
+                }
+                _ => {
+                    tx.execute("DELETE FROM meta WHERE key='key.forgotten'", [])?;
+                }
+            }
+            tx.commit()
         })
     }
 

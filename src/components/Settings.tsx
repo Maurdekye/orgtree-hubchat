@@ -343,6 +343,12 @@ function Devices({ onLink, goTab }: { onLink?: (tab?: LinkTab, input?: string) =
   // its name is its own (linking asks for none, user 00:16Z); renamed here
   const devName = snap.state!.device_name || self;
   const fileKey = snap.state!.key_storage === "file_permissions_only";
+  const residualKeyFile = !!snap.state!.key_file_residual;
+  const keyStorageLine = fileKey
+    ? "Holds your key in a file (readable by anything running as this user)"
+    : residualKeyFile
+      ? "Holds your key in the keyring (an older permissions-only key file still remains on disk; readable by anything running as this user)"
+      : "Holds your key";
   const [renaming, setRenaming] = useState<string | null>(null);
   const rename = async () => {
     try { await api.setDeviceName(renaming ?? ""); await refreshState(); setRenaming(null); toast("Renamed this device"); }
@@ -352,7 +358,7 @@ function Devices({ onLink, goTab }: { onLink?: (tab?: LinkTab, input?: string) =
     <>
       <Sec title="Your devices" first>
         <Card>
-          <Row icon={platform === "android" ? "phone" : "computer"} t1={<>{devName} <span className="chip">this device</span></>} t2={<>{fileKey ? "Holds your key in a file (readable by anything running as this user)" : "Holds your key"} · <span className="mono"><Addr a={me.address} net /></span></>}
+          <Row icon={platform === "android" ? "phone" : "computer"} t1={<>{devName} <span className="chip">this device</span></>} t2={<>{keyStorageLine} · <span className="mono"><Addr a={me.address} net /></span></>}
             right={renaming === null ? <button className={platform === "android" ? "icon-btn" : "btn"} onClick={() => setRenaming(devName)} aria-label="Rename this device" title="Rename this device"><Icon name="edit" />{platform === "android" ? null : "Rename"}</button> : null} />
           {renaming !== null ? (
             <div className={"set-row dev-rename" + pad}>
@@ -578,12 +584,14 @@ function Privacy() {
   const snap = useSnap();
   const on = !!snap.state?.read_receipts;
   const fileKey = snap.state?.key_storage === "file_permissions_only";
+  const residualKeyFile = !!snap.state?.key_file_residual;
   const set = async (v: boolean) => { try { await api.setReadReceipts(v); await refreshState(); } catch (e) { toast(errText(e)); } };
   return (
     <Sec first>
       <Card>
         <ToggleRow icon="done_all" t1="Send read receipts" t2="Off: people and agents see your messages as delivered, never read. You still see theirs." on={on} onChange={set} label="Send read receipts" />
         {fileKey ? <Row icon="key" t1="Identity key storage" t2="Stored in a private file protected only by your account's file permissions because no Secret Service keyring is available. Anything running as this user can read it." /> : null}
+        {!fileKey && residualKeyFile ? <Row icon="key" t1="Identity key storage" t2="Your active key is in the keyring, but an older permissions-only key file remains on disk where anything running as this user can read it. Hubchat will retry removing it at the next start." /> : null}
         <Row icon="contacts" t1="Directory" t2="Everyone on your hubs finds you in their directory: your name, address and about line. Being on a hub means being listed." />
         <Row icon="person" t1="Online status" t2="The hub shows you as online while Hubchat is connected, to everyone on that hub, and as busy once Hubchat hasn't been in front on any of your devices for an hour. This can't be hidden." />
         <Row icon="privacy" t1="Who can message you" t2="Anyone on your hubs who has your address." />

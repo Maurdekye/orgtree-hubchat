@@ -80,6 +80,40 @@ pub enum KeyStorage {
     FilePermissionsOnly,
 }
 
+/// Result of saving an identity key (Linux CI round-trip helper).
+#[cfg(target_os = "linux")]
+#[cfg_attr(not(test), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SaveResult {
+    pub storage: KeyStorage,
+    /// True when a Linux permissions-only fallback file could not be removed
+    /// after a committed keyring save.
+    pub residual_plaintext: bool,
+}
+
+/// Result of forgetting this device's identity key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ForgetResult {
+    /// True when the OS keyring was reachable and cleared (or held no entry).
+    pub keyring_cleared: bool,
+    /// True when a Linux permissions-only fallback file could not be removed
+    /// during best-effort cleanup and remains on disk.
+    pub residual_plaintext: bool,
+}
+
+/// Result of best-effort cleanup of a Linux permissions-only fallback file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FallbackCleanup {
+    /// No fallback file or interrupted temp copy existed.
+    NoneExisted,
+    /// A matching or scheduled fallback copy existed and was removed.
+    #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+    Removed,
+    /// A fallback copy remains on disk (belongs to another identity, or cleanup failed).
+    #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+    Residual,
+}
+
 /// What start-up found.
 pub enum Loaded {
     Found {
@@ -376,22 +410,15 @@ pub(crate) mod linux_policy {
                 let indet = state == SecretServiceState::Indeterminate;
                 match b.keyring_load() {
                     Main::Found(identity) => {
-                        let (extra, mut facts) = (String::new(), vec![Fact::KeyFound]);
-                        let (extra, extra_fact) = match b.file_forget() {
-                            Ok(true) => ("; stale permissions-only key file removed".to_string(), Some(Fact::KeyFileRemoved)),
-                            Ok(false) => (extra, None),
-                            Err(e) => (format!("; stale permissions-only key file couldn't be removed ({e})"), Some(Fact::KeyFileCleanupFailed)),
-                        };
-                        if let Some(f) = extra_fact {
-                            facts.push(f);
-                        }
+                        // Read-only load (H2): never delete any fallback file before `core`
+                        // verifies store ownership, tombstones, and matching address.
                         LoadOutcome {
                             loaded: PolicyLoaded::Found {
                                 identity,
                                 storage: KeyStorage::Keyring,
                             },
-                            log_line: format!("key found in the keyring{extra}"),
-                            facts,
+                            log_line: "key found in the keyring".into(),
+                            facts: vec![Fact::KeyFound],
                         }
                     }
                     Main::Missing(why) => {
@@ -474,33 +501,46 @@ pub(crate) mod linux_policy {
 
     pub(crate) struct SaveOutcome {
         pub storage: KeyStorage,
+        pub residual_plaintext: bool,
         pub log_line: Option<String>,
         pub facts: Vec<Fact>,
     }
 
-    pub(crate) fn save_with(b: &impl Backend, me: &Identity) -> Result<SaveOutcome, String> {
+    pub(crate) struct ForgetOutcome {
+        pub keyring_cleared: bool,
+        pub residual_plaintext: bool,
+        #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+        pub log_line: Option<String>,
+        pub facts: Vec<Fact>,
+    }
+
+    pub(crate) struct CleanupOutcome {
+        pub status: super::FallbackCleanup,
+        #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+        pub log_line: Option<String>,
+        pub facts: Vec<Fact>,
+    }
+
+    /// Save the credential without deleting an existing fallback file yet (M6):
+    /// `core` commits the new owner in SQLite first and runs best-effort fallback
+    /// cleanup afterward so a failure never leaves the device without its old key.
+    pub(crate) fn save_staged_with(b: &impl Backend, me: &Identity) -> Result<SaveOutcome, String> {
         match b.probe() {
             SecretServiceState::Present | SecretServiceState::Indeterminate => {
                 b.keyring_save(me)?;
-                match b.file_forget() {
-                    Ok(true) => Ok(SaveOutcome {
-                        storage: KeyStorage::Keyring,
-                        log_line: Some("key saved in the keyring; stale permissions-only key file removed".into()),
-                        facts: vec![Fact::KeyFileRemoved],
-                    }),
-                    Ok(false) => Ok(SaveOutcome {
-                        storage: KeyStorage::Keyring,
-                        log_line: None,
-                        facts: vec![],
-                    }),
-                    Err(e) => Err(format!("key saved in the keyring, but could not remove stale key file: {e}")),
-                }
+                Ok(SaveOutcome {
+                    storage: KeyStorage::Keyring,
+                    residual_plaintext: false,
+                    log_line: None,
+                    facts: vec![],
+                })
             }
             SecretServiceState::Absent => {
                 let encoded = encode(me);
                 b.file_save(encoded.as_str())?;
                 Ok(SaveOutcome {
                     storage: KeyStorage::FilePermissionsOnly,
+                    residual_plaintext: false,
                     log_line: Some("key saved in Hubchat's permissions-only key file (no Secret Service available)".into()),
                     facts: vec![Fact::NoSecretService, Fact::KeySavedInFile],
                 })
@@ -508,17 +548,135 @@ pub(crate) mod linux_policy {
         }
     }
 
-    pub(crate) fn forget_with(b: &impl Backend) -> Result<(), String> {
-        match b.probe() {
+    /// Commit point is the credential save; best-effort fallback cleanup after a
+    /// keyring save never fails or rolls back the committed keyring save (H4).
+    pub(crate) fn save_with(b: &impl Backend, me: &Identity) -> Result<SaveOutcome, String> {
+        let mut out = save_staged_with(b, me)?;
+        if out.storage == KeyStorage::Keyring && b.file_exists_hint() {
+            match b.file_forget() {
+                Ok(true) => {
+                    out.log_line = Some("key saved in the keyring; stale permissions-only key file removed".into());
+                    out.facts.push(Fact::KeyFileRemoved);
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    out.residual_plaintext = true;
+                    out.log_line = Some(format!(
+                        "key saved in the keyring; stale permissions-only key file couldn't be removed ({e})"
+                    ));
+                    out.facts.push(Fact::KeyFileCleanupFailed);
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Commit point is keyring deletion when a Secret Service is present or
+    /// indeterminate; fallback cleanup is best-effort so sign-out / Start over
+    /// never half-finishes or skips the local wipe (H4).
+    pub(crate) fn forget_with(b: &impl Backend) -> Result<ForgetOutcome, String> {
+        let keyring_cleared = match b.probe() {
             SecretServiceState::Present | SecretServiceState::Indeterminate => {
                 b.keyring_forget()?;
-                b.file_forget()?;
-                Ok(())
+                true
             }
-            SecretServiceState::Absent => {
-                b.file_forget()?;
-                Ok(())
+            SecretServiceState::Absent => false,
+        };
+        if !b.file_exists_hint() {
+            return Ok(ForgetOutcome {
+                keyring_cleared,
+                residual_plaintext: false,
+                log_line: None,
+                facts: vec![],
+            });
+        }
+        match b.file_forget() {
+            Ok(true) => Ok(ForgetOutcome {
+                keyring_cleared,
+                residual_plaintext: false,
+                log_line: Some("permissions-only key file removed".into()),
+                facts: vec![Fact::KeyFileRemoved],
+            }),
+            Ok(false) => Ok(ForgetOutcome {
+                keyring_cleared,
+                residual_plaintext: false,
+                log_line: None,
+                facts: vec![],
+            }),
+            Err(e) => Ok(ForgetOutcome {
+                keyring_cleared,
+                residual_plaintext: true,
+                log_line: Some(format!("permissions-only key file couldn't be removed ({e})")),
+                facts: vec![Fact::KeyFileCleanupFailed],
+            }),
+        }
+    }
+
+    /// Best-effort cleanup of a Linux permissions-only fallback file after `core`
+    /// has verified the active keyring identity (H2 + H4).
+    ///
+    /// Deletes the fallback file only when `allow_any` is true (explicitly
+    /// scheduled after a wipe/switch/sign-out) or when the file's decoded
+    /// identity address is in `allowed_addrs`. Never deletes a different
+    /// identity's unscheduled fallback file, and never fails startup.
+    pub(crate) fn cleanup_fallback_with(
+        b: &impl Backend,
+        allowed_addrs: &[&str],
+        allow_any: bool,
+    ) -> CleanupOutcome {
+        use super::FallbackCleanup;
+        if !b.file_exists_hint() {
+            return CleanupOutcome {
+                status: FallbackCleanup::NoneExisted,
+                log_line: None,
+                facts: vec![],
+            };
+        }
+        if !allow_any {
+            match b.file_load() {
+                Ok(None) => {
+                    // No canonical `identity.key`; fall through to sweep any leftover `.tmp`.
+                }
+                Ok(Some(text)) => {
+                    let matches_allowed = decode(text.as_str())
+                        .is_some_and(|id| allowed_addrs.contains(&id.address().as_str()));
+                    if !matches_allowed {
+                        return CleanupOutcome {
+                            status: FallbackCleanup::Residual,
+                            log_line: Some(
+                                "permissions-only key file holds another identity or unreadable key; left untouched".into(),
+                            ),
+                            facts: vec![Fact::KeyFileCleanupFailed],
+                        };
+                    }
+                }
+                Err(e) => {
+                    return CleanupOutcome {
+                        status: FallbackCleanup::Residual,
+                        log_line: Some(format!(
+                            "stale permissions-only key file couldn't be verified for cleanup ({e})"
+                        )),
+                        facts: vec![Fact::KeyFileCleanupFailed],
+                    };
+                }
             }
+        }
+        match b.file_forget() {
+            Ok(true) => CleanupOutcome {
+                status: FallbackCleanup::Removed,
+                log_line: Some("stale permissions-only key file removed".into()),
+                facts: vec![Fact::KeyFileRemoved],
+            },
+            Ok(false) => CleanupOutcome {
+                status: FallbackCleanup::NoneExisted,
+                log_line: None,
+                facts: vec![],
+            },
+            Err(e) => CleanupOutcome {
+                status: FallbackCleanup::Residual,
+                log_line: Some(format!("stale permissions-only key file couldn't be removed ({e})")),
+                facts: vec![Fact::KeyFileCleanupFailed],
+            },
         }
     }
 }
@@ -600,7 +758,7 @@ pub fn load_identity(dir: &Path) -> Loaded {
 /// Keep the key: the main copy must take it; the backup follows where there
 /// is one (if it can't, there is no backup, and the key log says why).
 #[cfg(not(target_os = "linux"))]
-pub fn save_identity(dir: &Path, me: &Identity) -> Result<KeyStorage, String> {
+pub fn save_identity_staged(dir: &Path, me: &Identity) -> Result<KeyStorage, String> {
     save_main(dir, me)?;
     if let Err(e) = write_backup(dir, me) {
         keylog::note(dir, &e, &[Fact::BackupNotWritten]);
@@ -609,49 +767,77 @@ pub fn save_identity(dir: &Path, me: &Identity) -> Result<KeyStorage, String> {
 }
 
 #[cfg(target_os = "linux")]
-pub fn save_identity(dir: &Path, me: &Identity) -> Result<KeyStorage, String> {
+pub fn save_identity_staged(dir: &Path, me: &Identity) -> Result<KeyStorage, String> {
     let backend = LinuxBackend { dir };
-    match linux_policy::save_with(&backend, me) {
-        Ok(out) => {
-            if let Some(line) = out.log_line {
-                keylog::note(dir, &line, &out.facts);
-            }
-            Ok(out.storage)
-        }
-        Err(e) => {
-            if e.contains("stale key file") {
-                keylog::note(dir, &e, &[Fact::KeyFileCleanupFailed]);
-            }
-            Err(e)
-        }
+    let out = linux_policy::save_staged_with(&backend, me)?;
+    if let Some(line) = out.log_line {
+        keylog::note(dir, &line, &out.facts);
     }
+    Ok(out.storage)
+}
+
+/// Save the key and perform best-effort fallback cleanup (used by Linux CI round-trip tests).
+#[cfg(target_os = "linux")]
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn save_identity(dir: &Path, me: &Identity) -> Result<SaveResult, String> {
+    let backend = LinuxBackend { dir };
+    let out = linux_policy::save_with(&backend, me)?;
+    if let Some(line) = out.log_line {
+        keylog::note(dir, &line, &out.facts);
+    }
+    Ok(SaveResult {
+        storage: out.storage,
+        residual_plaintext: out.residual_plaintext,
+    })
 }
 
 /// Forget the key: the main copy and any backup or fallback file.
 #[cfg(not(target_os = "linux"))]
-pub fn forget_identity(dir: &Path) -> Result<(), String> {
+pub fn forget_identity(dir: &Path) -> Result<ForgetResult, String> {
     forget_main(dir)?;
-    backup::forget(dir)
+    backup::forget(dir)?;
+    Ok(ForgetResult {
+        keyring_cleared: true,
+        residual_plaintext: false,
+    })
 }
 
 #[cfg(target_os = "linux")]
-pub fn forget_identity(dir: &Path) -> Result<(), String> {
+pub fn forget_identity(dir: &Path) -> Result<ForgetResult, String> {
     let backend = LinuxBackend { dir };
-    linux_policy::forget_with(&backend)
+    let out = linux_policy::forget_with(&backend)?;
+    if let Some(line) = out.log_line {
+        keylog::note(dir, &line, &out.facts);
+    }
+    Ok(ForgetResult {
+        keyring_cleared: out.keyring_cleared,
+        residual_plaintext: out.residual_plaintext,
+    })
 }
 
-/// Remove any Linux permissions-only fallback file (no-op elsewhere). Called
-/// before wiping local data when switching to another identity so an old
-/// fallback file can never linger next to a wiped store.
-pub fn forget_fallback_file(dir: &Path) -> Result<(), String> {
+/// Delete only the OS keyring/main credential entry (without touching any Linux
+/// fallback file). Used when a returning keyring entry matches a forget tombstone (H3).
+pub fn forget_keyring_only(dir: &Path) -> Result<(), String> {
+    forget_main(dir)
+}
+
+/// Best-effort cleanup of a Linux permissions-only fallback file after `core`
+/// confirms the keyring identity being started or adopted (H2 + H4). No-op
+/// on non-Linux platforms.
+pub fn cleanup_fallback_file(dir: &Path, allowed_addrs: &[&str], allow_any: bool) -> FallbackCleanup {
     #[cfg(target_os = "linux")]
     {
-        linux_file::forget(dir).map(|_| ())
+        let backend = LinuxBackend { dir };
+        let out = linux_policy::cleanup_fallback_with(&backend, allowed_addrs, allow_any);
+        if let Some(line) = out.log_line {
+            keylog::note(dir, &line, &out.facts);
+        }
+        out.status
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = dir;
-        Ok(())
+        let _ = (dir, allowed_addrs, allow_any);
+        FallbackCleanup::NoneExisted
     }
 }
 
@@ -2185,20 +2371,49 @@ mod tests {
         assert_eq!(b.file_reads.get(), reads_before);
         assert!(b.file.borrow().as_ref().unwrap().is_some(), "file preserved until user acts");
 
-        // If stale fallback file cannot be removed during keyring save -> surface error!
+        // If a real stale fallback file cannot be removed during keyring save ->
+        // commit point is keyring save (H4), so save_with succeeds and flags residual_plaintext!
         *b.file_forget_err.borrow_mut() = Some("untrusted key path".into());
-        assert!(save_with(&b, &alice).is_err());
+        let res = save_with(&b, &alice).unwrap();
+        assert_eq!(res.storage, KeyStorage::Keyring);
+        assert!(res.residual_plaintext, "must flag residual plaintext when fallback cleanup fails");
+        assert!(res.facts.contains(&Fact::KeyFileCleanupFailed));
         *b.file_forget_err.borrow_mut() = None;
 
+        // Keyring-only install with a symlinked XDG data dir and NO fallback file:
+        // exists_hint is false, so save_with and forget_with succeed cleanly without residual_plaintext!
+        let sym = FakeBackend::new(SecretServiceState::Present);
+        *sym.file_forget_err.borrow_mut() = Some("symlink in ancestor".into());
+        let sym_saved = save_with(&sym, &alice).unwrap();
+        assert_eq!(sym_saved.storage, KeyStorage::Keyring);
+        assert!(!sym_saved.residual_plaintext);
+        let sym_forgot = forget_with(&sym).unwrap();
+        assert!(sym_forgot.keyring_cleared);
+        assert!(!sym_forgot.residual_plaintext);
+
         // User restores Alice into Secret Service -> saved in keyring AND stale file removed!
-        assert_eq!(save_with(&b, &alice).unwrap().storage, KeyStorage::Keyring);
+        let restored = save_with(&b, &alice).unwrap();
+        assert_eq!(restored.storage, KeyStorage::Keyring);
+        assert!(!restored.residual_plaintext);
         assert_eq!(*b.file.borrow(), Ok(None), "stale fallback file must be removed on keyring save");
 
-        // Keyring load also sweeps any lingering stale file when keyring holds the active key.
-        *b.file.borrow_mut() = Ok(Some(encode(&alice).as_str().to_string()));
+        // Keyring load is read-only (H2): never deletes a fallback file before core verifies owner.
+        let bob = Identity::generate("bob").unwrap();
+        *b.file.borrow_mut() = Ok(Some(encode(&bob).as_str().to_string()));
         let loaded = load_with(&b);
         assert!(matches!(loaded.loaded, PolicyLoaded::Found { storage: KeyStorage::Keyring, .. }));
-        assert!(loaded.facts.contains(&Fact::KeyFileRemoved));
+        assert!(b.file.borrow().as_ref().unwrap().is_some(), "load_with must not unlink fallback file");
+
+        // Post-owner-check cleanup refuses to delete a mismatched identity file (H2)...
+        let mismatch = cleanup_fallback_with(&b, &[&alice.address()], false);
+        assert_eq!(mismatch.status, FallbackCleanup::Residual);
+        assert!(b.file.borrow().as_ref().unwrap().is_some(), "mismatched fallback file must stay intact");
+
+        // ...and removes a fallback file whose address matches the active keyring identity!
+        *b.file.borrow_mut() = Ok(Some(encode(&alice).as_str().to_string()));
+        let matched = cleanup_fallback_with(&b, &[&alice.address()], false);
+        assert_eq!(matched.status, FallbackCleanup::Removed);
+        assert!(matched.facts.contains(&Fact::KeyFileRemoved));
         assert_eq!(*b.file.borrow(), Ok(None));
 
         // If Secret Service later disappears again -> stale file is gone, returns Missing.
@@ -2206,8 +2421,12 @@ mod tests {
         assert!(matches!(load_with(&b).loaded, PolicyLoaded::Missing));
 
         // Save under Absent, then forget under Absent -> succeeds without keyring and removes file.
-        assert_eq!(save_with(&b, &alice).unwrap().storage, KeyStorage::FilePermissionsOnly);
-        forget_with(&b).unwrap();
+        let abs_save = save_with(&b, &alice).unwrap();
+        assert_eq!(abs_save.storage, KeyStorage::FilePermissionsOnly);
+        assert!(!abs_save.residual_plaintext);
+        let abs_forget = forget_with(&b).unwrap();
+        assert!(!abs_forget.keyring_cleared);
+        assert!(!abs_forget.residual_plaintext);
         assert_eq!(*b.file.borrow(), Ok(None));
         assert!(matches!(load_with(&b).loaded, PolicyLoaded::Missing));
 
@@ -2215,7 +2434,9 @@ mod tests {
         b.probe.set(SecretServiceState::Present);
         *b.keyring.borrow_mut() = Ok(Some(encode(&alice).as_str().to_string()));
         *b.file.borrow_mut() = Ok(Some(encode(&alice).as_str().to_string()));
-        forget_with(&b).unwrap();
+        let both_forget = forget_with(&b).unwrap();
+        assert!(both_forget.keyring_cleared);
+        assert!(!both_forget.residual_plaintext);
         assert_eq!(*b.keyring.borrow(), Ok(None));
         assert_eq!(*b.file.borrow(), Ok(None));
 
@@ -2308,16 +2529,18 @@ mod tests {
         *b.file.borrow_mut() = Ok(Some(encode(&alice).as_str().to_string()));
         *b.file_forget_err.borrow_mut() = Some("symlinked XDG data dir".into());
 
-        // Keyring save commits; fallback cleanup failure must NOT fail save_with.
-        assert!(
-            save_with(&b, &alice).is_ok(),
-            "H4: keyring save must succeed when best-effort fallback cleanup fails"
-        );
-        // Keyring forget commits; fallback cleanup failure must NOT fail forget_with.
-        assert!(
-            forget_with(&b).is_ok(),
-            "H4: keyring forget must succeed when best-effort fallback cleanup fails"
-        );
+        // Keyring save commits; fallback cleanup failure must NOT fail save_with,
+        // and must surface residual_plaintext = true.
+        let saved = save_with(&b, &alice).expect("H4: keyring save must succeed when best-effort fallback cleanup fails");
+        assert_eq!(saved.storage, KeyStorage::Keyring);
+        assert!(saved.residual_plaintext);
+        assert!(saved.facts.contains(&Fact::KeyFileCleanupFailed));
+        // Keyring forget commits; fallback cleanup failure must NOT fail forget_with,
+        // and must surface keyring_cleared = true + residual_plaintext = true.
+        let forgot = forget_with(&b).expect("H4: keyring forget must succeed when best-effort fallback cleanup fails");
+        assert!(forgot.keyring_cleared);
+        assert!(forgot.residual_plaintext);
+        assert!(forgot.facts.contains(&Fact::KeyFileCleanupFailed));
     }
 }
 
@@ -2658,7 +2881,9 @@ mod linux_keyring {
             "file" => {
                 let saved = save_identity(&dir, &me);
                 eprintln!("save_identity(file): {saved:?}");
-                assert_eq!(saved.unwrap(), KeyStorage::FilePermissionsOnly);
+                let saved = saved.unwrap();
+                assert_eq!(saved.storage, KeyStorage::FilePermissionsOnly);
+                assert!(!saved.residual_plaintext);
                 let store_mode = std::fs::symlink_metadata(dir.join(linux_file::STORE_DIR))
                     .unwrap()
                     .permissions()
@@ -2681,7 +2906,9 @@ mod linux_keyring {
                 assert_eq!(storage, KeyStorage::FilePermissionsOnly);
                 assert_eq!(back.id(), me.id());
                 assert_eq!(back.secret(), me.secret());
-                forget_identity(&dir).unwrap();
+                let forgot = forget_identity(&dir).unwrap();
+                assert!(!forgot.keyring_cleared);
+                assert!(!forgot.residual_plaintext);
                 assert!(!key_path.exists());
                 assert!(matches!(load_identity(&dir), Loaded::Missing), "gone after forget");
             }
@@ -2709,8 +2936,13 @@ mod linux_keyring {
                 );
                 let saved = save_identity(&dir, &me);
                 eprintln!("save_identity(ok): {saved:?}");
-                assert_eq!(saved.unwrap(), KeyStorage::Keyring);
+                let saved = saved.unwrap();
+                assert_eq!(saved.storage, KeyStorage::Keyring);
+                assert!(!saved.residual_plaintext);
                 assert!(!key_path.exists(), "stale fallback file must be removed after keyring save");
+                // Re-seed a mismatched fallback file and prove load_identity is read-only
+                // and cleanup_fallback_file refuses to delete another identity's file (H2).
+                linux_file::save(&dir, encode(&stale).as_str()).unwrap();
                 let Loaded::Found {
                     identity: back,
                     storage,
@@ -2721,8 +2953,41 @@ mod linux_keyring {
                 assert_eq!(storage, KeyStorage::Keyring);
                 assert_eq!(back.id(), me.id());
                 assert_eq!(back.secret(), me.secret());
-                forget_identity(&dir).unwrap();
+                assert!(key_path.exists(), "H2: load_identity must leave fallback file untouched");
+                assert_eq!(
+                    cleanup_fallback_file(&dir, &[&me.address()], false),
+                    FallbackCleanup::Residual,
+                    "H2: cleanup must not delete a different identity's fallback file"
+                );
+                assert!(key_path.exists());
+                // Matching fallback file IS removed by cleanup_fallback_file.
+                linux_file::save(&dir, encode(&me).as_str()).unwrap();
+                assert_eq!(
+                    cleanup_fallback_file(&dir, &[&me.address()], false),
+                    FallbackCleanup::Removed
+                );
+                assert!(!key_path.exists());
+                let forgot = forget_identity(&dir).unwrap();
+                assert!(forgot.keyring_cleared);
+                assert!(!forgot.residual_plaintext);
                 assert!(matches!(load_identity(&dir), Loaded::Missing), "gone after forget");
+
+                // H4: keyring-only install whose data dir sits under a symlink (no identity-store/)
+                // must succeed on save and forget with residual_plaintext == false.
+                let sym_base = std::env::temp_dir().join(format!("hubchat-keyring-sym-{}", std::process::id()));
+                let _ = std::fs::remove_dir_all(&sym_base);
+                let real_share = sym_base.join("real-share");
+                std::fs::create_dir_all(real_share.join("dev.orgtree.hubchat")).unwrap();
+                let link_share = sym_base.join("link-share");
+                std::os::unix::fs::symlink(&real_share, &link_share).unwrap();
+                let sym_dir = link_share.join("dev.orgtree.hubchat");
+                let sym_saved = save_identity(&sym_dir, &me).unwrap();
+                assert_eq!(sym_saved.storage, KeyStorage::Keyring);
+                assert!(!sym_saved.residual_plaintext);
+                let sym_forgot = forget_identity(&sym_dir).unwrap();
+                assert!(sym_forgot.keyring_cleared);
+                assert!(!sym_forgot.residual_plaintext);
+                let _ = std::fs::remove_dir_all(&sym_base);
             }
             other => panic!("HUBCHAT_KEYRING_EXPECT={other}"),
         }
