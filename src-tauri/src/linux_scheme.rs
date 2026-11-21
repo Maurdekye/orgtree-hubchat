@@ -485,6 +485,20 @@ struct FileSnap {
     modified: Option<std::time::SystemTime>,
 }
 
+impl FileSnap {
+    /// Post-`renameat2(RENAME_EXCHANGE)` identity check: `rename_exchange` itself
+    /// updates `ctime` on the swapped inode, so compare inode, size, mtime, and bytes.
+    #[cfg(target_os = "linux")]
+    fn same_after_exchange(&self, expected: &Self) -> bool {
+        self.text == expected.text
+            && self.len == expected.len
+            && self.dev == expected.dev
+            && self.ino == expected.ino
+            && self.mtime_sec == expected.mtime_sec
+            && self.mtime_nsec == expected.mtime_nsec
+    }
+}
+
 enum ExistingEntry {
     Missing,
     Untrusted,
@@ -601,7 +615,7 @@ fn replace_if_unchanged(dest: &Path, expected: &FileSnap, bytes: &[u8]) -> std::
                         // `guard.path()` now points to whatever inode was at `dest` at the exact swap instant.
                         let swapped_ok = matches!(
                             read_existing_entry(guard.path()),
-                            Ok(ExistingEntry::Regular(ref old)) if old == expected
+                            Ok(ExistingEntry::Regular(ref old)) if old.same_after_exchange(expected)
                         );
                         if swapped_ok {
                             // `guard` drop unlinks the old managed inode.
