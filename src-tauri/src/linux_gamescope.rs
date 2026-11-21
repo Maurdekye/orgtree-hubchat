@@ -29,11 +29,52 @@ pub struct ReexecPlan {
     pub remove: Vec<&'static str>,
 }
 
+fn non_empty(val: Option<String>) -> bool {
+    val.is_some_and(|s| !s.is_empty())
+}
+
 /// Compute the Gamescope re-exec environment plan, or `None` if no re-exec is
-/// needed (outside Gamescope, marker already set, or already configured).
-/// Stubbed for the red test commit.
-pub fn plan_reexec(_env: impl Fn(&str) -> Option<String>) -> Option<ReexecPlan> {
-    None
+/// needed (outside `XDG_CURRENT_DESKTOP=gamescope`, marker already set, or all
+/// required graphics variables are already in the desired state).
+pub fn plan_reexec(env: impl Fn(&str) -> Option<String>) -> Option<ReexecPlan> {
+    if non_empty(env(REEXEC_MARKER)) {
+        return None;
+    }
+    if env("XDG_CURRENT_DESKTOP").as_deref() != Some("gamescope") {
+        return None;
+    }
+    let has_wayland = non_empty(env("WAYLAND_DISPLAY"));
+    let has_x11 = non_empty(env("DISPLAY"));
+
+    let mut set: Vec<(&'static str, &'static str)> = vec![("DISABLE_GAMESCOPE_WSI", "1")];
+    let mut remove: Vec<&'static str> = Vec::new();
+    if has_wayland {
+        if has_x11 {
+            set.push(("GDK_BACKEND", "x11"));
+            remove.push("EGL_PLATFORM");
+        } else {
+            set.push(("WEBKIT_DISABLE_DMABUF_RENDERER", "1"));
+        }
+    }
+
+    let already_set = set.iter().all(|(k, v)| env(k).as_deref() == Some(*v));
+    let already_removed = remove.iter().all(|k| env(k).is_none());
+    if already_set && already_removed {
+        return None;
+    }
+
+    set.push((REEXEC_MARKER, "1"));
+    Some(ReexecPlan { set, remove })
+}
+
+/// Apply a re-exec environment plan onto a command.
+pub fn apply_plan(cmd: &mut Command, plan: &ReexecPlan) {
+    for (k, v) in &plan.set {
+        cmd.env(k, v);
+    }
+    for k in &plan.remove {
+        cmd.env_remove(k);
+    }
 }
 
 /// Build the re-exec command preserving `argv[0]` and all launch arguments once.
@@ -49,12 +90,7 @@ pub fn build_command(exe: &Path, args: &[OsString], plan: &ReexecPlan) -> Comman
     if args.len() > 1 {
         cmd.args(&args[1..]);
     }
-    for (k, v) in &plan.set {
-        cmd.env(k, v);
-    }
-    for k in &plan.remove {
-        cmd.env_remove(k);
-    }
+    apply_plan(&mut cmd, plan);
     cmd
 }
 
@@ -269,5 +305,59 @@ mod tests {
             .find("hubchat_lib::run()")
             .expect("main.rs must call hubchat_lib::run()");
         assert!(reexec_pos < run_pos, "re-exec must run before hubchat_lib::run()");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_reexec_command_applies_env_unsets_egl_preserves_args_and_stops_loop() {
+        let plan = plan_reexec(env_of(&[
+            ("XDG_CURRENT_DESKTOP", "gamescope"),
+            ("DISPLAY", ":0"),
+            ("WAYLAND_DISPLAY", "wayland-0"),
+            ("EGL_PLATFORM", "wayland"),
+        ]))
+        .expect("re-exec planned");
+        let args: Vec<OsString> = vec![
+            "hubchat".into(),
+            "-c".into(),
+            r#"printf 'wsi=%s\ngdk=%s\negl=%s\nmark=%s\nkeep=%s\nargs=%s|%s\n' \
+                "${DISABLE_GAMESCOPE_WSI:-}" "${GDK_BACKEND:-}" "${EGL_PLATFORM-<unset>}" \
+                "${HUBCHAT_GAMESCOPE_REEXEC:-}" "${APPIMAGE:-}" "$1" "$2""#
+                .into(),
+            "sh".into(),
+            "--hidden".into(),
+            "hubchat://chat?to=alex.123456".into(),
+        ];
+        // First: verify apply_plan removes an existing EGL_PLATFORM even when set earlier.
+        let mut seeded = Command::new("/bin/sh");
+        seeded.args(&args[1..]);
+        seeded.env("EGL_PLATFORM", "wayland");
+        seeded.env("APPIMAGE", "/home/steamos/.local/opt/hubchat/hubchat");
+        apply_plan(&mut seeded, &plan);
+        let out = seeded.output().expect("spawn /bin/sh with seeded env");
+        assert!(out.status.success());
+        let stdout = String::from_utf8(out.stdout).unwrap();
+        let expected = "wsi=1\ngdk=x11\negl=<unset>\nmark=1\nkeep=/home/steamos/.local/opt/hubchat/hubchat\n\
+             args=--hidden|hubchat://chat?to=alex.123456\n";
+        assert_eq!(stdout, expected);
+
+        // Second: verify build_command end-to-end preserves args, marker, and env.
+        let mut cmd = build_command(Path::new("/bin/sh"), &args, &plan);
+        cmd.env("APPIMAGE", "/home/steamos/.local/opt/hubchat/hubchat");
+        let out = cmd.output().expect("spawn /bin/sh via build_command");
+        assert!(out.status.success());
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), expected);
+        // Feeding the post-reexec environment back into plan_reexec must not re-exec again.
+        assert_eq!(
+            plan_reexec(env_of(&[
+                ("XDG_CURRENT_DESKTOP", "gamescope"),
+                ("DISPLAY", ":0"),
+                ("WAYLAND_DISPLAY", "wayland-0"),
+                ("DISABLE_GAMESCOPE_WSI", "1"),
+                ("GDK_BACKEND", "x11"),
+                (REEXEC_MARKER, "1"),
+            ])),
+            None
+        );
     }
 }
