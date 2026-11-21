@@ -1,14 +1,15 @@
 # Hubchat development invariants
 
-- 2026-11-21: Linux `hubchat://` registration (`src-tauri/src/linux_scheme.rs`,
-  `lib.rs` setup) writes only `$XDG_DATA_HOME/applications/dev.orgtree.hubchat.link.desktop`
-  (`NoDisplay=true`, `MimeType=x-scheme-handler/hubchat;`, bare plain paths,
-  `env APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1` when extracted, or
-  `env NO_CLEANUP=1 <launcher> %u` when `HUBCHAT_LAUNCHER` names an existing
-  executable regular file) and claims `mimeapps.list` default only when empty
-  or ours. Skips `.test` builds and foreign `$HOME` (`libc::getpwuid_r`); never
-  touches `dev.orgtree.hubchat.desktop`. See `docs/linux-scheme-handler.md`.
-  [decided: user 2026-11-21 m705e9611b564, mcfbe866f5243; verified: linux_scheme.rs]
+- 2026-11-21: Linux desktop integration & SteamOS (`linux_scheme.rs`,
+  `linux_gamescope.rs`, `secrets.rs`, `core.rs`): writes `dev.orgtree.hubchat.link.desktop`
+  and (for verified AppImage/`HUBCHAT_LAUNCHER` launches without a system entry)
+  `dev.orgtree.hubchat.desktop` + icon using no-replace/guarded writes (`X-Hubchat-Version=`),
+  extract `APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1`, bare plain paths, and foreign-HOME
+  guards. Gamescope re-execs once before GTK and restores launching env for external
+  openers. Without a Secret Service (confirmed via 2s D-Bus discovery), stores keys
+  in a 0700/0600 file with owner/tombstone/staged-adoption checks and best-effort
+  cleanup. See `docs/linux-scheme-handler.md`, `docs/steamos-steam-frame.md`.
+  [decided: user 2026-11-21 m705e9611b564, mcfbe866f5243, mcf5eec9b9660; verified: linux_scheme.rs, linux_gamescope.rs, secrets.rs, core.rs]
 
 - 2026-11-16: Hub TLS trusts the built-in public roots AND the device's own
   (a LAN hub's CA), always on: every hub connection takes its TLS from
