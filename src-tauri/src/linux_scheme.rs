@@ -24,7 +24,9 @@ pub const LINK_ENTRY: &str = "dev.orgtree.hubchat.link.desktop";
 pub const LINK_MIME: &str = "x-scheme-handler/hubchat";
 pub const APP_ENTRY: &str = "dev.orgtree.hubchat.desktop";
 pub const APP_ICON_NAME: &str = "dev.orgtree.hubchat";
+const APP_ICON_PNG: &[u8] = include_bytes!("../icons/128x128.png");
 const DEFAULTS: &str = "[Default Applications]";
+const MAX_ENTRY_BYTES: u64 = 256 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EntryStatus {
@@ -133,15 +135,52 @@ pub fn appimage_extracted(appimage: Option<&str>, appdir: Option<&str>) -> bool 
     base.starts_with("appimage_extracted_")
 }
 
-/// Full text of `dev.orgtree.hubchat.link.desktop`.
-pub fn link_entry_text(exec: &str, version: &str) -> String {
-    let clean_version: String = version
+fn clean_version(version: &str) -> String {
+    version
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-'))
-        .collect();
+        .collect()
+}
+
+/// Full text of `dev.orgtree.hubchat.link.desktop`.
+pub fn link_entry_text(exec: &str, version: &str) -> String {
+    let ver = clean_version(version);
     format!(
-        "[Desktop Entry]\nType=Application\nName=Hubchat link\nNoDisplay=true\nExec={exec}\nMimeType={LINK_MIME};\nX-Hubchat-Version={clean_version}\n"
+        "[Desktop Entry]\nType=Application\nName=Hubchat link\nNoDisplay=true\nExec={exec}\nMimeType={LINK_MIME};\nX-Hubchat-Version={ver}\n"
     )
+}
+
+/// Full text of Hubchat's visible app-list entry (`dev.orgtree.hubchat.desktop`).
+pub fn app_entry_text(exec: &str, version: &str) -> String {
+    let ver = clean_version(version);
+    format!(
+        "[Desktop Entry]\nType=Application\nName=Hubchat\nComment=Chat on an Orgtree mail hub\n\
+         Exec={exec}\nIcon={APP_ICON_NAME}\nTerminal=false\nCategories=Network;InstantMessaging;\n\
+         StartupWMClass=hubchat\nX-Hubchat-Version={ver}\n"
+    )
+}
+
+fn is_managed_hubchat_entry(text: &str) -> bool {
+    let mut inside = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') {
+            inside = line == "[Desktop Entry]";
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=') {
+            if k.trim() == "X-Hubchat-Version" && !v.trim().is_empty() {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn normalize_lexical(path: &Path) -> PathBuf {
@@ -158,7 +197,7 @@ fn normalize_lexical(path: &Path) -> PathBuf {
     out
 }
 
-fn same_folder(a: &Path, b: &Path) -> bool {
+pub(crate) fn same_folder(a: &Path, b: &Path) -> bool {
     if !a.is_absolute() || !b.is_absolute() {
         return false;
     }
@@ -175,7 +214,8 @@ fn xdg_dir(value: Option<&str>, fallback: PathBuf) -> PathBuf {
     }
 }
 
-fn write_atomic(file: &Path, text: &str) -> std::io::Result<()> {
+fn write_atomic_bytes(file: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent)?;
@@ -184,7 +224,17 @@ fn write_atomic(file: &Path, text: &str) -> std::io::Result<()> {
     let name = file.file_name().and_then(|n| n.to_str()).unwrap_or("file");
     let tmp = file.with_file_name(format!("{name}.{}.{seq}.tmp", std::process::id()));
     let write_res = (|| -> std::io::Result<()> {
-        std::fs::write(&tmp, text.as_bytes())?;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o644);
+        }
+        let mut f = opts.open(&tmp)?;
+        f.write_all(bytes)?;
+        f.flush()?;
+        drop(f);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -197,6 +247,10 @@ fn write_atomic(file: &Path, text: &str) -> std::io::Result<()> {
         let _ = std::fs::remove_file(&tmp);
     }
     write_res
+}
+
+fn write_atomic(file: &Path, text: &str) -> std::io::Result<()> {
+    write_atomic_bytes(file, text.as_bytes())
 }
 
 fn claim_default(file: &Path) -> std::io::Result<DefaultStatus> {
@@ -342,24 +396,106 @@ pub fn register_in_with(
     })
 }
 
-/// Full text of `dev.orgtree.hubchat.desktop`.
-pub fn app_entry_text(_exec: &str, _version: &str) -> String {
-    String::new()
+fn install_icon_if_missing(data_home: &Path) -> IconStatus {
+    let icon_path = data_home
+        .join("icons")
+        .join("hicolor")
+        .join("128x128")
+        .join("apps")
+        .join(format!("{APP_ICON_NAME}.png"));
+    match std::fs::symlink_metadata(&icon_path) {
+        Ok(_) => return IconStatus::Exists,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return IconStatus::Skipped,
+    }
+    match write_atomic_bytes(&icon_path, APP_ICON_PNG) {
+        Ok(()) => IconStatus::Written,
+        Err(_) => IconStatus::Skipped,
+    }
 }
 
 /// Self-install or repair Hubchat's visible `dev.orgtree.hubchat.desktop` and
-/// icon on Linux (Requests 2+3). Stubbed for the red test commit.
+/// icon on Linux (AppImage or valid `HUBCHAT_LAUNCHER` installs only, so `.deb`
+/// installs do not get a duplicate app-menu entry). Respects the same guards as
+/// `register_in_with`, keeps `HUBCHAT_LAUNCHER` winning, carries
+/// `APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1` in extract mode, never overwrites
+/// a hand-written entry (without `X-Hubchat-Version=`), a symlink, or an
+/// existing icon, and treats icon write failures as non-fatal.
 pub fn register_app_in_with(
-    _inputs: &Inputs<'_>,
-    _is_executable_file: impl Fn(&Path) -> bool,
+    inputs: &Inputs<'_>,
+    is_executable_file: impl Fn(&Path) -> bool,
 ) -> std::io::Result<AppEntryResult> {
-    Ok(AppEntryResult { entry: AppEntryStatus::Skipped, icon: IconStatus::Skipped })
+    let skipped = AppEntryResult { entry: AppEntryStatus::Skipped, icon: IconStatus::Skipped };
+    if inputs.identifier.ends_with(".test") {
+        return Ok(skipped);
+    }
+    let Some(home) = inputs.account_home.filter(|p| !p.as_os_str().is_empty()) else {
+        return Ok(skipped);
+    };
+    if let Some(env_home) = inputs.env_home.filter(|s| !s.is_empty()) {
+        if !same_folder(Path::new(env_home), home) {
+            return Ok(skipped);
+        }
+    }
+
+    let exec = if let Some(arg) = inputs
+        .launcher
+        .filter(|s| !s.is_empty())
+        .and_then(|launcher| {
+            let arg = desktop_exec_arg(launcher)?;
+            is_executable_file(Path::new(launcher)).then_some(arg)
+        })
+    {
+        format!("env NO_CLEANUP=1 {arg}")
+    } else if let Some(appimage) = inputs.appimage.filter(|s| !s.is_empty()) {
+        let Some(arg) = desktop_exec_arg(appimage) else {
+            return Ok(skipped);
+        };
+        if appimage_extracted(inputs.appimage, inputs.appdir) {
+            format!("env APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1 {arg}")
+        } else {
+            arg
+        }
+    } else {
+        // .deb or non-AppImage build without HUBCHAT_LAUNCHER: leave system/user menus alone.
+        return Ok(skipped);
+    };
+
+    let data_home = xdg_dir(inputs.xdg_data_home, home.join(".local").join("share"));
+    let app_path = data_home.join("applications").join(APP_ENTRY);
+    let text = app_entry_text(&exec, inputs.version);
+
+    let entry = match std::fs::symlink_metadata(&app_path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            write_atomic(&app_path, &text)?;
+            AppEntryStatus::Written
+        }
+        Err(e) => return Err(e),
+        Ok(meta) => {
+            if !meta.is_file() || meta.len() > MAX_ENTRY_BYTES {
+                return Ok(AppEntryResult { entry: AppEntryStatus::Other, icon: IconStatus::Skipped });
+            }
+            let existing = std::fs::read_to_string(&app_path)?;
+            if !is_managed_hubchat_entry(&existing) {
+                return Ok(AppEntryResult { entry: AppEntryStatus::Other, icon: IconStatus::Skipped });
+            }
+            if existing.as_bytes() == text.as_bytes() {
+                AppEntryStatus::Current
+            } else {
+                write_atomic(&app_path, &text)?;
+                AppEntryStatus::Written
+            }
+        }
+    };
+
+    let icon = install_icon_if_missing(&data_home);
+    Ok(AppEntryResult { entry, icon })
 }
 
 /// The account's real home directory from the system password database
 /// (`geteuid` + `getpwuid_r`), independent of `$HOME`.
 #[cfg(target_os = "linux")]
-fn account_home() -> Option<PathBuf> {
+pub(crate) fn account_home() -> Option<PathBuf> {
     use std::ffi::{CStr, OsStr};
     use std::os::unix::ffi::OsStrExt;
 
@@ -448,6 +584,20 @@ pub fn register(app: &tauri::AppHandle) {
         },
         Err(_) => {
             tracing::warn!("could not register hubchat:// scheme handler");
+        }
+    }
+    match register_app_in_with(&inputs, is_executable_regular_file) {
+        Ok(res) => match res.entry {
+            AppEntryStatus::Written => {
+                tracing::info!("registered Hubchat desktop entry");
+            }
+            AppEntryStatus::Other => {
+                tracing::info!("existing Hubchat desktop entry was not written by Hubchat; left alone");
+            }
+            AppEntryStatus::Current | AppEntryStatus::Skipped => {}
+        },
+        Err(_) => {
+            tracing::warn!("could not register Hubchat desktop entry");
         }
     }
 }
@@ -1072,5 +1222,41 @@ mod tests {
             register_in_with(&fail_inp, |_| false).unwrap(),
             RegisterResult { entry: EntryStatus::Written, default: DefaultStatus::Set }
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn visible_app_entry_and_icon_refuse_symlinks_on_linux() {
+        use std::os::unix::fs::symlink;
+        let h = TestHome::new("app-symlink");
+        std::fs::create_dir_all(&h.apps).unwrap();
+        let target = h.dir.join("target.desktop");
+        let target_text = "[Desktop Entry]\nType=Application\nName=Hubchat\nExec=/opt/x\nX-Hubchat-Version=1.3.11\n";
+        std::fs::write(&target, target_text).unwrap();
+        let link = h.apps.join(APP_ENTRY);
+        symlink(&target, &link).unwrap();
+
+        let mut inp = h.inputs();
+        inp.appdir = Some("/tmp/appimage_extracted_fedfad5");
+        assert_eq!(
+            register_app_in_with(&inp, |_| false).unwrap(),
+            AppEntryResult { entry: AppEntryStatus::Other, icon: IconStatus::Skipped }
+        );
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), target_text);
+
+        // Symlink at icon path is preserved untouched while desktop entry is written.
+        std::fs::remove_file(&link).unwrap();
+        let icon_target = h.dir.join("other-icon.png");
+        std::fs::write(&icon_target, b"keep-me").unwrap();
+        let icon_link = h.dir.join(".local/share/icons/hicolor/128x128/apps/dev.orgtree.hubchat.png");
+        std::fs::create_dir_all(icon_link.parent().unwrap()).unwrap();
+        symlink(&icon_target, &icon_link).unwrap();
+        assert_eq!(
+            register_app_in_with(&inp, |_| false).unwrap(),
+            AppEntryResult { entry: AppEntryStatus::Written, icon: IconStatus::Exists }
+        );
+        assert!(std::fs::symlink_metadata(&icon_link).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read(&icon_target).unwrap(), b"keep-me");
     }
 }
