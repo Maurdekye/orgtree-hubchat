@@ -153,6 +153,8 @@ export interface State {
   key_restored: boolean;
   /** Where the active identity key is kept on this device (absent on older cores or web). */
   key_storage?: KeyStorage | null;
+  /** True when a Linux permissions-only fallback key file remains on disk and awaits cleanup. */
+  key_file_residual?: boolean;
 }
 
 /** Why the lost-key screen shows (user 2026-10-10: Windows lost every saved sign-in). */

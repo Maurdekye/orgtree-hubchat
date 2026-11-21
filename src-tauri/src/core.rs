@@ -15,7 +15,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::keylog::{self, Fact};
-use crate::secrets::Loaded;
+use crate::secrets::{FallbackCleanup, ForgetResult, KeyStorage, Loaded};
 
 /// What only the platform can do.
 pub trait Platform: Send + Sync + 'static {
@@ -175,7 +175,10 @@ pub struct Core {
     /// Set while this device had an identity but its key can't be found.
     key_lost: Mutex<Option<KeyLost>>,
     /// Where this device's active identity key is stored (None when signed out / lost).
-    key_storage: Mutex<Option<crate::secrets::KeyStorage>>,
+    key_storage: Mutex<Option<KeyStorage>>,
+    /// True when a Linux permissions-only fallback key file could not be removed
+    /// after a keyring save/load/forget and still remains on disk (H4).
+    key_file_residual: Mutex<bool>,
     identity_load: hubchat_core::notification_reply::IdentityLoader,
     #[cfg(windows)]
     shortcut_projection: Mutex<Option<(String, Vec<hubchat_core::store::ShortcutContact>)>>,
@@ -192,6 +195,112 @@ pub struct KeyLost {
     unreadable: bool,
 }
 
+const META_FORGOTTEN: &str = "key.forgotten";
+const META_ADOPTING: &str = "key.adopting";
+const META_FILE_CLEANUP_PENDING: &str = "key.file_cleanup_pending";
+
+/// One identity explicitly forgotten (Start over or sign-out) while the OS
+/// keyring could not yet be reached, so a returning keyring cannot sign it
+/// back in (H3).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct ForgetTombstone {
+    address: String,
+    at: String,
+}
+
+/// Staged identity adoption written before the credential save so an
+/// interruption or database error between save and commit recovers cleanly on
+/// next launch without stranding the key or leaking old chats (M6).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct PendingAdoption {
+    address: String,
+    wipe: bool,
+    #[serde(default)]
+    meta: Vec<(String, String)>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct StoreOwnership {
+    owner: Option<String>,
+    had_identity: bool,
+    tombstones: Vec<ForgetTombstone>,
+    adopting: Option<PendingAdoption>,
+    cleanup_pending: Option<String>,
+}
+
+fn parse_tombstones(raw: Option<&str>) -> Result<Vec<ForgetTombstone>, String> {
+    let Some(s) = raw.filter(|s| !s.trim().is_empty()) else {
+        return Ok(Vec::new());
+    };
+    serde_json::from_str(s).map_err(|e| format!("invalid {META_FORGOTTEN} metadata: {e}"))
+}
+
+fn format_tombstones(list: &[ForgetTombstone]) -> Option<String> {
+    if list.is_empty() {
+        None
+    } else {
+        serde_json::to_string(list).ok()
+    }
+}
+
+fn add_tombstone(list: &[ForgetTombstone], address: &str, at: String) -> Vec<ForgetTombstone> {
+    let mut out: Vec<ForgetTombstone> = list
+        .iter()
+        .filter(|t| t.address != address)
+        .cloned()
+        .collect();
+    out.push(ForgetTombstone {
+        address: address.to_owned(),
+        at,
+    });
+    out
+}
+
+fn remove_tombstones_matching(list: &[ForgetTombstone], remove_addrs: &[&str]) -> Vec<ForgetTombstone> {
+    list.iter()
+        .filter(|t| !remove_addrs.contains(&t.address.as_str()))
+        .cloned()
+        .collect()
+}
+
+fn parse_pending_adoption(raw: Option<&str>) -> Result<Option<PendingAdoption>, String> {
+    let Some(s) = raw.filter(|s| !s.trim().is_empty()) else {
+        return Ok(None);
+    };
+    serde_json::from_str(s)
+        .map(Some)
+        .map_err(|e| format!("invalid {META_ADOPTING} metadata: {e}"))
+}
+
+trait MetaReader {
+    fn read_meta(&self, key: &str) -> Result<Option<String>, String>;
+}
+
+impl MetaReader for Store {
+    fn read_meta(&self, key: &str) -> Result<Option<String>, String> {
+        self.meta(key).map_err(|e| e.to_string())
+    }
+}
+
+/// Read store ownership and key-lifecycle metadata, propagating every SQLite
+/// read error instead of treating a broken database as missing metadata (M6).
+fn read_store_ownership(store: &impl MetaReader) -> Result<StoreOwnership, String> {
+    let owner = store.read_meta("identity.address")?.filter(|v| !v.is_empty());
+    let device_id = store.read_meta("device.id")?.filter(|v| !v.is_empty());
+    let raw_forgotten = store.read_meta(META_FORGOTTEN)?;
+    let raw_adopting = store.read_meta(META_ADOPTING)?;
+    let cleanup_pending = store
+        .read_meta(META_FILE_CLEANUP_PENDING)?
+        .filter(|v| !v.is_empty());
+    Ok(StoreOwnership {
+        had_identity: owner.is_some() || device_id.is_some(),
+        owner,
+        tombstones: parse_tombstones(raw_forgotten.as_deref())?,
+        adopting: parse_pending_adoption(raw_adopting.as_deref())?,
+        cleanup_pending,
+    })
+}
+
 /// Whether adopting `new` must first remove this device's local data: never
 /// when there is none; when it belongs to another known identity; and, when
 /// its owner is unknown (kept before Hubchat noted it), only for a brand-new
@@ -204,29 +313,451 @@ fn must_wipe(owner: Option<&str>, has_data: bool, new: &str, brand_new: bool) ->
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum LoadedDecision {
     Accept,
-    /// Permissions-only fallback file disagrees with local store owner: show LostKey.
+    /// Complete an interrupted adoption whose credential was already saved (M6).
+    RecoverAdoption(PendingAdoption),
+    /// Returning keyring identity matches a forget tombstone: refuse and clear keyring (H3).
+    ForgottenKeyring { matched: String },
+    /// Keyring or fallback file disagrees with local store owner: show LostKey without deleting either key (H2).
     RejectMismatch { owner: Option<String> },
-    /// Permissions-only fallback file exists with no local identity data: ignore orphan.
+    /// Permissions-only fallback file exists without local identity data (or matches a tombstone): ignore orphan.
     IgnoreOrphan,
 }
 
-fn decide_loaded_identity(
-    storage: crate::secrets::KeyStorage,
+fn matching_tombstone(
+    tombstones: &[ForgetTombstone],
     identity_addr: &str,
-    store_owner: Option<&str>,
     had_identity: bool,
+) -> Option<String> {
+    if tombstones.iter().any(|t| t.address == identity_addr) {
+        return Some(identity_addr.to_owned());
+    }
+    if !had_identity && tombstones.iter().any(|t| t.address == "*") {
+        return Some("*".to_owned());
+    }
+    None
+}
+
+fn decide_loaded_identity(
+    storage: KeyStorage,
+    identity_addr: &str,
+    ownership: &StoreOwnership,
 ) -> LoadedDecision {
-    if storage != crate::secrets::KeyStorage::FilePermissionsOnly {
-        return LoadedDecision::Accept;
+    if let Some(pending) = &ownership.adopting {
+        if pending.address == identity_addr {
+            return LoadedDecision::RecoverAdoption(pending.clone());
+        }
     }
-    match store_owner {
-        Some(owner) if owner == identity_addr => LoadedDecision::Accept,
-        Some(owner) => LoadedDecision::RejectMismatch {
-            owner: Some(owner.to_owned()),
-        },
-        None if had_identity => LoadedDecision::RejectMismatch { owner: None },
-        None => LoadedDecision::IgnoreOrphan,
+    match storage {
+        KeyStorage::Keyring => {
+            if let Some(matched) =
+                matching_tombstone(&ownership.tombstones, identity_addr, ownership.had_identity)
+            {
+                return LoadedDecision::ForgottenKeyring { matched };
+            }
+            if let Some(owner) = &ownership.owner {
+                if owner != identity_addr {
+                    return LoadedDecision::RejectMismatch {
+                        owner: Some(owner.clone()),
+                    };
+                }
+            }
+            // Matching owner, or legacy ownerless + tombstoneless profile -> Accept.
+            LoadedDecision::Accept
+        }
+        KeyStorage::FilePermissionsOnly => {
+            if matching_tombstone(&ownership.tombstones, identity_addr, ownership.had_identity).is_some() {
+                return LoadedDecision::IgnoreOrphan;
+            }
+            match ownership.owner.as_deref() {
+                Some(owner) if owner == identity_addr => LoadedDecision::Accept,
+                Some(owner) => LoadedDecision::RejectMismatch {
+                    owner: Some(owner.to_owned()),
+                },
+                None if ownership.had_identity => LoadedDecision::RejectMismatch { owner: None },
+                None => LoadedDecision::IgnoreOrphan,
+            }
+        }
     }
+}
+
+trait LifecycleSecrets {
+    fn load(&self) -> Loaded;
+    fn save_staged(&self, me: &Identity) -> Result<KeyStorage, String>;
+    fn forget(&self) -> Result<ForgetResult, String>;
+    fn forget_keyring_only(&self) -> Result<(), String>;
+    fn cleanup_fallback(&self, allowed_addrs: &[&str], allow_any: bool) -> FallbackCleanup;
+}
+
+struct RealSecrets<'a>(&'a std::path::Path);
+
+impl LifecycleSecrets for RealSecrets<'_> {
+    fn load(&self) -> Loaded {
+        crate::secrets::load_identity(self.0)
+    }
+    fn save_staged(&self, me: &Identity) -> Result<KeyStorage, String> {
+        crate::secrets::save_identity_staged(self.0, me)
+    }
+    fn forget(&self) -> Result<ForgetResult, String> {
+        crate::secrets::forget_identity(self.0)
+    }
+    fn forget_keyring_only(&self) -> Result<(), String> {
+        crate::secrets::forget_keyring_only(self.0)
+    }
+    fn cleanup_fallback(&self, allowed_addrs: &[&str], allow_any: bool) -> FallbackCleanup {
+        crate::secrets::cleanup_fallback_file(self.0, allowed_addrs, allow_any)
+    }
+}
+
+struct LoadPlan {
+    start: Option<(Identity, KeyStorage)>,
+    key_lost: Option<KeyLost>,
+    residual: bool,
+}
+
+struct ForgetCommit {
+    target_addr: Option<String>,
+    res: ForgetResult,
+}
+
+fn run_fallback_cleanup(
+    store: &Store,
+    secrets: &impl LifecycleSecrets,
+    active_addr: &str,
+    replaced_owner: Option<&str>,
+    pending: Option<&str>,
+) -> bool {
+    let allow_any = pending == Some("*");
+    let mut allowed: Vec<&str> = vec![active_addr];
+    if let Some(old) = replaced_owner {
+        if !old.is_empty() && !allowed.contains(&old) {
+            allowed.push(old);
+        }
+    }
+    if let Some(p) = pending {
+        if p != "*" && !p.is_empty() && !allowed.contains(&p) {
+            allowed.push(p);
+        }
+    }
+    match secrets.cleanup_fallback(&allowed, allow_any) {
+        FallbackCleanup::NoneExisted | FallbackCleanup::Removed => {
+            if pending.is_some() {
+                let _ = store.delete_meta(META_FILE_CLEANUP_PENDING);
+            }
+            false
+        }
+        FallbackCleanup::Residual => {
+            let next_pending = if allow_any {
+                "*"
+            } else if let Some(old) = replaced_owner.filter(|s| !s.is_empty()) {
+                old
+            } else if let Some(p) = pending.filter(|s| !s.is_empty()) {
+                p
+            } else {
+                active_addr
+            };
+            let _ = store.set_meta(META_FILE_CLEANUP_PENDING, next_pending);
+            true
+        }
+    }
+}
+
+fn lifecycle_load(
+    dir: &std::path::Path,
+    store: &Store,
+    secrets: &impl LifecycleSecrets,
+    on_forget_push: impl FnOnce(),
+) -> Result<LoadPlan, String> {
+    let loaded = secrets.load();
+    let ownership = read_store_ownership(store)?;
+    let (me, storage, restored) = match loaded {
+        Loaded::Found { identity, storage } => (identity, storage, false),
+        Loaded::Restored { identity, storage } => (identity, storage, true),
+        Loaded::Missing => {
+            return Ok(LoadPlan {
+                start: None,
+                key_lost: ownership.had_identity.then(|| KeyLost {
+                    address: ownership.owner,
+                    unreadable: false,
+                }),
+                residual: ownership.cleanup_pending.is_some(),
+            });
+        }
+        Loaded::Unreadable => {
+            return Ok(LoadPlan {
+                start: None,
+                key_lost: ownership.had_identity.then(|| KeyLost {
+                    address: ownership.owner,
+                    unreadable: true,
+                }),
+                residual: ownership.cleanup_pending.is_some(),
+            });
+        }
+    };
+    let addr = me.address();
+    match decide_loaded_identity(storage, &addr, &ownership) {
+        LoadedDecision::Accept => {
+            if ownership.adopting.is_some() {
+                let _ = store.delete_meta(META_ADOPTING);
+            }
+            if restored {
+                store.set_meta("key.restored", "yes").map_err(|e| e.to_string())?;
+            }
+            let residual = if storage == KeyStorage::Keyring {
+                run_fallback_cleanup(store, secrets, &addr, None, ownership.cleanup_pending.as_deref())
+            } else {
+                false
+            };
+            Ok(LoadPlan {
+                start: Some((me, storage)),
+                key_lost: None,
+                residual,
+            })
+        }
+        LoadedDecision::RecoverAdoption(pending) => {
+            if pending.wipe {
+                on_forget_push();
+            }
+            let mut meta_refs: Vec<(&str, &str)> = pending
+                .meta
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            if restored {
+                meta_refs.push(("key.restored", "yes"));
+            }
+            let updated_forgotten = format_tombstones(&remove_tombstones_matching(
+                &ownership.tombstones,
+                &[addr.as_str(), "*"],
+            ));
+            store
+                .commit_adopted_identity(pending.wipe, &addr, &meta_refs, updated_forgotten.as_deref())
+                .map_err(|e| e.to_string())?;
+            if pending.wipe {
+                keylog::note(
+                    dir,
+                    "another identity's local data was removed before taking this one",
+                    &[Fact::OtherLocalDataRemoved],
+                );
+            }
+            keylog::note(
+                dir,
+                "completed an interrupted identity change at startup",
+                &[Fact::AdoptionRecovered],
+            );
+            let residual = if storage == KeyStorage::Keyring {
+                let replaced_owner = pending.wipe.then_some(ownership.owner.as_deref()).flatten();
+                run_fallback_cleanup(
+                    store,
+                    secrets,
+                    &addr,
+                    replaced_owner,
+                    ownership.cleanup_pending.as_deref(),
+                )
+            } else {
+                if ownership.cleanup_pending.is_some() {
+                    let _ = store.delete_meta(META_FILE_CLEANUP_PENDING);
+                }
+                false
+            };
+            Ok(LoadPlan {
+                start: Some((me, storage)),
+                key_lost: None,
+                residual,
+            })
+        }
+        LoadedDecision::ForgottenKeyring { matched } => {
+            match secrets.forget_keyring_only() {
+                Ok(()) => {
+                    let remaining = remove_tombstones_matching(&ownership.tombstones, &[matched.as_str()]);
+                    match format_tombstones(&remaining) {
+                        Some(json) => store.set_meta(META_FORGOTTEN, &json).map_err(|e| e.to_string())?,
+                        None => store.delete_meta(META_FORGOTTEN).map_err(|e| e.to_string())?,
+                    }
+                    keylog::note(
+                        dir,
+                        "keyring held a previously forgotten identity; removed from keyring",
+                        &[Fact::ForgottenKeyCleared],
+                    );
+                }
+                Err(_) => {
+                    keylog::note(
+                        dir,
+                        "keyring held a previously forgotten identity that couldn't be removed; refused",
+                        &[Fact::ForgottenKeyCleanupFailed],
+                    );
+                }
+            }
+            Ok(LoadPlan {
+                start: None,
+                key_lost: ownership.had_identity.then(|| KeyLost {
+                    address: ownership.owner,
+                    unreadable: false,
+                }),
+                residual: ownership.cleanup_pending.is_some(),
+            })
+        }
+        LoadedDecision::RejectMismatch { owner } => {
+            if storage == KeyStorage::Keyring {
+                keylog::note(
+                    dir,
+                    "keyring holds a different identity than this device's data; refused",
+                    &[Fact::KeyringOwnerMismatch],
+                );
+            } else {
+                keylog::note(
+                    dir,
+                    "permissions-only key file holds a different identity than this device's data; refused",
+                    &[Fact::KeyFileOwnerMismatch],
+                );
+            }
+            Ok(LoadPlan {
+                start: None,
+                key_lost: Some(KeyLost {
+                    address: owner,
+                    unreadable: false,
+                }),
+                residual: ownership.cleanup_pending.is_some(),
+            })
+        }
+        LoadedDecision::IgnoreOrphan => {
+            keylog::note(
+                dir,
+                "permissions-only key file ignored without local identity data",
+                &[Fact::KeyFileOrphanIgnored],
+            );
+            Ok(LoadPlan {
+                start: None,
+                key_lost: None,
+                residual: ownership.cleanup_pending.is_some(),
+            })
+        }
+    }
+}
+
+fn lifecycle_adopt(
+    dir: &std::path::Path,
+    store: &Store,
+    secrets: &impl LifecycleSecrets,
+    me: &Identity,
+    brand_new: bool,
+    meta: &[(&str, &str)],
+    on_forget_push: impl FnOnce(),
+) -> Result<(KeyStorage, bool), String> {
+    let ownership = read_store_ownership(store)?;
+    let addr = me.address();
+    let wipe_needed = must_wipe(ownership.owner.as_deref(), ownership.had_identity, &addr, brand_new);
+    let pending = PendingAdoption {
+        address: addr.clone(),
+        wipe: wipe_needed,
+        meta: meta.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect(),
+    };
+    let pending_json = serde_json::to_string(&pending).map_err(|e| e.to_string())?;
+    store.set_meta(META_ADOPTING, &pending_json).map_err(|e| e.to_string())?;
+
+    let storage = match secrets.save_staged(me) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = store.delete_meta(META_ADOPTING);
+            return Err(e);
+        }
+    };
+
+    if wipe_needed {
+        on_forget_push();
+    }
+    let updated_forgotten = format_tombstones(&remove_tombstones_matching(
+        &ownership.tombstones,
+        &[addr.as_str(), "*"],
+    ));
+    store
+        .commit_adopted_identity(wipe_needed, &addr, meta, updated_forgotten.as_deref())
+        .map_err(|e| e.to_string())?;
+    if wipe_needed {
+        keylog::note(
+            dir,
+            "another identity's local data was removed before taking this one",
+            &[Fact::OtherLocalDataRemoved],
+        );
+    }
+
+    let residual = if storage == KeyStorage::Keyring {
+        let replaced_owner = wipe_needed.then_some(ownership.owner.as_deref()).flatten();
+        run_fallback_cleanup(
+            store,
+            secrets,
+            &addr,
+            replaced_owner,
+            ownership.cleanup_pending.as_deref(),
+        )
+    } else {
+        if ownership.cleanup_pending.is_some() {
+            let _ = store.delete_meta(META_FILE_CLEANUP_PENDING);
+        }
+        false
+    };
+
+    keylog::note(
+        dir,
+        if brand_new { "key saved: a new identity" } else { "key saved: an identity brought to this device" },
+        &[if brand_new { Fact::KeySavedNew } else { Fact::KeySavedBrought }],
+    );
+    Ok((storage, residual))
+}
+
+fn lifecycle_forget_begin(
+    store: &Store,
+    secrets: &impl LifecycleSecrets,
+    live_addr: Option<&str>,
+) -> Result<ForgetCommit, String> {
+    let ownership = read_store_ownership(store)?;
+    let target_addr = live_addr
+        .map(str::to_owned)
+        .or_else(|| ownership.owner.clone())
+        .or_else(|| ownership.had_identity.then(|| "*".to_owned()));
+    let prev_forgotten = format_tombstones(&ownership.tombstones);
+    if let Some(addr) = target_addr.as_deref() {
+        let updated = add_tombstone(&ownership.tombstones, addr, hubchat_core::engine::now());
+        if let Some(json) = format_tombstones(&updated) {
+            store.set_meta(META_FORGOTTEN, &json).map_err(|e| e.to_string())?;
+        }
+    }
+    let res = match secrets.forget() {
+        Ok(r) => r,
+        Err(e) => {
+            match prev_forgotten.as_deref() {
+                Some(json) => {
+                    let _ = store.set_meta(META_FORGOTTEN, json);
+                }
+                None => {
+                    let _ = store.delete_meta(META_FORGOTTEN);
+                }
+            }
+            return Err(e);
+        }
+    };
+    if res.residual_plaintext {
+        store
+            .set_meta(META_FILE_CLEANUP_PENDING, "*")
+            .map_err(|e| e.to_string())?;
+    } else if ownership.cleanup_pending.is_some() {
+        let _ = store.delete_meta(META_FILE_CLEANUP_PENDING);
+    }
+    Ok(ForgetCommit { target_addr, res })
+}
+
+fn lifecycle_forget_finish(store: &Store, commit: &ForgetCommit) -> Result<(), String> {
+    store.wipe().map_err(|e| e.to_string())?;
+    if commit.res.keyring_cleared {
+        if let Some(addr) = commit.target_addr.as_deref() {
+            let ownership = read_store_ownership(store)?;
+            let remaining = remove_tombstones_matching(&ownership.tombstones, &[addr]);
+            match format_tombstones(&remaining) {
+                Some(json) => store.set_meta(META_FORGOTTEN, &json).map_err(|e| e.to_string())?,
+                None => store.delete_meta(META_FORGOTTEN).map_err(|e| e.to_string())?,
+            }
+        }
+    }
+    Ok(())
 }
 
 struct ShellHost {
@@ -430,6 +961,7 @@ pub fn init(dir: PathBuf, platform: Arc<dyn Platform>) -> Result<&'static Core, 
         host,
         key_lost: Mutex::new(None),
         key_storage: Mutex::new(None),
+        key_file_residual: Mutex::new(false),
         identity_load: Default::default(),
         #[cfg(windows)]
         shortcut_projection: Mutex::new(None),
@@ -662,63 +1194,26 @@ impl Core {
     }
 
     fn load_key_inner(&self) -> Result<bool, String> {
-        let unreadable = match crate::secrets::load_identity(&self.dir) {
-            Loaded::Found { identity: me, storage } => {
-                let owner = self.store.meta("identity.address").ok().flatten();
-                match decide_loaded_identity(storage, &me.address(), owner.as_deref(), self.had_identity()) {
-                    LoadedDecision::Accept => {
-                        return self.start_with(me, storage).map(|_| true);
-                    }
-                    LoadedDecision::RejectMismatch { owner } => {
-                        keylog::note(
-                            &self.dir,
-                            "permissions-only key file holds a different identity than this device's data; refused",
-                            &[Fact::KeyFileOwnerMismatch],
-                        );
-                        *self.key_storage.lock().unwrap() = None;
-                        *self.key_lost.lock().unwrap() = Some(KeyLost {
-                            address: owner,
-                            unreadable: false,
-                        });
-                        self.host.platform.status("Set up Hubchat to connect");
-                        return Ok(false);
-                    }
-                    LoadedDecision::IgnoreOrphan => {
-                        keylog::note(
-                            &self.dir,
-                            "permissions-only key file ignored without local identity data",
-                            &[Fact::KeyFileOrphanIgnored],
-                        );
-                        *self.key_storage.lock().unwrap() = None;
-                        *self.key_lost.lock().unwrap() = None;
-                        self.host.platform.status("Set up Hubchat to connect");
-                        return Ok(false);
-                    }
-                }
-            }
-            Loaded::Restored { identity: me, storage } => {
-                // the UI says so once (dismissed: key_restored_seen)
-                self.store.set_meta("key.restored", "yes").map_err(|e| e.to_string())?;
-                return self.start_with(me, storage).map(|_| true);
-            }
-            Loaded::Missing => false,
-            Loaded::Unreadable => true,
-        };
+        let secrets = RealSecrets(&self.dir);
+        let plan = lifecycle_load(&self.dir, &self.store, &secrets, || self.forget_push())?;
+        if let Some((me, storage)) = plan.start {
+            self.start_with(me, storage, plan.residual)?;
+            return Ok(true);
+        }
         *self.key_storage.lock().unwrap() = None;
-        *self.key_lost.lock().unwrap() = self.had_identity().then(|| KeyLost {
-            address: self.store.meta("identity.address").ok().flatten(),
-            unreadable,
-        });
+        *self.key_lost.lock().unwrap() = plan.key_lost;
+        *self.key_file_residual.lock().unwrap() = plan.residual;
         self.host.platform.status("Set up Hubchat to connect");
         // Keep the lost-key UI available while a later cold attach retries the key.
         Ok(false)
     }
 
-    fn start_with(&self, me: Identity, storage: crate::secrets::KeyStorage) -> Result<(), String> {
-        self.note_owner(&me);
+    fn start_with(&self, me: Identity, storage: KeyStorage, residual: bool) -> Result<(), String> {
+        self.note_owner(&me)?;
         *self.key_lost.lock().unwrap() = None;
         self.start_engine(me)?;
         *self.key_storage.lock().unwrap() = Some(storage);
+        *self.key_file_residual.lock().unwrap() = residual;
         Ok(())
     }
 
@@ -726,23 +1221,29 @@ impl Core {
         self.key_lost.lock().unwrap().clone()
     }
 
-    pub fn key_storage(&self) -> Option<crate::secrets::KeyStorage> {
+    pub fn key_storage(&self) -> Option<KeyStorage> {
         *self.key_storage.lock().unwrap()
     }
 
-    /// The local data belongs to an identity: it ran here (device.id is made
-    /// at its first start) or Hubchat noted whose it is.
-    fn had_identity(&self) -> bool {
-        let has = |k: &str| self.store.meta(k).ok().flatten().is_some_and(|v| !v.is_empty());
-        has("device.id") || has("identity.address")
+    pub fn key_file_residual(&self) -> bool {
+        *self.key_file_residual.lock().unwrap()
     }
 
     /// Note whose the local data is (lost-key screen; nothing inherits it).
-    fn note_owner(&self, me: &Identity) {
+    fn note_owner(&self, me: &Identity) -> Result<(), String> {
         let a = me.address();
-        if self.store.meta("identity.address").ok().flatten().as_deref() != Some(a.as_str()) {
-            let _ = self.store.set_meta("identity.address", &a);
+        if self
+            .store
+            .meta("identity.address")
+            .map_err(|e| e.to_string())?
+            .as_deref()
+            != Some(a.as_str())
+        {
+            self.store
+                .set_meta("identity.address", &a)
+                .map_err(|e| e.to_string())?;
         }
+        Ok(())
     }
 
     /// Push cleanup must never prevent leaving or discarding an identity.
@@ -763,10 +1264,12 @@ impl Core {
         // distributor locally; endpoint rejection or device revocation cleans
         // the hub registration when this device can no longer authenticate.
         self.forget_push();
-        crate::secrets::forget_identity(&self.dir)?;
-        self.store.wipe().map_err(|e| e.to_string())?;
+        let secrets = RealSecrets(&self.dir);
+        let commit = lifecycle_forget_begin(&self.store, &secrets, None)?;
+        lifecycle_forget_finish(&self.store, &commit)?;
         *self.key_storage.lock().unwrap() = None;
         *self.key_lost.lock().unwrap() = None;
+        *self.key_file_residual.lock().unwrap() = commit.res.residual_plaintext;
         keylog::note(&self.dir, "started over: the local data of the lost identity was removed", &[Fact::StartedOver]);
         Ok(())
     }
@@ -777,11 +1280,18 @@ impl Core {
     /// data forgotten. The address itself stays registered for its other
     /// devices.
     pub async fn leave_identity(&self) -> Result<(), String> {
-        self.forget_push();
+        let Some(e) = self.engine.lock().unwrap().clone() else {
+            return Ok(());
+        };
+        let addr = e.me().address();
+        let secrets = RealSecrets(&self.dir);
+        let commit = lifecycle_forget_begin(&self.store, &secrets, Some(&addr))?;
         let Some(e) = self.engine.lock().unwrap().take() else {
             return Ok(());
         };
+        self.forget_push();
         *self.key_storage.lock().unwrap() = None;
+        *self.key_file_residual.lock().unwrap() = commit.res.residual_plaintext;
         self.host.platform.shortcuts_changed();
         #[cfg(windows)]
         if let Some(app) = self.host.app.get() { crate::tray_recent::reset(app); }
@@ -791,8 +1301,7 @@ impl Core {
             .spawn(async move { e2.sign_out_this_device().await })
             .await;
         e.shutdown();
-        crate::secrets::forget_identity(&self.dir)?;
-        self.store.wipe().map_err(|e| e.to_string())?;
+        lifecycle_forget_finish(&self.store, &commit)?;
         keylog::note(&self.dir, "left this identity: key and local data forgotten", &[Fact::LeftIdentity]);
         self.host.platform.status("Switching identity");
         Ok(())
@@ -812,23 +1321,17 @@ impl Core {
         if self.has_identity() {
             return Err("this device already has an identity".into());
         }
-        let owner = self.store.meta("identity.address").ok().flatten();
-        if must_wipe(owner.as_deref(), self.had_identity(), &me.address(), brand_new) {
-            self.forget_push();
-            crate::secrets::forget_fallback_file(&self.dir)?;
-            self.store.wipe().map_err(|e| e.to_string())?;
-            *self.key_storage.lock().unwrap() = None;
-            keylog::note(&self.dir, "another identity's local data was removed before taking this one", &[Fact::OtherLocalDataRemoved]);
-        }
-        for (k, v) in meta {
-            self.store.set_meta(k, v).map_err(|e| e.to_string())?;
-        }
-        let storage = crate::secrets::save_identity(&self.dir, &me)?;
-        self.store
-            .set_meta("identity.address", &me.address())
-            .map_err(|e| e.to_string())?;
-        keylog::note(&self.dir, if brand_new { "key saved: a new identity" } else { "key saved: an identity brought to this device" }, &[if brand_new { Fact::KeySavedNew } else { Fact::KeySavedBrought }]);
-        self.start_with(me, storage)?;
+        let secrets = RealSecrets(&self.dir);
+        let (storage, residual) = lifecycle_adopt(
+            &self.dir,
+            &self.store,
+            &secrets,
+            &me,
+            brand_new,
+            meta,
+            || self.forget_push(),
+        )?;
+        self.start_with(me, storage, residual)?;
         Ok(())
     }
 
@@ -890,8 +1393,166 @@ fn rand_u16() -> u16 {
 
 #[cfg(test)]
 mod key_tests {
-    use super::{decide_loaded_identity, must_wipe, LoadedDecision};
-    use crate::secrets::KeyStorage;
+    use std::cell::{Cell, RefCell};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use hubchat_core::Identity;
+
+    use super::{
+        decide_loaded_identity, lifecycle_adopt, lifecycle_forget_begin, lifecycle_forget_finish,
+        lifecycle_load, must_wipe, read_store_ownership, ForgetTombstone, LifecycleSecrets,
+        LoadedDecision, MetaReader, PendingAdoption, Store, StoreOwnership, META_ADOPTING,
+        META_FILE_CLEANUP_PENDING, META_FORGOTTEN,
+    };
+    use crate::secrets::{FallbackCleanup, ForgetResult, KeyStorage, Loaded};
+
+    static TEST_DIR_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let n = TEST_DIR_SEQ.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("hubchat-core-{tag}-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn ownership(owner: Option<&str>, had_identity: bool) -> StoreOwnership {
+        StoreOwnership {
+            owner: owner.map(str::to_owned),
+            had_identity,
+            ..Default::default()
+        }
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Mode {
+        Keyring,
+        FileOnly,
+    }
+
+    struct FakeSecrets {
+        mode: Cell<Mode>,
+        keyring: RefCell<Option<Identity>>,
+        file: RefCell<Option<Identity>>,
+        save_err: RefCell<Option<String>>,
+        forget_keyring_err: RefCell<Option<String>>,
+        file_cleanup_fails: Cell<bool>,
+        restored: Cell<bool>,
+        keyring_forget_calls: Cell<usize>,
+    }
+
+    impl FakeSecrets {
+        fn new(mode: Mode) -> Self {
+            Self {
+                mode: Cell::new(mode),
+                keyring: RefCell::new(None),
+                file: RefCell::new(None),
+                save_err: RefCell::new(None),
+                forget_keyring_err: RefCell::new(None),
+                file_cleanup_fails: Cell::new(false),
+                restored: Cell::new(false),
+                keyring_forget_calls: Cell::new(0),
+            }
+        }
+    }
+
+    impl LifecycleSecrets for FakeSecrets {
+        fn load(&self) -> Loaded {
+            match self.mode.get() {
+                Mode::Keyring => match self.keyring.borrow().as_ref() {
+                    Some(id) => {
+                        let copy = Identity::from_parts(id.id(), id.secret()).unwrap();
+                        if self.restored.get() {
+                            Loaded::Restored {
+                                identity: copy,
+                                storage: KeyStorage::Keyring,
+                            }
+                        } else {
+                            Loaded::Found {
+                                identity: copy,
+                                storage: KeyStorage::Keyring,
+                            }
+                        }
+                    }
+                    None => Loaded::Missing,
+                },
+                Mode::FileOnly => match self.file.borrow().as_ref() {
+                    Some(id) => Loaded::Found {
+                        identity: Identity::from_parts(id.id(), id.secret()).unwrap(),
+                        storage: KeyStorage::FilePermissionsOnly,
+                    },
+                    None => Loaded::Missing,
+                },
+            }
+        }
+
+        fn save_staged(&self, me: &Identity) -> Result<KeyStorage, String> {
+            if let Some(e) = self.save_err.borrow().as_ref() {
+                return Err(e.clone());
+            }
+            let copy = Identity::from_parts(me.id(), me.secret()).unwrap();
+            match self.mode.get() {
+                Mode::Keyring => {
+                    *self.keyring.borrow_mut() = Some(copy);
+                    Ok(KeyStorage::Keyring)
+                }
+                Mode::FileOnly => {
+                    *self.file.borrow_mut() = Some(copy);
+                    Ok(KeyStorage::FilePermissionsOnly)
+                }
+            }
+        }
+
+        fn forget(&self) -> Result<ForgetResult, String> {
+            let keyring_cleared = match self.mode.get() {
+                Mode::Keyring => {
+                    if let Some(e) = self.forget_keyring_err.borrow().as_ref() {
+                        return Err(e.clone());
+                    }
+                    *self.keyring.borrow_mut() = None;
+                    true
+                }
+                Mode::FileOnly => false,
+            };
+            let had_file = self.file.borrow().is_some();
+            if had_file && self.file_cleanup_fails.get() {
+                return Ok(ForgetResult {
+                    keyring_cleared,
+                    residual_plaintext: true,
+                });
+            }
+            *self.file.borrow_mut() = None;
+            Ok(ForgetResult {
+                keyring_cleared,
+                residual_plaintext: false,
+            })
+        }
+
+        fn forget_keyring_only(&self) -> Result<(), String> {
+            self.keyring_forget_calls.set(self.keyring_forget_calls.get() + 1);
+            if let Some(e) = self.forget_keyring_err.borrow().as_ref() {
+                return Err(e.clone());
+            }
+            *self.keyring.borrow_mut() = None;
+            Ok(())
+        }
+
+        fn cleanup_fallback(&self, allowed_addrs: &[&str], allow_any: bool) -> FallbackCleanup {
+            let existing = self.file.borrow().as_ref().map(|id| id.address());
+            let Some(addr) = existing else {
+                return FallbackCleanup::NoneExisted;
+            };
+            if !allow_any && !allowed_addrs.contains(&addr.as_str()) {
+                return FallbackCleanup::Residual;
+            }
+            if self.file_cleanup_fails.get() {
+                return FallbackCleanup::Residual;
+            }
+            *self.file.borrow_mut() = None;
+            FallbackCleanup::Removed
+        }
+    }
 
     #[test]
     fn a_new_identity_never_inherits_another_identitys_local_data() {
@@ -913,54 +1574,70 @@ mod key_tests {
     fn permissions_only_fallback_never_revives_forgotten_identity_or_attaches_to_other_chats() {
         // Matching recorded owner -> accepted.
         assert_eq!(
-            decide_loaded_identity(KeyStorage::FilePermissionsOnly, "alex.111111", Some("alex.111111"), true),
+            decide_loaded_identity(
+                KeyStorage::FilePermissionsOnly,
+                "alex.111111",
+                &ownership(Some("alex.111111"), true),
+            ),
             LoadedDecision::Accept
         );
         // Different recorded owner -> refused with LostKey for recorded owner.
         assert_eq!(
-            decide_loaded_identity(KeyStorage::FilePermissionsOnly, "alex.111111", Some("pat.222222"), true),
+            decide_loaded_identity(
+                KeyStorage::FilePermissionsOnly,
+                "alex.111111",
+                &ownership(Some("pat.222222"), true),
+            ),
             LoadedDecision::RejectMismatch {
                 owner: Some("pat.222222".into())
             }
         );
         // Existing local data with unknown owner -> refused with LostKey.
         assert_eq!(
-            decide_loaded_identity(KeyStorage::FilePermissionsOnly, "alex.111111", None, true),
+            decide_loaded_identity(
+                KeyStorage::FilePermissionsOnly,
+                "alex.111111",
+                &ownership(None, true),
+            ),
             LoadedDecision::RejectMismatch { owner: None }
         );
         // Fresh/wiped store (after sign-out or Start over) -> orphan ignored, never revived.
         assert_eq!(
-            decide_loaded_identity(KeyStorage::FilePermissionsOnly, "alex.111111", None, false),
+            decide_loaded_identity(
+                KeyStorage::FilePermissionsOnly,
+                "alex.111111",
+                &ownership(None, false),
+            ),
             LoadedDecision::IgnoreOrphan
         );
-        // Keyring keeps its existing behavior.
+        // Legacy ownerless + tombstoneless profile keeps existing keyring behavior.
         assert_eq!(
-            decide_loaded_identity(KeyStorage::Keyring, "alex.111111", None, false),
+            decide_loaded_identity(
+                KeyStorage::Keyring,
+                "alex.111111",
+                &ownership(None, true),
+            ),
+            LoadedDecision::Accept
+        );
+        assert_eq!(
+            decide_loaded_identity(
+                KeyStorage::Keyring,
+                "alex.111111",
+                &ownership(None, false),
+            ),
             LoadedDecision::Accept
         );
     }
 
     #[test]
     fn store_owner_lifecycle_across_recovery_profile_switch_and_sign_out() {
-        let dir = std::env::temp_dir().join(format!("hubchat-core-owner-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let store = super::Store::open(&dir.join("hubchat.sqlite3")).unwrap();
-
-        let owner_of = |s: &super::Store| s.meta("identity.address").ok().flatten();
-        let had_of = |s: &super::Store| {
-            let has = |k: &str| s.meta(k).ok().flatten().is_some_and(|v| !v.is_empty());
-            has("device.id") || has("identity.address")
-        };
+        let dir = temp_dir("owner");
+        let store = Store::open(&dir.join("hubchat.sqlite3")).unwrap();
 
         // 1. Fresh store: an orphan fallback file is ignored.
+        let ow = read_store_ownership(&store).unwrap();
         assert_eq!(
-            decide_loaded_identity(
-                KeyStorage::FilePermissionsOnly,
-                "alex.111111",
-                owner_of(&store).as_deref(),
-                had_of(&store),
-            ),
+            decide_loaded_identity(KeyStorage::FilePermissionsOnly, "alex.111111", &ow),
             LoadedDecision::IgnoreOrphan
         );
 
@@ -968,41 +1645,28 @@ mod key_tests {
         // a stale fallback holding Bob is refused instead of attaching to Alice's chats.
         store.set_meta("identity.address", "alex.111111").unwrap();
         store.set_meta("device.id", "hc-20261121000000-1234").unwrap();
+        let ow = read_store_ownership(&store).unwrap();
         assert_eq!(
-            decide_loaded_identity(
-                KeyStorage::FilePermissionsOnly,
-                "alex.111111",
-                owner_of(&store).as_deref(),
-                had_of(&store),
-            ),
+            decide_loaded_identity(KeyStorage::FilePermissionsOnly, "alex.111111", &ow),
             LoadedDecision::Accept
         );
         assert_eq!(
-            decide_loaded_identity(
-                KeyStorage::FilePermissionsOnly,
-                "bob.222222",
-                owner_of(&store).as_deref(),
-                had_of(&store),
-            ),
+            decide_loaded_identity(KeyStorage::FilePermissionsOnly, "bob.222222", &ow),
             LoadedDecision::RejectMismatch {
                 owner: Some("alex.111111".into()),
             }
         );
 
         // 3. Recovery of same identity keeps local data; switching to Bob wipes first.
-        assert!(!must_wipe(owner_of(&store).as_deref(), had_of(&store), "alex.111111", false));
-        assert!(must_wipe(owner_of(&store).as_deref(), had_of(&store), "bob.222222", false));
+        assert!(!must_wipe(ow.owner.as_deref(), ow.had_identity, "alex.111111", false));
+        assert!(must_wipe(ow.owner.as_deref(), ow.had_identity, "bob.222222", false));
 
         // 4. Sign-out / Start over wipes store: a stale fallback holding Alice cannot revive.
         store.wipe().unwrap();
-        assert!(!had_of(&store));
+        let ow = read_store_ownership(&store).unwrap();
+        assert!(!ow.had_identity);
         assert_eq!(
-            decide_loaded_identity(
-                KeyStorage::FilePermissionsOnly,
-                "alex.111111",
-                owner_of(&store).as_deref(),
-                had_of(&store),
-            ),
+            decide_loaded_identity(KeyStorage::FilePermissionsOnly, "alex.111111", &ow),
             LoadedDecision::IgnoreOrphan
         );
 
@@ -1011,12 +1675,320 @@ mod key_tests {
     }
 
     #[test]
+    fn h2_returning_keyring_with_different_identity_preserves_both_keys_and_refuses_start() {
+        let dir = temp_dir("h2");
+        let store = Store::open(&dir.join("hubchat.sqlite3")).unwrap();
+        let alice = Identity::generate("alice").unwrap();
+        let bob = Identity::generate("bob").unwrap();
+        let carol = Identity::generate("carol").unwrap();
+
+        // Desktop wallet has Alice; VR profile & fallback file belong to Bob.
+        store.set_meta("identity.address", &bob.address()).unwrap();
+        store.set_meta("device.id", "hc-20261121000000-0001").unwrap();
+        store.add_hub("http://bob-hub:7370", "t0").unwrap();
+        let secrets = FakeSecrets::new(Mode::Keyring);
+        *secrets.keyring.borrow_mut() = Some(Identity::from_parts(alice.id(), alice.secret()).unwrap());
+        *secrets.file.borrow_mut() = Some(Identity::from_parts(bob.id(), bob.secret()).unwrap());
+
+        let plan = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert!(plan.start.is_none(), "H2: mismatched keyring identity must NOT start");
+        assert_eq!(plan.key_lost.as_ref().and_then(|k| k.address.as_deref()), Some(bob.address().as_str()));
+        assert!(!plan.key_lost.as_ref().unwrap().unreadable);
+        assert!(secrets.keyring.borrow().is_some(), "H2: keyring entry must NOT be deleted on mismatch");
+        assert!(secrets.file.borrow().is_some(), "H2: Bob's fallback file must NOT be deleted on mismatch");
+        assert_eq!(store.meta("identity.address").unwrap().as_deref(), Some(bob.address().as_str()));
+        assert_eq!(store.hubs().unwrap().len(), 1, "Bob's local data stays intact");
+
+        // Now keyring holds Bob (matches store owner) AND fallback file holds Carol (different!).
+        // Bob starts, Carol's fallback file is NOT deleted, and residual plaintext is surfaced!
+        *secrets.keyring.borrow_mut() = Some(Identity::from_parts(bob.id(), bob.secret()).unwrap());
+        *secrets.file.borrow_mut() = Some(Identity::from_parts(carol.id(), carol.secret()).unwrap());
+        let plan = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert_eq!(plan.start.as_ref().map(|(id, s)| (id.address(), *s)), Some((bob.address(), KeyStorage::Keyring)));
+        assert!(secrets.file.borrow().is_some(), "H2: fallback file of another identity must not be deleted");
+        assert!(plan.residual, "unremoved fallback file must be surfaced as residual");
+
+        // When fallback file holds Bob (matching keyring identity being started), cleanup deletes it!
+        *secrets.file.borrow_mut() = Some(Identity::from_parts(bob.id(), bob.secret()).unwrap());
+        let plan = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert_eq!(plan.start.as_ref().map(|(id, _)| id.address()), Some(bob.address()));
+        assert!(secrets.file.borrow().is_none(), "H2: matching fallback file must be deleted on keyring start");
+        assert!(!plan.residual);
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn h3_start_over_and_sign_out_persist_tombstone_and_clear_returning_keyring() {
+        let dir = temp_dir("h3");
+        let store = Store::open(&dir.join("hubchat.sqlite3")).unwrap();
+        let alice = Identity::generate("alice").unwrap();
+        let secrets = FakeSecrets::new(Mode::Keyring);
+
+        // 1. Desktop creates Alice in keyring.
+        lifecycle_adopt(&dir, &store, &secrets, &alice, true, &[("profile.name", "Alice")], || {}).unwrap();
+        assert!(secrets.keyring.borrow().is_some());
+
+        // 2. Switch to VR (Secret Service Absent, no fallback file) -> LostKey -> Start over!
+        secrets.mode.set(Mode::FileOnly);
+        let lost = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert!(lost.start.is_none());
+        assert_eq!(lost.key_lost.as_ref().and_then(|k| k.address.as_deref()), Some(alice.address().as_str()));
+
+        let commit = lifecycle_forget_begin(&store, &secrets, None).unwrap();
+        assert!(!commit.res.keyring_cleared);
+        lifecycle_forget_finish(&store, &commit).unwrap();
+        assert!(store.meta("identity.address").unwrap().is_none());
+        let ow = read_store_ownership(&store).unwrap();
+        assert!(ow.tombstones.iter().any(|t| t.address == alice.address()));
+
+        // 3. Return to Desktop (Secret Service Present, still holding Alice):
+        // Alice must NOT start, keyring entry is deleted, and tombstone is cleared!
+        secrets.mode.set(Mode::Keyring);
+        let plan = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert!(plan.start.is_none(), "H3: forgotten identity must NOT be started when keyring returns");
+        assert!(plan.key_lost.is_none());
+        assert!(secrets.keyring.borrow().is_none(), "H3: forgotten keyring entry must be deleted once reachable");
+        assert_eq!(secrets.keyring_forget_calls.get(), 1);
+        assert!(read_store_ownership(&store).unwrap().tombstones.is_empty(), "tombstone cleared after keyring delete");
+
+        // 4. Sign-out while Secret Service is absent (with a fallback file) also tombstones Alice.
+        *secrets.keyring.borrow_mut() = Some(Identity::from_parts(alice.id(), alice.secret()).unwrap());
+        secrets.mode.set(Mode::FileOnly);
+        lifecycle_adopt(&dir, &store, &secrets, &alice, false, &[], || {}).unwrap();
+        let commit = lifecycle_forget_begin(&store, &secrets, Some(&alice.address())).unwrap();
+        lifecycle_forget_finish(&store, &commit).unwrap();
+        assert!(secrets.file.borrow().is_none());
+
+        // If keyring delete temporarily fails when Desktop returns, Alice still does NOT start
+        // and the tombstone stays for the next launch!
+        secrets.mode.set(Mode::Keyring);
+        *secrets.forget_keyring_err.borrow_mut() = Some("wallet locked".into());
+        let blocked = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert!(blocked.start.is_none());
+        assert!(secrets.keyring.borrow().is_some());
+        assert!(!read_store_ownership(&store).unwrap().tombstones.is_empty());
+
+        // Next launch with unlocked wallet clears keyring & tombstone.
+        *secrets.forget_keyring_err.borrow_mut() = None;
+        let cleared = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert!(cleared.start.is_none());
+        assert!(secrets.keyring.borrow().is_none());
+        assert!(read_store_ownership(&store).unwrap().tombstones.is_empty());
+
+        // 5. Legacy profile with no owner record and no tombstone keeps starting from keyring;
+        // Start over on a legacy ownerless profile records "*" tombstone so old key doesn't return.
+        let legacy = Identity::generate("legacy").unwrap();
+        store.set_meta("device.id", "hc-old-legacy").unwrap();
+        *secrets.keyring.borrow_mut() = Some(Identity::from_parts(legacy.id(), legacy.secret()).unwrap());
+        let ok = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert_eq!(ok.start.as_ref().map(|(id, _)| id.address()), Some(legacy.address()));
+
+        // Reset to ownerless legacy state, then Start over while Secret Service absent.
+        store.delete_meta("identity.address").unwrap();
+        secrets.mode.set(Mode::FileOnly);
+        let commit = lifecycle_forget_begin(&store, &secrets, None).unwrap();
+        lifecycle_forget_finish(&store, &commit).unwrap();
+        secrets.mode.set(Mode::Keyring);
+        let blocked = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert!(blocked.start.is_none());
+        assert!(secrets.keyring.borrow().is_none());
+        assert!(read_store_ownership(&store).unwrap().tombstones.is_empty());
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn h4_cleanup_failure_never_blocks_adoption_or_sign_out_and_retries_next_start() {
+        let dir = temp_dir("h4");
+        let store = Store::open(&dir.join("hubchat.sqlite3")).unwrap();
+        let alice = Identity::generate("alice").unwrap();
+        let secrets = FakeSecrets::new(Mode::FileOnly);
+
+        // Start in VR with Alice in fallback file.
+        lifecycle_adopt(&dir, &store, &secrets, &alice, true, &[], || {}).unwrap();
+        assert!(secrets.file.borrow().is_some());
+
+        // Secret Service returns, user restores Alice into keyring, but fallback cleanup fails!
+        // Adoption MUST succeed, record pending cleanup, and surface residual = true.
+        secrets.mode.set(Mode::Keyring);
+        secrets.file_cleanup_fails.set(true);
+        let (storage, residual) = lifecycle_adopt(&dir, &store, &secrets, &alice, false, &[], || {}).unwrap();
+        assert_eq!(storage, KeyStorage::Keyring);
+        assert!(residual, "H4: Settings must be told about residual plaintext copy");
+        assert!(store.meta(META_FILE_CLEANUP_PENDING).unwrap().is_some());
+        assert!(secrets.file.borrow().is_some());
+
+        // Next start retries cleanup; when the underlying path issue is fixed, cleanup clears residual!
+        secrets.file_cleanup_fails.set(false);
+        let plan = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert_eq!(plan.start.as_ref().map(|(id, _)| id.address()), Some(alice.address()));
+        assert!(!plan.residual);
+        assert!(secrets.file.borrow().is_none());
+        assert!(store.meta(META_FILE_CLEANUP_PENDING).unwrap().is_none());
+
+        // Sign-out with failing fallback cleanup: keyring cleared, wipe STILL runs, pending persisted!
+        *secrets.file.borrow_mut() = Some(Identity::from_parts(alice.id(), alice.secret()).unwrap());
+        store.add_hub("http://alice-hub:7370", "t0").unwrap();
+        secrets.file_cleanup_fails.set(true);
+        let commit = lifecycle_forget_begin(&store, &secrets, Some(&alice.address())).unwrap();
+        assert!(commit.res.keyring_cleared);
+        assert!(commit.res.residual_plaintext);
+        lifecycle_forget_finish(&store, &commit).unwrap();
+        assert!(store.hubs().unwrap().is_empty(), "H4: local wipe must still happen on sign-out");
+        assert_eq!(store.meta(META_FILE_CLEANUP_PENDING).unwrap().as_deref(), Some("*"));
+
+        // Adopting a new identity Carol in keyring retries and clears the leftover file once fixed.
+        let carol = Identity::generate("carol").unwrap();
+        secrets.file_cleanup_fails.set(false);
+        let (storage, residual) = lifecycle_adopt(&dir, &store, &secrets, &carol, true, &[], || {}).unwrap();
+        assert_eq!(storage, KeyStorage::Keyring);
+        assert!(!residual);
+        assert!(secrets.file.borrow().is_none());
+        assert!(store.meta(META_FILE_CLEANUP_PENDING).unwrap().is_none());
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn m6_staged_adoption_preserves_old_data_on_failure_and_recovers_interrupted_commits() {
+        let dir = temp_dir("m6");
+        let store = Store::open(&dir.join("hubchat.sqlite3")).unwrap();
+        let alice = Identity::generate("alice").unwrap();
+        let bob = Identity::generate("bob").unwrap();
+        let secrets = FakeSecrets::new(Mode::FileOnly);
+
+        // 1. Alice has data and fallback key on disk.
+        lifecycle_adopt(&dir, &store, &secrets, &alice, true, &[("profile.name", "Alice")], || {}).unwrap();
+        store.add_hub("http://alice-hub:7370", "t0").unwrap();
+
+        // 2. Returning Desktop wallet is locked; user tries to switch to Bob -> save fails.
+        // Alice's chats, owner, profile, AND fallback file must ALL remain intact!
+        secrets.mode.set(Mode::Keyring);
+        *secrets.save_err.borrow_mut() = Some("wallet locked".into());
+        assert!(lifecycle_adopt(&dir, &store, &secrets, &bob, true, &[("profile.name", "Bob")], || {}).is_err());
+        assert_eq!(store.meta("identity.address").unwrap().as_deref(), Some(alice.address().as_str()));
+        assert_eq!(store.meta("profile.name").unwrap().as_deref(), Some("Alice"));
+        assert_eq!(store.hubs().unwrap().len(), 1);
+        assert!(secrets.file.borrow().is_some(), "M6: old fallback key must survive failed replacement");
+        assert!(store.meta(META_ADOPTING).unwrap().is_none(), "staged marker cleaned up on save error");
+        *secrets.save_err.borrow_mut() = None;
+
+        // 3. Interrupted first adoption (FilePermissionsOnly): staged marker + saved file, crash before commit.
+        // Next launch must recover instead of ignoring as an orphan!
+        let dir2 = temp_dir("m6-first");
+        let store2 = Store::open(&dir2.join("hubchat.sqlite3")).unwrap();
+        let secrets2 = FakeSecrets::new(Mode::FileOnly);
+        let pending_first = PendingAdoption {
+            address: bob.address(),
+            wipe: false,
+            meta: vec![("profile.name".into(), "Bob".into())],
+        };
+        store2
+            .set_meta(META_ADOPTING, &serde_json::to_string(&pending_first).unwrap())
+            .unwrap();
+        *secrets2.file.borrow_mut() = Some(Identity::from_parts(bob.id(), bob.secret()).unwrap());
+        let recovered = lifecycle_load(&dir2, &store2, &secrets2, || {}).unwrap();
+        assert_eq!(
+            recovered.start.as_ref().map(|(id, s)| (id.address(), *s)),
+            Some((bob.address(), KeyStorage::FilePermissionsOnly))
+        );
+        assert_eq!(store2.meta("identity.address").unwrap().as_deref(), Some(bob.address().as_str()));
+        assert_eq!(store2.meta("profile.name").unwrap().as_deref(), Some("Bob"));
+        assert!(store2.meta(META_ADOPTING).unwrap().is_none());
+
+        // 4. Interrupted replacement adoption (Keyring — covers Windows/macOS/Linux):
+        // staged marker + new key Bob saved, crash before Alice's chats were wiped!
+        // Next launch must wipe Alice's chats atomically, set owner = Bob, remove Alice's fallback file, start Bob!
+        let pending_replace = PendingAdoption {
+            address: bob.address(),
+            wipe: true,
+            meta: vec![("profile.name".into(), "Bob2".into())],
+        };
+        store
+            .set_meta(META_ADOPTING, &serde_json::to_string(&pending_replace).unwrap())
+            .unwrap();
+        *secrets.keyring.borrow_mut() = Some(Identity::from_parts(bob.id(), bob.secret()).unwrap());
+        let recovered = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert_eq!(
+            recovered.start.as_ref().map(|(id, s)| (id.address(), *s)),
+            Some((bob.address(), KeyStorage::Keyring))
+        );
+        assert!(store.hubs().unwrap().is_empty(), "M6: Alice's hubs must be wiped during recovery");
+        assert_eq!(store.meta("identity.address").unwrap().as_deref(), Some(bob.address().as_str()));
+        assert_eq!(store.meta("profile.name").unwrap().as_deref(), Some("Bob2"));
+        assert!(secrets.file.borrow().is_none(), "Alice's superseded fallback file cleaned up after recovery");
+        assert!(store.meta(META_ADOPTING).unwrap().is_none());
+
+        // 5. Windows/macOS keyring adoption & backup-restored load path writes owner & reloads cleanly.
+        let dir3 = temp_dir("m6-win-mac");
+        let store3 = Store::open(&dir3.join("hubchat.sqlite3")).unwrap();
+        let secrets3 = FakeSecrets::new(Mode::Keyring);
+        let (st, res) = lifecycle_adopt(
+            &dir3,
+            &store3,
+            &secrets3,
+            &alice,
+            true,
+            &[("profile.name", "DesktopUser")],
+            || {},
+        )
+        .unwrap();
+        assert_eq!(st, KeyStorage::Keyring);
+        assert!(!res);
+        assert_eq!(store3.meta("identity.address").unwrap().as_deref(), Some(alice.address().as_str()));
+        assert_eq!(store3.meta("profile.name").unwrap().as_deref(), Some("DesktopUser"));
+        secrets3.restored.set(true);
+        let restored = lifecycle_load(&dir3, &store3, &secrets3, || {}).unwrap();
+        assert_eq!(restored.start.as_ref().map(|(id, _)| id.address()), Some(alice.address()));
+        assert_eq!(store3.meta("key.restored").unwrap().as_deref(), Some("yes"));
+
+        // 6. Database read errors and malformed lifecycle metadata must propagate as Err (never missing!).
+        struct BrokenDb;
+        impl MetaReader for BrokenDb {
+            fn read_meta(&self, _key: &str) -> Result<Option<String>, String> {
+                Err("database disk image is malformed".into())
+            }
+        }
+        assert!(read_store_ownership(&BrokenDb).is_err());
+        store3.set_meta(META_FORGOTTEN, "{not valid json").unwrap();
+        assert!(read_store_ownership(&store3).is_err());
+        assert!(lifecycle_load(&dir3, &store3, &secrets3, || {}).is_err());
+
+        drop(store);
+        drop(store2);
+        drop(store3);
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&dir2);
+        let _ = std::fs::remove_dir_all(&dir3);
+    }
+
+    #[test]
     fn h2_returning_keyring_with_different_identity_is_rejected_not_started() {
         // Desktop wallet holds Alice while local store belongs to Bob -> must refuse, not start Alice!
         assert_eq!(
-            decide_loaded_identity(KeyStorage::Keyring, "alice.111111", Some("bob.222222"), true),
+            decide_loaded_identity(
+                KeyStorage::Keyring,
+                "alice.111111",
+                &ownership(Some("bob.222222"), true),
+            ),
             LoadedDecision::RejectMismatch {
                 owner: Some("bob.222222".into())
+            }
+        );
+        // Tombstone takes precedence when keyring identity was forgotten.
+        let mut ow = ownership(None, false);
+        ow.tombstones.push(ForgetTombstone {
+            address: "alice.111111".into(),
+            at: "2026-11-21T20:00:00Z".into(),
+        });
+        assert_eq!(
+            decide_loaded_identity(KeyStorage::Keyring, "alice.111111", &ow),
+            LoadedDecision::ForgottenKeyring {
+                matched: "alice.111111".into()
             }
         );
     }
