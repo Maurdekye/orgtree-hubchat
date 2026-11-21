@@ -109,4 +109,15 @@ mod tests {
         let me = Identity::generate("alex").unwrap();
         assert!(!format!("{me:?}").contains(me.secret()));
     }
+
+    #[test]
+    fn rejects_oversized_or_control_char_secrets() {
+        let ok_secret = "a".repeat(256);
+        assert!(Identity::from_parts("alex", &ok_secret).is_ok());
+        // Over 4 KiB must be rejected before any import or storage write.
+        let huge = "a".repeat(4097);
+        assert!(Identity::from_parts("alex", &huge).is_err());
+        let with_ctrl = format!("{}a\x00b", "0".repeat(32));
+        assert!(Identity::from_parts("alex", &with_ctrl).is_err());
+    }
 }
