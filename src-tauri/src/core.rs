@@ -15,7 +15,9 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::keylog::{self, Fact};
-use crate::secrets::{FallbackCleanup, ForgetResult, KeyStorage, Loaded, SaveStageError};
+use crate::secrets::{
+    FallbackCleanup, FallbackFileStamp, ForgetResult, KeyStorage, Loaded, SaveStageError,
+};
 
 /// What only the platform can do.
 pub trait Platform: Send + Sync + 'static {
@@ -198,6 +200,7 @@ pub struct KeyLost {
 const META_FORGOTTEN: &str = "key.forgotten";
 const META_ADOPTING: &str = "key.adopting";
 const META_FILE_CLEANUP_PENDING: &str = "key.file_cleanup_pending";
+const META_INSTALLATION_WIPED: &str = "key.installation_wiped";
 
 /// One identity explicitly forgotten (Start over or sign-out) while the OS
 /// keyring could not yet be reached, so a returning keyring cannot sign it
@@ -216,16 +219,71 @@ struct PendingAdoption {
     address: String,
     wipe: bool,
     #[serde(default)]
+    brand_new: bool,
+    #[serde(default)]
     meta: Vec<(String, String)>,
+}
+
+/// Durable record of a Linux permissions-only fallback file awaiting cleanup
+/// (H4). Distinguishes explicit Sign out / Start over (`signed_out = true`,
+/// eligible for retry on signed-out startup when no owner or adoption exists)
+/// from active keyring-session cleanup failures (`signed_out = false`, retried
+/// only after a verified keyring identity is accepted or adopted).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct PendingFileCleanup {
+    target: String,
+    signed_out: bool,
+    #[serde(default)]
+    file_stamp: Option<FallbackFileStamp>,
+    #[serde(default)]
+    recorded_at_sec: Option<i64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct StoreOwnership {
     owner: Option<String>,
     had_identity: bool,
+    /// Durable marker set on Start over / Sign out and preserved across all
+    /// subsequent adoptions and wipes, so a previously wiped installation never
+    /// falls back to the legacy ownerless auto-accept rule (H3).
+    installation_wiped: bool,
     tombstones: Vec<ForgetTombstone>,
     adopting: Option<PendingAdoption>,
-    cleanup_pending: Option<String>,
+    cleanup_pending: Option<PendingFileCleanup>,
+}
+
+fn unix_now_sec() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn parse_pending_cleanup(raw: Option<&str>) -> Result<Option<PendingFileCleanup>, String> {
+    let Some(s) = raw.filter(|s| !s.trim().is_empty()) else {
+        return Ok(None);
+    };
+    if s.trim_start().starts_with('{') {
+        serde_json::from_str(s)
+            .map(Some)
+            .map_err(|e| format!("invalid {META_FILE_CLEANUP_PENDING} metadata: {e}"))
+    } else {
+        // Legacy plain-string marker from earlier dev builds: treat as non-signed-out
+        // (fail-safe: never deletes without a verified active keyring identity).
+        Ok(Some(PendingFileCleanup {
+            target: s.to_owned(),
+            signed_out: false,
+            file_stamp: None,
+            recorded_at_sec: None,
+        }))
+    }
+}
+
+fn save_pending_cleanup(store: &Store, pending: &PendingFileCleanup) -> Result<(), String> {
+    let json = serde_json::to_string(pending).map_err(|e| e.to_string())?;
+    store
+        .set_meta(META_FILE_CLEANUP_PENDING, &json)
+        .map_err(|e| e.to_string())
 }
 
 fn parse_tombstones(raw: Option<&str>) -> Result<Vec<ForgetTombstone>, String> {
@@ -287,17 +345,19 @@ impl MetaReader for Store {
 fn read_store_ownership(store: &impl MetaReader) -> Result<StoreOwnership, String> {
     let owner = store.read_meta("identity.address")?.filter(|v| !v.is_empty());
     let device_id = store.read_meta("device.id")?.filter(|v| !v.is_empty());
+    let installation_wiped = store
+        .read_meta(META_INSTALLATION_WIPED)?
+        .is_some_and(|v| !v.is_empty());
     let raw_forgotten = store.read_meta(META_FORGOTTEN)?;
     let raw_adopting = store.read_meta(META_ADOPTING)?;
-    let cleanup_pending = store
-        .read_meta(META_FILE_CLEANUP_PENDING)?
-        .filter(|v| !v.is_empty());
+    let raw_cleanup = store.read_meta(META_FILE_CLEANUP_PENDING)?;
     Ok(StoreOwnership {
         had_identity: owner.is_some() || device_id.is_some(),
         owner,
+        installation_wiped,
         tombstones: parse_tombstones(raw_forgotten.as_deref())?,
         adopting: parse_pending_adoption(raw_adopting.as_deref())?,
-        cleanup_pending,
+        cleanup_pending: parse_pending_cleanup(raw_cleanup.as_deref())?,
     })
 }
 
@@ -319,7 +379,9 @@ enum LoadedDecision {
     ForgottenKeyring,
     /// Keyring or fallback file disagrees with local store owner: show LostKey without deleting either key (H2).
     RejectMismatch { owner: Option<String> },
-    /// Permissions-only fallback file exists without local identity data (or matches a tombstone): ignore orphan.
+    /// Permissions-only fallback file without local identity data, or an
+    /// unadopted keyring entry on a previously wiped installation: refuse without
+    /// auto-starting and leave user on setup/choose-identity screen.
     IgnoreOrphan,
 }
 
@@ -353,8 +415,19 @@ fn decide_loaded_identity(
                         owner: Some(owner.clone()),
                     };
                 }
+                return LoadedDecision::Accept;
             }
-            // Matching owner, or legacy ownerless + tombstoneless profile -> Accept.
+            // No recorded owner: a previously wiped installation (Start over /
+            // Sign out) NEVER falls back to the untouched-legacy auto-accept
+            // rule for an un-readopted wallet identity (H3).
+            if ownership.installation_wiped {
+                return if ownership.had_identity {
+                    LoadedDecision::RejectMismatch { owner: None }
+                } else {
+                    LoadedDecision::IgnoreOrphan
+                };
+            }
+            // Untouched legacy ownerless + tombstoneless profile -> Accept.
             LoadedDecision::Accept
         }
         KeyStorage::FilePermissionsOnly => {
@@ -375,10 +448,18 @@ fn decide_loaded_identity(
 
 trait LifecycleSecrets {
     fn load(&self) -> Loaded;
+    fn confirm_loaded_keyring(&self, me: &Identity, restored: bool);
     fn save_staged(&self, me: &Identity) -> Result<KeyStorage, SaveStageError>;
     fn forget(&self) -> Result<ForgetResult, String>;
-    fn forget_keyring_only(&self) -> Result<bool, String>;
-    fn cleanup_fallback(&self, allowed_addrs: &[&str], allow_any: bool) -> FallbackCleanup;
+    fn forget_forgotten_keyring(&self, forgotten_addr: &str) -> Result<bool, String>;
+    fn fallback_file_stamp(&self) -> Option<FallbackFileStamp>;
+    fn cleanup_fallback(
+        &self,
+        allowed_addrs: &[&str],
+        allow_any: bool,
+        expected_stamp: Option<FallbackFileStamp>,
+        not_newer_than_sec: Option<i64>,
+    ) -> FallbackCleanup;
 }
 
 struct RealSecrets<'a>(&'a std::path::Path);
@@ -387,17 +468,35 @@ impl LifecycleSecrets for RealSecrets<'_> {
     fn load(&self) -> Loaded {
         crate::secrets::load_identity(self.0)
     }
+    fn confirm_loaded_keyring(&self, me: &Identity, restored: bool) {
+        crate::secrets::confirm_loaded_keyring(self.0, me, restored)
+    }
     fn save_staged(&self, me: &Identity) -> Result<KeyStorage, SaveStageError> {
         crate::secrets::save_identity_staged(self.0, me)
     }
     fn forget(&self) -> Result<ForgetResult, String> {
         crate::secrets::forget_identity(self.0)
     }
-    fn forget_keyring_only(&self) -> Result<bool, String> {
-        crate::secrets::forget_keyring_only(self.0)
+    fn forget_forgotten_keyring(&self, forgotten_addr: &str) -> Result<bool, String> {
+        crate::secrets::forget_forgotten_keyring(self.0, forgotten_addr)
     }
-    fn cleanup_fallback(&self, allowed_addrs: &[&str], allow_any: bool) -> FallbackCleanup {
-        crate::secrets::cleanup_fallback_file(self.0, allowed_addrs, allow_any)
+    fn fallback_file_stamp(&self) -> Option<FallbackFileStamp> {
+        crate::secrets::fallback_file_stamp(self.0)
+    }
+    fn cleanup_fallback(
+        &self,
+        allowed_addrs: &[&str],
+        allow_any: bool,
+        expected_stamp: Option<FallbackFileStamp>,
+        not_newer_than_sec: Option<i64>,
+    ) -> FallbackCleanup {
+        crate::secrets::cleanup_fallback_file(
+            self.0,
+            allowed_addrs,
+            allow_any,
+            expected_stamp,
+            not_newer_than_sec,
+        )
     }
 }
 
@@ -411,17 +510,34 @@ struct ForgetCommit {
     res: ForgetResult,
 }
 
-fn retry_pending_cleanup(
+/// Retry fallback cleanup on a signed-out/missing startup path ONLY when:
+/// 1. A durable sign-out cleanup record (`signed_out == true`) exists,
+/// 2. The profile does NOT currently own an identity or local identity data, AND
+/// 3. No identity adoption is currently staged (protects a pending adoption's file).
+/// Passes the exact target and file stamp so a credential newer than the
+/// cleanup target is never touched (H4).
+fn retry_signed_out_cleanup(
     store: &Store,
     secrets: &impl LifecycleSecrets,
-    pending: Option<&str>,
+    ownership: &StoreOwnership,
 ) -> bool {
-    let Some(pending) = pending.filter(|s| !s.is_empty()) else {
+    let Some(pending) = &ownership.cleanup_pending else {
         return false;
     };
-    let allow_any = pending == "*";
-    let allowed: Vec<&str> = if allow_any { vec![] } else { vec![pending] };
-    match secrets.cleanup_fallback(&allowed, allow_any) {
+    if !pending.signed_out
+        || ownership.had_identity
+        || ownership.owner.is_some()
+        || ownership.adopting.is_some()
+    {
+        return true;
+    }
+    let allow_any = pending.target == "*";
+    let allowed: Vec<&str> = if allow_any {
+        vec![]
+    } else {
+        vec![pending.target.as_str()]
+    };
+    match secrets.cleanup_fallback(&allowed, allow_any, pending.file_stamp, pending.recorded_at_sec) {
         FallbackCleanup::NoneExisted | FallbackCleanup::Removed => {
             let _ = store.delete_meta(META_FILE_CLEANUP_PENDING);
             false
@@ -435,9 +551,14 @@ fn run_fallback_cleanup(
     secrets: &impl LifecycleSecrets,
     active_addr: &str,
     replaced_owner: Option<&str>,
-    pending: Option<&str>,
+    pending: Option<&PendingFileCleanup>,
 ) -> bool {
-    let allow_any = pending == Some("*");
+    let allow_any = pending.is_some_and(|p| p.target == "*");
+    let (expected_stamp, not_newer_than_sec) = if allow_any {
+        pending.map_or((None, None), |p| (p.file_stamp, p.recorded_at_sec))
+    } else {
+        (None, None)
+    };
     let mut allowed: Vec<&str> = vec![active_addr];
     if let Some(old) = replaced_owner {
         if !old.is_empty() && !allowed.contains(&old) {
@@ -445,11 +566,11 @@ fn run_fallback_cleanup(
         }
     }
     if let Some(p) = pending {
-        if p != "*" && !p.is_empty() && !allowed.contains(&p) {
-            allowed.push(p);
+        if p.target != "*" && !p.target.is_empty() && !allowed.contains(&p.target.as_str()) {
+            allowed.push(p.target.as_str());
         }
     }
-    match secrets.cleanup_fallback(&allowed, allow_any) {
+    match secrets.cleanup_fallback(&allowed, allow_any, expected_stamp, not_newer_than_sec) {
         FallbackCleanup::NoneExisted | FallbackCleanup::Removed => {
             if pending.is_some() {
                 let _ = store.delete_meta(META_FILE_CLEANUP_PENDING);
@@ -457,16 +578,26 @@ fn run_fallback_cleanup(
             false
         }
         FallbackCleanup::Residual => {
-            let next_pending = if allow_any {
+            let next_target = if allow_any {
                 "*"
             } else if let Some(old) = replaced_owner.filter(|s| !s.is_empty()) {
                 old
-            } else if let Some(p) = pending.filter(|s| !s.is_empty()) {
-                p
+            } else if let Some(p) = pending.filter(|p| !p.target.is_empty()) {
+                p.target.as_str()
             } else {
                 active_addr
             };
-            let _ = store.set_meta(META_FILE_CLEANUP_PENDING, next_pending);
+            // Active keyring session: `signed_out` is `false` so a later empty
+            // wallet while this profile is still owned never deletes the VR copy (H4).
+            let _ = save_pending_cleanup(
+                store,
+                &PendingFileCleanup {
+                    target: next_target.to_owned(),
+                    signed_out: false,
+                    file_stamp: None,
+                    recorded_at_sec: None,
+                },
+            );
             true
         }
     }
@@ -478,13 +609,13 @@ fn lifecycle_load(
     secrets: &impl LifecycleSecrets,
     on_forget_push: impl FnOnce(),
 ) -> Result<LoadPlan, String> {
-    let loaded = secrets.load();
     let ownership = read_store_ownership(store)?;
+    let loaded = secrets.load();
     let (me, storage, restored) = match loaded {
         Loaded::Found { identity, storage } => (identity, storage, false),
         Loaded::Restored { identity, storage } => (identity, storage, true),
         Loaded::Missing => {
-            let residual = retry_pending_cleanup(store, secrets, ownership.cleanup_pending.as_deref());
+            let residual = retry_signed_out_cleanup(store, secrets, &ownership);
             return Ok(LoadPlan {
                 start: None,
                 key_lost: ownership.had_identity.then(|| KeyLost {
@@ -495,11 +626,7 @@ fn lifecycle_load(
             });
         }
         Loaded::Unreadable => {
-            let residual = if !ownership.had_identity {
-                retry_pending_cleanup(store, secrets, ownership.cleanup_pending.as_deref())
-            } else {
-                ownership.cleanup_pending.is_some()
-            };
+            let residual = retry_signed_out_cleanup(store, secrets, &ownership);
             return Ok(LoadPlan {
                 start: None,
                 key_lost: ownership.had_identity.then(|| KeyLost {
@@ -513,11 +640,19 @@ fn lifecycle_load(
     let addr = me.address();
     match decide_loaded_identity(storage, &addr, &ownership) {
         LoadedDecision::Accept => {
+            if storage == KeyStorage::Keyring {
+                secrets.confirm_loaded_keyring(&me, restored);
+            }
+            if ownership.owner.as_deref() != Some(addr.as_str()) {
+                store
+                    .set_meta("identity.address", &addr)
+                    .map_err(|e| e.to_string())?;
+            }
             if restored {
                 store.set_meta("key.restored", "yes").map_err(|e| e.to_string())?;
             }
             let residual = if storage == KeyStorage::Keyring {
-                run_fallback_cleanup(store, secrets, &addr, None, ownership.cleanup_pending.as_deref())
+                run_fallback_cleanup(store, secrets, &addr, None, ownership.cleanup_pending.as_ref())
             } else {
                 false
             };
@@ -528,8 +663,8 @@ fn lifecycle_load(
             })
         }
         LoadedDecision::RecoverAdoption(pending) => {
-            if pending.wipe {
-                on_forget_push();
+            if storage == KeyStorage::Keyring {
+                secrets.confirm_loaded_keyring(&me, restored);
             }
             let mut meta_refs: Vec<(&str, &str)> = pending
                 .meta
@@ -543,10 +678,17 @@ fn lifecycle_load(
                 &ownership.tombstones,
                 &[addr.as_str(), "*"],
             ));
-            store
-                .commit_adopted_identity(pending.wipe, &addr, &meta_refs, updated_forgotten.as_deref())
+            let (did_wipe, replaced_owner) = store
+                .commit_adopted_identity(
+                    pending.wipe,
+                    pending.brand_new,
+                    &addr,
+                    &meta_refs,
+                    updated_forgotten.as_deref(),
+                )
                 .map_err(|e| e.to_string())?;
-            if pending.wipe {
+            if did_wipe {
+                on_forget_push();
                 keylog::note(
                     dir,
                     "another identity's local data was removed before taking this one",
@@ -559,13 +701,12 @@ fn lifecycle_load(
                 &[Fact::AdoptionRecovered],
             );
             let residual = if storage == KeyStorage::Keyring {
-                let replaced_owner = pending.wipe.then_some(ownership.owner.as_deref()).flatten();
                 run_fallback_cleanup(
                     store,
                     secrets,
                     &addr,
-                    replaced_owner,
-                    ownership.cleanup_pending.as_deref(),
+                    replaced_owner.as_deref(),
+                    ownership.cleanup_pending.as_ref(),
                 )
             } else {
                 if ownership.cleanup_pending.is_some() {
@@ -580,9 +721,10 @@ fn lifecycle_load(
             })
         }
         LoadedDecision::ForgottenKeyring => {
-            // Keep the forget tombstone durable across distinct wallets until
-            // the user explicitly re-adopts that identity (H3).
-            match secrets.forget_keyring_only() {
+            // Never refresh/restore a forgotten backup; remove the matching
+            // keyring entry (and any matching Windows DPAPI backup) while
+            // keeping the forget tombstone durable across wallets (H3).
+            match secrets.forget_forgotten_keyring(&addr) {
                 Ok(true) => {
                     keylog::note(
                         dir,
@@ -599,7 +741,7 @@ fn lifecycle_load(
                     );
                 }
             }
-            let residual = retry_pending_cleanup(store, secrets, ownership.cleanup_pending.as_deref());
+            let residual = retry_signed_out_cleanup(store, secrets, &ownership);
             Ok(LoadPlan {
                 start: None,
                 key_lost: ownership.had_identity.then(|| KeyLost {
@@ -633,12 +775,20 @@ fn lifecycle_load(
             })
         }
         LoadedDecision::IgnoreOrphan => {
-            keylog::note(
-                dir,
-                "permissions-only key file ignored without local identity data",
-                &[Fact::KeyFileOrphanIgnored],
-            );
-            let residual = retry_pending_cleanup(store, secrets, ownership.cleanup_pending.as_deref());
+            if storage == KeyStorage::Keyring {
+                keylog::note(
+                    dir,
+                    "keyring holds an unadopted identity on a previously wiped installation; refused",
+                    &[Fact::KeyringOwnerMismatch],
+                );
+            } else {
+                keylog::note(
+                    dir,
+                    "permissions-only key file ignored without local identity data",
+                    &[Fact::KeyFileOrphanIgnored],
+                );
+            }
+            let residual = retry_signed_out_cleanup(store, secrets, &ownership);
             Ok(LoadPlan {
                 start: None,
                 key_lost: None,
@@ -663,6 +813,7 @@ fn lifecycle_adopt(
     let pending = PendingAdoption {
         address: addr.clone(),
         wipe: wipe_needed,
+        brand_new,
         meta: meta.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect(),
     };
     let prev_adopting = store.meta(META_ADOPTING).map_err(|e| e.to_string())?;
@@ -684,23 +835,27 @@ fn lifecycle_adopt(
         }
         Err(SaveStageError::Uncertain(e)) => {
             // Publication may have already occurred (e.g. `renameat` succeeded
-            // before `fsync_dir` failed); preserve `META_ADOPTING` so the next
-            // launch recovers cleanly instead of treating the file as an orphan (M6).
+            // before `fsync_dir` failed, or a keyring `set_password` reply was
+            // lost); preserve `META_ADOPTING` so the next launch recovers (M6).
             return Err(e);
         }
     };
 
-    if wipe_needed {
-        on_forget_push();
-    }
     let updated_forgotten = format_tombstones(&remove_tombstones_matching(
         &ownership.tombstones,
         &[addr.as_str(), "*"],
     ));
-    store
-        .commit_adopted_identity(wipe_needed, &addr, meta, updated_forgotten.as_deref())
+    let (did_wipe, replaced_owner) = store
+        .commit_adopted_identity(
+            wipe_needed,
+            brand_new,
+            &addr,
+            meta,
+            updated_forgotten.as_deref(),
+        )
         .map_err(|e| e.to_string())?;
-    if wipe_needed {
+    if did_wipe {
+        on_forget_push();
         keylog::note(
             dir,
             "another identity's local data was removed before taking this one",
@@ -709,13 +864,12 @@ fn lifecycle_adopt(
     }
 
     let residual = if storage == KeyStorage::Keyring {
-        let replaced_owner = wipe_needed.then_some(ownership.owner.as_deref()).flatten();
         run_fallback_cleanup(
             store,
             secrets,
             &addr,
-            replaced_owner,
-            ownership.cleanup_pending.as_deref(),
+            replaced_owner.as_deref(),
+            ownership.cleanup_pending.as_ref(),
         )
     } else {
         if ownership.cleanup_pending.is_some() {
@@ -743,12 +897,16 @@ fn lifecycle_forget_begin(
         .or_else(|| ownership.owner.clone())
         .or_else(|| ownership.had_identity.then(|| "*".to_owned()));
     let prev_forgotten = format_tombstones(&ownership.tombstones);
+    let prev_wiped = ownership.installation_wiped;
     if let Some(addr) = target_addr.as_deref() {
         let updated = add_tombstone(&ownership.tombstones, addr, hubchat_core::engine::now());
         if let Some(json) = format_tombstones(&updated) {
             store.set_meta(META_FORGOTTEN, &json).map_err(|e| e.to_string())?;
         }
     }
+    store
+        .set_meta(META_INSTALLATION_WIPED, "1")
+        .map_err(|e| e.to_string())?;
     let res = match secrets.forget() {
         Ok(r) => r,
         Err(e) => {
@@ -760,13 +918,20 @@ fn lifecycle_forget_begin(
                     let _ = store.delete_meta(META_FORGOTTEN);
                 }
             }
+            if !prev_wiped {
+                let _ = store.delete_meta(META_INSTALLATION_WIPED);
+            }
             return Err(e);
         }
     };
     if res.residual_plaintext {
-        store
-            .set_meta(META_FILE_CLEANUP_PENDING, "*")
-            .map_err(|e| e.to_string())?;
+        let pending = PendingFileCleanup {
+            target: target_addr.unwrap_or_else(|| "*".to_owned()),
+            signed_out: true,
+            file_stamp: secrets.fallback_file_stamp(),
+            recorded_at_sec: Some(unix_now_sec()),
+        };
+        save_pending_cleanup(store, &pending)?;
     } else if ownership.cleanup_pending.is_some() {
         let _ = store.delete_meta(META_FILE_CLEANUP_PENDING);
     }
@@ -1423,11 +1588,14 @@ mod key_tests {
 
     use super::{
         decide_loaded_identity, lifecycle_adopt, lifecycle_forget_begin, lifecycle_forget_finish,
-        lifecycle_load, must_wipe, read_store_ownership, ForgetTombstone, LifecycleSecrets,
-        LoadedDecision, MetaReader, PendingAdoption, Store, StoreOwnership, META_ADOPTING,
-        META_FILE_CLEANUP_PENDING, META_FORGOTTEN,
+        lifecycle_load, must_wipe, read_store_ownership, save_pending_cleanup, ForgetTombstone,
+        LifecycleSecrets, LoadedDecision, MetaReader, PendingAdoption, PendingFileCleanup, Store,
+        StoreOwnership, META_ADOPTING, META_FILE_CLEANUP_PENDING, META_FORGOTTEN,
+        META_INSTALLATION_WIPED,
     };
-    use crate::secrets::{FallbackCleanup, ForgetResult, KeyStorage, Loaded, SaveStageError};
+    use crate::secrets::{
+        FallbackCleanup, FallbackFileStamp, ForgetResult, KeyStorage, Loaded, SaveStageError,
+    };
 
     static TEST_DIR_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -1458,11 +1626,13 @@ mod key_tests {
         keyring: RefCell<Option<Identity>>,
         backup: RefCell<Option<Identity>>,
         file: RefCell<Option<Identity>>,
+        file_gen: Cell<u64>,
         save_err: RefCell<Option<SaveStageError>>,
         forget_keyring_err: RefCell<Option<String>>,
         file_cleanup_fails: Cell<bool>,
         restored: Cell<bool>,
         keyring_forget_calls: Cell<usize>,
+        confirm_calls: Cell<usize>,
     }
 
     impl FakeSecrets {
@@ -1472,12 +1642,19 @@ mod key_tests {
                 keyring: RefCell::new(None),
                 backup: RefCell::new(None),
                 file: RefCell::new(None),
+                file_gen: Cell::new(0),
                 save_err: RefCell::new(None),
                 forget_keyring_err: RefCell::new(None),
                 file_cleanup_fails: Cell::new(false),
                 restored: Cell::new(false),
                 keyring_forget_calls: Cell::new(0),
+                confirm_calls: Cell::new(0),
             }
+        }
+
+        fn set_file(&self, id: &Identity) {
+            self.file_gen.set(self.file_gen.get() + 1);
+            *self.file.borrow_mut() = Some(Identity::from_parts(id.id(), id.secret()).unwrap());
         }
     }
 
@@ -1517,14 +1694,24 @@ mod key_tests {
             }
         }
 
+        fn confirm_loaded_keyring(&self, me: &Identity, restored: bool) {
+            self.confirm_calls.set(self.confirm_calls.get() + 1);
+            let copy = Identity::from_parts(me.id(), me.secret()).unwrap();
+            if restored {
+                *self.keyring.borrow_mut() = Some(copy);
+            } else {
+                *self.backup.borrow_mut() = Some(copy);
+            }
+        }
+
         fn save_staged(&self, me: &Identity) -> Result<KeyStorage, SaveStageError> {
             let copy = Identity::from_parts(me.id(), me.secret()).unwrap();
             if let Some(err) = self.save_err.borrow().as_ref() {
                 if matches!(err, SaveStageError::Uncertain(_)) {
-                    // Simulate post-rename fsync_dir error: new file is already on disk!
+                    // Simulate post-rename fsync_dir or lost keyring reply: credential is published!
                     match self.mode.get() {
                         Mode::Keyring => *self.keyring.borrow_mut() = Some(copy),
-                        Mode::FileOnly => *self.file.borrow_mut() = Some(copy),
+                        Mode::FileOnly => self.set_file(&copy),
                     }
                 }
                 return Err(err.clone());
@@ -1535,7 +1722,7 @@ mod key_tests {
                     Ok(KeyStorage::Keyring)
                 }
                 Mode::FileOnly => {
-                    *self.file.borrow_mut() = Some(copy);
+                    self.set_file(&copy);
                     Ok(KeyStorage::FilePermissionsOnly)
                 }
             }
@@ -1549,6 +1736,7 @@ mod key_tests {
                     }
                     let had = self.keyring.borrow().is_some();
                     *self.keyring.borrow_mut() = None;
+                    *self.backup.borrow_mut() = None;
                     had
                 }
                 Mode::FileOnly => false,
@@ -1567,21 +1755,50 @@ mod key_tests {
             })
         }
 
-        fn forget_keyring_only(&self) -> Result<bool, String> {
+        fn forget_forgotten_keyring(&self, forgotten_addr: &str) -> Result<bool, String> {
             self.keyring_forget_calls.set(self.keyring_forget_calls.get() + 1);
+            let backup_matches = self.backup.borrow().as_ref().is_some_and(|id| {
+                forgotten_addr == "*" || id.address() == forgotten_addr
+            });
+            let mut backup_cleared = false;
+            if backup_matches {
+                *self.backup.borrow_mut() = None;
+                backup_cleared = true;
+            }
             if let Some(e) = self.forget_keyring_err.borrow().as_ref() {
                 return Err(e.clone());
             }
             let had = self.keyring.borrow().is_some();
             *self.keyring.borrow_mut() = None;
-            Ok(had)
+            Ok(had || backup_cleared)
         }
 
-        fn cleanup_fallback(&self, allowed_addrs: &[&str], allow_any: bool) -> FallbackCleanup {
+        fn fallback_file_stamp(&self) -> Option<FallbackFileStamp> {
+            self.file.borrow().as_ref().map(|_| FallbackFileStamp {
+                dev: 1,
+                ino: self.file_gen.get(),
+                mtime_sec: 0,
+                mtime_nsec: 0,
+            })
+        }
+
+        fn cleanup_fallback(
+            &self,
+            allowed_addrs: &[&str],
+            allow_any: bool,
+            expected_stamp: Option<FallbackFileStamp>,
+            _not_newer_than_sec: Option<i64>,
+        ) -> FallbackCleanup {
             let existing = self.file.borrow().as_ref().map(|id| id.address());
             let Some(addr) = existing else {
                 return FallbackCleanup::NoneExisted;
             };
+            if let Some(exp) = expected_stamp {
+                let cur = self.fallback_file_stamp();
+                if cur != Some(exp) {
+                    return FallbackCleanup::Residual;
+                }
+            }
             if !allow_any && !allowed_addrs.contains(&addr.as_str()) {
                 return FallbackCleanup::Residual;
             }
@@ -1820,9 +2037,10 @@ mod key_tests {
         assert!(secrets.keyring.borrow().is_none());
         assert!(read_store_ownership(&store).unwrap().tombstones.iter().any(|t| t.address == alice.address()));
 
-        // 5. Legacy profile with no owner record and no tombstone keeps starting from keyring;
-        // Start over on a legacy ownerless profile records "*" tombstone so old key doesn't return.
+        // 5. Untouched legacy profile with no owner record and no tombstone keeps starting from keyring;
+        // Start over on a legacy ownerless profile records "*" tombstone + wiped marker so old key doesn't return.
         store.delete_meta(META_FORGOTTEN).unwrap();
+        store.delete_meta(META_INSTALLATION_WIPED).unwrap();
         let legacy = Identity::generate("legacy").unwrap();
         store.set_meta("device.id", "hc-old-legacy").unwrap();
         *secrets.keyring.borrow_mut() = Some(Identity::from_parts(legacy.id(), legacy.secret()).unwrap());
@@ -1873,8 +2091,8 @@ mod key_tests {
         assert!(secrets.file.borrow().is_none());
         assert!(store.meta(META_FILE_CLEANUP_PENDING).unwrap().is_none());
 
-        // Sign-out with failing fallback cleanup: keyring cleared, wipe STILL runs, pending persisted!
-        *secrets.file.borrow_mut() = Some(Identity::from_parts(alice.id(), alice.secret()).unwrap());
+        // Sign-out with failing fallback cleanup: keyring cleared, wipe STILL runs, durable sign-out record persisted!
+        secrets.set_file(&alice);
         store.add_hub("http://alice-hub:7370", "t0").unwrap();
         secrets.file_cleanup_fails.set(true);
         let commit = lifecycle_forget_begin(&store, &secrets, Some(&alice.address())).unwrap();
@@ -1882,7 +2100,9 @@ mod key_tests {
         assert!(commit.res.residual_plaintext);
         lifecycle_forget_finish(&store, &commit).unwrap();
         assert!(store.hubs().unwrap().is_empty(), "H4: local wipe must still happen on sign-out");
-        assert_eq!(store.meta(META_FILE_CLEANUP_PENDING).unwrap().as_deref(), Some("*"));
+        let pending = read_store_ownership(&store).unwrap().cleanup_pending.unwrap();
+        assert!(pending.signed_out);
+        assert_eq!(pending.target, alice.address());
 
         // Adopting a new identity Carol in keyring retries and clears the leftover file once fixed.
         let carol = Identity::generate("carol").unwrap();
@@ -1929,12 +2149,13 @@ mod key_tests {
         let pending_first = PendingAdoption {
             address: bob.address(),
             wipe: false,
+            brand_new: true,
             meta: vec![("profile.name".into(), "Bob".into())],
         };
         store2
             .set_meta(META_ADOPTING, &serde_json::to_string(&pending_first).unwrap())
             .unwrap();
-        *secrets2.file.borrow_mut() = Some(Identity::from_parts(bob.id(), bob.secret()).unwrap());
+        secrets2.set_file(&bob);
         let recovered = lifecycle_load(&dir2, &store2, &secrets2, || {}).unwrap();
         assert_eq!(
             recovered.start.as_ref().map(|(id, s)| (id.address(), *s)),
@@ -1950,6 +2171,7 @@ mod key_tests {
         let pending_replace = PendingAdoption {
             address: bob.address(),
             wipe: true,
+            brand_new: true,
             meta: vec![("profile.name".into(), "Bob2".into())],
         };
         store
@@ -2085,13 +2307,15 @@ mod key_tests {
         let alice = Identity::generate("alice").unwrap();
         let secrets = FakeSecrets::new(Mode::Keyring);
 
-        // Sign out while fallback file cannot be removed -> pending cleanup persisted.
+        // Sign out while fallback file cannot be removed -> durable sign-out cleanup record persisted.
         lifecycle_adopt(&dir, &store, &secrets, &alice, true, &[], || {}).unwrap();
-        *secrets.file.borrow_mut() = Some(Identity::from_parts(alice.id(), alice.secret()).unwrap());
+        secrets.set_file(&alice);
         secrets.file_cleanup_fails.set(true);
         let commit = lifecycle_forget_begin(&store, &secrets, Some(&alice.address())).unwrap();
         lifecycle_forget_finish(&store, &commit).unwrap();
-        assert_eq!(store.meta(META_FILE_CLEANUP_PENDING).unwrap().as_deref(), Some("*"));
+        let pending = read_store_ownership(&store).unwrap().cleanup_pending.unwrap();
+        assert!(pending.signed_out);
+        assert_eq!(pending.target, alice.address());
 
         // 1. Signed-out startup with empty keyring (Loaded::Missing) retries cleanup once removable!
         secrets.file_cleanup_fails.set(false);
@@ -2102,8 +2326,17 @@ mod key_tests {
         assert!(store.meta(META_FILE_CLEANUP_PENDING).unwrap().is_none());
 
         // 2. Signed-out startup without Secret Service (LoadedDecision::IgnoreOrphan) also retries!
-        *secrets.file.borrow_mut() = Some(Identity::from_parts(alice.id(), alice.secret()).unwrap());
-        store.set_meta(META_FILE_CLEANUP_PENDING, "*").unwrap();
+        secrets.set_file(&alice);
+        save_pending_cleanup(
+            &store,
+            &PendingFileCleanup {
+                target: alice.address(),
+                signed_out: true,
+                file_stamp: secrets.fallback_file_stamp(),
+                recorded_at_sec: None,
+            },
+        )
+        .unwrap();
         secrets.mode.set(Mode::FileOnly);
         let p2 = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
         assert!(p2.start.is_none());
@@ -2129,6 +2362,7 @@ mod key_tests {
         let pending_bob = PendingAdoption {
             address: bob.address(),
             wipe: true,
+            brand_new: true,
             meta: vec![("profile.name".into(), "Bob".into())],
         };
         store
@@ -2200,6 +2434,7 @@ mod key_tests {
         let pending_bob = PendingAdoption {
             address: bob.address(),
             wipe: false,
+            brand_new: true,
             meta: vec![("profile.name".into(), "Bob".into())],
         };
         store
@@ -2278,12 +2513,13 @@ mod key_tests {
         let pending_bob = PendingAdoption {
             address: bob.address(),
             wipe: false,
+            brand_new: true,
             meta: vec![],
         };
         store
             .set_meta(META_ADOPTING, &serde_json::to_string(&pending_bob).unwrap())
             .unwrap();
-        *secrets.file.borrow_mut() = Some(Identity::from_parts(bob.id(), bob.secret()).unwrap());
+        secrets.set_file(&bob);
 
         secrets.file_cleanup_fails.set(false);
         let empty = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
@@ -2291,6 +2527,28 @@ mod key_tests {
         assert!(
             secrets.file.borrow().as_ref().map(|id| id.address()) == Some(bob.address()),
             "H4 High: pending adoption B's newly published fallback file must be protected from old sign-out cleanup"
+        );
+
+        // Case C: Even without META_ADOPTING, a newer file generation (new inode/stamp) published
+        // after sign-out is NEVER deleted by an older signed-out cleanup record (including wildcard "*").
+        store.delete_meta(META_ADOPTING).unwrap();
+        let older_stamp = FallbackFileStamp { dev: 1, ino: 1, mtime_sec: 0, mtime_nsec: 0 };
+        save_pending_cleanup(
+            &store,
+            &PendingFileCleanup {
+                target: "*".into(),
+                signed_out: true,
+                file_stamp: Some(older_stamp),
+                recorded_at_sec: None,
+            },
+        )
+        .unwrap();
+        secrets.set_file(&bob); // newer generation (ino > 1)
+        let after_new = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert!(after_new.residual);
+        assert!(
+            secrets.file.borrow().as_ref().map(|id| id.address()) == Some(bob.address()),
+            "H4 High: signed-out retry must never delete a credential file newer than the cleanup target"
         );
 
         drop(store);
@@ -2309,12 +2567,15 @@ mod key_tests {
         store.set_meta("device.id", "hc-legacy-0001").unwrap();
         let c1 = lifecycle_forget_begin(&store, &secrets, None).unwrap();
         lifecycle_forget_finish(&store, &c1).unwrap();
+        assert_eq!(store.meta(META_INSTALLATION_WIPED).unwrap().as_deref(), Some("1"));
 
-        // User adopts Bob, then later signs out of Bob.
+        // User adopts Bob, then later signs out of Bob: wiped marker survives both.
         secrets.mode.set(Mode::Keyring);
         lifecycle_adopt(&dir, &store, &secrets, &bob, true, &[], || {}).unwrap();
+        assert_eq!(store.meta(META_INSTALLATION_WIPED).unwrap().as_deref(), Some("1"));
         let c2 = lifecycle_forget_begin(&store, &secrets, Some(&bob.address())).unwrap();
         lifecycle_forget_finish(&store, &c2).unwrap();
+        assert_eq!(store.meta(META_INSTALLATION_WIPED).unwrap().as_deref(), Some("1"));
 
         // Older wallet holding un-readopted Alice returns: wiped installation MUST NOT auto-accept Alice.
         *secrets.keyring.borrow_mut() = Some(Identity::from_parts(alice.id(), alice.secret()).unwrap());
@@ -2323,6 +2584,10 @@ mod key_tests {
             plan.start.is_none(),
             "H3 High: previously wiped installation must never accept an un-readopted identity after later sign-out"
         );
+        // Explicit re-adoption of Alice still works cleanly!
+        lifecycle_adopt(&dir, &store, &secrets, &alice, false, &[], || {}).unwrap();
+        let ok = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert_eq!(ok.start.as_ref().map(|(id, _)| id.address()), Some(alice.address()));
 
         drop(store);
         let _ = std::fs::remove_dir_all(&dir);
@@ -2346,6 +2611,16 @@ mod key_tests {
         assert!(plan.start.is_none(), "H3 Medium: forgotten backup must not sign back in");
         assert!(secrets.keyring.borrow().is_none(), "H3 Medium: forgotten backup must not be restored to main keyring");
         assert!(secrets.backup.borrow().is_none(), "H3 Medium: forgotten matching backup must be deleted");
+        assert_eq!(secrets.confirm_calls.get(), 0, "H3 Medium: forgotten backup must never be confirmed/restored");
+
+        // Also: if forgotten Alice reappears in Credential Manager with no backup, confirm_loaded_keyring
+        // must NOT refresh/write a DPAPI backup before tombstone check!
+        *secrets.keyring.borrow_mut() = Some(Identity::from_parts(alice.id(), alice.secret()).unwrap());
+        let plan2 = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert!(plan2.start.is_none());
+        assert!(secrets.keyring.borrow().is_none());
+        assert!(secrets.backup.borrow().is_none(), "H3 Medium: forgotten Credential Manager key must not create a backup");
+        assert_eq!(secrets.confirm_calls.get(), 0);
 
         drop(store);
         let _ = std::fs::remove_dir_all(&dir);
