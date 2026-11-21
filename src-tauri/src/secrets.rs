@@ -2561,6 +2561,21 @@ mod tests {
         assert!(save_staged_with(&b_file, &huge).is_err(), "oversized identity must be refused on file fallback");
         assert_eq!(*b_file.file.borrow(), before, "existing fallback file must stay untouched when oversized save is refused");
     }
+
+    // Round 2 re-verification RED tests: H3 (empty keyring NoEntry is not cleared),
+    // H2 (cleanup must not validate and unlink in two separate raceable steps).
+
+    #[test]
+    fn r2_h3_empty_keyring_forget_reports_not_cleared() {
+        use linux_policy::*;
+        let b = FakeBackend::new(SecretServiceState::Present);
+        // Keyring is empty (NoEntry): forget_with must NOT claim keyring_cleared == true.
+        let res = forget_with(&b).unwrap();
+        assert!(
+            !res.keyring_cleared,
+            "H3: NoEntry on an empty/other wallet must not report keyring_cleared = true"
+        );
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]

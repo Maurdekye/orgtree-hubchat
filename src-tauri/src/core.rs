@@ -1992,6 +1992,126 @@ mod key_tests {
             }
         );
     }
+
+    // Round 2 re-verification RED tests: H3 (NoEntry & multi-wallet tombstone durability),
+    // H4 (signed-out startup retries scheduled cleanup), M6 (older wallet never clears B's staging).
+
+    #[test]
+    fn r2_h3_empty_wallet_noentry_and_second_wallet_keep_tombstone_durable() {
+        let dir = temp_dir("r2-h3");
+        let store = Store::open(&dir.join("hubchat.sqlite3")).unwrap();
+        let alice = Identity::generate("alice").unwrap();
+        let secrets = FakeSecrets::new(Mode::Keyring);
+
+        // 1. Desktop wallet 1 creates Alice.
+        lifecycle_adopt(&dir, &store, &secrets, &alice, true, &[], || {}).unwrap();
+
+        // 2. Switch to an empty separate VR wallet (Keyring present, NoEntry): Start over!
+        *secrets.keyring.borrow_mut() = None;
+        let commit = lifecycle_forget_begin(&store, &secrets, None).unwrap();
+        lifecycle_forget_finish(&store, &commit).unwrap();
+        // Tombstone MUST stay so Desktop wallet 1 cannot resurrect Alice.
+        assert!(
+            read_store_ownership(&store).unwrap().tombstones.iter().any(|t| t.address == alice.address()),
+            "H3: Start over against an empty wallet (NoEntry) must keep Alice's tombstone"
+        );
+
+        // Return to Desktop wallet 1 holding Alice -> refused & cleared from wallet 1.
+        *secrets.keyring.borrow_mut() = Some(Identity::from_parts(alice.id(), alice.secret()).unwrap());
+        let p1 = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert!(p1.start.is_none());
+        assert!(secrets.keyring.borrow().is_none());
+
+        // 3. Two wallets both holding Alice: sign-out in wallet 1 deletes wallet 1's entry,
+        // and tombstone MUST stay durable so opening wallet 2 (still holding Alice) also refuses & clears it.
+        lifecycle_adopt(&dir, &store, &secrets, &alice, false, &[], || {}).unwrap();
+        let commit2 = lifecycle_forget_begin(&store, &secrets, Some(&alice.address())).unwrap();
+        lifecycle_forget_finish(&store, &commit2).unwrap();
+        *secrets.keyring.borrow_mut() = Some(Identity::from_parts(alice.id(), alice.secret()).unwrap());
+        let p2 = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert!(p2.start.is_none(), "H3: second wallet holding forgotten Alice must not sign back in");
+        assert!(secrets.keyring.borrow().is_none());
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn r2_h4_signed_out_startup_retries_pending_fallback_cleanup() {
+        let dir = temp_dir("r2-h4");
+        let store = Store::open(&dir.join("hubchat.sqlite3")).unwrap();
+        let alice = Identity::generate("alice").unwrap();
+        let secrets = FakeSecrets::new(Mode::Keyring);
+
+        // Sign out while fallback file cannot be removed -> pending cleanup persisted.
+        lifecycle_adopt(&dir, &store, &secrets, &alice, true, &[], || {}).unwrap();
+        *secrets.file.borrow_mut() = Some(Identity::from_parts(alice.id(), alice.secret()).unwrap());
+        secrets.file_cleanup_fails.set(true);
+        let commit = lifecycle_forget_begin(&store, &secrets, Some(&alice.address())).unwrap();
+        lifecycle_forget_finish(&store, &commit).unwrap();
+        assert_eq!(store.meta(META_FILE_CLEANUP_PENDING).unwrap().as_deref(), Some("*"));
+
+        // 1. Signed-out startup with empty keyring (Loaded::Missing) retries cleanup once removable!
+        secrets.file_cleanup_fails.set(false);
+        let p = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert!(p.start.is_none());
+        assert!(!p.residual, "H4: signed-out startup must retry scheduled cleanup and clear residual");
+        assert!(secrets.file.borrow().is_none(), "H4: scheduled leftover file must be deleted on signed-out startup");
+        assert!(store.meta(META_FILE_CLEANUP_PENDING).unwrap().is_none());
+
+        // 2. Signed-out startup without Secret Service (LoadedDecision::IgnoreOrphan) also retries!
+        *secrets.file.borrow_mut() = Some(Identity::from_parts(alice.id(), alice.secret()).unwrap());
+        store.set_meta(META_FILE_CLEANUP_PENDING, "*").unwrap();
+        secrets.mode.set(Mode::FileOnly);
+        let p2 = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert!(p2.start.is_none());
+        assert!(!p2.residual, "H4: IgnoreOrphan startup must retry scheduled cleanup");
+        assert!(secrets.file.borrow().is_none(), "H4: orphaned leftover file must be deleted when cleanup is scheduled");
+        assert!(store.meta(META_FILE_CLEANUP_PENDING).unwrap().is_none());
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn r2_m6_older_wallet_accept_never_clears_another_address_pending_adoption() {
+        let dir = temp_dir("r2-m6");
+        let store = Store::open(&dir.join("hubchat.sqlite3")).unwrap();
+        let alice = Identity::generate("alice").unwrap();
+        let bob = Identity::generate("bob").unwrap();
+        let secrets = FakeSecrets::new(Mode::Keyring);
+
+        // Store belongs to Alice; Bob's adoption was staged and saved in another session,
+        // exiting before SQLite committed.
+        lifecycle_adopt(&dir, &store, &secrets, &alice, true, &[("profile.name", "Alice")], || {}).unwrap();
+        let pending_bob = PendingAdoption {
+            address: bob.address(),
+            wipe: true,
+            meta: vec![("profile.name".into(), "Bob".into())],
+        };
+        store
+            .set_meta(META_ADOPTING, &serde_json::to_string(&pending_bob).unwrap())
+            .unwrap();
+
+        // Next launch happens in an older wallet still holding Alice: Alice starts,
+        // and MUST NOT clear Bob's pending adoption record!
+        let plan_a = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert_eq!(plan_a.start.as_ref().map(|(id, _)| id.address()), Some(alice.address()));
+        assert!(
+            store.meta(META_ADOPTING).unwrap().is_some(),
+            "M6: accepting older wallet Alice must NOT clear Bob's pending adoption"
+        );
+
+        // Returning to Bob's session still recovers Bob's adoption cleanly.
+        *secrets.keyring.borrow_mut() = Some(Identity::from_parts(bob.id(), bob.secret()).unwrap());
+        let plan_b = lifecycle_load(&dir, &store, &secrets, || {}).unwrap();
+        assert_eq!(plan_b.start.as_ref().map(|(id, _)| id.address()), Some(bob.address()));
+        assert_eq!(store.meta("identity.address").unwrap().as_deref(), Some(bob.address().as_str()));
+        assert!(store.meta(META_ADOPTING).unwrap().is_none());
+
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[cfg(test)]
