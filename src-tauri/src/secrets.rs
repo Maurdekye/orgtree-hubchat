@@ -91,10 +91,31 @@ pub struct SaveResult {
     pub residual_plaintext: bool,
 }
 
+/// Failure from `save_identity_staged`, distinguishing a guaranteed non-write
+/// (caller may discard adoption staging) from an uncertain post-publication
+/// error such as a directory-sync failure after `renameat` (caller must keep
+/// adoption staging so the next launch can recover).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SaveStageError {
+    NotPublished(String),
+    #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+    Uncertain(String),
+}
+
+impl SaveStageError {
+    #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+    pub fn into_message(self) -> String {
+        match self {
+            Self::NotPublished(e) | Self::Uncertain(e) => e,
+        }
+    }
+}
+
 /// Result of forgetting this device's identity key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ForgetResult {
-    /// True when the OS keyring was reachable and cleared (or held no entry).
+    /// True ONLY when an OS keyring entry was actually found and deleted (`NoEntry` is `false`).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub keyring_cleared: bool,
     /// True when a Linux permissions-only fallback file could not be removed
     /// during best-effort cleanup and remains on disk.
@@ -340,6 +361,31 @@ pub(crate) mod posix_trust {
         Ok(())
     }
 
+    /// Interpret a POSIX `readdir` NULL return with its post-call `errno`:
+    /// `errno == 0` is end-of-directory; non-zero indicates an incomplete scan (M8).
+    pub(crate) fn check_readdir_null_errno(errno: i32) -> Result<(), String> {
+        if errno == 0 {
+            Ok(())
+        } else {
+            Err(format!(
+                "incomplete directory scan while sweeping key store (errno {errno})"
+            ))
+        }
+    }
+
+    /// Inspect directory entry results for leftover temporary key files.
+    /// Any per-entry read error returns `true` (fail closed so cleanup runs/flags residual, M8).
+    pub(crate) fn entries_may_have_temp<E>(
+        entries: impl IntoIterator<Item = Result<std::ffi::OsString, E>>,
+    ) -> bool {
+        entries.into_iter().any(|res| match res {
+            Err(_) => true,
+            Ok(name) => name
+                .to_str()
+                .is_some_and(|n| n.starts_with(".identity.key.") && n.ends_with(".tmp")),
+        })
+    }
+
     /// The key file must be a regular file owned by the effective user, with
     /// no group/other/exec/special permissions, no hard links, and bounded size.
     pub(crate) fn judge_key_file(euid: u32, st: StatInfo) -> Result<(), &'static str> {
@@ -367,7 +413,7 @@ pub(crate) mod posix_trust {
 
 #[cfg(any(target_os = "linux", test))]
 pub(crate) mod linux_policy {
-    use super::{decode, encode, KeyStorage, Main, SecretServiceState, SecretText};
+    use super::{decode, encode, FallbackCleanup, KeyStorage, Main, SaveStageError, SecretServiceState, SecretText};
     use crate::keylog::Fact;
     use hubchat_core::Identity;
 
@@ -387,11 +433,14 @@ pub(crate) mod linux_policy {
         fn probe(&self) -> SecretServiceState;
         fn keyring_load(&self) -> Main;
         fn keyring_save(&self, me: &Identity) -> Result<(), String>;
-        fn keyring_forget(&self) -> Result<(), String>;
+        /// Returns `Ok(true)` iff a keyring credential actually existed and was deleted (`NoEntry` -> `Ok(false)`).
+        fn keyring_forget(&self) -> Result<bool, String>;
         fn file_load(&self) -> Result<Option<SecretText>, String>;
-        fn file_save(&self, encoded: &str) -> Result<(), String>;
+        fn file_save(&self, encoded: &str) -> Result<(), SaveStageError>;
         /// Returns `Ok(true)` if a fallback file was removed, `Ok(false)` if none existed.
         fn file_forget(&self) -> Result<bool, String>;
+        /// Single-step locked validation + inode-bound removal of a matching fallback file (H2).
+        fn file_forget_matching(&self, allowed_addrs: &[&str], allow_any: bool) -> Result<FallbackCleanup, String>;
         fn file_exists_hint(&self) -> bool {
             false
         }
@@ -518,10 +567,10 @@ pub(crate) mod linux_policy {
     /// Save the credential without deleting an existing fallback file yet (M6):
     /// `core` commits the new owner in SQLite first and runs best-effort fallback
     /// cleanup afterward so a failure never leaves the device without its old key.
-    pub(crate) fn save_staged_with(b: &impl Backend, me: &Identity) -> Result<SaveOutcome, String> {
+    pub(crate) fn save_staged_with(b: &impl Backend, me: &Identity) -> Result<SaveOutcome, SaveStageError> {
         match b.probe() {
             SecretServiceState::Present | SecretServiceState::Indeterminate => {
-                b.keyring_save(me)?;
+                b.keyring_save(me).map_err(SaveStageError::NotPublished)?;
                 Ok(SaveOutcome {
                     storage: KeyStorage::Keyring,
                     residual_plaintext: false,
@@ -534,7 +583,9 @@ pub(crate) mod linux_policy {
                 if encoded.as_str().is_empty()
                     || (encoded.as_str().len() as i64) > super::posix_trust::MAX_KEY_BYTES
                 {
-                    return Err("identity key exceeds the permissions-only file size limit".into());
+                    return Err(SaveStageError::NotPublished(
+                        "identity key exceeds the permissions-only file size limit".into(),
+                    ));
                 }
                 b.file_save(encoded.as_str())?;
                 Ok(SaveOutcome {
@@ -550,7 +601,7 @@ pub(crate) mod linux_policy {
     /// Commit point is the credential save; best-effort fallback cleanup after a
     /// keyring save never fails or rolls back the committed keyring save (H4).
     pub(crate) fn save_with(b: &impl Backend, me: &Identity) -> Result<SaveOutcome, String> {
-        let mut out = save_staged_with(b, me)?;
+        let mut out = save_staged_with(b, me).map_err(SaveStageError::into_message)?;
         if out.storage == KeyStorage::Keyring && b.file_exists_hint() {
             match b.file_forget() {
                 Ok(true) => {
@@ -573,12 +624,11 @@ pub(crate) mod linux_policy {
     /// Commit point is keyring deletion when a Secret Service is present or
     /// indeterminate; fallback cleanup is best-effort so sign-out / Start over
     /// never half-finishes or skips the local wipe (H4).
+    /// `keyring_cleared` is `true` ONLY when an existing keyring entry was deleted
+    /// (`NoEntry` is `false`, H3).
     pub(crate) fn forget_with(b: &impl Backend) -> Result<ForgetOutcome, String> {
         let keyring_cleared = match b.probe() {
-            SecretServiceState::Present | SecretServiceState::Indeterminate => {
-                b.keyring_forget()?;
-                true
-            }
+            SecretServiceState::Present | SecretServiceState::Indeterminate => b.keyring_forget()?,
             SecretServiceState::Absent => false,
         };
         if !b.file_exists_hint() {
@@ -614,16 +664,14 @@ pub(crate) mod linux_policy {
     /// Best-effort cleanup of a Linux permissions-only fallback file after `core`
     /// has verified the active keyring identity (H2 + H4).
     ///
-    /// Deletes the fallback file only when `allow_any` is true (explicitly
-    /// scheduled after a wipe/switch/sign-out) or when the file's decoded
-    /// identity address is in `allowed_addrs`. Never deletes a different
-    /// identity's unscheduled fallback file, and never fails startup.
+    /// Performs address validation and inode-bound removal in ONE locked backend
+    /// operation so a concurrent writer publishing another identity cannot have
+    /// its file deleted between check and unlink.
     pub(crate) fn cleanup_fallback_with(
         b: &impl Backend,
         allowed_addrs: &[&str],
         allow_any: bool,
     ) -> CleanupOutcome {
-        use super::FallbackCleanup;
         if !b.file_exists_hint() {
             return CleanupOutcome {
                 status: FallbackCleanup::NoneExisted,
@@ -631,45 +679,23 @@ pub(crate) mod linux_policy {
                 facts: vec![],
             };
         }
-        if !allow_any {
-            match b.file_load() {
-                Ok(None) => {
-                    // No canonical `identity.key`; fall through to sweep any leftover `.tmp`.
-                }
-                Ok(Some(text)) => {
-                    let matches_allowed = decode(text.as_str())
-                        .is_some_and(|id| allowed_addrs.contains(&id.address().as_str()));
-                    if !matches_allowed {
-                        return CleanupOutcome {
-                            status: FallbackCleanup::Residual,
-                            log_line: Some(
-                                "permissions-only key file holds another identity or unreadable key; left untouched".into(),
-                            ),
-                            facts: vec![Fact::KeyFileCleanupFailed],
-                        };
-                    }
-                }
-                Err(e) => {
-                    return CleanupOutcome {
-                        status: FallbackCleanup::Residual,
-                        log_line: Some(format!(
-                            "stale permissions-only key file couldn't be verified for cleanup ({e})"
-                        )),
-                        facts: vec![Fact::KeyFileCleanupFailed],
-                    };
-                }
-            }
-        }
-        match b.file_forget() {
-            Ok(true) => CleanupOutcome {
+        match b.file_forget_matching(allowed_addrs, allow_any) {
+            Ok(FallbackCleanup::Removed) => CleanupOutcome {
                 status: FallbackCleanup::Removed,
                 log_line: Some("stale permissions-only key file removed".into()),
                 facts: vec![Fact::KeyFileRemoved],
             },
-            Ok(false) => CleanupOutcome {
+            Ok(FallbackCleanup::NoneExisted) => CleanupOutcome {
                 status: FallbackCleanup::NoneExisted,
                 log_line: None,
                 facts: vec![],
+            },
+            Ok(FallbackCleanup::Residual) => CleanupOutcome {
+                status: FallbackCleanup::Residual,
+                log_line: Some(
+                    "permissions-only key file holds another identity or unreadable key; left untouched".into(),
+                ),
+                facts: vec![Fact::KeyFileCleanupFailed],
             },
             Err(e) => CleanupOutcome {
                 status: FallbackCleanup::Residual,
@@ -757,8 +783,8 @@ pub fn load_identity(dir: &Path) -> Loaded {
 /// Keep the key: the main copy must take it; the backup follows where there
 /// is one (if it can't, there is no backup, and the key log says why).
 #[cfg(not(target_os = "linux"))]
-pub fn save_identity_staged(dir: &Path, me: &Identity) -> Result<KeyStorage, String> {
-    save_main(dir, me)?;
+pub fn save_identity_staged(dir: &Path, me: &Identity) -> Result<KeyStorage, SaveStageError> {
+    save_main(dir, me).map_err(SaveStageError::NotPublished)?;
     if let Err(e) = write_backup(dir, me) {
         keylog::note(dir, &e, &[Fact::BackupNotWritten]);
     }
@@ -766,7 +792,7 @@ pub fn save_identity_staged(dir: &Path, me: &Identity) -> Result<KeyStorage, Str
 }
 
 #[cfg(target_os = "linux")]
-pub fn save_identity_staged(dir: &Path, me: &Identity) -> Result<KeyStorage, String> {
+pub fn save_identity_staged(dir: &Path, me: &Identity) -> Result<KeyStorage, SaveStageError> {
     let backend = LinuxBackend { dir };
     let out = linux_policy::save_staged_with(&backend, me)?;
     if let Some(line) = out.log_line {
@@ -793,10 +819,10 @@ pub fn save_identity(dir: &Path, me: &Identity) -> Result<SaveResult, String> {
 /// Forget the key: the main copy and any backup or fallback file.
 #[cfg(not(target_os = "linux"))]
 pub fn forget_identity(dir: &Path) -> Result<ForgetResult, String> {
-    forget_main(dir)?;
+    let keyring_cleared = forget_main(dir)?;
     backup::forget(dir)?;
     Ok(ForgetResult {
-        keyring_cleared: true,
+        keyring_cleared,
         residual_plaintext: false,
     })
 }
@@ -816,7 +842,8 @@ pub fn forget_identity(dir: &Path) -> Result<ForgetResult, String> {
 
 /// Delete only the OS keyring/main credential entry (without touching any Linux
 /// fallback file). Used when a returning keyring entry matches a forget tombstone (H3).
-pub fn forget_keyring_only(dir: &Path) -> Result<(), String> {
+/// Returns `Ok(true)` iff an entry actually existed and was removed (`NoEntry` -> `Ok(false)`).
+pub fn forget_keyring_only(dir: &Path) -> Result<bool, String> {
     forget_main(dir)
 }
 
@@ -931,9 +958,10 @@ fn save_main(dir: &Path, me: &Identity) -> Result<(), String> {
 }
 
 #[cfg(desktop)]
-fn forget_main(dir: &Path) -> Result<(), String> {
+fn forget_main(dir: &Path) -> Result<bool, String> {
     match entry(dir)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Ok(()) => Ok(true),
+        Err(keyring::Error::NoEntry) => Ok(false),
         Err(e) => Err(e.to_string()),
     }
 }
@@ -966,10 +994,10 @@ fn save_main(dir: &Path, me: &Identity) -> Result<(), String> {
 }
 
 #[cfg(target_os = "android")]
-fn forget_main(dir: &Path) -> Result<(), String> {
+fn forget_main(dir: &Path) -> Result<bool, String> {
     match std::fs::remove_file(dir.join("identity.sealed")) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(e) => Err(e.to_string()),
     }
 }
@@ -992,17 +1020,24 @@ impl linux_policy::Backend for LinuxBackend<'_> {
     fn keyring_save(&self, me: &Identity) -> Result<(), String> {
         save_main(self.dir, me)
     }
-    fn keyring_forget(&self) -> Result<(), String> {
+    fn keyring_forget(&self) -> Result<bool, String> {
         forget_main(self.dir)
     }
     fn file_load(&self) -> Result<Option<SecretText>, String> {
         linux_file::load(self.dir)
     }
-    fn file_save(&self, encoded: &str) -> Result<(), String> {
+    fn file_save(&self, encoded: &str) -> Result<(), SaveStageError> {
         linux_file::save(self.dir, encoded)
     }
     fn file_forget(&self) -> Result<bool, String> {
         linux_file::forget(self.dir)
+    }
+    fn file_forget_matching(
+        &self,
+        allowed_addrs: &[&str],
+        allow_any: bool,
+    ) -> Result<FallbackCleanup, String> {
+        linux_file::forget_matching(self.dir, allowed_addrs, allow_any)
     }
     fn file_exists_hint(&self) -> bool {
         linux_file::exists_hint(self.dir)
@@ -1109,10 +1144,10 @@ mod linux_file {
     use rand::RngCore;
 
     use super::posix_trust::{
-        judge_ancestor, judge_app_dir, judge_key_file, judge_store_dir, validate_clean_absolute,
-        StatInfo, MAX_KEY_BYTES,
+        check_readdir_null_errno, entries_may_have_temp, judge_ancestor, judge_app_dir,
+        judge_key_file, judge_store_dir, validate_clean_absolute, StatInfo, MAX_KEY_BYTES,
     };
-    use super::{wipe_bytes, SecretText};
+    use super::{decode, wipe_bytes, FallbackCleanup, SaveStageError, SecretText};
 
     pub(super) const STORE_DIR: &str = "identity-store";
     pub(super) const KEY_FILE: &str = "identity.key";
@@ -1121,6 +1156,34 @@ mod linux_file {
     const MAX_SYMLINK_HOPS: usize = 8;
 
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    /// Advisory exclusive lock on `identity-store/` coordinating Hubchat writers
+    /// and atomic validate-then-unlink cleanup across processes and threads (H2).
+    struct StoreLock(RawFd);
+
+    impl StoreLock {
+        fn acquire(fd: RawFd) -> Result<Self, String> {
+            loop {
+                let rc = unsafe { libc::flock(fd, libc::LOCK_EX) };
+                if rc == 0 {
+                    return Ok(Self(fd));
+                }
+                let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+                if errno == libc::EINTR {
+                    continue;
+                }
+                return Err(format!("could not lock key store directory (errno {errno})"));
+            }
+        }
+    }
+
+    impl Drop for StoreLock {
+        fn drop(&mut self) {
+            unsafe {
+                libc::flock(self.0, libc::LOCK_UN);
+            }
+        }
+    }
 
     fn fsync_dir(fd: RawFd) -> Result<(), String> {
         let rc = unsafe { libc::fsync(fd) };
@@ -1179,8 +1242,15 @@ mod linux_file {
         let stream = DirStream(dirp);
         let mut candidates: Vec<CString> = Vec::new();
         loop {
+            // POSIX readdir(3): clear errno before each call so NULL + errno != 0
+            // is distinguished from genuine end-of-directory (M8).
+            unsafe {
+                *libc::__errno_location() = 0;
+            }
             let ent = unsafe { libc::readdir(stream.0) };
             if ent.is_null() {
+                let err = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+                check_readdir_null_errno(err)?;
                 break;
             }
             let c_name = unsafe { CStr::from_ptr((*ent).d_name.as_ptr()) };
@@ -1255,6 +1325,15 @@ mod linux_file {
         Ok(stat_to_info(&st))
     }
 
+    fn fstat_id(fd: RawFd) -> Result<(StatInfo, u64, u64), String> {
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        let rc = unsafe { libc::fstat(fd, &mut st) };
+        if rc != 0 {
+            return Err("fstat failed".into());
+        }
+        Ok((stat_to_info(&st), st.st_dev as u64, st.st_ino as u64))
+    }
+
     fn fstatat_nofollow(dir_fd: RawFd, name: &CString) -> Result<Option<StatInfo>, String> {
         let mut st: libc::stat = unsafe { std::mem::zeroed() };
         let rc = unsafe { libc::fstatat(dir_fd, name.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW) };
@@ -1266,6 +1345,19 @@ mod linux_file {
             return Err("fstatat failed".into());
         }
         Ok(Some(stat_to_info(&st)))
+    }
+
+    fn fstatat_id_nofollow(dir_fd: RawFd, name: &CString) -> Result<Option<(StatInfo, u64, u64)>, String> {
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        let rc = unsafe { libc::fstatat(dir_fd, name.as_ptr(), &mut st, libc::AT_SYMLINK_NOFOLLOW) };
+        if rc != 0 {
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() == Some(libc::ENOENT) {
+                return Ok(None);
+            }
+            return Err("fstatat failed".into());
+        }
+        Ok(Some((stat_to_info(&st), st.st_dev as u64, st.st_ino as u64)))
     }
 
     fn open_root() -> Result<(OwnedFd, StatInfo), String> {
@@ -1597,33 +1689,60 @@ mod linux_file {
         }
     }
 
+    fn read_key_fd(key_fd: OwnedFd) -> Result<SecretText, String> {
+        let mut file = std::fs::File::from(key_fd);
+        let mut buf = Vec::new();
+        let read_res = (&mut file).take((MAX_KEY_BYTES as u64) + 1).read_to_end(&mut buf);
+        if read_res.is_err() {
+            wipe_bytes(&mut buf);
+            return Err("could not read key file".into());
+        }
+        if (buf.len() as i64) > MAX_KEY_BYTES {
+            wipe_bytes(&mut buf);
+            return Err("key file size is out of bounds".into());
+        }
+        match String::from_utf8(buf) {
+            Ok(s) => Ok(SecretText::new(s)),
+            Err(e) => {
+                let mut raw = e.into_bytes();
+                wipe_bytes(&mut raw);
+                Err("key file is not valid UTF-8".into())
+            }
+        }
+    }
+
     pub(super) fn save_with_env(
         dir: &Path,
         text: &str,
         home_env: Option<&OsStr>,
         xdg_data_env: Option<&OsStr>,
         account_home: Option<&Path>,
-    ) -> Result<(), String> {
+    ) -> Result<(), SaveStageError> {
         if text.is_empty() || (text.len() as i64) > MAX_KEY_BYTES {
-            return Err("key payload size is out of bounds".into());
+            return Err(SaveStageError::NotPublished("key payload size is out of bounds".into()));
         }
         let uid = euid();
-        check_env_roots_with(uid, home_env, xdg_data_env, account_home)?;
-        let (dir_fd, _) = open_dir_trusted(uid, dir, true, false)?
-            .ok_or_else(|| "could not prepare data directory".to_string())?;
-        let store_fd = open_store_dir(dir_fd.as_raw_fd(), uid, true)?
-            .ok_or_else(|| "could not prepare key store directory".to_string())?;
+        check_env_roots_with(uid, home_env, xdg_data_env, account_home)
+            .map_err(SaveStageError::NotPublished)?;
+        let (dir_fd, _) = open_dir_trusted(uid, dir, true, false)
+            .map_err(SaveStageError::NotPublished)?
+            .ok_or_else(|| SaveStageError::NotPublished("could not prepare data directory".to_string()))?;
+        let store_fd = open_store_dir(dir_fd.as_raw_fd(), uid, true)
+            .map_err(SaveStageError::NotPublished)?
+            .ok_or_else(|| SaveStageError::NotPublished("could not prepare key store directory".to_string()))?;
+        let _lock = StoreLock::acquire(store_fd.as_raw_fd()).map_err(SaveStageError::NotPublished)?;
 
         let key_name = CString::new(KEY_FILE).unwrap();
         const MAX_REPLACE_RETRIES: usize = 32;
         for attempt in 0..MAX_REPLACE_RETRIES {
-            match fstatat_nofollow(store_fd.as_raw_fd(), &key_name)? {
+            match fstatat_nofollow(store_fd.as_raw_fd(), &key_name).map_err(SaveStageError::NotPublished)? {
                 None => break,
                 Some(existing) if existing.is_reg && existing.nlink == 0 && attempt + 1 < MAX_REPLACE_RETRIES => {
                     continue;
                 }
                 Some(existing) => {
-                    judge_key_file(uid, existing).map_err(str::to_string)?;
+                    judge_key_file(uid, existing)
+                        .map_err(|e| SaveStageError::NotPublished(e.to_string()))?;
                     break;
                 }
             }
@@ -1646,7 +1765,7 @@ mod linux_file {
             )
         };
         if tmp_raw < 0 {
-            return Err("could not create temporary key file".into());
+            return Err(SaveStageError::NotPublished("could not create temporary key file".into()));
         }
         // SAFETY: `tmp_raw` is a freshly created valid descriptor.
         let tmp_fd = unsafe { OwnedFd::from_raw_fd(tmp_raw) };
@@ -1656,17 +1775,19 @@ mod linux_file {
             committed: false,
         };
 
-        let tmp_st = fstat_fd(tmp_fd.as_raw_fd())?;
+        let tmp_st = fstat_fd(tmp_fd.as_raw_fd()).map_err(SaveStageError::NotPublished)?;
         if !tmp_st.is_reg || tmp_st.uid != uid || (tmp_st.mode & 0o7777) != 0o600 || tmp_st.nlink != 1 {
-            return Err("temporary key file did not get exclusive 0600 permissions".into());
+            return Err(SaveStageError::NotPublished(
+                "temporary key file did not get exclusive 0600 permissions".into(),
+            ));
         }
 
         {
             let mut file = std::fs::File::from(tmp_fd);
             file.write_all(text.as_bytes())
-                .map_err(|_| "could not write temporary key file".to_string())?;
+                .map_err(|_| SaveStageError::NotPublished("could not write temporary key file".to_string()))?;
             file.sync_all()
-                .map_err(|_| "could not sync temporary key file".to_string())?;
+                .map_err(|_| SaveStageError::NotPublished("could not sync temporary key file".to_string()))?;
         }
 
         let rc = unsafe {
@@ -1678,10 +1799,12 @@ mod linux_file {
             )
         };
         if rc != 0 {
-            return Err("could not atomically install key file".into());
+            return Err(SaveStageError::NotPublished("could not atomically install key file".into()));
         }
         guard.commit();
-        fsync_dir(store_fd.as_raw_fd())?;
+        // `renameat` has already published the new key file; if `fsync_dir` fails,
+        // return `Uncertain` so `core` preserves `META_ADOPTING` for recovery (M6).
+        fsync_dir(store_fd.as_raw_fd()).map_err(SaveStageError::Uncertain)?;
         Ok(())
     }
 
@@ -1699,6 +1822,7 @@ mod linux_file {
         let Some(store_fd) = open_store_dir(dir_fd.as_raw_fd(), uid, false)? else {
             return Ok(false);
         };
+        let _lock = StoreLock::acquire(store_fd.as_raw_fd())?;
         let mut removed_any = sweep_temp_files(store_fd.as_raw_fd(), uid, false)?;
         let key_name = CString::new(KEY_FILE).unwrap();
         if let Some(st) = fstatat_nofollow(store_fd.as_raw_fd(), &key_name)? {
@@ -1724,6 +1848,97 @@ mod linux_file {
         Ok(removed_any)
     }
 
+    /// Single-step locked validation and inode-bound removal of a fallback key
+    /// file (H2). Holds `StoreLock` across open, decode, `(dev, ino)` check,
+    /// `unlinkat`, and `fsync_dir` so a concurrent writer publishing another
+    /// identity cannot have its file deleted between validation and removal.
+    pub(super) fn forget_matching_with_env(
+        dir: &Path,
+        allowed_addrs: &[&str],
+        allow_any: bool,
+        home_env: Option<&OsStr>,
+        xdg_data_env: Option<&OsStr>,
+        account_home: Option<&Path>,
+    ) -> Result<FallbackCleanup, String> {
+        if allow_any {
+            return Ok(if forget_with_env(dir, home_env, xdg_data_env, account_home)? {
+                FallbackCleanup::Removed
+            } else {
+                FallbackCleanup::NoneExisted
+            });
+        }
+        let uid = euid();
+        check_env_roots_with(uid, home_env, xdg_data_env, account_home)?;
+        let Some((dir_fd, _)) = open_dir_trusted(uid, dir, false, false)? else {
+            return Ok(FallbackCleanup::NoneExisted);
+        };
+        let Some(store_fd) = open_store_dir(dir_fd.as_raw_fd(), uid, false)? else {
+            return Ok(FallbackCleanup::NoneExisted);
+        };
+        let _lock = StoreLock::acquire(store_fd.as_raw_fd())?;
+
+        let key_name = CString::new(KEY_FILE).unwrap();
+        let fd = unsafe {
+            libc::openat(
+                store_fd.as_raw_fd(),
+                key_name.as_ptr(),
+                libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+            if errno == libc::ENOENT {
+                // No canonical key file; sweep only dead-PID interrupted temps.
+                let swept = sweep_temp_files(store_fd.as_raw_fd(), uid, true)?;
+                if swept {
+                    fsync_dir(store_fd.as_raw_fd())?;
+                    return Ok(FallbackCleanup::Removed);
+                }
+                return Ok(FallbackCleanup::NoneExisted);
+            }
+            if errno == libc::ELOOP {
+                return Err("key file cannot be a symbolic link".into());
+            }
+            return Err("could not open key file".into());
+        }
+        // SAFETY: `fd` is a freshly opened valid descriptor.
+        let key_fd = unsafe { OwnedFd::from_raw_fd(fd) };
+        let (key_st, key_dev, key_ino) = fstat_id(key_fd.as_raw_fd())?;
+        judge_key_file(uid, key_st).map_err(str::to_string)?;
+        let text = read_key_fd(key_fd)?;
+        let matches_allowed = decode(text.as_str())
+            .is_some_and(|id| allowed_addrs.contains(&id.address().as_str()));
+        if !matches_allowed {
+            return Ok(FallbackCleanup::Residual);
+        }
+
+        // Bind unlink to the exact `(dev, ino)` inode we validated (protects even
+        // against an uncooperative non-locking writer replacing `identity.key`).
+        let Some((cur_st, cur_dev, cur_ino)) = fstatat_id_nofollow(store_fd.as_raw_fd(), &key_name)? else {
+            return Ok(FallbackCleanup::NoneExisted);
+        };
+        if cur_dev != key_dev
+            || cur_ino != key_ino
+            || !cur_st.is_reg
+            || cur_st.is_symlink
+            || cur_st.uid != uid
+            || cur_st.nlink > 1
+        {
+            return Ok(FallbackCleanup::Residual);
+        }
+
+        let rc = unsafe { libc::unlinkat(store_fd.as_raw_fd(), key_name.as_ptr(), 0) };
+        if rc != 0 {
+            let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+            if errno != libc::ENOENT {
+                return Err("could not remove key file".into());
+            }
+        }
+        let _ = sweep_temp_files(store_fd.as_raw_fd(), uid, false)?;
+        fsync_dir(store_fd.as_raw_fd())?;
+        Ok(FallbackCleanup::Removed)
+    }
+
     pub(super) fn load(dir: &Path) -> Result<Option<SecretText>, String> {
         let home = std::env::var_os("HOME");
         let xdg = std::env::var_os("XDG_DATA_HOME");
@@ -1731,7 +1946,7 @@ mod linux_file {
         load_with_env(dir, home.as_deref(), xdg.as_deref(), pw.as_deref())
     }
 
-    pub(super) fn save(dir: &Path, text: &str) -> Result<(), String> {
+    pub(super) fn save(dir: &Path, text: &str) -> Result<(), SaveStageError> {
         let home = std::env::var_os("HOME");
         let xdg = std::env::var_os("XDG_DATA_HOME");
         let pw = crate::linux_scheme::account_home();
@@ -1745,10 +1960,28 @@ mod linux_file {
         forget_with_env(dir, home.as_deref(), xdg.as_deref(), pw.as_deref())
     }
 
+    pub(super) fn forget_matching(
+        dir: &Path,
+        allowed_addrs: &[&str],
+        allow_any: bool,
+    ) -> Result<FallbackCleanup, String> {
+        let home = std::env::var_os("HOME");
+        let xdg = std::env::var_os("XDG_DATA_HOME");
+        let pw = crate::linux_scheme::account_home();
+        forget_matching_with_env(
+            dir,
+            allowed_addrs,
+            allow_any,
+            home.as_deref(),
+            xdg.as_deref(),
+            pw.as_deref(),
+        )
+    }
+
     /// Lightweight presence hint for the key log and cleanup fast-path (never
     /// reads key bytes). Returns `true` if `identity.key` or any interrupted
     /// `.identity.key.*.tmp` exists inside `identity-store/`, or if the store
-    /// directory exists and cannot be inspected.
+    /// directory exists and cannot be completely scanned (M8).
     pub(super) fn exists_hint(dir: &Path) -> bool {
         let store = dir.join(STORE_DIR);
         match std::fs::symlink_metadata(&store) {
@@ -1761,11 +1994,7 @@ mod linux_file {
             return true;
         }
         match std::fs::read_dir(&store) {
-            Ok(entries) => entries.flatten().any(|e| {
-                e.file_name()
-                    .to_str()
-                    .is_some_and(|n| n.starts_with(TMP_PREFIX) && n.ends_with(TMP_SUFFIX))
-            }),
+            Ok(entries) => entries_may_have_temp(entries.map(|r| r.map(|e| e.file_name()))),
             Err(_) => true,
         }
     }
@@ -2250,12 +2479,13 @@ mod tests {
             *self.keyring.borrow_mut() = Ok(Some(encode(me).as_str().to_string()));
             Ok(())
         }
-        fn keyring_forget(&self) -> Result<(), String> {
+        fn keyring_forget(&self) -> Result<bool, String> {
             if let Some(e) = self.keyring_forget_err.borrow().as_ref() {
                 return Err(e.clone());
             }
+            let had = matches!(self.keyring.borrow().as_ref(), Ok(Some(_)));
             *self.keyring.borrow_mut() = Ok(None);
-            Ok(())
+            Ok(had)
         }
         fn file_load(&self) -> Result<Option<SecretText>, String> {
             self.file_reads.set(self.file_reads.get() + 1);
@@ -2265,10 +2495,10 @@ mod tests {
                 Err(e) => Err(e.clone()),
             }
         }
-        fn file_save(&self, encoded: &str) -> Result<(), String> {
+        fn file_save(&self, encoded: &str) -> Result<(), SaveStageError> {
             self.file_writes.set(self.file_writes.get() + 1);
             if let Some(e) = self.file_save_err.borrow().as_ref() {
-                return Err(e.clone());
+                return Err(SaveStageError::NotPublished(e.clone()));
             }
             *self.file.borrow_mut() = Ok(Some(encoded.to_string()));
             Ok(())
@@ -2280,6 +2510,29 @@ mod tests {
             let had = matches!(self.file.borrow().as_ref(), Ok(Some(_)));
             *self.file.borrow_mut() = Ok(None);
             Ok(had)
+        }
+        fn file_forget_matching(
+            &self,
+            allowed_addrs: &[&str],
+            allow_any: bool,
+        ) -> Result<FallbackCleanup, String> {
+            if let Some(e) = self.file_forget_err.borrow().as_ref() {
+                return Err(e.clone());
+            }
+            let existing = match self.file.borrow().as_ref() {
+                Ok(Some(s)) => s.clone(),
+                Ok(None) => return Ok(FallbackCleanup::NoneExisted),
+                Err(e) => return Err(e.clone()),
+            };
+            if !allow_any {
+                let ok = decode(&existing)
+                    .is_some_and(|id| allowed_addrs.contains(&id.address().as_str()));
+                if !ok {
+                    return Ok(FallbackCleanup::Residual);
+                }
+            }
+            *self.file.borrow_mut() = Ok(None);
+            Ok(FallbackCleanup::Removed)
         }
         fn file_exists_hint(&self) -> bool {
             matches!(self.file.borrow().as_ref(), Ok(Some(_)))
@@ -2575,6 +2828,24 @@ mod tests {
             !res.keyring_cleared,
             "H3: NoEntry on an empty/other wallet must not report keyring_cleared = true"
         );
+    }
+
+    #[test]
+    fn r2_m8_incomplete_dir_scan_fails_closed() {
+        use posix_trust::{check_readdir_null_errno, entries_may_have_temp};
+        use std::ffi::OsString;
+
+        // Genuine EOF (errno 0) succeeds; non-zero errno fails so cleanup_pending stays set.
+        assert!(check_readdir_null_errno(0).is_ok());
+        assert!(check_readdir_null_errno(5).is_err());
+
+        // Per-entry read_dir error must return true (fail closed) instead of being dropped.
+        assert!(!entries_may_have_temp::<()>(vec![Ok(OsString::from("other.txt"))]));
+        assert!(entries_may_have_temp::<()>(vec![Ok(OsString::from(".identity.key.123.0.abcd.tmp"))]));
+        assert!(entries_may_have_temp(vec![
+            Ok(OsString::from("other.txt")),
+            Err("EIO"),
+        ]));
     }
 }
 
@@ -2881,6 +3152,37 @@ mod linux_file_tests {
                 ),
             }
         }
+
+        // H2: single-step locked forget_matching_with_env preserves mismatched identity and removes matching one.
+        let other = Identity::generate("other").unwrap();
+        let dir_match = base.join("h2-match");
+        linux_file::save_with_env(&dir_match, encode(&other).as_str(), home, None, pw.as_deref()).unwrap();
+        assert_eq!(
+            linux_file::forget_matching_with_env(
+                &dir_match,
+                &[&me.address()],
+                false,
+                home,
+                None,
+                pw.as_deref(),
+            )
+            .unwrap(),
+            FallbackCleanup::Residual
+        );
+        assert!(linux_file::load_with_env(&dir_match, home, None, pw.as_deref()).unwrap().is_some());
+        assert_eq!(
+            linux_file::forget_matching_with_env(
+                &dir_match,
+                &[&other.address()],
+                false,
+                home,
+                None,
+                pw.as_deref(),
+            )
+            .unwrap(),
+            FallbackCleanup::Removed
+        );
+        assert!(linux_file::load_with_env(&dir_match, home, None, pw.as_deref()).unwrap().is_none());
 
         let _ = std::fs::remove_dir_all(&base);
     }
