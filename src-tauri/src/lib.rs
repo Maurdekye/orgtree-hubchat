@@ -14,6 +14,8 @@ mod crash;
 mod diagnostics;
 mod keylog;
 mod link;
+#[cfg(any(target_os = "linux", test))]
+mod linux_scheme;
 #[cfg(any(windows, target_os = "linux"))]
 mod local_orgtree;
 mod media;
