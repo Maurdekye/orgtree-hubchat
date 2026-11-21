@@ -65,8 +65,10 @@ pub enum Fact {
     KeyFileRemoved,
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     KeyFileCleanupFailed,
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
     KeyFileIgnoredWithSecretService,
+    #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+    KeyFileIgnoredSecretServiceIndeterminate,
     KeyFileOwnerMismatch,
     KeyFileOrphanIgnored,
 }
@@ -101,6 +103,7 @@ impl Fact {
             Fact::KeyFileRemoved => "stale permissions-only key file removed",
             Fact::KeyFileCleanupFailed => "stale permissions-only key file could not be removed",
             Fact::KeyFileIgnoredWithSecretService => "permissions-only key file ignored while a Secret Service is available",
+            Fact::KeyFileIgnoredSecretServiceIndeterminate => "permissions-only key file ignored while Secret Service availability was indeterminate",
             Fact::KeyFileOwnerMismatch => "permissions-only key file did not match this device's identity",
             Fact::KeyFileOrphanIgnored => "permissions-only key file ignored without local identity data",
         }

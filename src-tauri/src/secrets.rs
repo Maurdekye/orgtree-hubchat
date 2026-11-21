@@ -121,48 +121,101 @@ pub(crate) enum SecretServiceState {
 
 #[cfg(any(target_os = "linux", test))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BusEnv {
+pub(crate) struct BusHints {
     /// `DBUS_SESSION_BUS_ADDRESS` is set to a non-empty address other than `disabled:`.
-    Configured,
+    pub address_set: bool,
     /// `DBUS_SESSION_BUS_ADDRESS=disabled:` (e.g. inherited from Chromium with no bus).
-    Disabled { runtime_bus_exists: bool },
-    /// `DBUS_SESSION_BUS_ADDRESS` is unset or empty; `None` means stat on `$XDG_RUNTIME_DIR/bus` errored.
-    Missing { runtime_bus_exists: Option<bool> },
+    pub address_disabled: bool,
+    /// `Some(true)` if `$XDG_RUNTIME_DIR/bus` exists, `Some(false)` if absent or `XDG_RUNTIME_DIR`
+    /// is unset, `None` if `symlink_metadata` errored (e.g. permission denied).
+    pub runtime_bus_exists: Option<bool>,
+    /// Non-empty `DISPLAY` environment variable (X11 session discovery / autolaunch possible).
+    pub has_display: bool,
+}
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DbusProbeResult {
+    /// `org.freedesktop.secrets` is currently owned on the session bus.
+    Owned,
+    /// Connected to session bus; `org.freedesktop.secrets` is not owned, `activatable` lists
+    /// all activatable service names reported by `ListActivatableNames`.
+    NotOwned { activatable: Vec<String> },
+    /// libdbus session discovery / connection failed with an optional D-Bus error name & message.
+    ConnectError {
+        name: Option<String>,
+        message: Option<String>,
+    },
+    /// Connected to session bus, but a bus query (`NameHasOwner`/`ListActivatableNames`) failed.
+    QueryError,
+    /// Discovery or bus query exceeded the 2-second probe timeout.
+    TimedOut,
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn is_definitive_no_bus_error(name: Option<&str>, message: Option<&str>) -> bool {
+    if let Some(n) = name {
+        if matches!(
+            n,
+            "org.freedesktop.DBus.Error.NotSupported"
+                | "org.freedesktop.DBus.Error.Spawn.ExecFailed"
+                | "org.freedesktop.DBus.Error.Spawn.ChildExited"
+                | "org.freedesktop.DBus.Error.NoServer"
+        ) {
+            return true;
+        }
+    }
+    if let Some(m) = message {
+        let lower = m.to_ascii_lowercase();
+        if lower.contains("unable to autolaunch")
+            || lower.contains("cannot autolaunch")
+            || lower.contains("without a $display")
+            || lower.contains("unable to determine the address of the message bus")
+            || lower.contains("no d-bus daemon running")
+            || lower.contains("autolaunch error")
+        {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(any(target_os = "linux", test))]
 pub(crate) fn classify_dbus_probe(
-    bus_env: BusEnv,
-    probe: impl FnOnce() -> Result<(bool, Option<Vec<String>>), ()>,
+    hints: BusHints,
+    probe: impl FnOnce() -> DbusProbeResult,
 ) -> SecretServiceState {
-    match bus_env {
-        BusEnv::Missing {
-            runtime_bus_exists: Some(false),
-        } => return SecretServiceState::Absent,
-        BusEnv::Missing {
-            runtime_bus_exists: None,
-        } => return SecretServiceState::Indeterminate,
-        BusEnv::Disabled {
-            runtime_bus_exists: false,
-        } => return SecretServiceState::Absent,
-        BusEnv::Disabled {
-            runtime_bus_exists: true,
-        } => return SecretServiceState::Indeterminate,
-        BusEnv::Configured
-        | BusEnv::Missing {
-            runtime_bus_exists: Some(true),
-        } => {}
+    if hints.address_disabled {
+        return if hints.runtime_bus_exists == Some(false) && !hints.has_display {
+            SecretServiceState::Absent
+        } else {
+            SecretServiceState::Indeterminate
+        };
     }
     match probe() {
-        Ok((true, _)) => SecretServiceState::Present,
-        Ok((false, Some(names))) => {
-            if names.iter().any(|n| n == SECRETS_BUS_NAME) {
+        DbusProbeResult::Owned => SecretServiceState::Present,
+        DbusProbeResult::NotOwned { activatable } => {
+            if activatable.iter().any(|n| n == SECRETS_BUS_NAME) {
                 SecretServiceState::Present
             } else {
                 SecretServiceState::Absent
             }
         }
-        Ok((false, None)) | Err(()) => SecretServiceState::Indeterminate,
+        DbusProbeResult::ConnectError { name, message } => {
+            // Only treat a discovery failure as definitive absence when there were NO bus
+            // address hints, NO runtime bus socket, NO X11 DISPLAY, and libdbus returned its
+            // no-session-bus / cannot-autolaunch error class. Everything else fails closed.
+            if !hints.address_set
+                && hints.runtime_bus_exists == Some(false)
+                && !hints.has_display
+                && is_definitive_no_bus_error(name.as_deref(), message.as_deref())
+            {
+                SecretServiceState::Absent
+            } else {
+                SecretServiceState::Indeterminate
+            }
+        }
+        DbusProbeResult::QueryError | DbusProbeResult::TimedOut => SecretServiceState::Indeterminate,
     }
 }
 
@@ -349,8 +402,13 @@ pub(crate) mod linux_policy {
                         facts.push(Fact::StoreHasNoKey);
                         let mut line = why;
                         if b.file_exists_hint() {
-                            line.push_str("; permissions-only key file ignored while Secret Service is available");
-                            facts.push(Fact::KeyFileIgnoredWithSecretService);
+                            if indet {
+                                line.push_str("; permissions-only key file ignored while Secret Service availability could not be determined");
+                                facts.push(Fact::KeyFileIgnoredSecretServiceIndeterminate);
+                            } else {
+                                line.push_str("; permissions-only key file ignored while Secret Service is available");
+                                facts.push(Fact::KeyFileIgnoredWithSecretService);
+                            }
                         }
                         LoadOutcome {
                             loaded: PolicyLoaded::Missing,
@@ -366,8 +424,13 @@ pub(crate) mod linux_policy {
                         facts.push(Fact::StoreDidNotAnswer);
                         let mut line = why;
                         if b.file_exists_hint() {
-                            line.push_str("; permissions-only key file ignored while Secret Service is available");
-                            facts.push(Fact::KeyFileIgnoredWithSecretService);
+                            if indet {
+                                line.push_str("; permissions-only key file ignored while Secret Service availability could not be determined");
+                                facts.push(Fact::KeyFileIgnoredSecretServiceIndeterminate);
+                            } else {
+                                line.push_str("; permissions-only key file ignored while Secret Service is available");
+                                facts.push(Fact::KeyFileIgnoredWithSecretService);
+                            }
                         }
                         LoadOutcome {
                             loaded: PolicyLoaded::Unreadable,
@@ -764,11 +827,12 @@ impl linux_policy::Backend for LinuxBackend<'_> {
 #[cfg(target_os = "linux")]
 mod linux_dbus {
     use std::path::Path;
+    use std::sync::mpsc;
     use std::time::Duration;
 
     use dbus::blocking::Connection;
 
-    use super::{classify_dbus_probe, BusEnv, SecretServiceState, SECRETS_BUS_NAME};
+    use super::{classify_dbus_probe, BusHints, DbusProbeResult, SecretServiceState, SECRETS_BUS_NAME};
 
     const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -783,32 +847,66 @@ mod linux_dbus {
         }
     }
 
-    fn current_bus_env() -> BusEnv {
-        match std::env::var("DBUS_SESSION_BUS_ADDRESS") {
-            Ok(addr) if addr == "disabled:" => BusEnv::Disabled {
-                runtime_bus_exists: runtime_bus_stat().unwrap_or(true),
-            },
-            Ok(addr) if !addr.is_empty() => BusEnv::Configured,
-            _ => BusEnv::Missing {
-                runtime_bus_exists: runtime_bus_stat(),
-            },
+    fn current_bus_hints() -> BusHints {
+        let addr = std::env::var("DBUS_SESSION_BUS_ADDRESS").ok();
+        let address_disabled = addr.as_deref() == Some("disabled:");
+        let address_set = addr.as_deref().is_some_and(|a| !a.is_empty() && a != "disabled:");
+        let has_display = std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty());
+        BusHints {
+            address_set,
+            address_disabled,
+            runtime_bus_exists: runtime_bus_stat(),
+            has_display,
+        }
+    }
+
+    fn run_probe_blocking() -> DbusProbeResult {
+        let conn = match Connection::new_session() {
+            Ok(c) => c,
+            Err(e) => {
+                return DbusProbeResult::ConnectError {
+                    name: e.name().map(str::to_string),
+                    message: e.message().map(str::to_string),
+                };
+            }
+        };
+        let proxy = conn.with_proxy("org.freedesktop.DBus", "/org/freedesktop/DBus", PROBE_TIMEOUT);
+        let owned: (bool,) = match proxy.method_call(
+            "org.freedesktop.DBus",
+            "NameHasOwner",
+            (SECRETS_BUS_NAME,),
+        ) {
+            Ok(v) => v,
+            Err(_) => return DbusProbeResult::QueryError,
+        };
+        if owned.0 {
+            return DbusProbeResult::Owned;
+        }
+        let activatable: (Vec<String>,) =
+            match proxy.method_call("org.freedesktop.DBus", "ListActivatableNames", ()) {
+                Ok(v) => v,
+                Err(_) => return DbusProbeResult::QueryError,
+            };
+        DbusProbeResult::NotOwned {
+            activatable: activatable.0,
         }
     }
 
     pub(super) fn probe_secret_service() -> SecretServiceState {
-        classify_dbus_probe(current_bus_env(), || {
-            let conn = Connection::new_session().map_err(|_| ())?;
-            let proxy = conn.with_proxy("org.freedesktop.DBus", "/org/freedesktop/DBus", PROBE_TIMEOUT);
-            let (owned,): (bool,) = proxy
-                .method_call("org.freedesktop.DBus", "NameHasOwner", (SECRETS_BUS_NAME,))
-                .map_err(|_| ())?;
-            if owned {
-                return Ok((true, None));
+        classify_dbus_probe(current_bus_hints(), || {
+            let (tx, rx) = mpsc::sync_channel(1);
+            let spawned = std::thread::Builder::new()
+                .name("hc-dbus-probe".into())
+                .spawn(move || {
+                    let _ = tx.send(run_probe_blocking());
+                });
+            if spawned.is_err() {
+                return DbusProbeResult::QueryError;
             }
-            let (activatable,): (Vec<String>,) = proxy
-                .method_call("org.freedesktop.DBus", "ListActivatableNames", ())
-                .map_err(|_| ())?;
-            Ok((false, Some(activatable)))
+            match rx.recv_timeout(PROBE_TIMEOUT) {
+                Ok(res) => res,
+                Err(_) => DbusProbeResult::TimedOut,
+            }
         })
     }
 }
@@ -833,9 +931,112 @@ mod linux_file {
 
     pub(super) const STORE_DIR: &str = "identity-store";
     pub(super) const KEY_FILE: &str = "identity.key";
+    const TMP_PREFIX: &str = ".identity.key.";
+    const TMP_SUFFIX: &str = ".tmp";
     const MAX_SYMLINK_HOPS: usize = 8;
 
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+
+    fn fsync_dir(fd: RawFd) -> Result<(), String> {
+        let rc = unsafe { libc::fsync(fd) };
+        if rc == 0 {
+            return Ok(());
+        }
+        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+        Err(format!("could not sync directory (errno {errno})"))
+    }
+
+    struct DirStream(*mut libc::DIR);
+
+    impl Drop for DirStream {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                unsafe {
+                    libc::closedir(self.0);
+                }
+            }
+        }
+    }
+
+    fn pid_is_dead(pid: i32) -> bool {
+        if pid <= 0 || (pid as u32) == std::process::id() {
+            return false;
+        }
+        let rc = unsafe { libc::kill(pid as libc::pid_t, 0) };
+        if rc == 0 {
+            return false;
+        }
+        std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    }
+
+    fn parse_tmp_pid(name: &str) -> Option<i32> {
+        let rest = name.strip_prefix(TMP_PREFIX)?.strip_suffix(TMP_SUFFIX)?;
+        let pid_part = rest.split('.').next()?;
+        pid_part.parse::<i32>().ok()
+    }
+
+    /// Sweep interrupted `.identity.key.*.tmp` files inside `store_fd` using
+    /// `fdopendir(dup(store_fd))` + `fstatat(AT_SYMLINK_NOFOLLOW)` + `unlinkat`.
+    /// When `dead_pids_only` is true, leaves temps owned by live processes
+    /// (including concurrent threads in this process) untouched.
+    fn sweep_temp_files(store_fd: RawFd, uid: u32, dead_pids_only: bool) -> Result<bool, String> {
+        use std::ffi::CStr;
+        let dup_fd = unsafe { libc::fcntl(store_fd, libc::F_DUPFD_CLOEXEC, 0) };
+        if dup_fd < 0 {
+            return Err("could not duplicate key store descriptor".into());
+        }
+        let dirp = unsafe { libc::fdopendir(dup_fd) };
+        if dirp.is_null() {
+            unsafe { libc::close(dup_fd) };
+            return Err("could not read key store directory".into());
+        }
+        // `DirStream` now owns `dup_fd` via `closedir`.
+        let stream = DirStream(dirp);
+        let mut candidates: Vec<CString> = Vec::new();
+        loop {
+            let ent = unsafe { libc::readdir(stream.0) };
+            if ent.is_null() {
+                break;
+            }
+            let c_name = unsafe { CStr::from_ptr((*ent).d_name.as_ptr()) };
+            let Ok(name_str) = c_name.to_str() else {
+                continue;
+            };
+            if !(name_str.starts_with(TMP_PREFIX) && name_str.ends_with(TMP_SUFFIX)) {
+                continue;
+            }
+            if dead_pids_only {
+                let Some(pid) = parse_tmp_pid(name_str) else {
+                    continue;
+                };
+                if !pid_is_dead(pid) {
+                    continue;
+                }
+            }
+            candidates.push(c_name.to_owned());
+        }
+        drop(stream);
+
+        let mut removed = false;
+        for c_name in candidates {
+            let Some(st) = fstatat_nofollow(store_fd, &c_name)? else {
+                continue;
+            };
+            if !st.is_reg || st.is_symlink || st.uid != uid || st.nlink > 1 {
+                return Err("refusing to remove untrusted or multiply-linked temporary key file".into());
+            }
+            let rc = unsafe { libc::unlinkat(store_fd, c_name.as_ptr(), 0) };
+            if rc != 0 {
+                let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+                if errno != libc::ENOENT {
+                    return Err("could not remove temporary key file".into());
+                }
+            } else {
+                removed = true;
+            }
+        }
+        Ok(removed)
+    }
 
     fn euid() -> u32 {
         // SAFETY: `geteuid` has no preconditions and never fails.
@@ -1017,20 +1218,25 @@ mod linux_file {
                         .map_err(|_| "could not open newly created directory safely".to_string())?;
                     let next_st = fstat_fd(next_fd.as_raw_fd())?;
                     judge_app_dir(uid, next_st).map_err(str::to_string)?;
-                    let _ = unsafe { libc::fsync(cur_fd.as_raw_fd()) };
+                    fsync_dir(cur_fd.as_raw_fd())?;
                     cur_fd = next_fd;
                     cur_st = next_st;
                 }
-                Err(libc::ELOOP) => {
+                // On Linux, `openat(..., O_DIRECTORY | O_NOFOLLOW)` returns ENOTDIR (or ELOOP)
+                // when the path component is a symbolic link. Distinguish links from ordinary
+                // non-directories via `fstatat(AT_SYMLINK_NOFOLLOW)` before applying root-link checks.
+                Err(libc::ELOOP | libc::ENOTDIR) => {
+                    let link_st = fstatat_nofollow(cur_fd.as_raw_fd(), &c_name)?
+                        .ok_or_else(|| "ancestor vanished during open".to_string())?;
+                    if !link_st.is_symlink {
+                        return Err("path component is not a directory".into());
+                    }
                     if is_final {
                         return Err("data directory cannot be a symbolic link".into());
                     }
                     // Allow only a root-owned symlink inside a root-owned non-writable
                     // system directory (e.g. `/home -> var/home` on atomic Linux distros).
-                    let link_st = fstatat_nofollow(cur_fd.as_raw_fd(), &c_name)?
-                        .ok_or_else(|| "ancestor vanished during open".to_string())?;
-                    let trusted_root_link = link_st.is_symlink
-                        && link_st.uid == 0
+                    let trusted_root_link = link_st.uid == 0
                         && cur_st.uid == 0
                         && (cur_st.mode & 0o022) == 0;
                     if !trusted_root_link {
@@ -1061,13 +1267,12 @@ mod linux_file {
         xdg_data_env: Option<&OsStr>,
         account_home: Option<&Path>,
     ) -> Result<(), String> {
+        let Some(pw_home) = account_home else {
+            return Err("could not verify effective user's account home directory".into());
+        };
         if let Some(home) = home_env.filter(|v| !v.is_empty()) {
-            if let Some(pw_home) = account_home {
-                if !crate::linux_scheme::same_folder(Path::new(home), pw_home) {
-                    return Err("HOME does not match the effective user's account home".into());
-                }
-            } else {
-                let _ = open_dir_trusted(uid, Path::new(home), false, true)?;
+            if !crate::linux_scheme::same_folder(Path::new(home), pw_home) {
+                return Err("HOME does not match the effective user's account home".into());
             }
         }
         if let Some(xdg) = xdg_data_env.filter(|v| !v.is_empty()) {
@@ -1093,13 +1298,20 @@ mod linux_file {
         let store_fd = match openat_dir_nofollow(dir_fd, &name) {
             Ok(fd) => fd,
             Err(libc::ENOENT) if !create => return Ok(None),
-            Err(libc::ELOOP) => return Err("key store directory cannot be a symbolic link".into()),
+            Err(libc::ELOOP | libc::ENOTDIR) => {
+                let is_link = fstatat_nofollow(dir_fd, &name)?
+                    .is_some_and(|st| st.is_symlink);
+                if is_link {
+                    return Err("key store directory cannot be a symbolic link".into());
+                }
+                return Err("key store directory is not a directory".into());
+            }
             Err(_) => return Err("could not open key store directory safely".into()),
         };
         let st = fstat_fd(store_fd.as_raw_fd())?;
         judge_store_dir(uid, st).map_err(str::to_string)?;
         if created {
-            let _ = unsafe { libc::fsync(dir_fd) };
+            fsync_dir(dir_fd)?;
         }
         Ok(Some(store_fd))
     }
@@ -1140,6 +1352,9 @@ mod linux_file {
         let Some(store_fd) = open_store_dir(dir_fd.as_raw_fd(), uid, false)? else {
             return Ok(None);
         };
+        if sweep_temp_files(store_fd.as_raw_fd(), uid, true)? {
+            fsync_dir(store_fd.as_raw_fd())?;
+        }
         let key_name = CString::new(KEY_FILE).unwrap();
         const MAX_REPLACE_RETRIES: usize = 32;
         let key_fd = {
@@ -1281,7 +1496,7 @@ mod linux_file {
             return Err("could not atomically install key file".into());
         }
         guard.commit();
-        let _ = unsafe { libc::fsync(store_fd.as_raw_fd()) };
+        fsync_dir(store_fd.as_raw_fd())?;
         Ok(())
     }
 
@@ -1299,23 +1514,29 @@ mod linux_file {
         let Some(store_fd) = open_store_dir(dir_fd.as_raw_fd(), uid, false)? else {
             return Ok(false);
         };
+        let mut removed_any = sweep_temp_files(store_fd.as_raw_fd(), uid, false)?;
         let key_name = CString::new(KEY_FILE).unwrap();
-        let Some(st) = fstatat_nofollow(store_fd.as_raw_fd(), &key_name)? else {
-            return Ok(false);
-        };
-        if !st.is_reg || st.is_symlink || st.uid != uid {
-            return Err("refusing to remove untrusted key path".into());
-        }
-        let rc = unsafe { libc::unlinkat(store_fd.as_raw_fd(), key_name.as_ptr(), 0) };
-        if rc != 0 {
-            let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
-            if errno == libc::ENOENT {
-                return Ok(false);
+        if let Some(st) = fstatat_nofollow(store_fd.as_raw_fd(), &key_name)? {
+            if !st.is_reg || st.is_symlink || st.uid != uid {
+                return Err("refusing to remove untrusted key path".into());
             }
-            return Err("could not remove key file".into());
+            if st.nlink > 1 {
+                return Err("refusing to remove key file with additional hard links".into());
+            }
+            let rc = unsafe { libc::unlinkat(store_fd.as_raw_fd(), key_name.as_ptr(), 0) };
+            if rc != 0 {
+                let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+                if errno != libc::ENOENT {
+                    return Err("could not remove key file".into());
+                }
+            } else {
+                removed_any = true;
+            }
         }
-        let _ = unsafe { libc::fsync(store_fd.as_raw_fd()) };
-        Ok(true)
+        if removed_any {
+            fsync_dir(store_fd.as_raw_fd())?;
+        }
+        Ok(removed_any)
     }
 
     pub(super) fn load(dir: &Path) -> Result<Option<SecretText>, String> {
@@ -1339,9 +1560,29 @@ mod linux_file {
         forget_with_env(dir, home.as_deref(), xdg.as_deref(), pw.as_deref())
     }
 
-    /// Lightweight presence hint for the key log only (never opens or reads the file).
+    /// Lightweight presence hint for the key log and cleanup fast-path (never
+    /// reads key bytes). Returns `true` if `identity.key` or any interrupted
+    /// `.identity.key.*.tmp` exists inside `identity-store/`, or if the store
+    /// directory exists and cannot be inspected.
     pub(super) fn exists_hint(dir: &Path) -> bool {
-        std::fs::symlink_metadata(dir.join(STORE_DIR).join(KEY_FILE)).is_ok()
+        let store = dir.join(STORE_DIR);
+        match std::fs::symlink_metadata(&store) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return false,
+            Err(_) => return true,
+            Ok(meta) if !meta.is_dir() => return true,
+            Ok(_) => {}
+        }
+        if std::fs::symlink_metadata(store.join(KEY_FILE)).is_ok() {
+            return true;
+        }
+        match std::fs::read_dir(&store) {
+            Ok(entries) => entries.flatten().any(|e| {
+                e.file_name()
+                    .to_str()
+                    .is_some_and(|n| n.starts_with(TMP_PREFIX) && n.ends_with(TMP_SUFFIX))
+            }),
+            Err(_) => true,
+        }
     }
 }
 
@@ -1549,57 +1790,144 @@ mod tests {
 
     #[test]
     fn dbus_probe_confirms_absence_only_when_no_bus_or_not_owned_and_not_activatable() {
-        // No session bus configured and no $XDG_RUNTIME_DIR/bus -> confirmed absent.
+        let no_hints_no_display = BusHints {
+            address_set: false,
+            address_disabled: false,
+            runtime_bus_exists: Some(false),
+            has_display: false,
+        };
+        let no_hints_with_display = BusHints {
+            has_display: true,
+            ..no_hints_no_display
+        };
+        let configured = BusHints {
+            address_set: true,
+            address_disabled: false,
+            runtime_bus_exists: Some(false),
+            has_display: false,
+        };
+        let runtime_bus = BusHints {
+            address_set: false,
+            address_disabled: false,
+            runtime_bus_exists: Some(true),
+            has_display: false,
+        };
+
+        // No hints + no DISPLAY + definitive libdbus no-session-bus/cannot-autolaunch error -> Absent.
         assert_eq!(
-            classify_dbus_probe(BusEnv::Missing { runtime_bus_exists: Some(false) }, || {
-                panic!("must not connect when no session bus exists")
+            classify_dbus_probe(no_hints_no_display, || DbusProbeResult::ConnectError {
+                name: Some("org.freedesktop.DBus.Error.NotSupported".into()),
+                message: Some("Unable to autolaunch a dbus-daemon without a $DISPLAY for X11".into()),
             }),
             SecretServiceState::Absent
         );
-        // Chromium DBUS_SESSION_BUS_ADDRESS=disabled: without $XDG_RUNTIME_DIR/bus -> absent.
+        // No hints + no DISPLAY + unexpected non-absence connect error (e.g. AccessDenied) -> Indeterminate.
         assert_eq!(
-            classify_dbus_probe(BusEnv::Disabled { runtime_bus_exists: false }, || {
-                panic!("must not connect when bus is disabled without runtime bus")
+            classify_dbus_probe(no_hints_no_display, || DbusProbeResult::ConnectError {
+                name: Some("org.freedesktop.DBus.Error.AccessDenied".into()),
+                message: Some("permission denied".into()),
             }),
-            SecretServiceState::Absent
-        );
-        // DBUS_SESSION_BUS_ADDRESS=disabled: WITH an existing runtime bus -> fail closed.
-        assert_eq!(
-            classify_dbus_probe(BusEnv::Disabled { runtime_bus_exists: true }, || Ok((false, Some(vec![])))),
             SecretServiceState::Indeterminate
         );
-        // $XDG_RUNTIME_DIR/bus stat error (e.g. permission denied) -> fail closed.
+        // No hints + no DISPLAY + timeout -> Indeterminate.
         assert_eq!(
-            classify_dbus_probe(BusEnv::Missing { runtime_bus_exists: None }, || Ok((false, Some(vec![])))),
+            classify_dbus_probe(no_hints_no_display, || DbusProbeResult::TimedOut),
+            SecretServiceState::Indeterminate
+        );
+        // No hints + DISPLAY set (X11 session) + discovery finds bus with secrets -> Present!
+        assert_eq!(
+            classify_dbus_probe(no_hints_with_display, || DbusProbeResult::Owned),
+            SecretServiceState::Present
+        );
+        // No hints + DISPLAY set + discovery fails -> Indeterminate (fail closed!).
+        assert_eq!(
+            classify_dbus_probe(no_hints_with_display, || DbusProbeResult::ConnectError {
+                name: Some("org.freedesktop.DBus.Error.Spawn.ExecFailed".into()),
+                message: Some("Failed to execute dbus-launch".into()),
+            }),
+            SecretServiceState::Indeterminate
+        );
+        // Chromium DBUS_SESSION_BUS_ADDRESS=disabled: without runtime bus and without DISPLAY -> Absent.
+        assert_eq!(
+            classify_dbus_probe(
+                BusHints {
+                    address_set: false,
+                    address_disabled: true,
+                    runtime_bus_exists: Some(false),
+                    has_display: false,
+                },
+                || panic!("must not connect when bus is disabled without runtime bus or DISPLAY")
+            ),
+            SecretServiceState::Absent
+        );
+        // DBUS_SESSION_BUS_ADDRESS=disabled: WITH an existing runtime bus or DISPLAY -> fail closed.
+        assert_eq!(
+            classify_dbus_probe(
+                BusHints {
+                    address_set: false,
+                    address_disabled: true,
+                    runtime_bus_exists: Some(true),
+                    has_display: false,
+                },
+                || DbusProbeResult::NotOwned { activatable: vec![] }
+            ),
+            SecretServiceState::Indeterminate
+        );
+        assert_eq!(
+            classify_dbus_probe(
+                BusHints {
+                    address_set: false,
+                    address_disabled: true,
+                    runtime_bus_exists: Some(false),
+                    has_display: true,
+                },
+                || DbusProbeResult::NotOwned { activatable: vec![] }
+            ),
+            SecretServiceState::Indeterminate
+        );
+        // $XDG_RUNTIME_DIR/bus stat error (None) + connect error -> fail closed.
+        assert_eq!(
+            classify_dbus_probe(
+                BusHints {
+                    runtime_bus_exists: None,
+                    ..no_hints_no_display
+                },
+                || DbusProbeResult::ConnectError {
+                    name: Some("org.freedesktop.DBus.Error.NotSupported".into()),
+                    message: Some("Unable to autolaunch".into()),
+                }
+            ),
             SecretServiceState::Indeterminate
         );
         // Configured bus: NameHasOwner=true -> Present.
         assert_eq!(
-            classify_dbus_probe(BusEnv::Configured, || Ok((true, None))),
+            classify_dbus_probe(configured, || DbusProbeResult::Owned),
             SecretServiceState::Present
         );
         // Configured bus: idle but activatable org.freedesktop.secrets -> Present.
         assert_eq!(
-            classify_dbus_probe(BusEnv::Configured, || {
-                Ok((false, Some(vec!["org.freedesktop.Notifications".into(), "org.freedesktop.secrets".into()])))
+            classify_dbus_probe(configured, || DbusProbeResult::NotOwned {
+                activatable: vec!["org.freedesktop.Notifications".into(), "org.freedesktop.secrets".into()],
             }),
             SecretServiceState::Present
         );
         // Configured bus: neither owned nor activatable (Steam Frame VR bus) -> Absent.
         assert_eq!(
-            classify_dbus_probe(BusEnv::Configured, || {
-                Ok((false, Some(vec!["org.freedesktop.Notifications".into()])))
+            classify_dbus_probe(configured, || DbusProbeResult::NotOwned {
+                activatable: vec!["org.freedesktop.Notifications".into()],
             }),
             SecretServiceState::Absent
         );
-        // Configured bus: connect or query error / timeout -> Indeterminate (fail closed).
+        // Configured bus or runtime bus: connect/query error or timeout -> Indeterminate (fail closed).
         assert_eq!(
-            classify_dbus_probe(BusEnv::Configured, || Err(())),
+            classify_dbus_probe(configured, || DbusProbeResult::QueryError),
             SecretServiceState::Indeterminate
         );
-        // Runtime bus exists, connect fails -> Indeterminate (fail closed).
         assert_eq!(
-            classify_dbus_probe(BusEnv::Missing { runtime_bus_exists: Some(true) }, || Err(())),
+            classify_dbus_probe(runtime_bus, || DbusProbeResult::ConnectError {
+                name: Some("org.freedesktop.DBus.Error.NoServer".into()),
+                message: Some("Failed to connect".into()),
+            }),
             SecretServiceState::Indeterminate
         );
     }
@@ -1785,7 +2113,12 @@ mod tests {
             *b.file.borrow_mut() = Ok(Some(encode(&stale).as_str().to_string()));
             let out = load_with(&b);
             assert!(matches!(out.loaded, PolicyLoaded::Missing), "state={state:?}");
-            assert!(out.facts.contains(&Fact::KeyFileIgnoredWithSecretService));
+            let expected_fact = if state == SecretServiceState::Present {
+                Fact::KeyFileIgnoredWithSecretService
+            } else {
+                Fact::KeyFileIgnoredSecretServiceIndeterminate
+            };
+            assert!(out.facts.contains(&expected_fact), "state={state:?} facts={:?}", out.facts);
             assert_eq!(b.file_reads.get(), 0, "must not read file when state={state:?}");
 
             // 2. Keyring locked / denied / timeout / bus error + older fallback file -> Unreadable
@@ -1902,10 +2235,18 @@ mod tests {
         // Without DBUS_SESSION_BUS_ADDRESS or $XDG_RUNTIME_DIR/bus, X11 session discovery
         // can still locate a usable Secret Service bus and MUST NOT short-circuit to Absent.
         let mut probed = false;
-        let state = classify_dbus_probe(BusEnv::Missing { runtime_bus_exists: Some(false) }, || {
-            probed = true;
-            Ok((true, None))
-        });
+        let state = classify_dbus_probe(
+            BusHints {
+                address_set: false,
+                address_disabled: false,
+                runtime_bus_exists: Some(false),
+                has_display: true,
+            },
+            || {
+                probed = true;
+                DbusProbeResult::Owned
+            },
+        );
         assert!(probed, "discovery probe must actually run when address hints are missing");
         assert_eq!(state, SecretServiceState::Present);
     }
@@ -1920,6 +2261,7 @@ mod tests {
         // Keyring Missing under Indeterminate probe: must not claim Secret Service "is available".
         let out_missing = load_with(&b);
         assert!(matches!(out_missing.loaded, PolicyLoaded::Missing));
+        assert!(out_missing.facts.contains(&Fact::KeyFileIgnoredSecretServiceIndeterminate));
         assert!(
             !out_missing.log_line.contains("Secret Service is available"),
             "log line mislabeled indeterminate probe as available: {}",
@@ -1930,6 +2272,7 @@ mod tests {
         *b.keyring.borrow_mut() = Err("bus timed out".into());
         let out_failed = load_with(&b);
         assert!(matches!(out_failed.loaded, PolicyLoaded::Unreadable));
+        assert!(out_failed.facts.contains(&Fact::KeyFileIgnoredSecretServiceIndeterminate));
         assert!(
             !out_failed.log_line.contains("Secret Service is available"),
             "log line mislabeled indeterminate probe as available: {}",
