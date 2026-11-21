@@ -119,12 +119,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_oversized_or_control_char_secrets() {
-        let ok_secret = "a".repeat(256);
-        assert!(Identity::from_parts("alex", &ok_secret).is_ok());
-        // Over 4 KiB must be rejected before any import or storage write.
-        let huge = "a".repeat(4097);
-        assert!(Identity::from_parts("alex", &huge).is_err());
+    fn preserves_1_3_11_secret_acceptance_and_rejects_control_chars() {
+        // M7: restore 1.3.11 import/keyring acceptance (no global 2048-byte cap).
+        let legacy_2049 = "a".repeat(2049);
+        assert!(Identity::from_parts("alex", &legacy_2049).is_ok());
+        let long_keyring = "a".repeat(5000);
+        assert!(Identity::from_parts("alex", &long_keyring).is_ok());
         let with_ctrl = format!("{}a\x00b", "0".repeat(32));
         assert!(Identity::from_parts("alex", &with_ctrl).is_err());
     }

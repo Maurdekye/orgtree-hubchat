@@ -735,7 +735,9 @@ mod tests {
     #[test]
     fn m11_external_openers_route_through_gamescope_env_restoration_on_linux() {
         let commands_rs = include_str!("commands.rs");
+        let lib_rs = include_str!("lib.rs");
         let trace_rs = include_str!("trace.rs");
+        let tray_rs = include_str!("tray.rs");
         let native_ts = include_str!("../../src/lib/native.ts");
         assert!(
             commands_rs.contains("linux_gamescope::open_external"),
@@ -746,8 +748,61 @@ mod tests {
             "trace.rs must use linux_gamescope::open_external on Linux"
         );
         assert!(
-            !native_ts.contains("@tauri-apps/plugin-opener"),
-            "native.ts must route external URL/file opens through backend commands so Linux restores launching env"
+            tray_rs.contains("linux_gamescope::open_external_path"),
+            "tray.rs crash reports folder opener must use linux_gamescope::open_external_path on Linux"
         );
+        assert!(
+            !commands_rs.contains("fn hc_open_file") && !lib_rs.contains("hc_open_file") && !native_ts.contains("hc_open_file"),
+            "M11: hc_open_file must be removed so renderer path opening stays under 1.3.11 Tauri ACLs"
+        );
+        assert!(
+            native_ts.contains("openPath") && native_ts.contains("hc_open_url"),
+            "native.ts must keep openFile on plugin-opener and route openLink through hc_open_url"
+        );
+    }
+
+    #[test]
+    fn m11_oversized_graphics_env_value_is_bounded_below_exec_limit() {
+        let huge = "x".repeat(70_000);
+        let plan = plan_reexec(env_of(&[
+            ("XDG_CURRENT_DESKTOP", "gamescope"),
+            ("WAYLAND_DISPLAY", "wayland-0"),
+            ("DISPLAY", ":0"),
+            ("GDK_BACKEND", &huge),
+            ("EGL_PLATFORM", "wayland"),
+        ]))
+        .expect("re-exec plan expected");
+        for (k, v) in &plan.set {
+            assert!(
+                v.len() <= 4096,
+                "env entry {k} must stay far below Linux 128 KiB MAX_ARG_STRLEN, got {} bytes",
+                v.len()
+            );
+        }
+        // Small managed var (EGL_PLATFORM=wayland) is still captured even when GDK_BACKEND was oversized.
+        let orig = plan
+            .set
+            .iter()
+            .find(|(k, _)| *k == ORIG_ENV_VAR)
+            .map(|(_, v)| v.as_str())
+            .expect("ORIG_ENV_VAR present");
+        let decoded = decode_orig_env(orig);
+        assert!(decoded.contains(&("EGL_PLATFORM", Some("wayland".to_string()))));
+        assert!(!decoded.iter().any(|(k, _)| *k == "GDK_BACKEND"));
+
+        // An inherited oversized ORIG_ENV_VAR must also never be copied verbatim into the plan.
+        let plan2 = plan_reexec(env_of(&[
+            ("XDG_CURRENT_DESKTOP", "gamescope"),
+            ("WAYLAND_DISPLAY", "wayland-0"),
+            (ORIG_ENV_VAR, &huge),
+        ]))
+        .expect("re-exec plan expected");
+        let orig2 = plan2
+            .set
+            .iter()
+            .find(|(k, _)| *k == ORIG_ENV_VAR)
+            .map(|(_, v)| v.as_str())
+            .unwrap();
+        assert!(orig2.len() <= 4096, "inherited oversized ORIG_ENV_VAR must be bounded");
     }
 }
