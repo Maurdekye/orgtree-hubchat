@@ -952,9 +952,9 @@ mod tests {
     }
 
     #[test]
-    fn bundle_import_rejects_oversized_secret_before_adoption() {
+    fn bundle_import_preserves_1_3_11_long_secret_acceptance() {
         let mut b = bundle();
-        b.secret = "a".repeat(4097);
-        assert!(b.identity().is_err());
+        b.secret = "a".repeat(2049);
+        assert!(b.identity().is_ok());
     }
 }
