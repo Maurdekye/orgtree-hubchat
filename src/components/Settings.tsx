@@ -297,7 +297,7 @@ function UseAnother({ onApprove }: { onApprove: (input: string) => void }) {
   const thisSelf = word === "phone" ? "This phone" : word === "PC" ? "This PC" : word === "browser" ? "This browser" : "This device";
   const label = <><Icon name="sync" />Use another identity on this device</>;
   const help = platform === "android"
-    ? "Scan its link QR: on the device with that identity, Settings › Devices › Link a device. This phone asks before it switches."
+    ? `Scan its link QR: on the device with that identity, Settings › Devices › Link a device. ${thisSelf} asks before it switches.`
     : `Type or paste its link code: on the device with that identity, Settings › Devices › Link a device. ${thisSelf} asks before it switches.`;
   if (platform === "android") {
     return (
@@ -338,7 +338,7 @@ function Devices({ onLink, goTab }: { onLink?: (tab?: LinkTab, input?: string) =
   const me = snap.state!.me!;
   const [linking, setLinking] = useState<{ tab?: LinkTab; input?: string } | null>(null);
   const link = (tab?: LinkTab, input?: string) => (onLink ? onLink(tab, input) : setLinking({ tab, input }));
-  const self = platform === "android" ? "This phone" : word === "PC" ? "This PC" : word === "browser" ? "This browser" : "This device";
+  const self = word === "phone" ? "This phone" : word === "PC" ? "This PC" : word === "browser" ? "This browser" : "This device";
   const pad = platform === "android" ? " pad" : "";
   // Mail hub v2.0 lists every device that syncs as us; older hubs list none.
   const [list, setList] = useState<Devices | null>(null);

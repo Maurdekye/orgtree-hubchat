@@ -6,7 +6,7 @@ import { CtxMenu } from "./components/CtxMenu";
 import { Desktop } from "./components/Desktop";
 import { LostKey, Onboarding } from "./components/Onboarding";
 import { SetupFlow } from "./components/SetupFlow";
-import { OsCtx, PlatformCtx, Toasts, WebCtx } from "./components/ui";
+import { OsCtx, PlatformCtx, Toasts, WebCtx, detectOs } from "./components/ui";
 import { TitleBar } from "./components/TitleBar";
 import { isWeb } from "./api";
 import { onContextMenu } from "./lib/ctxmenu";
@@ -62,5 +62,6 @@ export default function App() {
   else body = platform === "android" ? <Android key={snap.state.me.address} /> : <Desktop key={snap.state.me.address} />;
   // Scan setup code: a screen over everything on Android, a modal on desktop
   if (setup && !mismatch) body = <>{body}<SetupFlow key={setup.n} req={setup} /></>;
-  return <WebCtx.Provider value={web}><PlatformCtx.Provider value={platform}><OsCtx.Provider value={snap.state.os ?? null}>{framed(<>{body}<CtxMenu /></>)}</OsCtx.Provider></PlatformCtx.Provider></WebCtx.Provider>;
+  const os = snap.state.os ?? detectOs(platform);
+  return <WebCtx.Provider value={web}><PlatformCtx.Provider value={platform}><OsCtx.Provider value={os}>{framed(<>{body}<CtxMenu /></>)}</OsCtx.Provider></PlatformCtx.Provider></WebCtx.Provider>;
 }

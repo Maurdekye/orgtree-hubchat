@@ -39,6 +39,22 @@ await esbuild.build({
       },
     },
     {
+      name: "md-spy",
+      setup(b) {
+        const mdPath = path.resolve(repo, "src/lib/md.ts");
+        b.onLoad({ filter: /[\\/]src[\\/]lib[\\/]md\.ts$/ }, (args) => {
+          if (path.resolve(args.path) !== mdPath) return null;
+          const src = fs.readFileSync(args.path, "utf8");
+          const patched = src.replace(
+            "export function md(",
+            "export function md(...args) { globalThis.__mdCalls = (globalThis.__mdCalls || 0) + 1; return _realMd(...args); }\nfunction _realMd(",
+          );
+          if (patched === src) throw new Error("md-spy could not patch export function md(");
+          return { contents: patched, loader: "ts" };
+        });
+      },
+    },
+    {
       name: "existing-dependencies",
       setup(b) {
         b.onResolve({ filter: /^[^./][^:]*/ }, (a) => ({
@@ -52,7 +68,7 @@ esbuild.stop();
 
 const { JSDOM } = orgdeps("jsdom");
 const dom = new JSDOM('<div id="root"></div>', { url: "http://scratch.invalid" });
-for (const key of ["window", "document", "navigator", "HTMLElement", "HTMLTextAreaElement", "HTMLInputElement", "localStorage", "location", "getComputedStyle", "Event", "MouseEvent", "KeyboardEvent", "MutationObserver"]) {
+for (const key of ["window", "document", "navigator", "history", "HTMLElement", "HTMLTextAreaElement", "HTMLInputElement", "localStorage", "location", "getComputedStyle", "Event", "MouseEvent", "KeyboardEvent", "MutationObserver"]) {
   Object.defineProperty(globalThis, key, {
     value: key === "getComputedStyle" ? dom.window[key].bind(dom.window) : dom.window[key],
     configurable: true,
@@ -123,7 +139,8 @@ async function mountEnv(tag, { platform = "desktop", shell = "tauri", os = "wind
     await m.act(async () => {
       root.render(
         m.createElement(m.WebCtx.Provider, { value: web },
-          m.createElement(m.PlatformCtx.Provider, { value: platform }, node)),
+          m.createElement(m.PlatformCtx.Provider, { value: platform },
+            m.createElement(m.OsCtx.Provider, { value: os ?? m.detectOs(platform) }, node))),
       );
     });
     await m.act(async () => { await wait(30); });
@@ -281,6 +298,97 @@ async function probeDefaultName(tag, envOpts) {
   check("H-02 default device name matches platform (Windows PC / Linux device / Mac / Web browser)",
     winName === "Windows PC" && linName === "Linux device" && macName === "Mac" && webName === "Web browser",
     JSON.stringify({ winName, linName, macName, webName }));
+}
+
+// ---- Review Item 2: MessageView draft-typing regression (32 rows, 4 draft edits -> 0 extra md() renders)
+{
+  const env = await mountEnv("r02-msg-rerender", { platform: "desktop", shell: "tauri", os: "windows" });
+  globalThis.__mdCalls = 0;
+  const noop = () => {};
+  const rows = Array.from({ length: 32 }, (_, i) => env.m.createElement(env.m.MessageView, {
+    key: i,
+    m: {
+      id: "fixture-" + i,
+      peer: "fixture",
+      body: "Message body " + i,
+      attachments: [],
+      outgoing: false,
+      ts: 1700000000000 + i * 1000,
+      status: "read",
+    },
+    first: i === 0,
+    peerName: "Contact",
+    peerKind: "person",
+    quoted: null,
+    quotes: [],
+    card: null,
+    picks: [],
+    notes: [],
+    hover: false,
+    selected: false,
+    highlighted: false,
+    onReply: noop,
+    onSelect: noop,
+    onPick: noop,
+    onInfo: noop,
+    onDelete: noop,
+    onJump: noop,
+    onOpenAddr: noop,
+    onContactInfo: noop,
+  }));
+  await env.render(env.m.createElement("div", null, rows));
+  const initialCalls = globalThis.__mdCalls;
+  for (const draft of ["a", "ab", "abc", "abcd"]) {
+    await env.m.act(async () => { env.m.store.noteDraft("fixture", draft); });
+  }
+  const extraCalls = globalThis.__mdCalls - initialCalls;
+  check("R-02 MessageView 32 rows trigger 0 extra Markdown renders across 4 draft edits",
+    initialCalls >= 32 && extraCalls === 0,
+    `initial=${initialCalls} extra=${extraCalls}`);
+  await env.done();
+}
+
+// ---- Review Item 7a: Compact Web Devices uses "This browser" (never "This phone") while keeping compact layout
+{
+  const cw = await mountEnv("r07-compact-web-devices", { platform: "android", shell: "web", os: "linux", device_name: "" });
+  await cw.render(cw.m.createElement(cw.m.SettingsSection, { tab: "devices" }));
+  const txt = cw.host.textContent || "";
+  check("R-07a Compact Web Devices uses This browser (never This phone)",
+    txt.includes("This browser")
+      && txt.includes("This browser asks before it switches.")
+      && !txt.includes("This phone"),
+    txt.slice(0, 350));
+  await cw.done();
+}
+
+// ---- Review Item 7b: SetupFlow uses device-word noun ("this phone" only on phones, "this device" on Linux desktop)
+{
+  const setupProbe = async (tag, envOpts, net) => {
+    const env = await mountEnv(tag, envOpts);
+    Object.assign(env.m.api, {
+      parseSetup: async () => ({
+        link: { org: "acme.1", orgname: "Acme", pc: "HostBox", hub: "http://host:7371", hubname: "HostHub", net, ts: "u@example.test" },
+        error: null,
+      }),
+      appInstalled: async () => true,
+      setupCheck: async () => ({ reachable: false, error: "unreachable" }),
+    });
+    await env.render(env.m.createElement(env.m.SetupFlow, { req: { n: 1, input: "hubchat://setup?x=1" } }));
+    await env.m.act(async () => { await wait(50); });
+    const txt = env.host.textContent || "";
+    await env.done();
+    return txt;
+  };
+  const linWifi = await setupProbe("r07-setup-lin-wifi", { platform: "desktop", shell: "tauri", os: "linux" }, "wifi");
+  const linTs = await setupProbe("r07-setup-lin-ts", { platform: "desktop", shell: "tauri", os: "linux" }, "tailscale");
+  const andWifi = await setupProbe("r07-setup-and-wifi", { platform: "android", shell: "tauri", os: "android" }, "wifi");
+  check("R-07b SetupFlow uses 'this device' on Linux desktop and keeps 'this phone' on Android",
+    linWifi.includes("Is this device on the same Wi-Fi as your other device?")
+      && !linWifi.includes("this phone")
+      && linTs.includes("Is Tailscale on and signed in on this device?")
+      && !linTs.includes("this phone")
+      && andWifi.includes("Is this phone on the same Wi-Fi as your other device?"),
+    JSON.stringify({ linWifi: linWifi.slice(0, 200), linTs: linTs.slice(0, 200), andWifi: andWifi.slice(0, 200) }));
 }
 
 const passed = checks.filter((c) => c.ok).length;

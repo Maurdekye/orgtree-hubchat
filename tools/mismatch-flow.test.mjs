@@ -392,6 +392,8 @@ function loadAppStack(initialState) {
   const TitleBar = function TitleBar() { return null; };
   const PlatformCtx = h.React.createContext("desktop");
   const WebCtx = h.React.createContext(false);
+  const OsCtx = h.React.createContext("linux");
+  const detectOs = (p) => (p === "android" ? "android" : "linux");
 
   const onboardingMod = loadTs("src/components/Onboarding.tsx", {
     ...baseMocks,
@@ -409,7 +411,18 @@ function loadAppStack(initialState) {
     "./HubReview": { HubReview: () => null, useHubReview: () => ({ urls: [], blocked: false }) },
     "./LinkDevice": { formatCode: (s) => s },
     "./Guide": { openGuide: () => {} },
-    "./ui": { Confirm, NoteCard: () => null, QR: () => null, useNow: () => 0, usePlatform: () => "desktop", useWeb: () => false },
+    "./ui": {
+      Confirm,
+      NoteCard: () => null,
+      QR: () => null,
+      defaultDeviceName: () => "Linux device",
+      useDeviceWord: () => "device",
+      useIsWindowsDesktop: () => false,
+      useNow: () => 0,
+      useOs: () => "linux",
+      usePlatform: () => "desktop",
+      useWeb: () => false,
+    },
     "../assets/desktop-footer-qr.png": "",
     "../assets/desktop-footer-qr.json": { x: 0, y: 0, w: 1, h: 1 },
   }, { React: h.React });
@@ -421,7 +434,7 @@ function loadAppStack(initialState) {
     "./components/Desktop": { Desktop },
     "./components/Onboarding": onboardingMod,
     "./components/SetupFlow": { SetupFlow },
-    "./components/ui": { PlatformCtx, Toasts, WebCtx },
+    "./components/ui": { OsCtx, PlatformCtx, Toasts, WebCtx, detectOs },
     "./components/TitleBar": { TitleBar },
     "./lib/ctxmenu": { onContextMenu: () => {} },
     "./lib/icons": { Logo: () => null },

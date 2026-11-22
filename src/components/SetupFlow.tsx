@@ -11,7 +11,7 @@ import { errText } from "../lib/native";
 import { endSetup, openAfterSetup, scanSetup, updateHubchat, openOther, wantLinkInstead, type SetupReq } from "../lib/setup";
 import { getSnap, refreshAll, refreshState, setOnboarding } from "../lib/store";
 import { useUpdate } from "../lib/updates";
-import { Addr, Avatar, Modal, ModalHead, useIsWindowsDesktop, usePlatform } from "./ui";
+import { Addr, Avatar, Modal, ModalHead, useDeviceWord, useIsWindowsDesktop, usePlatform } from "./ui";
 import { idFromName } from "./Onboarding";
 import "../styles/setup.css";
 
@@ -23,8 +23,10 @@ const TAILSCALE = "com.tailscale.ipn";
 
 export function SetupFlow({ req }: { req: SetupReq }) {
   const platform = usePlatform();
+  const word = useDeviceWord();
   const isWin = useIsWindowsDesktop();
   const hostWord = isWin ? "your PC" : "your other device";
+  const thisDevice = `this ${word}`;
   const android = platform === "android";
   const update = useUpdate();
   const [link, setLink] = useState<SetupLink | null>(null);
@@ -140,7 +142,7 @@ export function SetupFlow({ req }: { req: SetupReq }) {
           <label className="input"><input id="setup-name" value={name} autoFocus maxLength={48} autoComplete="off" placeholder="e.g. Alex Rivera"
             onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && ok) void join(); }} /></label>
         </div>
-        <p className="setup-instead"><button className="link" onClick={() => { endSetup(); wantLinkInstead(); }}>Already use Hubchat on another device? Link this phone instead.</button></p>
+        <p className="setup-instead"><button className="link" onClick={() => { endSetup(); wantLinkInstead(); }}>Already use Hubchat on another device? Link {thisDevice} instead.</button></p>
         {keepOn}
       </>
     );
@@ -171,14 +173,14 @@ export function SetupFlow({ req }: { req: SetupReq }) {
       if (st.f === "update") card = bad("This code needs a newer Hubchat.", null, sm("Update", () => void updateHubchat(platform, update).catch(() => {}), true));
       else if (st.f === "damaged") card = bad("This setup code is damaged.", ` Show a new one on ${hostWord} and scan again.`, android ? sm("Scan again", () => { endSetup(); void scanSetup(); }, true) : null);
       else if (st.f === "no-ts") card = (
-        <div className="probe-card bad" data-fail={st.f} title={st.why}><Icon name="error" /><div><b className="inl">Install Tailscale on this phone</b> and sign in as <b className="inl">{ts}</b>, the same account as {hostWord}. Then come back here.
+        <div className="probe-card bad" data-fail={st.f} title={st.why}><Icon name="error" /><div><b className="inl">Install Tailscale on {thisDevice}</b> and sign in as <b className="inl">{ts}</b>, the same account as {hostWord}. Then come back here.
           {acts(<>{sm("Get Tailscale", () => void openOther("get_tailscale"), true)}{sm("Try again", retry)}</>)}</div></div>
       );
       else if (st.f === "unreach") card = (
-        <div className="probe-card bad" data-fail={st.f} title={st.why}><Icon name="error" /><div><b>Can't reach {pc}.</b>Is Tailscale on and signed in on this phone? Use <b className="inl">{ts}</b>, the same account as {hostWord}.
+        <div className="probe-card bad" data-fail={st.f} title={st.why}><Icon name="error" /><div><b>Can't reach {pc}.</b>Is Tailscale on and signed in on {thisDevice}? Use <b className="inl">{ts}</b>, the same account as {hostWord}.
           {acts(<>{android ? sm("Open Tailscale", () => void openOther("open_tailscale"), true) : null}{sm("Try again", retry, !android)}</>)}</div></div>
       );
-      else if (st.f === "unreach-wifi") card = bad(<>Can't reach {pc}.</>, `Is this phone on the same Wi-Fi as ${hostWord}?`,
+      else if (st.f === "unreach-wifi") card = bad(<>Can't reach {pc}.</>, `Is ${thisDevice} on the same Wi-Fi as ${hostWord}?`,
         <>{android ? sm("Open Wi-Fi settings", () => void openOther("wifi_settings"), true) : null}{sm("Try again", retry, !android)}</>);
       else card = bad(<>Couldn't join {pc}'s hub.</>, " Try again.", sm("Try again", () => void join(), true));
     }

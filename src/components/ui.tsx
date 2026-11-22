@@ -30,9 +30,8 @@ export function detectOs(platform: Platform): DesktopOs {
 }
 export const useOs = (): DesktopOs => {
   const provided = useContext(OsCtx);
-  const stateOs = useSnap().state?.os;
   const platform = usePlatform();
-  return provided ?? stateOs ?? detectOs(platform);
+  return provided ?? detectOs(platform);
 };
 export const useIsWindowsDesktop = (): boolean => {
   const web = useContext(WebCtx);
