@@ -26,7 +26,7 @@ export function SetupFlow({ req }: { req: SetupReq }) {
   const word = useDeviceWord();
   const isWin = useIsWindowsDesktop();
   const hostWord = isWin ? "your PC" : "your other device";
-  const thisDevice = `this ${word}`;
+  const thisDevice = isWin ? "this phone" : `this ${word}`;
   const android = platform === "android";
   const update = useUpdate();
   const [link, setLink] = useState<SetupLink | null>(null);

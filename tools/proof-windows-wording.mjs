@@ -87,12 +87,12 @@ const check = (name, ok, detail = "") => {
 };
 const wait = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
-async function mountEnv(tag, { platform = "desktop", shell = "tauri", os = "windows", device_name = "" }) {
+async function mountEnv(tag, { platform = "desktop", shell = "tauri", os = "windows", device_name = "", me = { id: "alex", address: "alex.123456", name: "Alex", about: "", picture: null } }) {
   const m = await import(pathToFileURL(path.join(out, "entry.mjs")).href + "?" + tag);
   const linkStarts = [];
   Object.assign(m.api, {
     state: async () => ({
-      me: { id: "alex", address: "alex.123456", name: "Alex", about: "", picture: null },
+      me,
       recovery_saved: true,
       read_receipts: true,
       status: "online",
@@ -361,9 +361,10 @@ async function probeDefaultName(tag, envOpts) {
   await cw.done();
 }
 
-// ---- Review Item 7b: SetupFlow uses device-word noun ("this phone" only on phones, "this device" on Linux desktop)
+// ---- Review Item 7b + Follow-up 1: SetupFlow keeps exact 8c0feef Windows strings byte-for-byte
+// and uses device-word noun only off native Windows ("this device" on Linux desktop, "this phone" on Android)
 {
-  const setupProbe = async (tag, envOpts, net) => {
+  const setupProbe = async (tag, envOpts, net, reachable = false) => {
     const env = await mountEnv(tag, envOpts);
     Object.assign(env.m.api, {
       parseSetup: async () => ({
@@ -371,24 +372,38 @@ async function probeDefaultName(tag, envOpts) {
         error: null,
       }),
       appInstalled: async () => true,
-      setupCheck: async () => ({ reachable: false, error: "unreachable" }),
+      setupCheck: async () => ({ reachable, error: reachable ? undefined : "unreachable" }),
     });
     await env.render(env.m.createElement(env.m.SetupFlow, { req: { n: 1, input: "hubchat://setup?x=1" } }));
-    await env.m.act(async () => { await wait(50); });
+    await env.m.act(async () => { await wait(reachable ? 760 : 50); });
     const txt = env.host.textContent || "";
+    const instead = env.host.querySelector(".setup-instead")?.textContent || "";
     await env.done();
-    return txt;
+    return { txt, instead };
   };
-  const linWifi = await setupProbe("r07-setup-lin-wifi", { platform: "desktop", shell: "tauri", os: "linux" }, "wifi");
-  const linTs = await setupProbe("r07-setup-lin-ts", { platform: "desktop", shell: "tauri", os: "linux" }, "tailscale");
-  const andWifi = await setupProbe("r07-setup-and-wifi", { platform: "android", shell: "tauri", os: "android" }, "wifi");
+  const winWifi = await setupProbe("r07-setup-win-wifi", { platform: "desktop", shell: "tauri", os: "windows" }, "wifi", false);
+  const winTs = await setupProbe("r07-setup-win-ts", { platform: "desktop", shell: "tauri", os: "windows" }, "tailscale", false);
+  const winName = await setupProbe("r07-setup-win-name", { platform: "desktop", shell: "tauri", os: "windows", me: null }, "wifi", true);
+  check("R-07c Native Windows SetupFlow keeps all three 8c0feef strings byte-for-byte",
+    winWifi.txt.includes("Is this phone on the same Wi-Fi as your PC?")
+      && !winWifi.txt.includes("Is this PC on the same Wi-Fi")
+      && winTs.txt.includes("Is Tailscale on and signed in on this phone? Use u@example.test, the same account as your PC.")
+      && !winTs.txt.includes("signed in on this PC")
+      && winName.instead === "Already use Hubchat on another device? Link this phone instead.",
+    JSON.stringify({ winWifi: winWifi.txt.slice(0, 220), winTs: winTs.txt.slice(0, 220), winName: winName.instead }));
+
+  const linWifi = await setupProbe("r07-setup-lin-wifi", { platform: "desktop", shell: "tauri", os: "linux" }, "wifi", false);
+  const linTs = await setupProbe("r07-setup-lin-ts", { platform: "desktop", shell: "tauri", os: "linux" }, "tailscale", false);
+  const linName = await setupProbe("r07-setup-lin-name", { platform: "desktop", shell: "tauri", os: "linux", me: null }, "wifi", true);
+  const andWifi = await setupProbe("r07-setup-and-wifi", { platform: "android", shell: "tauri", os: "android" }, "wifi", false);
   check("R-07b SetupFlow uses 'this device' on Linux desktop and keeps 'this phone' on Android",
-    linWifi.includes("Is this device on the same Wi-Fi as your other device?")
-      && !linWifi.includes("this phone")
-      && linTs.includes("Is Tailscale on and signed in on this device?")
-      && !linTs.includes("this phone")
-      && andWifi.includes("Is this phone on the same Wi-Fi as your other device?"),
-    JSON.stringify({ linWifi: linWifi.slice(0, 200), linTs: linTs.slice(0, 200), andWifi: andWifi.slice(0, 200) }));
+    linWifi.txt.includes("Is this device on the same Wi-Fi as your other device?")
+      && !linWifi.txt.includes("this phone")
+      && linTs.txt.includes("Is Tailscale on and signed in on this device? Use u@example.test, the same account as your other device.")
+      && !linTs.txt.includes("this phone")
+      && linName.instead === "Already use Hubchat on another device? Link this device instead."
+      && andWifi.txt.includes("Is this phone on the same Wi-Fi as your other device?"),
+    JSON.stringify({ linWifi: linWifi.txt.slice(0, 200), linTs: linTs.txt.slice(0, 200), linName: linName.instead, andWifi: andWifi.txt.slice(0, 200) }));
 }
 
 const passed = checks.filter((c) => c.ok).length;
