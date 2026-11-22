@@ -170,8 +170,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # The identity key lives in the desktop keyring (Secret Service). Without
-  # one, saving must fail plainly, never fall back to an in-memory store.
+  # The identity key lives in the desktop keyring (Secret Service). Only when
+  # no Secret Service is owned or activatable on the session bus does Hubchat
+  # fall back to a 0700/0600 permissions-only file.
   keyring:
     runs-on: ubuntu-22.04
     timeout-minutes: 60
@@ -213,20 +214,100 @@ jobs:
           cargo test --locked -p hubchat-core --lib
           cargo test --locked -p hubchat --lib
 
-      - name: No D-Bus session -> saving fails plainly
+      - name: No D-Bus session and no DISPLAY -> permissions-only 0700/0600 file fallback
         run: |
-          env -u DBUS_SESSION_BUS_ADDRESS HUBCHAT_KEYRING_EXPECT=fail \
+          env -u DBUS_SESSION_BUS_ADDRESS -u XDG_RUNTIME_DIR -u DISPLAY HUBCHAT_KEYRING_EXPECT=file \
             cargo test --locked -p hubchat --lib linux_keyring -- --ignored --nocapture
 
-      - name: D-Bus session, no keyring daemon -> saving fails plainly
+      - name: Session D-Bus with no Secret Service provider -> permissions-only file fallback
         run: |
-          HUBCHAT_KEYRING_EXPECT=fail dbus-run-session -- \
+          cfg="$RUNNER_TEMP/no-secrets-session.conf"
+          cat > "$cfg" <<'EOF'
+          <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+           "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+          <busconfig>
+            <type>session</type>
+            <listen>unix:tmpdir=/tmp</listen>
+            <policy context="default">
+              <allow send_destination="*" eavesdrop="true"/>
+              <allow eavesdrop="true"/>
+              <allow own="*"/>
+            </policy>
+          </busconfig>
+          EOF
+          dbus-run-session --config-file="$cfg" -- \
+            env HUBCHAT_KEYRING_EXPECT=file \
             cargo test --locked -p hubchat --lib linux_keyring -- --ignored --nocapture
 
-      - name: Unlocked GNOME Keyring -> save, load, forget
+      - name: Session D-Bus with activatable locked keyring -> keyring only, Unreadable, file untouched
+        run: |
+          HUBCHAT_KEYRING_EXPECT=locked dbus-run-session -- \
+            cargo test --locked -p hubchat --lib linux_keyring -- --ignored --nocapture
+
+      - name: Unlocked GNOME Keyring -> keyring only, file untouched
         run: |
           export XDG_DATA_HOME="$RUNNER_TEMP/xdg-data"
-          mkdir -p "$XDG_DATA_HOME"
+          mkdir -m 0700 -p "$XDG_DATA_HOME"
           HUBCHAT_KEYRING_EXPECT=ok dbus-run-session -- bash -c '
             eval "$(printf ci | gnome-keyring-daemon --unlock --components=secrets)"
             cargo test --locked -p hubchat --lib linux_keyring -- --ignored --nocapture'
+
+      - name: Probe hang -> indeterminate -> keyring only, Unreadable, file untouched
+        run: |
+          rt="$RUNNER_TEMP/hang-bus"
+          rm -rf "$rt"
+          mkdir -m 0700 -p "$rt"
+          sock="$rt/bus"
+          python3 - "$sock" "$rt/ready" <<'PY' &
+          import os, socket, sys, threading, time
+          sock_path, ready_path = sys.argv[1], sys.argv[2]
+          srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+          srv.bind(sock_path)
+          srv.listen(8)
+          with open(ready_path, "w") as f:
+              f.write("ok\n")
+          n = 0
+          while True:
+              try:
+                  conn, _ = srv.accept()
+              except OSError:
+                  break
+              n += 1
+              if n == 1:
+                  def hold(c):
+                      time.sleep(5.0)
+                      try: c.close()
+                      except OSError: pass
+                  threading.Thread(target=hold, args=(conn,), daemon=True).start()
+              else:
+                  conn.close()
+          PY
+          srv_pid=$!
+          trap 'kill "$srv_pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 50); do [ -f "$rt/ready" ] && break; sleep 0.1; done
+          env -u XDG_RUNTIME_DIR -u DISPLAY DBUS_SESSION_BUS_ADDRESS="unix:path=$sock" HUBCHAT_KEYRING_EXPECT=hang \
+            cargo test --locked -p hubchat --lib linux_keyring -- --ignored --nocapture
+
+      - name: Discoverable bus via XDG_RUNTIME_DIR/bus without DBUS_SESSION_BUS_ADDRESS -> keyring only
+        run: |
+          rt="$RUNNER_TEMP/rt-discoverable-bus"
+          rm -rf "$rt"
+          mkdir -m 0700 -p "$rt"
+          cat > "$rt/session.conf" <<EOF
+          <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+           "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+          <busconfig>
+            <type>session</type>
+            <listen>unix:path=$rt/bus</listen>
+            <standard_session_servicedirs/>
+            <policy context="default">
+              <allow send_destination="*" eavesdrop="true"/>
+              <allow eavesdrop="true"/>
+              <allow own="*"/>
+            </policy>
+          </busconfig>
+          EOF
+          dbus-daemon --config-file="$rt/session.conf" --fork --print-pid > "$rt/pid"
+          trap 'kill "$(cat "$rt/pid")" 2>/dev/null || true' EXIT
+          env -u DBUS_SESSION_BUS_ADDRESS -u DISPLAY XDG_RUNTIME_DIR="$rt" HUBCHAT_KEYRING_EXPECT=locked \
+            cargo test --locked -p hubchat --lib linux_keyring -- --ignored --nocapture
