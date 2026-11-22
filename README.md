@@ -82,7 +82,9 @@ Get the latest release from the
   options `APPIMAGE_EXTRACT_AND_RUN=1 %command%`); see the
   [SteamOS and Steam Frame guide](docs/steamos-steam-frame.md). Install a
   downloaded `.deb` with `sudo apt install ./<filename>.deb`. Hubchat keeps your
-  identity key in the desktop keyring (GNOME Keyring or KWallet).
+  identity key in the desktop Secret Service keyring (GNOME Keyring or KWallet),
+  or in a separate user-only `0600` file (`identity-store/identity.key`) only
+  when no Secret Service exists in the session.
 - **iPhone, iPad, or any device with none of the above:** there is no app to
   download. Someone runs [Hubchat Web](#hubchat-web) and you open its address
   in your browser.
