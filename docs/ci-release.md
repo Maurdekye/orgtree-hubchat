@@ -257,8 +257,11 @@ hand-made ones did.
   - .deb: `sudo apt install ./Hubchat_<v>_amd64.deb`. Updates ask for your
     password, because they reinstall the package.
   - Hubchat keeps its identity key in the desktop keyring (GNOME Keyring or
-    KWallet). Without a keyring, creating an identity shows an error rather than
-    keeping the key only in memory.
+    KWallet) whenever a Secret Service is present or activatable. In a session
+    with no Secret Service (such as a SteamOS / Steam Frame VR session), it
+    falls back to a permissions-only key file
+    (`~/.local/share/dev.orgtree.hubchat/identity-store/identity.key`, `0700`
+    directory / `0600` file, no passphrase; see `docs/steamos-steam-frame.md`).
 - **Android**: allow your browser or file manager to install apps when Android
   asks.
 

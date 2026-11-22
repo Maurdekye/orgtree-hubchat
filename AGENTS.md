@@ -9,6 +9,7 @@
   openers. On Linux only, a cached per-process 2s D-Bus probe picks Secret Service
   (present/indeterminate) or a separate 0700/0600 file (`identity-store/identity.key`,
   absent only); store disagreement shows the lost-key choice screen (`hc_use_found_identity`),
+  guards native adopt against create/wrong-identity wipes, holds setup links until resolved,
   with zero cross-store moves or cleanup. See `docs/linux-scheme-handler.md`,
   `docs/steamos-steam-frame.md`. [decided: user 2026-11-21 m705e9611b564,
   mcfbe866f5243, mcf5eec9b9660; 2026-11-22 maa144b7bda6b]
