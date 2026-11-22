@@ -121,9 +121,6 @@ export interface PushState {
 /** Your status (Mail hub 2.3.0 feature `status`): your hubs keep it, so it is the same on all your devices. */
 export type MyStatus = "auto" | "online" | "busy" | "dnd" | "invisible";
 
-/** Where this device keeps its active identity key. */
-export type KeyStorage = "keyring" | "file_permissions_only";
-
 export interface State {
   me: Me | null;
   recovery_saved: boolean;
@@ -151,10 +148,6 @@ export interface State {
   key_lost: KeyLost | null;
   /** The key was restored from Hubchat's backup (Windows); say so once. */
   key_restored: boolean;
-  /** Where the active identity key is kept on this device (absent on older cores or web). */
-  key_storage?: KeyStorage | null;
-  /** True when a Linux permissions-only fallback key file remains on disk and awaits cleanup. */
-  key_file_residual?: boolean;
 }
 
 /** Why the lost-key screen shows (user 2026-10-10: Windows lost every saved sign-in). */

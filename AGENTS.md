@@ -1,15 +1,13 @@
 # Hubchat development invariants
 
 - 2026-11-21: Linux desktop integration & SteamOS (`linux_scheme.rs`,
-  `linux_gamescope.rs`, `secrets.rs`, `core.rs`): writes `dev.orgtree.hubchat.link.desktop`
+  `linux_gamescope.rs`): writes `dev.orgtree.hubchat.link.desktop`
   and (for verified AppImage/`HUBCHAT_LAUNCHER` launches without a system entry)
   `dev.orgtree.hubchat.desktop` + icon using no-replace/guarded writes (`X-Hubchat-Version=`),
   extract `APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1`, bare plain paths, and foreign-HOME
   guards. Gamescope re-execs once before GTK and restores launching env for external
-  openers. Without a Secret Service (confirmed via 2s D-Bus discovery), stores keys
-  in a 0700/0600 file with owner/tombstone/staged-adoption checks and best-effort
-  cleanup. See `docs/linux-scheme-handler.md`, `docs/steamos-steam-frame.md`.
-  [decided: user 2026-11-21 m705e9611b564, mcfbe866f5243, mcf5eec9b9660; verified: linux_scheme.rs, linux_gamescope.rs, secrets.rs, core.rs]
+  openers. See `docs/linux-scheme-handler.md`, `docs/steamos-steam-frame.md`.
+  [decided: user 2026-11-21 m705e9611b564, mcfbe866f5243; verified: linux_scheme.rs, linux_gamescope.rs]
 
 - 2026-11-16: Hub TLS trusts the built-in public roots AND the device's own
   (a LAN hub's CA), always on: every hub connection takes its TLS from
@@ -840,9 +838,3 @@
   window-watch phrases/seconds (hubchat.update/window). Web and Android are
   excluded; Android still has no file log. [decided: coordinator mc2088b1e930f;
   verified: window_watch.rs, tools/desktop-diagnostics.test.mjs; docs/logging.md]
-
-- 2026-11-21: Linux SteamOS automation: self-install `dev.orgtree.hubchat.desktop`
-  + icon (`linux_scheme.rs`, `X-Hubchat-Version=`), Gamescope re-exec before GTK
-  (`linux_gamescope.rs`), and 0700/0600 file key fallback only on confirmed
-  Secret Service absence (`secrets.rs`, `core.rs`, `Settings.tsx`). [decided:
-  user mcf5eec9b9660; docs/steamos-steam-frame.md]
