@@ -1086,6 +1086,135 @@ mod linux_r5_core_tests {
             cleanup(core, rt, dir);
         }
     }
+
+    #[test]
+    fn r5_guard_refuses_create_in_mismatch_state_without_wiping() {
+        let (core, rt, dir) = make_core("guard-create");
+        let a = Identity::generate("alice").unwrap();
+        let b = Identity::generate("bob").unwrap();
+        let fresh = Identity::generate("charlie").unwrap();
+        seed_owner_data(&core.store, Some(&a.address()));
+        let expected_err = format!(
+            "This device's chats belong to {}. Use {}'s recovery words, link or key file, or choose Use {} here.",
+            a.address(),
+            a.address(),
+            b.address()
+        );
+        let kr = MockKeyring::new();
+        with_test_backend(SecretServiceState::Absent, kr, || {
+            crate::secrets::save_identity(&dir, &b).unwrap();
+            core.load_key().unwrap();
+            let err = core
+                .adopt_identity(fresh, true, &[("profile.name", "New User")])
+                .unwrap_err();
+            assert_eq!(err, expected_err);
+            let crate::secrets::Loaded::Found(still) = crate::secrets::load_identity(&dir) else {
+                panic!("key store must still hold B");
+            };
+            assert_eq!(still.address(), b.address());
+        });
+        assert!(!core.has_identity(), "engine must not start");
+        let lost = core.key_lost().expect("mismatch state must stay set");
+        assert_eq!(lost.address.as_deref(), Some(a.address().as_str()));
+        assert_eq!(lost.found.as_deref(), Some(b.address().as_str()));
+        assert_eq!(core.store.meta("identity.address").unwrap().as_deref(), Some(a.address().as_str()));
+        assert_eq!(core.store.meta("profile.name").unwrap(), None, "no meta write before guard");
+        assert_eq!(core.store.chat("peer.111111", None, None, 10).unwrap().len(), 1, "A's chats preserved");
+        assert_eq!(core.store.draft("peer.111111").unwrap().as_deref(), Some("unsent draft"), "A's drafts preserved");
+        assert_eq!(core.store.hubs().unwrap().len(), 1, "A's hubs preserved");
+        cleanup(core, rt, dir);
+    }
+
+    #[test]
+    fn r5_guard_refuses_non_owner_c_restore_in_mismatch_state_without_wiping_or_overwriting_b() {
+        let (core, rt, dir) = make_core("guard-c");
+        let a = Identity::generate("alice").unwrap();
+        let b = Identity::generate("bob").unwrap();
+        let c = Identity::generate("carol").unwrap();
+        seed_owner_data(&core.store, Some(&a.address()));
+        let expected_err = format!(
+            "This device's chats belong to {}. Use {}'s recovery words, link or key file, or choose Use {} here.",
+            a.address(),
+            a.address(),
+            b.address()
+        );
+        let kr = MockKeyring::new();
+        with_test_backend(SecretServiceState::Absent, kr, || {
+            crate::secrets::save_identity(&dir, &b).unwrap();
+            core.load_key().unwrap();
+            // Recovery words / key file / QR / link for C must be refused.
+            let err_c = core
+                .adopt_identity(c, false, &[("recovery.saved", "yes")])
+                .unwrap_err();
+            assert_eq!(err_c, expected_err);
+            // Direct adopt_identity for B must also be refused (use_found_identity is the only path to B).
+            let err_b = core
+                .adopt_identity(b.clone(), false, &[("recovery.saved", "yes")])
+                .unwrap_err();
+            assert_eq!(err_b, expected_err);
+            let crate::secrets::Loaded::Found(still) = crate::secrets::load_identity(&dir) else {
+                panic!("key store must still hold B");
+            };
+            assert_eq!(still.address(), b.address());
+        });
+        assert!(!core.has_identity(), "engine must not start");
+        let lost = core.key_lost().expect("mismatch state must stay set");
+        assert_eq!(lost.address.as_deref(), Some(a.address().as_str()));
+        assert_eq!(lost.found.as_deref(), Some(b.address().as_str()));
+        assert_eq!(core.store.meta("identity.address").unwrap().as_deref(), Some(a.address().as_str()));
+        assert_eq!(core.store.meta("recovery.saved").unwrap(), None, "no meta write before guard");
+        assert_eq!(core.store.chat("peer.111111", None, None, 10).unwrap().len(), 1, "A's chats preserved");
+        assert_eq!(core.store.draft("peer.111111").unwrap().as_deref(), Some("unsent draft"), "A's drafts preserved");
+        assert_eq!(core.store.hubs().unwrap().len(), 1, "A's hubs preserved");
+        cleanup(core, rt, dir);
+    }
+
+    #[test]
+    fn r5_guard_accepts_owner_a_restore_keeps_chats_and_replaces_b_with_a() {
+        let (core, rt, dir) = make_core("guard-a");
+        let a = Identity::generate("alice").unwrap();
+        let b = Identity::generate("bob").unwrap();
+        let c = Identity::generate("carol").unwrap();
+        seed_owner_data(&core.store, Some(&a.address()));
+        let kr = MockKeyring::new();
+        with_test_backend(SecretServiceState::Absent, kr, || {
+            crate::secrets::save_identity(&dir, &b).unwrap();
+            core.load_key().unwrap();
+            // A refused C attempt first must leave mismatch state healthy for A recovery.
+            assert!(core.adopt_identity(c, false, &[]).is_err());
+            core.adopt_identity(a.clone(), false, &[("recovery.saved", "yes")])
+                .expect("restoring A in mismatch state must succeed");
+            let crate::secrets::Loaded::Found(now) = crate::secrets::load_identity(&dir) else {
+                panic!("key store must now hold A");
+            };
+            assert_eq!(now.address(), a.address());
+        });
+        assert!(core.has_identity(), "engine started as A");
+        assert_eq!(core.engine().unwrap().me().address(), a.address());
+        assert!(core.key_lost().is_none(), "key_lost cleared");
+        assert_eq!(core.store.meta("identity.address").unwrap().as_deref(), Some(a.address().as_str()));
+        assert_eq!(core.store.meta("recovery.saved").unwrap().as_deref(), Some("yes"));
+        assert_eq!(core.store.chat("peer.111111", None, None, 10).unwrap().len(), 1, "A's chats kept");
+        assert_eq!(core.store.draft("peer.111111").unwrap().as_deref(), Some("unsent draft"), "A's drafts kept");
+        assert_eq!(core.store.hubs().unwrap().len(), 1, "A's hubs kept");
+        cleanup(core, rt, dir);
+
+        // Outside mismatch state (key missing, found == None), adopting C still works as in 1.3.11.
+        let (core2, rt2, dir2) = make_core("no-mismatch-c");
+        let a2 = Identity::generate("alice").unwrap();
+        let c2 = Identity::generate("carol").unwrap();
+        seed_owner_data(&core2.store, Some(&a2.address()));
+        let kr2 = MockKeyring::new();
+        with_test_backend(SecretServiceState::Absent, kr2, || {
+            core2.load_key().unwrap();
+            assert!(core2.key_lost().unwrap().found.is_none());
+            core2.adopt_identity(c2.clone(), false, &[]).expect("non-mismatch adopt C must succeed");
+        });
+        assert!(core2.has_identity());
+        assert_eq!(core2.engine().unwrap().me().address(), c2.address());
+        assert!(core2.store.chat("peer.111111", None, None, 10).unwrap().is_empty(), "non-mismatch must_wipe still wipes A");
+        cleanup(core2, rt2, dir2);
+    }
 }
 
 #[cfg(test)]

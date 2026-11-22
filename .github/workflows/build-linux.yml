@@ -93,6 +93,9 @@ jobs:
       - name: npm ci
         run: npm ci
 
+      - name: Mismatch flow UI tests
+        run: node --test tools/mismatch-flow.test.mjs
+
       # createUpdaterArtifacts needs a key at build time. Real keys never
       # enter this job (npm scripts and build.rs run here): it signs with a
       # throwaway key, and release.yml's sign job re-signs real releases.
