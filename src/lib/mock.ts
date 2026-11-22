@@ -78,8 +78,9 @@ const pushStates: Record<string, PushState> = {
 
 const st: State = {
   me: onboarding || lostKey ? null : { ...ALEX },
-  key_lost: lostKey ? { address: lostKey === "unknown" ? null : ALEX.address, unreadable: lostKey === "unreadable" } : null,
+  key_lost: lostKey ? { address: lostKey === "unknown" ? null : ALEX.address, unreadable: lostKey === "unreadable", found: lostKey === "mismatch" ? "maya.e71f2b" : null } : null,
   key_restored: params.get("keyrestored") === "1",
+  key_storage: params.get("keystorage") === "file" ? "file" : params.get("keystorage") === "keyring" ? "keyring" : null,
   recovery_saved: false,
   read_receipts: true,
   status: "auto",
@@ -660,6 +661,13 @@ export const mockApi: Api = {
     if (st.key_lost?.unreadable && now() >= keyBackAt) { st.me = { ...ALEX }; st.key_lost = null; st.hubs = seedHubs(); }
   },
   startOver: async () => { await sleep(300); st.key_lost = null; st.me = null; st.hubs = []; },
+  useFoundIdentity: async (expected: string) => {
+    await sleep(300);
+    if (st.key_lost?.found !== expected) throw new Error("The key store changed. Try again.");
+    st.me = { id: expected.split(".")[0] || "user", address: expected, name: "", about: "" };
+    st.key_lost = null;
+    st.hubs = [];
+  },
   keyRestoredSeen: async () => { st.key_restored = false; },
   uiState: async () => {},
 

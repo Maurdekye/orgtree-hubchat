@@ -121,6 +121,9 @@ export interface PushState {
 /** Your status (Mail hub 2.3.0 feature `status`): your hubs keep it, so it is the same on all your devices. */
 export type MyStatus = "auto" | "online" | "busy" | "dnd" | "invisible";
 
+/** Linux only: where this session keeps the identity key. */
+export type KeyStorage = "keyring" | "file";
+
 export interface State {
   me: Me | null;
   recovery_saved: boolean;
@@ -148,6 +151,8 @@ export interface State {
   key_lost: KeyLost | null;
   /** The key was restored from Hubchat's backup (Windows); say so once. */
   key_restored: boolean;
+  /** Linux only: where this session keeps the identity key ("keyring" or "file"). */
+  key_storage?: KeyStorage | null;
 }
 
 /** Why the lost-key screen shows (user 2026-10-10: Windows lost every saved sign-in). */
@@ -156,6 +161,8 @@ export interface KeyLost {
   address: string | null;
   /** The key store didn't answer: it may still have the key. */
   unreadable: boolean;
+  /** Linux only: the key store in this session holds a different identity. */
+  found?: string | null;
 }
 
 /** Outgoing: queued | sending | sent | fetched | delivered | read | failed. Incoming: received. */
@@ -477,6 +484,8 @@ export const makeApi = ({ invoke, listen, mediaUrl }: Transport) => ({
   retryKey: () => invoke<void>("hc_retry_key"),
   /** The lost-key screen: remove this device's local data and start afresh. */
   startOver: () => invoke<void>("hc_start_over"),
+  /** The lost-key screen (Linux): adopt the identity currently in this session's key store. */
+  useFoundIdentity: (expected: string) => invoke<void>("hc_use_found_identity", { expected }),
   /** The "restored from Hubchat's backup" notice was seen. */
   keyRestoredSeen: () => invoke<void>("hc_key_restored_seen"),
   recoveryWords: () => invoke<string[]>("hc_recovery_words"),

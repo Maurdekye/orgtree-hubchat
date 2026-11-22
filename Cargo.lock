@@ -1926,6 +1926,7 @@ dependencies = [
  "arboard",
  "base64 0.22.1",
  "chrono",
+ "dbus",
  "flate2",
  "hex",
  "hubchat-core",

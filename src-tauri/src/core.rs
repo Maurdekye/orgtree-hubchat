@@ -633,8 +633,18 @@ impl Core {
 
     fn load_key_inner(&self) -> Result<bool, String> {
         let unreadable = match crate::secrets::load_identity(&self.dir) {
-            Loaded::Found(me) => return self.start_with(me).map(|_| true),
+            Loaded::Found(me) => {
+                #[cfg(target_os = "linux")]
+                if self.store_mismatch(&me)? {
+                    return Ok(false);
+                }
+                return self.start_with(me).map(|_| true);
+            }
             Loaded::Restored(me) => {
+                #[cfg(target_os = "linux")]
+                if self.store_mismatch(&me)? {
+                    return Ok(false);
+                }
                 // the UI says so once (dismissed: key_restored_seen)
                 self.store.set_meta("key.restored", "yes").map_err(|e| e.to_string())?;
                 return self.start_with(me).map(|_| true);
@@ -663,8 +673,40 @@ impl Core {
     }
 
     #[cfg(target_os = "linux")]
-    pub fn use_found_identity(&self, _expected: &str) -> Result<(), String> {
-        Err("not implemented".into())
+    fn store_mismatch(&self, me: &Identity) -> Result<bool, String> {
+        let owner = self
+            .store
+            .meta("identity.address")
+            .map_err(|e| e.to_string())?
+            .filter(|a| !a.is_empty());
+        if let Some(a) = owner {
+            if a != me.address() {
+                *self.key_lost.lock().unwrap() = Some(KeyLost {
+                    address: Some(a),
+                    unreadable: false,
+                    found: Some(me.address()),
+                });
+                self.host.platform.status("Set up Hubchat to connect");
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn use_found_identity(&self, expected: &str) -> Result<(), String> {
+        if self.has_identity() {
+            return Err("this device already has an identity".into());
+        }
+        match crate::secrets::load_identity(&self.dir) {
+            Loaded::Found(me) | Loaded::Restored(me) if me.address() == expected => {
+                self.adopt_identity(me, false, &[])
+            }
+            _ => {
+                let _ = self.load_key();
+                Err("The key store changed. Try again.".into())
+            }
+        }
     }
 
     /// The local data belongs to an identity: it ran here (device.id is made
