@@ -23,7 +23,7 @@ This is the easy way: about three clicks on your computer and four taps on your 
 **On your computer**, in Orgtree, open **App settings › Mail hub › Connect your phone**. The panel shows only the next step you need:
 
 1. **Install Tailscale on this computer** and sign in. Use an account you can also use on your phone (Google, Microsoft, GitHub or Apple).
-2. **Turn on phone access.** Only devices on your Tailscale network can connect. On Windows, Windows asks for permission once.
+2. **Turn on phone access.** Only devices on your Tailscale network can connect. On Windows, the firewall asks for permission once.
 
 <!-- screenshots -->
 <p>
