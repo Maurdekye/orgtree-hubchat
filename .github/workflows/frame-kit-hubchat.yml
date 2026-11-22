@@ -1,0 +1,266 @@
+# Test-only Steam Frame clean-profile headset kit build for Hubchat (aarch64).
+# Builds N (1.3.12-alpha.1) and N+1 (1.3.12-alpha.2) from exact accepted
+# Hubchat SHA 9ad62da5ffb869261aec5ce42585e1f8a0b6b144 with a loopback update
+# feed (http://127.0.0.1:47615/latest.json) and a single-use throwaway minisign
+# keypair baked into both builds via `tauri build --config <overlay.json>`.
+# The throwaway private key is deleted and verified absent inside this job
+# before smoke tests and artifact upload.
+# Never publishes, never creates a release, never tags, never merges.
+name: frame-kit-hubchat
+
+on:
+  push:
+    branches: ['ci-test/hubchat-frame-kit']
+
+permissions:
+  contents: read
+
+env:
+  RUST_TOOLCHAIN: nightly-2025-12-12
+  NODE_VERSION: 24.12.0
+  NPM_VERSION: 11.6.2
+  KIT_BASE_SHA: 9ad62da5ffb869261aec5ce42585e1f8a0b6b144
+  KIT_VERSION_N: 1.3.12-alpha.1
+  KIT_VERSION_N1: 1.3.12-alpha.2
+  KIT_FEED_BASE: http://127.0.0.1:47615
+
+jobs:
+  build-kit-aarch64:
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Verify exact base SHA, architecture, and zero product diff
+        run: |
+          set -euo pipefail
+          echo "runner arch=$(uname -m), $(. /etc/os-release; echo "$PRETTY_NAME"), $(ldd --version | head -1)"
+          [ "$(uname -m)" = "aarch64" ] || { echo "::error::expected aarch64 runner"; exit 1; }
+          base="$(git rev-parse HEAD~1)"
+          echo "HEAD=$(git rev-parse HEAD)"
+          echo "HEAD~1=$base (want $KIT_BASE_SHA)"
+          [ "$base" = "$KIT_BASE_SHA" ] || { echo "::error::HEAD~1 is $base, expected $KIT_BASE_SHA"; exit 1; }
+          changed="$(git diff --name-only HEAD~1..HEAD)"
+          echo "changed vs base: $changed"
+          [ "$changed" = ".github/workflows/frame-kit-hubchat.yml" ] || {
+            echo "::error::unexpected diff vs base SHA: $changed"
+            exit 1
+          }
+
+      - name: apt build and smoke dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config file curl wget patchelf jq \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libxdo-dev libdbus-1-dev libgtk-3-dev \
+            xvfb dbus-x11 libfuse2
+
+      - name: Rust ${{ env.RUST_TOOLCHAIN }}
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$RUST_TOOLCHAIN"
+          rustc -Vv
+          cargo -V
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: npm ${{ env.NPM_VERSION }}
+        run: |
+          npm install -g "npm@$NPM_VERSION"
+          node -v
+          npm -v
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: hubchat-linux-cargo-ubuntu-22.04-arm-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            hubchat-linux-cargo-ubuntu-22.04-arm-${{ env.RUST_TOOLCHAIN }}-
+
+      - name: npm ci and mismatch-flow UI tests
+        run: |
+          npm ci
+          node --test tools/mismatch-flow.test.mjs
+
+      - name: Build aarch64 N (1.3.12-alpha.1) and N+1 (1.3.12-alpha.2) with throwaway key and delete key in-job
+        run: |
+          set -euo pipefail
+          keys="$RUNNER_TEMP/frame-kit-keys"
+          out="$RUNNER_TEMP/hubchat-frame-kit"
+          rm -rf "$keys" "$out"
+          mkdir -m 700 -p "$keys"
+          mkdir -p "$out"
+
+          cleanup_keys() {
+            rm -rf "$keys"
+          }
+          trap cleanup_keys EXIT
+
+          # 1. Generate a single-use throwaway minisign keypair strictly inside this step.
+          #    Real keys never touch this workflow; this throwaway key cannot update any
+          #    published Hubchat install and is deleted immediately after signing N+1.
+          pw="$(openssl rand -hex 24)"
+          echo "::add-mask::$pw"
+          key_file="$keys/frame-kit-updater.key"
+          pub_file="$keys/frame-kit-updater.key.pub"
+          npx tauri signer generate --ci -p "$pw" -w "$key_file" >/dev/null
+          [ -s "$key_file" ] && [ -s "$pub_file" ] || { echo "::error::failed to generate throwaway keypair"; exit 1; }
+
+          # tauri.conf.json expects base64 of minisign's 2-line public key text.
+          if grep -q '^untrusted comment:' "$pub_file"; then
+            pubkey_b64="$(base64 -w0 "$pub_file")"
+          else
+            pubkey_b64="$(tr -d '\r\n' < "$pub_file")"
+          fi
+          decoded_pub="$(base64 -d <<< "$pubkey_b64")"
+          grep -q '^untrusted comment: minisign public key:' <<< "$decoded_pub" || {
+            echo "::error::unexpected throwaway pubkey format"
+            exit 1
+          }
+          echo "Throwaway pubkey header: $(head -1 <<< "$decoded_pub")"
+
+          # 2. Write build-time Tauri config overlays (zero committed edits to src-tauri/tauri.conf.json).
+          for pair in "n:$KIT_VERSION_N" "n1:$KIT_VERSION_N1"; do
+            tag="${pair%%:*}"
+            ver="${pair#*:}"
+            jq -n \
+              --arg ver "$ver" \
+              --arg pub "$pubkey_b64" \
+              --arg ep "$KIT_FEED_BASE/latest.json" \
+              '{
+                version: $ver,
+                plugins: {
+                  updater: {
+                    pubkey: $pub,
+                    endpoints: [$ep],
+                    dangerousInsecureTransportProtocol: true,
+                    requireSignedVersion: true
+                  }
+                }
+              }' > "$RUNNER_TEMP/overlay-$tag.json"
+            echo "--- overlay-$tag.json ---"
+            cat "$RUNNER_TEMP/overlay-$tag.json"
+          done
+
+          export TAURI_SIGNING_PRIVATE_KEY="$(cat "$key_file")"
+          export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$pw"
+
+          # 3. Build N (1.3.12-alpha.1) AppImage.
+          echo "=== Building Hubchat N ($KIT_VERSION_N) ==="
+          rm -rf target/release/bundle/appimage
+          npx tauri build --bundles appimage --config "$RUNNER_TEMP/overlay-n.json"
+          app_n="Hubchat_${KIT_VERSION_N}_aarch64.AppImage"
+          cp "target/release/bundle/appimage/$app_n" "$out/$app_n"
+          chmod +x "$out/$app_n"
+
+          # 4. Build N+1 (1.3.12-alpha.2) AppImage + signed .sig.
+          echo "=== Building Hubchat N+1 ($KIT_VERSION_N1) ==="
+          rm -rf target/release/bundle/appimage
+          touch src-tauri/build.rs
+          npx tauri build --bundles appimage --config "$RUNNER_TEMP/overlay-n1.json"
+          app_n1="Hubchat_${KIT_VERSION_N1}_aarch64.AppImage"
+          cp "target/release/bundle/appimage/$app_n1" "$out/$app_n1"
+          cp "target/release/bundle/appimage/$app_n1.sig" "$out/$app_n1.sig"
+          chmod +x "$out/$app_n1"
+
+          # 5. Verify N+1 .sig binds exact version 1.3.12-alpha.2 and matches throwaway pubkey key ID.
+          sig_text="$(tr -d '\r\n' < "$out/$app_n1.sig")"
+          node -e '
+            const [pubB64, sigB64, wantVer, wantFile] = process.argv.slice(1);
+            const pubText = Buffer.from(pubB64, "base64").toString("utf8").trim().split(/\r?\n/);
+            const sigText = Buffer.from(sigB64, "base64").toString("utf8").trim().split(/\r?\n/);
+            const pubRaw = Buffer.from(pubText[1], "base64");
+            const sigRaw = Buffer.from(sigText[1], "base64");
+            const pubKeyId = pubRaw.subarray(2, 10).toString("hex");
+            const sigKeyId = sigRaw.subarray(2, 10).toString("hex");
+            const trusted = sigText.find(l => l.startsWith("trusted comment:")) || "";
+            console.log("Signature trusted comment:", trusted);
+            console.log("Key ID check: pub=" + pubKeyId + " sig=" + sigKeyId);
+            if (pubKeyId !== sigKeyId) { console.error("key ID mismatch"); process.exit(1); }
+            if (!trusted.includes("version:" + wantVer)) { console.error("missing version:" + wantVer); process.exit(1); }
+            if (!trusted.includes("file:" + wantFile)) { console.error("missing file:" + wantFile); process.exit(1); }
+          ' "$pubkey_b64" "$sig_text" "$KIT_VERSION_N1" "$app_n1"
+
+          # 6. Immediately destroy the throwaway private key and log verifiable proof.
+          unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD pw
+          shred -u "$key_file" 2>/dev/null || rm -f "$key_file"
+          rm -rf "$keys"
+          if [ -e "$key_file" ] || [ -d "$keys" ]; then
+            echo "::error::throwaway key still present after deletion"
+            exit 1
+          fi
+          echo "THROWAWAY_KEY_DELETED: throwaway minisign private key destroyed and verified absent ($keys)"
+
+          # 7. Assemble local loopback latest.json for Step 5 (127.0.0.1:47615).
+          pub_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n \
+            --arg ver "$KIT_VERSION_N1" \
+            --arg notes "Steam Frame clean-profile test update ($KIT_VERSION_N -> $KIT_VERSION_N1, throwaway key, loopback feed only)." \
+            --arg pub_date "$pub_date" \
+            --arg sig "$sig_text" \
+            --arg url "$KIT_FEED_BASE/$app_n1" \
+            '{
+              version: $ver,
+              notes: $notes,
+              pub_date: $pub_date,
+              platforms: {
+                "linux-aarch64": {
+                  signature: $sig,
+                  url: $url
+                }
+              }
+            }' > "$out/latest.json"
+          echo "--- latest.json ---"
+          cat "$out/latest.json"
+
+          # 8. Confirm exact SHA-256 sums and ELF architecture.
+          (
+            cd "$out"
+            sha256sum "$app_n" "$app_n1" "$app_n1.sig" latest.json | sort -k2 > SHA256SUMS-hubchat.txt
+            echo "--- SHA256SUMS-hubchat.txt ---"
+            cat SHA256SUMS-hubchat.txt
+            file "$app_n" "$app_n1"
+          )
+
+          echo "dir=$out" >> "$GITHUB_OUTPUT"
+          echo "app_n=$app_n" >> "$GITHUB_OUTPUT"
+          echo "app_n1=$app_n1" >> "$GITHUB_OUTPUT"
+        id: kit
+
+      - name: Launch smoke N (AppImage, no FUSE) and verify version 1.3.12-alpha.1
+        run: |
+          set -euo pipefail
+          APPIMAGE_EXTRACT_AND_RUN=1 .github/ci/linux/smoke.sh kit-n-nofuse \
+            "${{ steps.kit.outputs.dir }}/${{ steps.kit.outputs.app_n }}"
+          got="$(tr -d '\r\n' < "$RUNNER_TEMP/home-kit-n-nofuse/.local/share/dev.orgtree.hubchat/last-run-version")"
+          echo "N runtime last-run-version=$got (want $KIT_VERSION_N)"
+          [ "$got" = "$KIT_VERSION_N" ] || { echo "::error::N reported version $got, expected $KIT_VERSION_N"; exit 1; }
+
+      - name: Launch smoke N+1 (AppImage, no FUSE) and verify version 1.3.12-alpha.2
+        run: |
+          set -euo pipefail
+          APPIMAGE_EXTRACT_AND_RUN=1 .github/ci/linux/smoke.sh kit-n1-nofuse \
+            "${{ steps.kit.outputs.dir }}/${{ steps.kit.outputs.app_n1 }}"
+          got="$(tr -d '\r\n' < "$RUNNER_TEMP/home-kit-n1-nofuse/.local/share/dev.orgtree.hubchat/last-run-version")"
+          echo "N+1 runtime last-run-version=$got (want $KIT_VERSION_N1)"
+          [ "$got" = "$KIT_VERSION_N1" ] || { echo "::error::N+1 reported version $got, expected $KIT_VERSION_N1"; exit 1; }
+
+      - name: Upload Hubchat Frame kit artifacts (aarch64)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hubchat-frame-kit-aarch64
+          path: ${{ steps.kit.outputs.dir }}/*
+          if-no-files-found: error
+          retention-days: 14
