@@ -64,8 +64,11 @@ arboard = "3"
 png = "0.17"
 
 # Linux: the identity key goes to the desktop keyring (Secret Service:
-# GNOME Keyring / KWallet); without a backend keyring keeps it only in memory.
+# GNOME Keyring / KWallet). `dbus` queries org.freedesktop.DBus directly so
+# Hubchat only falls back to a 0700/0600 permissions-only file when no Secret
+# Service is owned or activatable on the session bus.
 [target.'cfg(target_os = "linux")'.dependencies]
+dbus = "0.9"
 keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 libc = "0.2"
 

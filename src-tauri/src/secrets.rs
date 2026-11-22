@@ -63,7 +63,11 @@ pub fn load_identity(dir: &Path) -> Loaded {
                 Some((text, fact)) => (format!("; {text}"), vec![Fact::KeyFound, fact]),
                 None => (String::new(), vec![Fact::KeyFound]),
             };
-            keylog::note(dir, &format!("key found in {STORE}{backup}"), &facts);
+            #[cfg(target_os = "linux")]
+            let store = linux::store_name();
+            #[cfg(not(target_os = "linux"))]
+            let store = STORE;
+            keylog::note(dir, &format!("key found in {store}{backup}"), &facts);
             return Loaded::Found(me);
         }
         Main::Missing(why) => (why, false, Fact::StoreHasNoKey),
@@ -204,18 +208,35 @@ pub fn linux_key_storage() -> &'static str {
 
 #[cfg(target_os = "linux")]
 pub(crate) mod linux {
+    use std::ffi::CString;
+    use std::io::{Read, Write};
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+    use std::os::unix::ffi::OsStrExt;
     use std::path::Path;
+    use std::sync::{mpsc, OnceLock};
+    use std::time::Duration;
 
-    use super::{classify, entry, encode, Identity, Main};
+    use dbus::blocking::Connection;
+
+    use super::{classify, decode, entry, encode, keylog, Fact, Identity, Main};
 
     #[cfg(test)]
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     #[cfg(test)]
     use std::collections::HashMap;
     #[cfg(test)]
     use std::sync::{Arc, Mutex};
 
-    #[allow(dead_code)]
+    const SECRETS_BUS_NAME: &str = "org.freedesktop.secrets";
+    const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+    const STORE_DIR: &str = "identity-store";
+    const KEY_FILE: &str = "identity.key";
+    const TMP_FILE: &str = "identity.key.tmp";
+    const MAX_FILE_BYTES: u64 = 64 * 1024;
+
+    static BACKEND: OnceLock<SecretServiceState> = OnceLock::new();
+    static LOGGED_BACKEND: OnceLock<()> = OnceLock::new();
+
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub(crate) enum SecretServiceState {
         Present,
@@ -223,7 +244,6 @@ pub(crate) mod linux {
         Indeterminate,
     }
 
-    #[allow(dead_code)]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub(crate) struct BusHints {
         pub address_set: bool,
@@ -232,7 +252,6 @@ pub(crate) mod linux {
         pub has_display: bool,
     }
 
-    #[allow(dead_code)]
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub(crate) enum DbusProbeResult {
         Owned,
@@ -242,7 +261,6 @@ pub(crate) mod linux {
         TimedOut,
     }
 
-    #[allow(dead_code)]
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub(crate) struct StatInfo {
         pub is_dir: bool,
@@ -254,22 +272,518 @@ pub(crate) mod linux {
         pub size: i64,
     }
 
-    #[allow(dead_code)]
+    fn is_definitive_no_bus_error(name: Option<&str>, message: Option<&str>) -> bool {
+        if let Some(n) = name {
+            if matches!(
+                n,
+                "org.freedesktop.DBus.Error.NotSupported"
+                    | "org.freedesktop.DBus.Error.Spawn.ExecFailed"
+                    | "org.freedesktop.DBus.Error.Spawn.ChildExited"
+                    | "org.freedesktop.DBus.Error.NoServer"
+            ) {
+                return true;
+            }
+        }
+        if let Some(m) = message {
+            let lower = m.to_ascii_lowercase();
+            if lower.contains("unable to autolaunch")
+                || lower.contains("cannot autolaunch")
+                || lower.contains("without a $display")
+                || lower.contains("unable to determine the address of the message bus")
+                || lower.contains("no d-bus daemon running")
+                || lower.contains("autolaunch error")
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     pub(crate) fn classify_dbus_probe(
-        _hints: BusHints,
-        _probe: impl FnOnce() -> DbusProbeResult,
+        hints: BusHints,
+        probe: impl FnOnce() -> DbusProbeResult,
     ) -> SecretServiceState {
-        SecretServiceState::Present
+        if hints.address_disabled {
+            return if hints.runtime_bus_exists == Some(false) && !hints.has_display {
+                SecretServiceState::Absent
+            } else {
+                SecretServiceState::Indeterminate
+            };
+        }
+        match probe() {
+            DbusProbeResult::Owned => SecretServiceState::Present,
+            DbusProbeResult::NotOwned { activatable } => {
+                if activatable.iter().any(|n| n == SECRETS_BUS_NAME) {
+                    SecretServiceState::Present
+                } else {
+                    SecretServiceState::Absent
+                }
+            }
+            DbusProbeResult::ConnectError { name, message } => {
+                if !hints.address_set
+                    && hints.runtime_bus_exists == Some(false)
+                    && !hints.has_display
+                    && is_definitive_no_bus_error(name.as_deref(), message.as_deref())
+                {
+                    SecretServiceState::Absent
+                } else {
+                    SecretServiceState::Indeterminate
+                }
+            }
+            DbusProbeResult::QueryError | DbusProbeResult::TimedOut => SecretServiceState::Indeterminate,
+        }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn judge_store_dir(_euid: u32, _st: StatInfo) -> Result<(), &'static str> {
+    fn runtime_bus_stat() -> Option<bool> {
+        let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) else {
+            return Some(false);
+        };
+        match std::fs::symlink_metadata(Path::new(&runtime).join("bus")) {
+            Ok(_) => Some(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(false),
+            Err(_) => None,
+        }
+    }
+
+    fn current_bus_hints() -> BusHints {
+        let addr = std::env::var("DBUS_SESSION_BUS_ADDRESS").ok();
+        let address_disabled = addr.as_deref() == Some("disabled:");
+        let address_set = addr.as_deref().is_some_and(|a| !a.is_empty() && a != "disabled:");
+        let has_display = std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty());
+        BusHints {
+            address_set,
+            address_disabled,
+            runtime_bus_exists: runtime_bus_stat(),
+            has_display,
+        }
+    }
+
+    fn run_probe_blocking() -> DbusProbeResult {
+        let conn = match Connection::new_session() {
+            Ok(c) => c,
+            Err(e) => {
+                return DbusProbeResult::ConnectError {
+                    name: e.name().map(str::to_string),
+                    message: e.message().map(str::to_string),
+                };
+            }
+        };
+        let proxy = conn.with_proxy("org.freedesktop.DBus", "/org/freedesktop/DBus", PROBE_TIMEOUT);
+        let owned: (bool,) = match proxy.method_call(
+            "org.freedesktop.DBus",
+            "NameHasOwner",
+            (SECRETS_BUS_NAME,),
+        ) {
+            Ok(v) => v,
+            Err(_) => return DbusProbeResult::QueryError,
+        };
+        if owned.0 {
+            return DbusProbeResult::Owned;
+        }
+        let activatable: (Vec<String>,) =
+            match proxy.method_call("org.freedesktop.DBus", "ListActivatableNames", ()) {
+                Ok(v) => v,
+                Err(_) => return DbusProbeResult::QueryError,
+            };
+        DbusProbeResult::NotOwned {
+            activatable: activatable.0,
+        }
+    }
+
+    fn probe_secret_service() -> SecretServiceState {
+        classify_dbus_probe(current_bus_hints(), || {
+            let (tx, rx) = mpsc::sync_channel(1);
+            let spawned = std::thread::Builder::new()
+                .name("hc-dbus-probe".into())
+                .spawn(move || {
+                    let _ = tx.send(run_probe_blocking());
+                });
+            if spawned.is_err() {
+                return DbusProbeResult::QueryError;
+            }
+            match rx.recv_timeout(PROBE_TIMEOUT) {
+                Ok(res) => res,
+                Err(_) => DbusProbeResult::TimedOut,
+            }
+        })
+    }
+
+    fn stat_info(st: &libc::stat) -> StatInfo {
+        let kind = st.st_mode & libc::S_IFMT;
+        StatInfo {
+            is_dir: kind == libc::S_IFDIR,
+            is_reg: kind == libc::S_IFREG,
+            is_symlink: kind == libc::S_IFLNK,
+            uid: st.st_uid,
+            mode: st.st_mode,
+            nlink: st.st_nlink as u64,
+            size: st.st_size as i64,
+        }
+    }
+
+    pub(crate) fn judge_store_dir(euid: u32, st: StatInfo) -> Result<(), &'static str> {
+        if !st.is_dir || st.is_symlink {
+            return Err("key store directory is not a real directory");
+        }
+        if st.uid != euid {
+            return Err("key store directory is not owned by the effective user");
+        }
+        if (st.mode & 0o7777) != 0o700 {
+            return Err("key store directory must have 0700 permissions");
+        }
         Ok(())
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn judge_key_file(_euid: u32, _st: StatInfo) -> Result<(), &'static str> {
+    pub(crate) fn judge_key_file(euid: u32, st: StatInfo) -> Result<(), &'static str> {
+        if !st.is_reg || st.is_symlink || st.is_dir {
+            return Err("key path is not a regular file");
+        }
+        if st.uid != euid {
+            return Err("key file is not owned by the effective user");
+        }
+        if (st.mode & 0o7777) != 0o600 {
+            return Err("key file must have 0600 permissions");
+        }
+        if st.nlink != 1 {
+            return Err("key file must not have additional hard links");
+        }
+        if st.size < 0 || (st.size as u64) > MAX_FILE_BYTES {
+            return Err("key file exceeds 64 KiB size limit");
+        }
         Ok(())
+    }
+
+    fn wipe_bytes(buf: &mut [u8]) {
+        for b in buf.iter_mut() {
+            unsafe { std::ptr::write_volatile(b, 0) };
+        }
+        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn fstat_fd(fd: i32) -> Result<StatInfo, String> {
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        if unsafe { libc::fstat(fd, &mut st) } != 0 {
+            return Err(format!("couldn't stat key store path: {}", std::io::Error::last_os_error()));
+        }
+        Ok(stat_info(&st))
+    }
+
+    fn c_path(p: &Path) -> Result<CString, String> {
+        CString::new(p.as_os_str().as_bytes())
+            .map_err(|_| "key store path contains NUL byte".to_string())
+    }
+
+    /// Open `<dir>/identity-store` with `O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC` and
+    /// validate euid ownership and exact `0700` mode. Never chmods or deletes an
+    /// existing path. When `create` is true, creates missing `identity-store` with
+    /// mode `0700`; when false, missing returns `Ok(None)`.
+    fn open_store_dir(dir: &Path, create: bool) -> Result<Option<OwnedFd>, String> {
+        let store_path = dir.join(STORE_DIR);
+        let c_store = c_path(&store_path)?;
+        let euid = unsafe { libc::geteuid() };
+        let flags = libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        let mut fd = unsafe { libc::open(c_store.as_ptr(), flags) };
+        if fd < 0 {
+            let err = std::io::Error::last_os_error();
+            match err.raw_os_error() {
+                Some(libc::ENOENT) if !create => return Ok(None),
+                Some(libc::ENOENT) => {
+                    std::fs::create_dir_all(dir)
+                        .map_err(|e| format!("couldn't prepare data directory: {e}"))?;
+                    if unsafe { libc::mkdir(c_store.as_ptr(), 0o700) } != 0 {
+                        let mk_err = std::io::Error::last_os_error();
+                        if mk_err.raw_os_error() != Some(libc::EEXIST) {
+                            return Err(format!("couldn't create key store directory: {mk_err}"));
+                        }
+                    }
+                    fd = unsafe { libc::open(c_store.as_ptr(), flags) };
+                    if fd < 0 {
+                        let open_err = std::io::Error::last_os_error();
+                        return Err(format!("couldn't open key store directory: {open_err}"));
+                    }
+                }
+                Some(libc::ELOOP) | Some(libc::ENOTDIR) => {
+                    return Err("key store directory is not a real directory".into());
+                }
+                _ => return Err(format!("couldn't open key store directory: {err}")),
+            }
+        }
+        let owned = unsafe { OwnedFd::from_raw_fd(fd) };
+        let st = fstat_fd(owned.as_raw_fd())?;
+        judge_store_dir(euid, st).map_err(str::to_string)?;
+        Ok(Some(owned))
+    }
+
+    fn file_load(dir: &Path) -> Main {
+        let dir_fd = match open_store_dir(dir, false) {
+            Ok(Some(fd)) => fd,
+            Ok(None) => return Main::Missing("no permissions-only key file".into()),
+            Err(why) => {
+                keylog::note(dir, &why, &[Fact::LinuxKeyFileError]);
+                return Main::Failed(why);
+            }
+        };
+        let key_name = CString::new(KEY_FILE).unwrap();
+        let fd = unsafe {
+            libc::openat(
+                dir_fd.as_raw_fd(),
+                key_name.as_ptr(),
+                libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK,
+            )
+        };
+        if fd < 0 {
+            let err = std::io::Error::last_os_error();
+            return match err.raw_os_error() {
+                Some(libc::ENOENT) => Main::Missing("no permissions-only key file".into()),
+                Some(libc::ELOOP) => {
+                    let why = "key file is a symlink".to_string();
+                    keylog::note(dir, &why, &[Fact::LinuxKeyFileError]);
+                    Main::Failed(why)
+                }
+                _ => {
+                    let why = format!("couldn't open permissions-only key file: {err}");
+                    keylog::note(dir, &why, &[Fact::LinuxKeyFileError]);
+                    Main::Failed(why)
+                }
+            };
+        }
+        let file = unsafe { std::fs::File::from_raw_fd(fd) };
+        let euid = unsafe { libc::geteuid() };
+        let st = match fstat_fd(file.as_raw_fd()) {
+            Ok(st) => st,
+            Err(why) => {
+                keylog::note(dir, &why, &[Fact::LinuxKeyFileError]);
+                return Main::Failed(why);
+            }
+        };
+        if let Err(why) = judge_key_file(euid, st) {
+            keylog::note(dir, why, &[Fact::LinuxKeyFileError]);
+            return Main::Failed(why.into());
+        }
+        let mut buf = Vec::new();
+        if let Err(e) = file.take(MAX_FILE_BYTES + 1).read_to_end(&mut buf) {
+            wipe_bytes(&mut buf);
+            let why = format!("couldn't read permissions-only key file: {e}");
+            keylog::note(dir, &why, &[Fact::LinuxKeyFileError]);
+            return Main::Failed(why);
+        }
+        if (buf.len() as u64) > MAX_FILE_BYTES {
+            wipe_bytes(&mut buf);
+            let why = "key file exceeds 64 KiB size limit".to_string();
+            keylog::note(dir, &why, &[Fact::LinuxKeyFileError]);
+            return Main::Failed(why);
+        }
+        let decoded = std::str::from_utf8(&buf).ok().and_then(decode);
+        wipe_bytes(&mut buf);
+        match decoded {
+            Some(me) => Main::Found(me),
+            None => {
+                let why = "the permissions-only key file is damaged".to_string();
+                keylog::note(dir, &why, &[Fact::LinuxKeyFileError]);
+                Main::Failed(why)
+            }
+        }
+    }
+
+    fn file_save(dir: &Path, me: &Identity) -> Result<(), String> {
+        let dir_fd = open_store_dir(dir, true)
+            .inspect_err(|why| keylog::note(dir, why, &[Fact::LinuxKeyFileError]))?
+            .ok_or_else(|| "key store directory missing".to_string())?;
+        let key_name = CString::new(KEY_FILE).unwrap();
+        let tmp_name = CString::new(TMP_FILE).unwrap();
+        let euid = unsafe { libc::geteuid() };
+
+        // Remove any stale tmp before creating a fresh 0600 temp file so an
+        // existing looser-mode or hard-linked tmp can never be written to.
+        if unsafe { libc::unlinkat(dir_fd.as_raw_fd(), tmp_name.as_ptr(), 0) } != 0 {
+            let err = std::io::Error::last_os_error();
+            if err.raw_os_error() != Some(libc::ENOENT) {
+                let why = format!("couldn't clear stale key temp file: {err}");
+                keylog::note(dir, &why, &[Fact::LinuxKeyFileError]);
+                return Err(why);
+            }
+        }
+
+        let fd = unsafe {
+            libc::openat(
+                dir_fd.as_raw_fd(),
+                tmp_name.as_ptr(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_TRUNC | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                0o600 as libc::c_uint,
+            )
+        };
+        if fd < 0 {
+            let why = format!("couldn't create permissions-only key temp file: {}", std::io::Error::last_os_error());
+            keylog::note(dir, &why, &[Fact::LinuxKeyFileError]);
+            return Err(why);
+        }
+        let mut tmp_file = unsafe { std::fs::File::from_raw_fd(fd) };
+
+        let result: Result<(), String> = (|| {
+            let st = fstat_fd(tmp_file.as_raw_fd())?;
+            if !st.is_reg || st.uid != euid || st.nlink != 1 || (st.mode & 0o7777) != 0o600 {
+                return Err("key temp file failed ownership or 0600 permission check".into());
+            }
+            let mut bytes = encode(me).into_bytes();
+            let write_res = tmp_file
+                .write_all(&bytes)
+                .and_then(|()| tmp_file.sync_all())
+                .map_err(|e| format!("couldn't write permissions-only key file: {e}"));
+            wipe_bytes(&mut bytes);
+            write_res?;
+            drop(tmp_file);
+            if unsafe {
+                libc::renameat(
+                    dir_fd.as_raw_fd(),
+                    tmp_name.as_ptr(),
+                    dir_fd.as_raw_fd(),
+                    key_name.as_ptr(),
+                )
+            } != 0
+            {
+                return Err(format!(
+                    "couldn't replace permissions-only key file: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            if unsafe { libc::fsync(dir_fd.as_raw_fd()) } != 0 {
+                return Err(format!(
+                    "couldn't sync key store directory: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            Ok(())
+        })();
+
+        if let Err(why) = result {
+            let _ = unsafe { libc::unlinkat(dir_fd.as_raw_fd(), tmp_name.as_ptr(), 0) };
+            keylog::note(dir, &why, &[Fact::LinuxKeyFileError]);
+            return Err(why);
+        }
+        Ok(())
+    }
+
+    fn file_forget(dir: &Path) -> Result<(), String> {
+        let Some(dir_fd) = open_store_dir(dir, false)
+            .inspect_err(|why| keylog::note(dir, why, &[Fact::LinuxKeyFileError]))?
+        else {
+            return Ok(());
+        };
+        for name in [KEY_FILE, TMP_FILE] {
+            let c_name = CString::new(name).unwrap();
+            if unsafe { libc::unlinkat(dir_fd.as_raw_fd(), c_name.as_ptr(), 0) } != 0 {
+                let err = std::io::Error::last_os_error();
+                if err.raw_os_error() != Some(libc::ENOENT) {
+                    let why = format!("couldn't remove {name}: {err}");
+                    keylog::note(dir, &why, &[Fact::LinuxKeyFileError]);
+                    return Err(why);
+                }
+            }
+        }
+        let _ = unsafe { libc::fsync(dir_fd.as_raw_fd()) };
+        Ok(())
+    }
+
+    fn log_backend_choice(dir: &Path, state: SecretServiceState) {
+        let (msg, fact) = match state {
+            SecretServiceState::Present => (
+                "Linux key backend: system keyring (Secret Service present)",
+                Fact::LinuxBackendKeyringPresent,
+            ),
+            SecretServiceState::Indeterminate => (
+                "Linux key backend: system keyring (Secret Service probe indeterminate)",
+                Fact::LinuxBackendKeyringIndeterminate,
+            ),
+            SecretServiceState::Absent => (
+                "Linux key backend: permissions-only file (no Secret Service)",
+                Fact::LinuxBackendFileAbsent,
+            ),
+        };
+        keylog::note(dir, msg, &[fact]);
+    }
+
+    fn current_state() -> SecretServiceState {
+        #[cfg(test)]
+        if let Some(s) = TEST_OVERRIDE.with(|c| c.borrow().as_ref().map(|o| o.state)) {
+            return s;
+        }
+        *BACKEND.get_or_init(probe_secret_service)
+    }
+
+    fn ensure_backend_logged(dir: &Path) -> SecretServiceState {
+        #[cfg(test)]
+        {
+            let override_state = TEST_OVERRIDE.with(|c| {
+                c.borrow().as_ref().map(|o| {
+                    let need_log = !o.logged.replace(true);
+                    (o.state, need_log)
+                })
+            });
+            if let Some((state, need_log)) = override_state {
+                if need_log {
+                    log_backend_choice(dir, state);
+                }
+                return state;
+            }
+        }
+        let state = *BACKEND.get_or_init(probe_secret_service);
+        LOGGED_BACKEND.get_or_init(|| log_backend_choice(dir, state));
+        state
+    }
+
+    pub(super) fn key_storage() -> &'static str {
+        match current_state() {
+            SecretServiceState::Absent => "file",
+            SecretServiceState::Present | SecretServiceState::Indeterminate => "keyring",
+        }
+    }
+
+    pub(super) fn store_name() -> &'static str {
+        match current_state() {
+            SecretServiceState::Absent => "the permissions-only key file",
+            SecretServiceState::Present | SecretServiceState::Indeterminate => "the keyring",
+        }
+    }
+
+    pub(super) fn load_main(dir: &Path) -> Main {
+        if ensure_backend_logged(dir) == SecretServiceState::Absent {
+            return file_load(dir);
+        }
+        #[cfg(test)]
+        if let Some(m) = TEST_OVERRIDE.with(|c| c.borrow().as_ref().map(|o| o.keyring.get(dir))) {
+            return m;
+        }
+        match entry(dir) {
+            Ok(e) => classify(e.get_password()),
+            Err(e) => Main::Failed(e),
+        }
+    }
+
+    pub(super) fn save_main(dir: &Path, me: &Identity) -> Result<(), String> {
+        if ensure_backend_logged(dir) == SecretServiceState::Absent {
+            return file_save(dir, me);
+        }
+        #[cfg(test)]
+        if let Some(r) = TEST_OVERRIDE.with(|c| c.borrow().as_ref().map(|o| o.keyring.set(dir, me))) {
+            return r;
+        }
+        entry(dir)?
+            .set_password(&encode(me))
+            .map_err(|e| e.to_string())
+    }
+
+    pub(super) fn forget_main(dir: &Path) -> Result<(), String> {
+        if ensure_backend_logged(dir) == SecretServiceState::Absent {
+            return file_forget(dir);
+        }
+        #[cfg(test)]
+        if let Some(r) = TEST_OVERRIDE.with(|c| c.borrow().as_ref().map(|o| o.keyring.delete(dir))) {
+            return r;
+        }
+        match entry(dir)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
     }
 
     #[cfg(test)]
@@ -290,7 +804,7 @@ pub(crate) mod linux {
         pub(crate) fn calls(&self) -> usize {
             self.calls.load(std::sync::atomic::Ordering::SeqCst)
         }
-        pub(crate) fn get(&self, dir: &Path) -> Main {
+        fn get(&self, dir: &Path) -> Main {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let k = dir.to_string_lossy().into_owned();
             match self.entries.lock().unwrap().get(&k).cloned() {
@@ -318,8 +832,9 @@ pub(crate) mod linux {
 
     #[cfg(test)]
     struct TestOverride {
-        _state: SecretServiceState,
+        state: SecretServiceState,
         keyring: MockKeyring,
+        logged: Cell<bool>,
     }
 
     #[cfg(test)]
@@ -339,45 +854,15 @@ pub(crate) mod linux {
                 TEST_OVERRIDE.with(|c| *c.borrow_mut() = None);
             }
         }
-        TEST_OVERRIDE.with(|c| *c.borrow_mut() = Some(TestOverride { _state: state, keyring }));
+        TEST_OVERRIDE.with(|c| {
+            *c.borrow_mut() = Some(TestOverride {
+                state,
+                keyring,
+                logged: Cell::new(false),
+            });
+        });
         let _reset = Reset;
         f()
-    }
-
-    pub(super) fn key_storage() -> &'static str {
-        "keyring"
-    }
-
-    pub(super) fn load_main(dir: &Path) -> Main {
-        #[cfg(test)]
-        if let Some(m) = TEST_OVERRIDE.with(|c| c.borrow().as_ref().map(|o| o.keyring.get(dir))) {
-            return m;
-        }
-        match entry(dir) {
-            Ok(e) => classify(e.get_password()),
-            Err(e) => Main::Failed(e),
-        }
-    }
-
-    pub(super) fn save_main(dir: &Path, me: &Identity) -> Result<(), String> {
-        #[cfg(test)]
-        if let Some(r) = TEST_OVERRIDE.with(|c| c.borrow().as_ref().map(|o| o.keyring.set(dir, me))) {
-            return r;
-        }
-        entry(dir)?
-            .set_password(&encode(me))
-            .map_err(|e| e.to_string())
-    }
-
-    pub(super) fn forget_main(dir: &Path) -> Result<(), String> {
-        #[cfg(test)]
-        if let Some(r) = TEST_OVERRIDE.with(|c| c.borrow().as_ref().map(|o| o.keyring.delete(dir))) {
-            return r;
-        }
-        match entry(dir)?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(e.to_string()),
-        }
     }
 }
 

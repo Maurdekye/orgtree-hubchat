@@ -39,6 +39,14 @@ pub enum Fact {
     OtherLocalDataRemoved,
     KeySavedNew,
     KeySavedBrought,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    LinuxBackendKeyringPresent,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    LinuxBackendKeyringIndeterminate,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    LinuxBackendFileAbsent,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    LinuxKeyFileError,
 }
 
 impl Fact {
@@ -61,6 +69,10 @@ impl Fact {
             Fact::OtherLocalDataRemoved => "another identity's local data removed before taking this one",
             Fact::KeySavedNew => "key saved: a new identity",
             Fact::KeySavedBrought => "key saved: an identity brought to this device",
+            Fact::LinuxBackendKeyringPresent => "Linux key backend: system keyring (Secret Service present)",
+            Fact::LinuxBackendKeyringIndeterminate => "Linux key backend: system keyring (Secret Service probe indeterminate)",
+            Fact::LinuxBackendFileAbsent => "Linux key backend: permissions-only file (no Secret Service)",
+            Fact::LinuxKeyFileError => "the permissions-only key file could not be used",
         }
     }
 }

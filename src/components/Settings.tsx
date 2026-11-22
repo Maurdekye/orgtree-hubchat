@@ -576,11 +576,18 @@ function SamsungHide() {
 function Privacy() {
   const snap = useSnap();
   const on = !!snap.state?.read_receipts;
+  const ks = snap.state?.key_storage;
+  const ksLine = ks === "file"
+    ? "Identity key: file protected by your account's permissions (no Secret Service in this session)"
+    : ks === "keyring"
+      ? "Identity key: system keyring"
+      : null;
   const set = async (v: boolean) => { try { await api.setReadReceipts(v); await refreshState(); } catch (e) { toast(errText(e)); } };
   return (
     <Sec first>
       <Card>
         <ToggleRow icon="done_all" t1="Send read receipts" t2="Off: people and agents see your messages as delivered, never read. You still see theirs." on={on} onChange={set} label="Send read receipts" />
+        {ksLine ? <Row icon="key" t1={ksLine} /> : null}
         <Row icon="contacts" t1="Directory" t2="Everyone on your hubs finds you in their directory: your name, address and about line. Being on a hub means being listed." />
         <Row icon="person" t1="Online status" t2="The hub shows you as online while Hubchat is connected, to everyone on that hub, and as busy once Hubchat hasn't been in front on any of your devices for an hour. This can't be hidden." />
         <Row icon="privacy" t1="Who can message you" t2="Anyone on your hubs who has your address." />

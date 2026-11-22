@@ -81,6 +81,9 @@ pub struct State {
     key_lost: Option<core::KeyLost>,
     /// The key was restored from Hubchat's backup; say so once.
     key_restored: bool,
+    /// Linux only: where this session keeps the identity key ("keyring" or "file").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key_storage: Option<&'static str>,
 }
 
 fn meta(c: &Core, k: &str) -> String {
@@ -112,6 +115,10 @@ pub fn hc_state() -> R<State> {
         hubs: engine.map(|e| e.hub_statuses()).unwrap_or_default(),
         key_lost: c.key_lost(),
         key_restored: meta(c, "key.restored") == "yes",
+        #[cfg(target_os = "linux")]
+        key_storage: Some(crate::secrets::linux_key_storage()),
+        #[cfg(not(target_os = "linux"))]
+        key_storage: None,
         platform: if cfg!(target_os = "android") {
             "android"
         } else {
@@ -183,6 +190,21 @@ pub fn hc_retry_key() -> R<()> {
 #[tauri::command]
 pub fn hc_start_over() -> R<()> {
     core::get()?.start_over()
+}
+
+/// The lost-key screen (Linux): adopt the identity currently in this session's
+/// key store after confirming the store still holds `expected`.
+#[tauri::command]
+pub fn hc_use_found_identity(expected: String) -> R<()> {
+    #[cfg(target_os = "linux")]
+    {
+        core::get()?.use_found_identity(&expected)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = expected;
+        Err("only available on Linux".into())
+    }
 }
 
 /// The notice that the key was restored from Hubchat's backup was seen.

@@ -23,7 +23,7 @@ import { usePendingLink } from "../lib/visibility";
 import { isSetupLink, scanSetup, startSetup, useLinkInstead } from "../lib/setup";
 import { formatCode } from "./LinkDevice";
 import { openGuide } from "./Guide";
-import { NoteCard, QR, useNow, usePlatform, useWeb } from "./ui";
+import { Confirm, NoteCard, QR, useNow, usePlatform, useWeb } from "./ui";
 import footerCrop from "../assets/desktop-footer-qr.png";
 import footerQr from "../assets/desktop-footer-qr.json";
 
@@ -95,9 +95,12 @@ export function LostKey({ lost, onPick }: { lost: KeyLost; onPick: (s: "method" 
   const device = web ? "browser" : platform === "android" ? "phone" : "PC";
   const windows = !web && platform === "desktop" && /Windows/.test(navigator.userAgent);
   const [confirm, setConfirm] = useState(false);
+  const [useFoundAsk, setUseFoundAsk] = useState(false);
   const [busy, setBusy] = useState(false);
   const [tries, setTries] = useState(0);
+  const found = lost.found ?? null;
   const who = lost.address ? <b className="mono inl">{lost.address}</b> : "your identity";
+  const foundWho = found ? <b className="mono inl">{found}</b> : null;
   // a key store that doesn't answer may only be slow (just after signing
   // in): ask again every 5 s for a minute, and on Try again
   const retrying = lost.unreadable && tries < 12;
@@ -114,6 +117,19 @@ export function LostKey({ lost, onPick }: { lost: KeyLost; onPick: (s: "method" 
   const startOver = async () => {
     setBusy(true);
     try { await api.startOver(); await refreshAll(); } catch (e) { toast(errText(e)); setBusy(false); }
+  };
+  const useFound = async () => {
+    if (!found) return;
+    setBusy(true);
+    try {
+      await api.useFoundIdentity(found);
+      await refreshAll();
+    } catch (e) {
+      toast(errText(e));
+      setUseFoundAsk(false);
+      setBusy(false);
+      await refreshAll();
+    }
   };
   if (confirm) {
     return (
@@ -132,7 +148,16 @@ export function LostKey({ lost, onPick }: { lost: KeyLost; onPick: (s: "method" 
     <Frame step="welcome" flow="new" actions={[]}>
       <div className="lk">
         <Icon name="key" />
-        {lost.unreadable ? <>
+        {found ? <>
+          <h2>Different identity in this session's key store</h2>
+          <p className="lead">This device's chats belong to {who}. The key store in this session holds a different identity, {foundWho}.</p>
+          <div className="probe-card">
+            <Icon name="key" />
+            <div>Check this session's key store again if you switched or unlocked it.</div>
+            <button className="btn sm" onClick={() => void retry()} disabled={busy}>Try again</button>
+          </div>
+          <div className="ob-sub">Choose which identity to use</div>
+        </> : lost.unreadable ? <>
           <h2>Hubchat can't read its key yet</h2>
           <p className="lead">{windows ? "Windows' Credential Manager" : platform === "android" ? "Android" : "The keychain"} isn't answering, so Hubchat can't open the key for {who} yet. This can happen just after you sign in. Your chats are still on this {device}.</p>
           <div className={"probe-card" + (retrying ? " busy" : "")}>
@@ -147,11 +172,17 @@ export function LostKey({ lost, onPick }: { lost: KeyLost; onPick: (s: "method" 
           <div className="ob-sub">Bring your key back</div>
         </>}
         <div className="methods">
+          {found ? <Opt cls="method" ic="person" t={`Use ${found} here`} s={`Remove ${lost.address ?? "the previous identity"}'s chats, hubs and drafts from this ${device} and sign in as ${found}.`} onClick={() => setUseFoundAsk(true)} /> : null}
           <Opt cls="method" ic="link" t="Link from your other device" s={"Your phone, or another device with your identity, approves this " + device + ". Your key comes back, and your chats stay."} onClick={() => onPick("method")} />
           <Opt cls="method" ic="key" t="Recovery words" s="Type the 24 words you saved when you made your identity." onClick={() => onPick("restore")} />
-          {retrying ? null : <Opt cls="method" ic="add" t="Start over with a new identity" s={"This " + device + "'s chats, hubs and settings are removed. Your address keeps working on your other devices."} onClick={() => setConfirm(true)} />}
+          {retrying || found ? null : <Opt cls="method" ic="add" t="Start over with a new identity" s={"This " + device + "'s chats, hubs and settings are removed. Your address keeps working on your other devices."} onClick={() => setConfirm(true)} />}
         </div>
       </div>
+      {useFoundAsk && found ? (
+        <Confirm title={`Use ${found} here?`} okLabel={`Use ${found} here`} danger busy={busy} onOk={() => void useFound()} onCancel={() => { if (!busy) setUseFoundAsk(false); }}>
+          <p>This removes {who}'s chats, hubs and drafts from this device. {who} keeps working on its other devices and through its recovery words.</p>
+        </Confirm>
+      ) : null}
     </Frame>
   );
 }
@@ -224,7 +255,7 @@ function ReviewStep({ ev, flow, busy, err, onConfirm, onCancel }: { ev: Arrived;
  *  or typed) this device joins that code instead and shows no code of its
  *  own; `other` then offers a new scan (or a new typed code) when it fails
  *  or runs out. */
-function LinkWait({ hub, hubName, name, code, aliases, other, onDone, onCancel, step, flow }: { hub: string; hubName: string; name: string; code?: string; aliases?: string[]; other?: Action; onDone: (address: string) => void; onCancel: () => void; step: Step; flow: Flow }) {
+function LinkWait({ hub, hubName, name, code, aliases, other, confirmReplace, onDone, onCancel, step, flow }: { hub: string; hubName: string; name: string; code?: string; aliases?: string[]; other?: Action; confirmReplace?: (run: () => void) => void; onDone: (address: string) => void; onCancel: () => void; step: Step; flow: Flow }) {
   const platform = usePlatform();
   const [st, setSt] = useState<Wait>({ k: "starting" });
   const [attempt, setAttempt] = useState(0);
@@ -288,7 +319,7 @@ function LinkWait({ hub, hubName, name, code, aliases, other, onDone, onCancel, 
   const web = useWeb();
   const device = web ? "browser" : platform === "android" ? "phone" : "PC";
   const otherDev = platform === "android" ? "your PC" : "your other device";
-  if (st.k === "review") return <ReviewStep ev={st.ev} flow={flow} busy={st.busy} err={st.err} onConfirm={(urls) => void confirm(urls)} onCancel={cancel} />;
+  if (st.k === "review") return <ReviewStep ev={st.ev} flow={flow} busy={st.busy} err={st.err} onConfirm={(urls) => (confirmReplace ? confirmReplace(() => void confirm(urls)) : void confirm(urls))} onCancel={cancel} />;
   if (code) {
     let jb: ReactNode;
     if (st.k === "waiting") {
@@ -420,6 +451,25 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
   const [joinProbe, setJoinProbe] = useState<Probe | null>(null);
   const [code, setCode] = useState("");
   const otherDev = platform === "android" ? "your PC" : "your other device";
+  const replaceFound = snap.state?.key_lost?.found ?? null;
+  const replaceOwner = snap.state?.key_lost?.address ?? "your identity";
+  const [replaceRun, setReplaceRun] = useState<(() => void) | null>(null);
+  const confirmReplace = (run: () => void) => {
+    if (replaceFound) setReplaceRun(() => run);
+    else run();
+  };
+  const replaceDialog = replaceRun && replaceFound ? (
+    <Confirm
+      title="Replace key in this session's key store?"
+      okLabel="Replace key"
+      danger
+      busy={busy}
+      onOk={() => { const fn = replaceRun; setReplaceRun(null); fn(); }}
+      onCancel={() => setReplaceRun(null)}
+    >
+      <p>This replaces <b className="mono inl">{replaceFound}</b> in this session's key store with <b className="mono inl">{replaceOwner}</b>.</p>
+    </Confirm>
+  ) : null;
 
   const finish = async () => { setOnboarding(false); await refreshAll(); };
   useEffect(() => {
@@ -482,7 +532,14 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
     try {
       const t = (await scanQr(MOCK_LINK_QR))?.trim();
       if (!t) { setBusy(false); return; }
-      if (/^hubchat-key/i.test(t)) { setFlow("qr"); const a = await api.restoreQr(t); await arrived(a); return; }
+      if (/^hubchat-key/i.test(t)) {
+        setBusy(false);
+        confirmReplace(() => {
+          setBusy(true); setErr(null); setFlow("qr");
+          void api.restoreQr(t).then(arrived, (e) => { setErr(errText(e)); setBusy(false); });
+        });
+        return;
+      }
       if (chatLinkTarget(t) !== null) {
         setErr("That's someone's chat QR code, not a link code. On your PC, click the QR button at the bottom of Hubchat's chat list, then scan the code it shows.");
         setBusy(false); return;
@@ -680,7 +737,7 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
   }
 
   if (step === "linkcode" && linkHub) {
-    return <LinkWait step={step} flow={flow} hub={linkHub.url} hubName={linkHub.name} name={devName.trim()} onDone={(a) => void arrived(a)} onCancel={() => go("method")} />;
+    return <><LinkWait step={step} flow={flow} hub={linkHub.url} hubName={linkHub.name} name={devName.trim()} confirmReplace={confirmReplace} onDone={(a) => void arrived(a)} onCancel={() => go("method")} />{replaceDialog}</>;
   }
 
   if (step === "typecode") {
@@ -750,7 +807,7 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
     const other: Action | undefined = flow === "type"
       ? { label: "Type a new code", onClick: () => { setCode(""); go("typecode"); } }
       : platform === "android" ? { label: <><Icon name="camera" />Scan again</>, onClick: () => { go("scan"); void scanLink(); } } : undefined;
-    return <LinkWait step={step} flow={flow} hub={join.ok.url} hubName={join.ok.name} name={devName.trim()} code={join.code} aliases={join.hubs} other={other} onDone={(a) => void arrived(a)} onCancel={() => go("method")} />;
+    return <><LinkWait step={step} flow={flow} hub={join.ok.url} hubName={join.ok.name} name={devName.trim()} code={join.code} aliases={join.hubs} other={other} confirmReplace={confirmReplace} onDone={(a) => void arrived(a)} onCancel={() => go("method")} />{replaceDialog}</>;
   }
 
   if (step === "scan") {
@@ -770,6 +827,7 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
       );
     }
     return (
+      <>
       <Frame step={step} flow={flow} back={() => go("method")} actions={[{ label: busy ? "Scanning…" : <><Icon name="camera" />Open the camera</>, primary: true, disabled: busy, onClick: () => void scanLink() }]}>
         <h2>Scan the QR code from your other device</h2>
         <p className="lead">On your PC, open Hubchat and click the QR button at the bottom of the chat list (or <b>Settings › Devices › Link a device</b>). Then scan the code it shows.</p>
@@ -778,6 +836,8 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
           : <div className="help" style={{ marginTop: 12, ...pad(platform) }}>A QR code of your key (<b>Link a device › My key as a QR code</b>) works here too, with no network.</div>}
         <div className="ob-alt"><button className="link" onClick={() => { setCode(""); pick("type", "typecode"); }}>Type the code instead</button></div>
       </Frame>
+      {replaceDialog}
+      </>
     );
   }
 
@@ -805,8 +865,10 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
       try { const a = await api.keyFileImport(keyFile, pass); await arrived(a); }
       catch (e) { setErr(errText(e)); setBusy(false); }
     };
+    const startUnlock = () => { if (!keyFile || !pass || busy) return; confirmReplace(() => void unlock()); };
     return (
-      <Frame step={step} flow={flow} back={() => go("method")} wide actions={keyFile ? [{ label: busy ? "Unlocking…" : <><Icon name="lock" />Unlock</>, primary: true, disabled: !pass || busy, onClick: unlock }] : []}>
+      <>
+      <Frame step={step} flow={flow} back={() => go("method")} wide actions={keyFile ? [{ label: busy ? "Unlocking…" : <><Icon name="lock" />Unlock</>, primary: true, disabled: !pass || busy, onClick: startUnlock }] : []}>
         <h2>Open your key file</h2>
         <p className="lead">A key file saved from Hubchat holds your key, your id, your profile and your hubs, locked with the passphrase you chose.</p>
         {!keyFile
@@ -817,12 +879,14 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
                 <label htmlFor="ob-pass">Passphrase</label>
                 <label className={"input" + (err ? " bad" : "")}><Icon name="lock" />
                   <input id="ob-pass" type="password" value={pass} autoFocus placeholder="The passphrase you chose when saving it" autoComplete="off"
-                    onChange={(e) => { setPass(e.target.value); setErr(null); }} onKeyDown={(e) => { if (e.key === "Enter") void unlock(); }} />
+                    onChange={(e) => { setPass(e.target.value); setErr(null); }} onKeyDown={(e) => { if (e.key === "Enter") startUnlock(); }} />
                 </label>
               </div>
             </>}
         {err ? <div className="probe-card bad"><Icon name="error" /><div><b>Couldn't open it</b>{err}</div></div> : null}
       </Frame>
+      {replaceDialog}
+      </>
     );
   }
 
@@ -852,8 +916,10 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
     catch (e) { setErr(errText(e)); }
     finally { setBusy(false); }
   };
+  const startRestore = () => { if (!n || busy || readingWords) return; confirmReplace(() => void doRestore()); };
   return (
-    <Frame step={step} flow={flow} back={busy ? undefined : () => go("method")} wide actions={[{ label: busy ? "Checking…" : "Continue", primary: true, disabled: !n || busy || readingWords, onClick: doRestore }]}>
+    <>
+    <Frame step={step} flow={flow} back={busy ? undefined : () => go("method")} wide actions={[{ label: busy ? "Checking…" : "Continue", primary: true, disabled: !n || busy || readingWords, onClick: startRestore }]}>
       <h2>Recovery words</h2>
       <p className="lead">Your words carry your key and your id, so your address comes back exactly as it was.</p>
       <div className="field">
@@ -871,6 +937,8 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
         <span role={err ? "alert" : "status"}>{err ? <><Icon name="error" />{err}</> : readingWords ? "Reading recovery words…" : n + " of 24 words"}</span>
       </div>
     </Frame>
+    {replaceDialog}
+    </>
   );
 }
 
