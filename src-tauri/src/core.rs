@@ -188,6 +188,10 @@ pub struct KeyLost {
     address: Option<String>,
     /// The key store didn't answer: it may still have the key (try again).
     unreadable: bool,
+    /// Linux only: the key store in this session holds a different identity
+    /// than this device's local chats. Always None off Linux.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    found: Option<String>,
 }
 
 /// Whether adopting `new` must first remove this device's local data: never
@@ -641,6 +645,7 @@ impl Core {
         *self.key_lost.lock().unwrap() = self.had_identity().then(|| KeyLost {
             address: self.store.meta("identity.address").ok().flatten(),
             unreadable,
+            found: None,
         });
         self.host.platform.status("Set up Hubchat to connect");
         // Keep the lost-key UI available while a later cold attach retries the key.
@@ -655,6 +660,11 @@ impl Core {
 
     pub fn key_lost(&self) -> Option<KeyLost> {
         self.key_lost.lock().unwrap().clone()
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn use_found_identity(&self, _expected: &str) -> Result<(), String> {
+        Err("not implemented".into())
     }
 
     /// The local data belongs to an identity: it ran here (device.id is made
@@ -826,6 +836,213 @@ mod key_tests {
         // can't be its owner; one brought here may be, so it is kept
         assert!(must_wipe(None, true, "pat.222222", true));
         assert!(!must_wipe(None, true, "alex.111111", false));
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_r5_core_tests {
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex, OnceLock};
+
+    use hubchat_core::store::{NewOutgoing, Store};
+    use hubchat_core::Identity;
+
+    use super::{Core, Platform, ShellHost};
+    use crate::secrets::linux::{with_test_backend, MockKeyring, SecretServiceState};
+
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+
+    struct StubPlatform(PathBuf);
+    impl Platform for StubPlatform {
+        fn notify(&self, _: &str, _: &str, _: &str, _: bool) {}
+        fn status(&self, _: &str) {}
+        fn open_source(&self, s: &str) -> std::io::Result<std::fs::File> {
+            std::fs::File::open(s)
+        }
+        fn download_dir(&self) -> PathBuf {
+            self.0.join("downloads")
+        }
+    }
+
+    fn make_core(label: &str) -> (Core, tokio::runtime::Runtime, PathBuf) {
+        let n = SEQ.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "hubchat-r5-core-{label}-{}-{n}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Arc::new(Store::open(&dir.join("hubchat.sqlite3")).unwrap());
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let host = Arc::new(ShellHost {
+            staging: dir.join("outbox"),
+            app: OnceLock::new(),
+            platform: Arc::new(StubPlatform(dir.clone())),
+            foreground: AtomicBool::new(false),
+            open_chat: Mutex::new(None),
+            store: store.clone(),
+            notify_on: AtomicBool::new(false),
+            notify_text: AtomicBool::new(false),
+            notify_sound: AtomicBool::new(false),
+        });
+        let core = Core {
+            dir: dir.clone(),
+            store,
+            engine: Mutex::new(None),
+            background_checks: Mutex::new(0),
+            file_admissions: std::sync::atomic::AtomicUsize::new(0),
+            file_lifetime: Mutex::new(()),
+            rt: rt.handle().clone(),
+            host,
+            key_lost: Mutex::new(None),
+            identity_load: Default::default(),
+        };
+        (core, rt, dir)
+    }
+
+    fn seed_owner_data(store: &Store, owner: Option<&str>) {
+        store.set_meta("device.id", "hc-test-dev").unwrap();
+        if let Some(a) = owner {
+            store.set_meta("identity.address", a).unwrap();
+        }
+        store.add_hub("http://127.0.0.1:9", "2026-11-22T00:00:00Z").unwrap();
+        store.set_draft("peer.111111", "unsent draft").unwrap();
+        store
+            .queue_outgoing(
+                &NewOutgoing {
+                    id: "msg-1".into(),
+                    peer: "peer.111111".into(),
+                    body: "hello".into(),
+                    kind: None,
+                    reply_to: None,
+                    attachments: vec![],
+                },
+                "2026-11-22T00:00:00Z",
+            )
+            .unwrap();
+    }
+
+    fn cleanup(core: Core, rt: tokio::runtime::Runtime, dir: PathBuf) {
+        if let Ok(e) = core.engine() {
+            e.shutdown();
+        }
+        drop(core);
+        drop(rt);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn r5_owner_a_found_b_sets_key_lost_found_without_starting_engine() {
+        let (core, rt, dir) = make_core("mismatch");
+        let a = Identity::generate("alice").unwrap();
+        let b = Identity::generate("bob").unwrap();
+        seed_owner_data(&core.store, Some(&a.address()));
+        let kr = MockKeyring::new();
+        with_test_backend(SecretServiceState::Absent, kr, || {
+            crate::secrets::save_identity(&dir, &b).unwrap();
+            core.load_key().unwrap();
+        });
+        assert!(!core.has_identity(), "must not start engine on owner mismatch");
+        let lost = core.key_lost().expect("key_lost must be set");
+        assert_eq!(lost.address.as_deref(), Some(a.address().as_str()));
+        assert!(!lost.unreadable);
+        assert_eq!(lost.found.as_deref(), Some(b.address().as_str()));
+        assert_eq!(core.store.chat("peer.111111", None, None, 10).unwrap().len(), 1);
+        cleanup(core, rt, dir);
+    }
+
+    #[test]
+    fn r5_use_found_identity_rejects_stale_expected_without_wiping_a() {
+        let (core, rt, dir) = make_core("stale");
+        let a = Identity::generate("alice").unwrap();
+        let b = Identity::generate("bob").unwrap();
+        let c = Identity::generate("carol").unwrap();
+        seed_owner_data(&core.store, Some(&a.address()));
+        let kr = MockKeyring::new();
+        with_test_backend(SecretServiceState::Absent, kr, || {
+            crate::secrets::save_identity(&dir, &b).unwrap();
+            core.load_key().unwrap();
+            assert_eq!(core.key_lost().unwrap().found.as_deref(), Some(b.address().as_str()));
+            // Key store changes to C before user confirms B.
+            crate::secrets::save_identity(&dir, &c).unwrap();
+            let err = core.use_found_identity(&b.address()).unwrap_err();
+            assert_eq!(err, "The key store changed. Try again.");
+        });
+        assert!(!core.has_identity(), "must not start on stale expected");
+        assert_eq!(core.store.meta("identity.address").unwrap().as_deref(), Some(a.address().as_str()));
+        assert_eq!(core.store.chat("peer.111111", None, None, 10).unwrap().len(), 1, "A's messages preserved");
+        assert_eq!(core.store.draft("peer.111111").unwrap().as_deref(), Some("unsent draft"), "A's drafts preserved");
+        assert_eq!(core.store.hubs().unwrap().len(), 1, "A's hubs preserved");
+        assert_eq!(core.key_lost().unwrap().found.as_deref(), Some(c.address().as_str()), "key state reloaded to C");
+        cleanup(core, rt, dir);
+    }
+
+    #[test]
+    fn r5_use_found_identity_wipes_a_sets_owner_b_and_starts_engine() {
+        let (core, rt, dir) = make_core("accept-found");
+        let a = Identity::generate("alice").unwrap();
+        let b = Identity::generate("bob").unwrap();
+        seed_owner_data(&core.store, Some(&a.address()));
+        let kr = MockKeyring::new();
+        with_test_backend(SecretServiceState::Absent, kr, || {
+            crate::secrets::save_identity(&dir, &b).unwrap();
+            core.load_key().unwrap();
+            core.use_found_identity(&b.address()).expect("use_found_identity should succeed");
+        });
+        assert!(core.has_identity(), "engine started");
+        assert_eq!(core.engine().unwrap().me().address(), b.address());
+        assert_eq!(core.store.meta("identity.address").unwrap().as_deref(), Some(b.address().as_str()));
+        assert!(core.key_lost().is_none(), "key_lost cleared");
+        assert!(core.store.chat("peer.111111", None, None, 10).unwrap().is_empty(), "A's chats wiped");
+        assert!(core.store.draft("peer.111111").unwrap().is_none(), "A's drafts wiped");
+        assert!(core.store.hubs().unwrap().is_empty(), "A's hubs wiped");
+        cleanup(core, rt, dir);
+    }
+
+    #[test]
+    fn r5_owner_none_or_matching_owner_starts_as_1_3_11() {
+        // Legacy ownerless profile starts normally with found key.
+        {
+            let (core, rt, dir) = make_core("owner-none");
+            let b = Identity::generate("bob").unwrap();
+            seed_owner_data(&core.store, None);
+            let kr = MockKeyring::new();
+            with_test_backend(SecretServiceState::Absent, kr.clone(), || {
+                crate::secrets::save_identity(&dir, &b).unwrap();
+                core.load_key().unwrap();
+            });
+            assert_eq!(kr.calls(), 0, "file backend must be used when Secret Service is absent");
+            assert!(dir.join("identity-store").join("identity.key").exists());
+            assert!(core.has_identity());
+            assert!(core.key_lost().is_none());
+            assert_eq!(core.engine().unwrap().me().address(), b.address());
+            assert_eq!(core.store.chat("peer.111111", None, None, 10).unwrap().len(), 1);
+            cleanup(core, rt, dir);
+        }
+
+        // Matching owner starts normally and keeps chats.
+        {
+            let (core, rt, dir) = make_core("owner-match");
+            let a = Identity::generate("alice").unwrap();
+            seed_owner_data(&core.store, Some(&a.address()));
+            let kr = MockKeyring::new();
+            with_test_backend(SecretServiceState::Absent, kr.clone(), || {
+                crate::secrets::save_identity(&dir, &a).unwrap();
+                core.load_key().unwrap();
+            });
+            assert_eq!(kr.calls(), 0, "file backend must be used when Secret Service is absent");
+            assert!(dir.join("identity-store").join("identity.key").exists());
+            assert!(core.has_identity());
+            assert!(core.key_lost().is_none());
+            assert_eq!(core.engine().unwrap().me().address(), a.address());
+            assert_eq!(core.store.chat("peer.111111", None, None, 10).unwrap().len(), 1);
+            cleanup(core, rt, dir);
+        }
     }
 }
 

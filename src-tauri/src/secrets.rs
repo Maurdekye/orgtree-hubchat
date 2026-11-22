@@ -148,7 +148,7 @@ fn entry(dir: &Path) -> Result<keyring::Entry, String> {
     keyring::Entry::new(SERVICE, &user).map_err(|e| e.to_string())
 }
 
-#[cfg(desktop)]
+#[cfg(all(desktop, not(target_os = "linux")))]
 fn load_main(dir: &Path) -> Main {
     match entry(dir) {
         Ok(e) => classify(e.get_password()),
@@ -167,18 +167,217 @@ fn classify(r: keyring::Result<String>) -> Main {
     }
 }
 
-#[cfg(desktop)]
+#[cfg(all(desktop, not(target_os = "linux")))]
 fn save_main(dir: &Path, me: &Identity) -> Result<(), String> {
     entry(dir)?
         .set_password(&encode(me))
         .map_err(|e| e.to_string())
 }
 
-#[cfg(desktop)]
+#[cfg(all(desktop, not(target_os = "linux")))]
 fn forget_main(dir: &Path) -> Result<(), String> {
     match entry(dir)?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(e.to_string()),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn load_main(dir: &Path) -> Main {
+    linux::load_main(dir)
+}
+
+#[cfg(target_os = "linux")]
+fn save_main(dir: &Path, me: &Identity) -> Result<(), String> {
+    linux::save_main(dir, me)
+}
+
+#[cfg(target_os = "linux")]
+fn forget_main(dir: &Path) -> Result<(), String> {
+    linux::forget_main(dir)
+}
+
+#[cfg(target_os = "linux")]
+pub fn linux_key_storage() -> &'static str {
+    linux::key_storage()
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) mod linux {
+    use std::path::Path;
+
+    use super::{classify, entry, encode, Identity, Main};
+
+    #[cfg(test)]
+    use std::cell::RefCell;
+    #[cfg(test)]
+    use std::collections::HashMap;
+    #[cfg(test)]
+    use std::sync::{Arc, Mutex};
+
+    #[allow(dead_code)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) enum SecretServiceState {
+        Present,
+        Absent,
+        Indeterminate,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) struct BusHints {
+        pub address_set: bool,
+        pub address_disabled: bool,
+        pub runtime_bus_exists: Option<bool>,
+        pub has_display: bool,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub(crate) enum DbusProbeResult {
+        Owned,
+        NotOwned { activatable: Vec<String> },
+        ConnectError { name: Option<String>, message: Option<String> },
+        QueryError,
+        TimedOut,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) struct StatInfo {
+        pub is_dir: bool,
+        pub is_reg: bool,
+        pub is_symlink: bool,
+        pub uid: u32,
+        pub mode: u32,
+        pub nlink: u64,
+        pub size: i64,
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn classify_dbus_probe(
+        _hints: BusHints,
+        _probe: impl FnOnce() -> DbusProbeResult,
+    ) -> SecretServiceState {
+        SecretServiceState::Present
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn judge_store_dir(_euid: u32, _st: StatInfo) -> Result<(), &'static str> {
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn judge_key_file(_euid: u32, _st: StatInfo) -> Result<(), &'static str> {
+        Ok(())
+    }
+
+    #[cfg(test)]
+    #[derive(Clone)]
+    pub(crate) struct MockKeyring {
+        entries: Arc<Mutex<HashMap<String, String>>>,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[cfg(test)]
+    impl MockKeyring {
+        pub(crate) fn new() -> Self {
+            Self {
+                entries: Arc::new(Mutex::new(HashMap::new())),
+                calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            }
+        }
+        pub(crate) fn calls(&self) -> usize {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+        pub(crate) fn get(&self, dir: &Path) -> Main {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let k = dir.to_string_lossy().into_owned();
+            match self.entries.lock().unwrap().get(&k).cloned() {
+                Some(v) => classify(Ok(v)),
+                None => classify(Err(keyring::Error::NoEntry)),
+            }
+        }
+        pub(crate) fn set(&self, dir: &Path, me: &Identity) -> Result<(), String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.entries
+                .lock()
+                .unwrap()
+                .insert(dir.to_string_lossy().into_owned(), encode(me));
+            Ok(())
+        }
+        pub(crate) fn delete(&self, dir: &Path) -> Result<(), String> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.entries
+                .lock()
+                .unwrap()
+                .remove(&dir.to_string_lossy().into_owned());
+            Ok(())
+        }
+    }
+
+    #[cfg(test)]
+    struct TestOverride {
+        _state: SecretServiceState,
+        keyring: MockKeyring,
+    }
+
+    #[cfg(test)]
+    thread_local! {
+        static TEST_OVERRIDE: RefCell<Option<TestOverride>> = const { RefCell::new(None) };
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_test_backend<R>(
+        state: SecretServiceState,
+        keyring: MockKeyring,
+        f: impl FnOnce() -> R,
+    ) -> R {
+        struct Reset;
+        impl Drop for Reset {
+            fn drop(&mut self) {
+                TEST_OVERRIDE.with(|c| *c.borrow_mut() = None);
+            }
+        }
+        TEST_OVERRIDE.with(|c| *c.borrow_mut() = Some(TestOverride { _state: state, keyring }));
+        let _reset = Reset;
+        f()
+    }
+
+    pub(super) fn key_storage() -> &'static str {
+        "keyring"
+    }
+
+    pub(super) fn load_main(dir: &Path) -> Main {
+        #[cfg(test)]
+        if let Some(m) = TEST_OVERRIDE.with(|c| c.borrow().as_ref().map(|o| o.keyring.get(dir))) {
+            return m;
+        }
+        match entry(dir) {
+            Ok(e) => classify(e.get_password()),
+            Err(e) => Main::Failed(e),
+        }
+    }
+
+    pub(super) fn save_main(dir: &Path, me: &Identity) -> Result<(), String> {
+        #[cfg(test)]
+        if let Some(r) = TEST_OVERRIDE.with(|c| c.borrow().as_ref().map(|o| o.keyring.set(dir, me))) {
+            return r;
+        }
+        entry(dir)?
+            .set_password(&encode(me))
+            .map_err(|e| e.to_string())
+    }
+
+    pub(super) fn forget_main(dir: &Path) -> Result<(), String> {
+        #[cfg(test)]
+        if let Some(r) = TEST_OVERRIDE.with(|c| c.borrow().as_ref().map(|o| o.keyring.delete(dir))) {
+            return r;
+        }
+        match entry(dir)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
     }
 }
 
@@ -384,37 +583,352 @@ mod tests {
     }
 }
 
-/// Linux keyring round trip, run by CI (build-linux.yml) in three setups:
-/// no D-Bus session, a session without a keyring daemon, and a session
-/// with an unlocked GNOME Keyring. HUBCHAT_KEYRING_EXPECT says which
-/// outcome is right: `fail` (saving fails plainly and nothing is kept in
-/// memory) or `ok` (save, load and forget all work).
+/// Linux keyring round trip, run by CI (build-linux.yml) across five D-Bus
+/// setups: no bus (file), bus without Secret Service (file), activatable locked
+/// collection (keyring only, Unreadable, file untouched), unlocked GNOME Keyring
+/// (keyring only, file untouched), and hanging D-Bus socket (indeterminate ->
+/// keyring only, Unreadable, file untouched).
 #[cfg(all(test, target_os = "linux"))]
 mod linux_keyring {
+    use std::os::unix::fs::PermissionsExt;
+
     use super::*;
+
+    fn plant_file(dir: &Path, text: &str, mode: u32) -> std::path::PathBuf {
+        let store = dir.join("identity-store");
+        std::fs::create_dir_all(&store).unwrap();
+        std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let file = store.join("identity.key");
+        std::fs::write(&file, text).unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(mode)).unwrap();
+        file
+    }
 
     #[test]
     #[ignore = "needs a chosen D-Bus/keyring setup; run by CI"]
     fn round_trip() {
         let expect = std::env::var("HUBCHAT_KEYRING_EXPECT").expect("HUBCHAT_KEYRING_EXPECT");
         let dir = std::env::temp_dir().join(format!("hubchat-keyring-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
         let me = Identity::generate("ci").unwrap();
-        let saved = save_identity(&dir, &me);
-        eprintln!("save_identity: {saved:?}");
         match expect.as_str() {
-            "fail" => {
-                assert!(saved.is_err(), "saving must fail without a keyring");
-                assert!(!matches!(load_identity(&dir), Loaded::Found(_)), "nothing may be kept in memory");
+            "file" => {
+                assert!(matches!(load_identity(&dir), Loaded::Missing), "missing subdir is Missing");
+                assert_eq!(linux_key_storage(), "file");
+                save_identity(&dir, &me).expect("save to file backend");
+                let store = dir.join("identity-store");
+                let key = store.join("identity.key");
+                assert_eq!(std::fs::metadata(&store).unwrap().permissions().mode() & 0o7777, 0o700);
+                assert_eq!(std::fs::metadata(&key).unwrap().permissions().mode() & 0o7777, 0o600);
+                assert!(!store.join("identity.key.tmp").exists(), "tmp must not linger");
+                let Loaded::Found(back) = load_identity(&dir) else { panic!("load after file save") };
+                assert_eq!((back.id(), back.secret()), (me.id(), me.secret()));
+                forget_identity(&dir).expect("forget on file backend");
+                assert!(!key.exists(), "identity.key removed");
+                assert!(store.is_dir(), "identity-store subdir kept");
+                assert!(matches!(load_identity(&dir), Loaded::Missing), "gone after forget");
+                let log = std::fs::read_to_string(dir.join("identity-log.txt")).unwrap();
+                assert!(log.contains("permissions-only file"), "keylog notes file backend: {log}");
+                assert!(!log.contains(me.secret()), "keylog must never contain secret");
+            }
+            "locked" | "hang" => {
+                let planted_id = Identity::generate("planted").unwrap();
+                let planted_text = encode(&planted_id);
+                let key = plant_file(&dir, &planted_text, 0o600);
+                let loaded = load_identity(&dir);
+                eprintln!("load_identity({expect}): {}", match &loaded {
+                    Loaded::Found(_) => "Found",
+                    Loaded::Restored(_) => "Restored",
+                    Loaded::Missing => "Missing",
+                    Loaded::Unreadable => "Unreadable",
+                });
+                assert!(matches!(loaded, Loaded::Unreadable), "locked/hang must be Unreadable, never file fallback");
+                assert_eq!(linux_key_storage(), "keyring");
+                let saved = save_identity(&dir, &me);
+                eprintln!("save_identity({expect}): {saved:?}");
+                assert!(saved.is_err(), "saving must fail when keyring is unavailable");
+                assert_eq!(std::fs::read_to_string(&key).unwrap(), planted_text, "planted file untouched");
+                if expect == "hang" {
+                    let log = std::fs::read_to_string(dir.join("identity-log.txt")).unwrap();
+                    assert!(log.contains("indeterminate"), "hang must log indeterminate probe: {log}");
+                }
             }
             "ok" => {
-                saved.unwrap();
-                let Loaded::Found(back) = load_identity(&dir) else { panic!("load after save") };
-                assert_eq!(back.id(), me.id());
-                assert_eq!(back.secret(), me.secret());
-                forget_identity(&dir).unwrap();
-                assert!(matches!(load_identity(&dir), Loaded::Missing), "gone after forget");
+                let planted_id = Identity::generate("planted").unwrap();
+                let planted_text = encode(&planted_id);
+                let key = plant_file(&dir, &planted_text, 0o000);
+                save_identity(&dir, &me).expect("save to unlocked keyring");
+                assert_eq!(linux_key_storage(), "keyring");
+                let Loaded::Found(back) = load_identity(&dir) else { panic!("load after keyring save") };
+                assert_eq!((back.id(), back.secret()), (me.id(), me.secret()));
+                forget_identity(&dir).expect("forget from unlocked keyring");
+                assert!(matches!(load_identity(&dir), Loaded::Missing), "gone after keyring forget");
+                assert!(key.exists(), "keyring backend must never delete planted file");
+                assert_eq!(std::fs::metadata(&key).unwrap().permissions().mode() & 0o7777, 0o000);
+                std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+                assert_eq!(std::fs::read_to_string(&key).unwrap(), planted_text, "planted file bytes untouched");
             }
             other => panic!("HUBCHAT_KEYRING_EXPECT={other}"),
         }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_r5_tests {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::linux::{
+        classify_dbus_probe, judge_key_file, judge_store_dir, with_test_backend, BusHints,
+        DbusProbeResult, MockKeyring, SecretServiceState, StatInfo,
+    };
+    use super::*;
+
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_dir(label: &str) -> PathBuf {
+        let n = SEQ.fetch_add(1, Ordering::Relaxed);
+        let d = std::env::temp_dir().join(format!(
+            "hubchat-r5-{label}-{}-{n}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn r5_probe_absent_uses_file_backend_and_never_calls_keyring() {
+        let dir = temp_dir("absent");
+        let me = Identity::generate("frame").unwrap();
+        let kr = MockKeyring::new();
+        with_test_backend(SecretServiceState::Absent, kr.clone(), || {
+            assert!(matches!(load_identity(&dir), Loaded::Missing));
+            assert_eq!(linux_key_storage(), "file");
+            save_identity(&dir, &me).expect("file backend save");
+            let Loaded::Found(back) = load_identity(&dir) else {
+                panic!("file backend load should return Found");
+            };
+            assert_eq!((back.id(), back.secret()), (me.id(), me.secret()));
+        });
+        assert_eq!(kr.calls(), 0, "keyring must never be called when Secret Service is absent");
+        let store = dir.join("identity-store");
+        let key = store.join("identity.key");
+        assert_eq!(std::fs::metadata(&store).unwrap().permissions().mode() & 0o7777, 0o700);
+        assert_eq!(std::fs::metadata(&key).unwrap().permissions().mode() & 0o7777, 0o600);
+        assert!(!store.join("identity.key.tmp").exists());
+        let log = std::fs::read_to_string(dir.join("identity-log.txt")).unwrap();
+        assert!(log.contains("permissions-only file"), "keylog should note file backend: {log}");
+        assert!(!log.contains(me.secret()), "keylog must never contain secret");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn r5_probe_present_and_indeterminate_use_keyring_and_never_open_planted_file() {
+        // Probe classification checks for present, absent, indeterminate.
+        let no_hints = BusHints {
+            address_set: false,
+            address_disabled: false,
+            runtime_bus_exists: Some(false),
+            has_display: false,
+        };
+        assert_eq!(
+            classify_dbus_probe(no_hints, || DbusProbeResult::Owned),
+            SecretServiceState::Present
+        );
+        assert_eq!(
+            classify_dbus_probe(no_hints, || DbusProbeResult::NotOwned {
+                activatable: vec!["org.freedesktop.secrets".into()]
+            }),
+            SecretServiceState::Present
+        );
+        assert_eq!(
+            classify_dbus_probe(no_hints, || DbusProbeResult::NotOwned { activatable: vec![] }),
+            SecretServiceState::Absent
+        );
+        assert_eq!(
+            classify_dbus_probe(no_hints, || DbusProbeResult::TimedOut),
+            SecretServiceState::Indeterminate
+        );
+        assert_eq!(
+            classify_dbus_probe(no_hints, || DbusProbeResult::QueryError),
+            SecretServiceState::Indeterminate
+        );
+
+        for (state, expect_log) in [
+            (SecretServiceState::Present, "Secret Service present"),
+            (SecretServiceState::Indeterminate, "indeterminate"),
+        ] {
+            let dir = temp_dir(if state == SecretServiceState::Present { "present" } else { "indet" });
+            let store = dir.join("identity-store");
+            std::fs::create_dir_all(&store).unwrap();
+            std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let planted = store.join("identity.key");
+            std::fs::write(&planted, "unreadable-sentinel").unwrap();
+            // Mode 0000: opening this file would fail with EACCES if touched.
+            std::fs::set_permissions(&planted, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+            let me = Identity::generate("desktop").unwrap();
+            let kr = MockKeyring::new();
+            kr.set(&dir, &me).unwrap();
+            let before_calls = kr.calls();
+            with_test_backend(state, kr.clone(), || {
+                assert_eq!(linux_key_storage(), "keyring");
+                let Loaded::Found(back) = load_identity(&dir) else {
+                    panic!("keyring backend should return Found without touching planted file");
+                };
+                assert_eq!(back.address(), me.address());
+                save_identity(&dir, &me).unwrap();
+                forget_identity(&dir).unwrap();
+            });
+            assert!(kr.calls() > before_calls, "keyring backend must be used");
+            assert!(planted.exists(), "planted identity.key must still exist untouched");
+            assert_eq!(std::fs::metadata(&planted).unwrap().permissions().mode() & 0o7777, 0o000);
+            let log = std::fs::read_to_string(dir.join("identity-log.txt")).unwrap();
+            assert!(log.contains(expect_log), "keylog must record backend choice ({expect_log}): {log}");
+            std::fs::set_permissions(&planted, std::fs::Permissions::from_mode(0o600)).unwrap();
+            assert_eq!(std::fs::read_to_string(&planted).unwrap(), "unreadable-sentinel");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    fn r5_file_backend_rejects_bad_mode_owner_symlink_nlink_dir_mode_and_oversize_without_deleting() {
+        // Pure stat owner mismatch checks (root uid 0 vs euid 1000).
+        assert!(judge_store_dir(
+            1000,
+            StatInfo { is_dir: true, is_reg: false, is_symlink: false, uid: 0, mode: 0o040700, nlink: 2, size: 0 }
+        ).is_err());
+        assert!(judge_key_file(
+            1000,
+            StatInfo { is_dir: false, is_reg: true, is_symlink: false, uid: 0, mode: 0o100600, nlink: 1, size: 64 }
+        ).is_err());
+
+        let me = Identity::generate("alex").unwrap();
+        let encoded = encode(&me);
+        let kr = MockKeyring::new();
+
+        // 1. file mode 0644 -> Unreadable, never Missing, never deleted
+        {
+            let dir = temp_dir("mode0644");
+            let store = dir.join("identity-store");
+            std::fs::create_dir_all(&store).unwrap();
+            std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let key = store.join("identity.key");
+            std::fs::write(&key, &encoded).unwrap();
+            std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o644)).unwrap();
+            with_test_backend(SecretServiceState::Absent, kr.clone(), || {
+                assert!(matches!(load_identity(&dir), Loaded::Unreadable));
+            });
+            assert!(key.exists(), "0644 file must not be deleted");
+            assert_eq!(std::fs::metadata(&key).unwrap().permissions().mode() & 0o7777, 0o644);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        // 2. symlink identity.key -> Unreadable, never deleted
+        {
+            let dir = temp_dir("symlink");
+            let store = dir.join("identity-store");
+            std::fs::create_dir_all(&store).unwrap();
+            std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let real = dir.join("target.key");
+            std::fs::write(&real, &encoded).unwrap();
+            std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+            let key = store.join("identity.key");
+            symlink(&real, &key).unwrap();
+            with_test_backend(SecretServiceState::Absent, kr.clone(), || {
+                assert!(matches!(load_identity(&dir), Loaded::Unreadable));
+            });
+            assert!(std::fs::symlink_metadata(&key).unwrap().file_type().is_symlink());
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        // 3. hard link (nlink == 2) -> Unreadable, never deleted
+        {
+            let dir = temp_dir("nlink2");
+            let store = dir.join("identity-store");
+            std::fs::create_dir_all(&store).unwrap();
+            std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let key = store.join("identity.key");
+            std::fs::write(&key, &encoded).unwrap();
+            std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+            let alias = dir.join("alias.key");
+            std::fs::hard_link(&key, &alias).unwrap();
+            with_test_backend(SecretServiceState::Absent, kr.clone(), || {
+                assert!(matches!(load_identity(&dir), Loaded::Unreadable));
+            });
+            assert!(key.exists() && alias.exists(), "hard-linked files must not be deleted");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        // 4. identity-store dir mode 0755 -> Unreadable, save refused, never chmod'd or deleted
+        {
+            let dir = temp_dir("dir0755");
+            let store = dir.join("identity-store");
+            std::fs::create_dir_all(&store).unwrap();
+            std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let key = store.join("identity.key");
+            std::fs::write(&key, &encoded).unwrap();
+            std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+            with_test_backend(SecretServiceState::Absent, kr.clone(), || {
+                assert!(matches!(load_identity(&dir), Loaded::Unreadable));
+                assert!(save_identity(&dir, &me).is_err());
+            });
+            assert_eq!(std::fs::metadata(&store).unwrap().permissions().mode() & 0o7777, 0o755);
+            assert!(key.exists());
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        // 5. >64 KiB file -> Unreadable, never deleted
+        {
+            let dir = temp_dir("oversize");
+            let store = dir.join("identity-store");
+            std::fs::create_dir_all(&store).unwrap();
+            std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let key = store.join("identity.key");
+            let big = format!("{} {}", me.id(), "a".repeat(64 * 1024 + 1));
+            std::fs::write(&key, &big).unwrap();
+            std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+            with_test_backend(SecretServiceState::Absent, kr.clone(), || {
+                assert!(matches!(load_identity(&dir), Loaded::Unreadable));
+            });
+            assert!(key.exists());
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+
+        assert_eq!(kr.calls(), 0, "file backend errors must never call keyring");
+    }
+
+    #[test]
+    fn r5_file_backend_forget_removes_only_key_and_tmp_leaving_subdir_and_siblings() {
+        let dir = temp_dir("forget");
+        let me = Identity::generate("alex").unwrap();
+        let kr = MockKeyring::new();
+        with_test_backend(SecretServiceState::Absent, kr.clone(), || {
+            save_identity(&dir, &me).expect("save before forget");
+            let store = dir.join("identity-store");
+            let key = store.join("identity.key");
+            let tmp = store.join("identity.key.tmp");
+            let other = store.join("keep.txt");
+            let sibling = dir.join("hubchat.sqlite3");
+            std::fs::write(&tmp, "stale-tmp").unwrap();
+            std::fs::write(&other, "keep").unwrap();
+            std::fs::write(&sibling, "db").unwrap();
+
+            forget_identity(&dir).expect("forget removes key + tmp");
+            assert!(!key.exists(), "identity.key removed");
+            assert!(!tmp.exists(), "identity.key.tmp removed");
+            assert!(store.is_dir(), "identity-store subdir left in place");
+            assert!(other.exists(), "unrelated file in subdir untouched");
+            assert!(sibling.exists(), "sibling in data dir untouched");
+            // ENOENT on second forget is Ok
+            forget_identity(&dir).expect("second forget is Ok on ENOENT");
+            assert!(matches!(load_identity(&dir), Loaded::Missing));
+        });
+        assert_eq!(kr.calls(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
