@@ -960,101 +960,15 @@ impl Store {
         })
     }
 
-    /// Forget this identity's local data (switching to another identity,
-    /// signing out, or starting over): messages, files' records, hubs,
-    /// directory, drafts and settings. Preserves device-level key-lifecycle
-    /// metadata (`key.forgotten`, `key.file_cleanup_pending`, and the durable
-    /// `key.installation_wiped` marker) so a temporarily unreachable keyring
-    /// cannot revive a forgotten identity or lose track of a pending
-    /// fallback-file cleanup.
+    /// Forget everything (switching to another identity): messages, files'
+    /// records, hubs, directory, drafts and settings.
     pub fn wipe(&self) -> Result<()> {
         self.with(|c| {
-            let tx = c.transaction()?;
-            tx.execute_batch(
+            c.execute_batch(
                 "DELETE FROM attachments; DELETE FROM messages; DELETE FROM roster; DELETE FROM hubs;
-                 DELETE FROM drafts; DELETE FROM notification_replies;
-                 DELETE FROM meta WHERE key NOT IN ('key.forgotten', 'key.file_cleanup_pending', 'key.installation_wiped');
-                 INSERT INTO meta(key,value) VALUES('key.installation_wiped','1') ON CONFLICT(key) DO UPDATE SET value='1';
-                 DELETE FROM closed_dms; DELETE FROM draft_answers; DELETE FROM reply_links;",
-            )?;
-            tx.commit()
-        })
-    }
-
-    /// Atomically commit a newly adopted (or recovered) identity into the local
-    /// store: recomputes whether a wipe is required against the CURRENT store
-    /// owner and local data inside the transaction (so an interrupted adoption
-    /// recorded with `wipe=false` can never attach to another account's chats),
-    /// writes profile/setup metadata and `identity.address`, clears staged
-    /// adoption markers, and updates the `key.forgotten` tombstone list in one
-    /// transaction. Returns `(did_wipe, replaced_owner)`.
-    pub fn commit_adopted_identity(
-        &self,
-        wipe_requested: bool,
-        brand_new: bool,
-        address: &str,
-        meta: &[(&str, &str)],
-        forgotten_json: Option<&str>,
-    ) -> Result<(bool, Option<String>)> {
-        self.with(|c| {
-            let tx = c.transaction()?;
-            let current_owner: Option<String> = tx
-                .query_row("SELECT value FROM meta WHERE key='identity.address'", [], |r| r.get(0))
-                .optional()?
-                .filter(|v: &String| !v.is_empty());
-            let has_device_id: bool = tx
-                .query_row("SELECT value FROM meta WHERE key='device.id'", [], |r| r.get(0))
-                .optional()?
-                .is_some_and(|v: String| !v.is_empty());
-            let has_data: bool = current_owner.is_some()
-                || has_device_id
-                || tx.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM messages) \
-                     OR EXISTS(SELECT 1 FROM hubs) \
-                     OR EXISTS(SELECT 1 FROM drafts) \
-                     OR EXISTS(SELECT 1 FROM roster) \
-                     OR EXISTS(SELECT 1 FROM attachments)",
-                    [],
-                    |r| r.get::<_, i64>(0),
-                )? != 0;
-            let effective_wipe = wipe_requested
-                || (has_data
-                    && match current_owner.as_deref() {
-                        Some(o) => o != address,
-                        None => brand_new,
-                    });
-            if effective_wipe {
-                tx.execute_batch(
-                    "DELETE FROM attachments; DELETE FROM messages; DELETE FROM roster; DELETE FROM hubs;
-                     DELETE FROM drafts; DELETE FROM notification_replies;
-                     DELETE FROM meta WHERE key NOT IN ('key.forgotten', 'key.file_cleanup_pending', 'key.installation_wiped');
-                     DELETE FROM closed_dms; DELETE FROM draft_answers; DELETE FROM reply_links;",
-                )?;
-            }
-            for (k, v) in meta {
-                tx.execute(
-                    "INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                    [k, v],
-                )?;
-            }
-            tx.execute(
-                "INSERT INTO meta(key,value) VALUES('identity.address',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                [address],
-            )?;
-            tx.execute("DELETE FROM meta WHERE key IN ('key.adopting', 'key.adopting.wipe')", [])?;
-            match forgotten_json {
-                Some(json) if !json.is_empty() => {
-                    tx.execute(
-                        "INSERT INTO meta(key,value) VALUES('key.forgotten',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                        [json],
-                    )?;
-                }
-                _ => {
-                    tx.execute("DELETE FROM meta WHERE key='key.forgotten'", [])?;
-                }
-            }
-            tx.commit()?;
-            Ok((effective_wipe, effective_wipe.then_some(current_owner).flatten()))
+                 DELETE FROM drafts; DELETE FROM notification_replies; DELETE FROM meta; DELETE FROM closed_dms;
+                 DELETE FROM draft_answers; DELETE FROM reply_links;",
+            )
         })
     }
 
@@ -2356,25 +2270,6 @@ mod tests {
         let s = Store::open_refusing_newer(&older).unwrap();
         assert_eq!(s.with(|c| c.query_row("PRAGMA user_version", [], |r| r.get::<_, usize>(0))).unwrap(), MIGRATIONS.len());
         Store::open_refusing_newer(&dir.path().join("new.db")).unwrap();
-    }
-
-    #[test]
-    fn h3_h4_store_wipe_preserves_device_key_lifecycle_meta() {
-        let dir = tempfile::tempdir().unwrap();
-        let s = Store::open(&dir.path().join("hubchat.sqlite3")).unwrap();
-        s.set_meta("identity.address", "alice.111111").unwrap();
-        s.set_meta("profile.name", "Alice").unwrap();
-        s.set_meta("key.forgotten", r#"[{"address":"alice.111111","at":"2026-11-21T00:00:00Z"}]"#).unwrap();
-        s.set_meta("key.file_cleanup_pending", "yes").unwrap();
-        s.wipe().unwrap();
-        assert_eq!(s.meta("identity.address").unwrap(), None);
-        assert_eq!(s.meta("profile.name").unwrap(), None);
-        assert_eq!(
-            s.meta("key.forgotten").unwrap().as_deref(),
-            Some(r#"[{"address":"alice.111111","at":"2026-11-21T00:00:00Z"}]"#)
-        );
-        assert_eq!(s.meta("key.file_cleanup_pending").unwrap().as_deref(), Some("yes"));
-        assert_eq!(s.meta("key.installation_wiped").unwrap().as_deref(), Some("1"));
     }
 
     /// Migration 17 (moved from tests/hub_removal.rs): a real version-16

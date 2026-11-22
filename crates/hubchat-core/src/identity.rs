@@ -31,12 +31,9 @@ impl Identity {
     }
 
     /// Restore an identity from its id and secret (linking, recovery).
-    /// Known Low (accepted compatibility exception vs 1.3.11): `c.is_control()`
-    /// rejects manually formed non-whitespace control characters in secrets;
-    /// shipped generators and recovery phrases emit printable hex only.
     pub fn from_parts(id: &str, secret: &str) -> Result<Self> {
         validate_id(id)?;
-        if secret.len() < 32 || secret.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        if secret.len() < 32 || secret.chars().any(char::is_whitespace) {
             return Err(Error::Invalid("secret key is malformed".into()));
         }
         Ok(Self {
@@ -111,16 +108,5 @@ mod tests {
     fn debug_hides_secret() {
         let me = Identity::generate("alex").unwrap();
         assert!(!format!("{me:?}").contains(me.secret()));
-    }
-
-    #[test]
-    fn preserves_1_3_11_secret_acceptance_and_rejects_control_chars() {
-        // M7: restore 1.3.11 import/keyring acceptance (no global 2048-byte cap).
-        let legacy_2049 = "a".repeat(2049);
-        assert!(Identity::from_parts("alex", &legacy_2049).is_ok());
-        let long_keyring = "a".repeat(5000);
-        assert!(Identity::from_parts("alex", &long_keyring).is_ok());
-        let with_ctrl = format!("{}a\x00b", "0".repeat(32));
-        assert!(Identity::from_parts("alex", &with_ctrl).is_err());
     }
 }

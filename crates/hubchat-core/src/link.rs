@@ -950,11 +950,4 @@ mod tests {
         let old = r#"{"id":"alex","secret":"s","name":"Alex","hubs":[]}"#;
         assert!(!serde_json::from_str::<Bundle>(old).unwrap().recovery_saved);
     }
-
-    #[test]
-    fn bundle_import_preserves_1_3_11_long_secret_acceptance() {
-        let mut b = bundle();
-        b.secret = "a".repeat(2049);
-        assert!(b.identity().is_ok());
-    }
 }

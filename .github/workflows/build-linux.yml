@@ -170,9 +170,8 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # The identity key lives in the desktop keyring (Secret Service). Only when
-  # no Secret Service is owned or activatable on the session bus does Hubchat
-  # fall back to a 0700/0600 permissions-only file.
+  # The identity key lives in the desktop keyring (Secret Service). Without
+  # one, saving must fail plainly, never fall back to an in-memory store.
   keyring:
     runs-on: ubuntu-22.04
     timeout-minutes: 60
@@ -214,64 +213,20 @@ jobs:
           cargo test --locked -p hubchat-core --lib
           cargo test --locked -p hubchat --lib
 
-      - name: No D-Bus session and no DISPLAY -> permissions-only 0700/0600 file fallback
+      - name: No D-Bus session -> saving fails plainly
         run: |
-          env -u DBUS_SESSION_BUS_ADDRESS -u XDG_RUNTIME_DIR -u DISPLAY HUBCHAT_KEYRING_EXPECT=file \
+          env -u DBUS_SESSION_BUS_ADDRESS HUBCHAT_KEYRING_EXPECT=fail \
             cargo test --locked -p hubchat --lib linux_keyring -- --ignored --nocapture
 
-      - name: Discoverable bus via XDG_RUNTIME_DIR/bus without DBUS_SESSION_BUS_ADDRESS -> must not use file fallback
-        run: |
-          rt="$RUNNER_TEMP/rt-discoverable-bus"
-          rm -rf "$rt"
-          mkdir -m 0700 -p "$rt"
-          cat > "$rt/session.conf" <<EOF
-          <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
-           "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
-          <busconfig>
-            <type>session</type>
-            <listen>unix:path=$rt/bus</listen>
-            <standard_session_servicedirs/>
-            <policy context="default">
-              <allow send_destination="*" eavesdrop="true"/>
-              <allow eavesdrop="true"/>
-              <allow own="*"/>
-            </policy>
-          </busconfig>
-          EOF
-          dbus-daemon --config-file="$rt/session.conf" --fork --print-pid > "$rt/pid"
-          trap 'kill "$(cat "$rt/pid")" 2>/dev/null || true' EXIT
-          env -u DBUS_SESSION_BUS_ADDRESS -u DISPLAY XDG_RUNTIME_DIR="$rt" HUBCHAT_KEYRING_EXPECT=fail \
-            cargo test --locked -p hubchat --lib linux_keyring -- --ignored --nocapture
-
-      - name: Session D-Bus with no Secret Service provider -> permissions-only file fallback
-        run: |
-          cfg="$RUNNER_TEMP/no-secrets-session.conf"
-          cat > "$cfg" <<'EOF'
-          <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
-           "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
-          <busconfig>
-            <type>session</type>
-            <listen>unix:tmpdir=/tmp</listen>
-            <policy context="default">
-              <allow send_destination="*" eavesdrop="true"/>
-              <allow eavesdrop="true"/>
-              <allow own="*"/>
-            </policy>
-          </busconfig>
-          EOF
-          dbus-run-session --config-file="$cfg" -- \
-            env HUBCHAT_KEYRING_EXPECT=file \
-            cargo test --locked -p hubchat --lib linux_keyring -- --ignored --nocapture
-
-      - name: Session D-Bus with activatable locked keyring -> preserves keyring failure
+      - name: D-Bus session, no keyring daemon -> saving fails plainly
         run: |
           HUBCHAT_KEYRING_EXPECT=fail dbus-run-session -- \
             cargo test --locked -p hubchat --lib linux_keyring -- --ignored --nocapture
 
-      - name: Unlocked GNOME Keyring -> keyring only and removes stale fallback file
+      - name: Unlocked GNOME Keyring -> save, load, forget
         run: |
           export XDG_DATA_HOME="$RUNNER_TEMP/xdg-data"
-          mkdir -m 0700 -p "$XDG_DATA_HOME"
+          mkdir -p "$XDG_DATA_HOME"
           HUBCHAT_KEYRING_EXPECT=ok dbus-run-session -- bash -c '
             eval "$(printf ci | gnome-keyring-daemon --unlock --components=secrets)"
             cargo test --locked -p hubchat --lib linux_keyring -- --ignored --nocapture'

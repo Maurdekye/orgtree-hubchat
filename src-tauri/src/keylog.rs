@@ -24,21 +24,13 @@ pub enum Fact {
     StoreHasNoKey,
     /// The key store did not answer; it may still hold the key.
     StoreDidNotAnswer,
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
     BackupWritten,
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
     BackupNotWritten,
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
     RestoredFromBackup,
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
     PutBackInStore,
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
     StoreRefusedItBack,
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
     BackupDamaged,
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
     NoBackup,
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
     BackupUnreadable,
     #[cfg_attr(not(target_os = "android"), allow(dead_code))] // only Android has push cleanup
     PushCleanupFailed,
@@ -47,34 +39,6 @@ pub enum Fact {
     OtherLocalDataRemoved,
     KeySavedNew,
     KeySavedBrought,
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    NoSecretService,
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    SecretServiceIndeterminate,
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    KeyFoundInFile,
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    KeySavedInFile,
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    KeyFileMissing,
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    KeyFileDamaged,
-    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-    KeyFileUnreadable,
-    #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
-    KeyFileRemoved,
-    #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
-    KeyFileCleanupFailed,
-    #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
-    KeyFileIgnoredWithSecretService,
-    #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
-    KeyFileIgnoredSecretServiceIndeterminate,
-    KeyFileOwnerMismatch,
-    KeyringOwnerMismatch,
-    KeyFileOrphanIgnored,
-    ForgottenKeyCleared,
-    ForgottenKeyCleanupFailed,
-    AdoptionRecovered,
 }
 
 impl Fact {
@@ -97,23 +61,6 @@ impl Fact {
             Fact::OtherLocalDataRemoved => "another identity's local data removed before taking this one",
             Fact::KeySavedNew => "key saved: a new identity",
             Fact::KeySavedBrought => "key saved: an identity brought to this device",
-            Fact::NoSecretService => "no Secret Service is available",
-            Fact::SecretServiceIndeterminate => "could not confirm whether a Secret Service is available",
-            Fact::KeyFoundInFile => "key found in Hubchat's permissions-only key file",
-            Fact::KeySavedInFile => "key saved in Hubchat's permissions-only key file",
-            Fact::KeyFileMissing => "no permissions-only key file",
-            Fact::KeyFileDamaged => "Hubchat's permissions-only key file is damaged",
-            Fact::KeyFileUnreadable => "Hubchat's permissions-only key file could not be opened or trusted",
-            Fact::KeyFileRemoved => "stale permissions-only key file removed",
-            Fact::KeyFileCleanupFailed => "stale permissions-only key file could not be removed",
-            Fact::KeyFileIgnoredWithSecretService => "permissions-only key file ignored while a Secret Service is available",
-            Fact::KeyFileIgnoredSecretServiceIndeterminate => "permissions-only key file ignored while Secret Service availability was indeterminate",
-            Fact::KeyFileOwnerMismatch => "permissions-only key file did not match this device's identity",
-            Fact::KeyringOwnerMismatch => "the key in the keyring did not match this device's identity",
-            Fact::KeyFileOrphanIgnored => "permissions-only key file ignored without local identity data",
-            Fact::ForgottenKeyCleared => "forgotten identity removed from the keyring",
-            Fact::ForgottenKeyCleanupFailed => "forgotten identity could not be removed from the keyring yet",
-            Fact::AdoptionRecovered => "completed an interrupted identity setup",
         }
     }
 }

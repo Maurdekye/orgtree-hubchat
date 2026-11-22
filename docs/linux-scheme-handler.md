@@ -45,8 +45,7 @@ Orgtree's `apps/desktop/main/orgtree-link-linux.ts`; user rulings 2026-11-21
     is already ours. Any other default is left untouched byte for byte.
 
 See [SteamOS and Steam Frame](steamos-steam-frame.md) for the Gamescope re-exec
-and permissions-only key fallback used on SteamOS systems without FUSE or
-Secret Service.
+used on SteamOS systems without FUSE.
 
 ## Launcher opt-in (`HUBCHAT_LAUNCHER`)
 
@@ -100,6 +99,6 @@ hand-written `dev.orgtree.hubchat.desktop` that does not carry
   `mimeapps.list` section handling, and untouched foreign defaults /
   hand-written `dev.orgtree.hubchat.desktop`.
 - CI `.github/workflows/build-linux.yml` (`keyring` runs the full
-  `hubchat-core --lib` and `hubchat --lib` test suites plus 5 real D-Bus /
+  `hubchat-core --lib` and `hubchat --lib` test suites plus the D-Bus /
   GNOME Keyring scenarios; `build` builds and launch-smokes x86_64 and aarch64
   AppImage and `.deb` packages).
