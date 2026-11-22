@@ -488,8 +488,6 @@ pub(crate) mod linux {
             match err.raw_os_error() {
                 Some(libc::ENOENT) if !create => return Ok(None),
                 Some(libc::ENOENT) => {
-                    std::fs::create_dir_all(dir)
-                        .map_err(|e| format!("couldn't prepare data directory: {e}"))?;
                     if unsafe { libc::mkdir(c_store.as_ptr(), 0o700) } != 0 {
                         let mk_err = std::io::Error::last_os_error();
                         if mk_err.raw_os_error() != Some(libc::EEXIST) {

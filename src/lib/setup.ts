@@ -8,19 +8,29 @@ import { api } from "../api";
 import { errText, openLink, scanQr } from "./native";
 import { checkForUpdate, installUpdate, type Available } from "./updates";
 import { toast } from "./toast";
+import { getSnap } from "./store";
+import { FINISH_IDENTITY_NOTICE, isMismatchState, SetupGate, type SetupReq } from "./mismatchFlow";
 import { startTake } from "./visibility";
 
-export interface SetupReq { input: string; n: number }
+export type { SetupReq };
 
-let cur: SetupReq | null = null;
-let n = 0;
+const gate = new SetupGate();
 const subs = new Set<() => void>();
 const changed = () => subs.forEach((f) => f());
 
-export function startSetup(input: string): void { cur = { input, n: ++n }; changed(); }
-export function endSetup(): void { cur = null; changed(); }
+export function startSetup(input: string): void {
+  if (!gate.request(input, isMismatchState(getSnap().state))) {
+    toast(FINISH_IDENTITY_NOTICE);
+    return;
+  }
+  changed();
+}
+export function endSetup(): void { gate.end(); changed(); }
+export function syncSetupGate(mismatch: boolean, canOpen: boolean): void {
+  if (gate.sync(mismatch, canOpen)) changed();
+}
 export function useSetup(): SetupReq | null {
-  return useSyncExternalStore((f) => { subs.add(f); return () => { subs.delete(f); }; }, () => cur);
+  return useSyncExternalStore((f) => { subs.add(f); return () => { subs.delete(f); }; }, () => gate.active());
 }
 
 /** A hubchat://setup link (a deep link from the phone's camera, or a scan). */

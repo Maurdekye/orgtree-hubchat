@@ -694,19 +694,67 @@ impl Core {
     }
 
     #[cfg(target_os = "linux")]
+    fn mismatch_guard_error(&self, me: &Identity, brand_new: bool) -> Option<String> {
+        let lost = self.key_lost.lock().unwrap().clone();
+        let Some(KeyLost {
+            address,
+            found: Some(found),
+            ..
+        }) = lost
+        else {
+            return None;
+        };
+        let owner = address.as_deref();
+        if brand_new || owner != Some(me.address().as_str()) {
+            let who = owner.unwrap_or("the previous identity");
+            return Some(format!(
+                "This device's chats belong to {who}. Use {who}'s recovery words, link or key file, or choose Use {found} here."
+            ));
+        }
+        None
+    }
+
+    #[cfg(target_os = "linux")]
     pub fn use_found_identity(&self, expected: &str) -> Result<(), String> {
-        if self.has_identity() {
-            return Err("this device already has an identity".into());
+        let mut stale = false;
+        let res = self.identity_load.run(
+            || false,
+            || {
+                if self.has_identity() {
+                    return Err("this device already has an identity".into());
+                }
+                let saved_lost = self.key_lost.lock().unwrap().clone();
+                if saved_lost.as_ref().and_then(|k| k.found.as_deref()) != Some(expected) {
+                    stale = true;
+                    return Ok(false);
+                }
+                match crate::secrets::load_identity(&self.dir) {
+                    Loaded::Found(me) | Loaded::Restored(me) if me.address() == expected => {
+                        // Bypass mismatch_guard_error ONLY for this verified `expected`
+                        // identity, serialized inside `identity_load.run`.
+                        *self.key_lost.lock().unwrap() = None;
+                        if let Err(e) = self.adopt_identity_inner(me, false, &[]) {
+                            if self.had_identity() {
+                                *self.key_lost.lock().unwrap() = saved_lost;
+                            }
+                            return Err(e);
+                        }
+                        Ok(true)
+                    }
+                    _ => {
+                        stale = true;
+                        Ok(false)
+                    }
+                }
+            },
+        );
+        if stale {
+            let _ = self.load_key();
+            return Err("The key store changed. Try again.".into());
         }
-        match crate::secrets::load_identity(&self.dir) {
-            Loaded::Found(me) | Loaded::Restored(me) if me.address() == expected => {
-                self.adopt_identity(me, false, &[])
-            }
-            _ => {
-                let _ = self.load_key();
-                Err("The key store changed. Try again.".into())
-            }
-        }
+        res?;
+        self.platform().refresh_push();
+        Ok(())
     }
 
     /// The local data belongs to an identity: it ran here (device.id is made
@@ -788,6 +836,10 @@ impl Core {
     fn adopt_identity_inner(&self, me: Identity, brand_new: bool, meta: &[(&str, &str)]) -> Result<(), String> {
         if self.has_identity() {
             return Err("this device already has an identity".into());
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(err) = self.mismatch_guard_error(&me, brand_new) {
+            return Err(err);
         }
         let owner = self.store.meta("identity.address").ok().flatten();
         if must_wipe(owner.as_deref(), self.had_identity(), &me.address(), brand_new) {

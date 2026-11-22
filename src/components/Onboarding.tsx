@@ -21,6 +21,7 @@ import { HubReview, useHubReview } from "./HubReview";
 import { chatLinkTarget } from "../lib/chatlink";
 import { usePendingLink } from "../lib/visibility";
 import { isSetupLink, scanSetup, startSetup, useLinkInstead } from "../lib/setup";
+import { FINISH_IDENTITY_NOTICE, isMismatchRefusal } from "../lib/mismatchFlow";
 import { formatCode } from "./LinkDevice";
 import { openGuide } from "./Guide";
 import { Confirm, NoteCard, QR, useNow, usePlatform, useWeb } from "./ui";
@@ -85,10 +86,18 @@ const ObAddr = ({ a }: { a: string }) => { const [h, t] = splitAddr(a); return <
 function Feat({ ic, t, s }: { ic: IconName; t: string; s: string }) {
   return <div className="ob-feat"><span className="fi"><Icon name={ic} /></span><div><b>{t}</b><span>{s}</span></div></div>;
 }
+function MismatchLinkGuard() {
+  usePendingLink((input) => {
+    if (isSetupLink(input)) { startSetup(input); return; }
+    toast(FINISH_IDENTITY_NOTICE);
+  });
+  return null;
+}
+
 /** This device had an identity, but its key is gone (user 2026-10-10: Windows
  *  lost every saved sign-in after a crash, and Hubchat started over as if
  *  new, without a word): say so, and bring the key back. The chats stay. */
-export function LostKey({ lost, onPick }: { lost: KeyLost; onPick: (s: "method" | "restore") => void }) {
+export function LostKey({ lost, err, onPick }: { lost: KeyLost; err?: string | null; onPick: (s: "method" | "restore") => void }) {
   const platform = usePlatform();
   // Hubchat Web: the device is this browser, which keeps the key itself
   const web = useWeb();
@@ -108,6 +117,7 @@ export function LostKey({ lost, onPick }: { lost: KeyLost; onPick: (s: "method" 
     try { await api.retryKey(); } catch { /* still not answering */ }
     setTries((n) => n + 1);
     await refreshAll();
+    if (found && getSnap().state?.me) setOnboarding(false);
   };
   useEffect(() => {
     if (!retrying) return;
@@ -123,6 +133,7 @@ export function LostKey({ lost, onPick }: { lost: KeyLost; onPick: (s: "method" 
     setBusy(true);
     try {
       await api.useFoundIdentity(found);
+      setOnboarding(false);
       await refreshAll();
     } catch (e) {
       toast(errText(e));
@@ -149,8 +160,10 @@ export function LostKey({ lost, onPick }: { lost: KeyLost; onPick: (s: "method" 
       <div className="lk">
         <Icon name="key" />
         {found ? <>
+          <MismatchLinkGuard />
           <h2>Different identity in this session's key store</h2>
           <p className="lead">This device's chats belong to {who}. The key store in this session holds a different identity, {foundWho}.</p>
+          {err ? <div className="probe-card bad" role="alert"><Icon name="error" /><div>{err}</div></div> : null}
           <div className="probe-card">
             <Icon name="key" />
             <div>Check this session's key store again if you switched or unlocked it.</div>
@@ -255,7 +268,7 @@ function ReviewStep({ ev, flow, busy, err, onConfirm, onCancel }: { ev: Arrived;
  *  or typed) this device joins that code instead and shows no code of its
  *  own; `other` then offers a new scan (or a new typed code) when it fails
  *  or runs out. */
-function LinkWait({ hub, hubName, name, code, aliases, other, confirmReplace, onDone, onCancel, step, flow }: { hub: string; hubName: string; name: string; code?: string; aliases?: string[]; other?: Action; confirmReplace?: (run: () => void) => void; onDone: (address: string) => void; onCancel: () => void; step: Step; flow: Flow }) {
+function LinkWait({ hub, hubName, name, code, aliases, other, confirmReplace, onRefused, onDone, onCancel, step, flow }: { hub: string; hubName: string; name: string; code?: string; aliases?: string[]; other?: Action; confirmReplace?: (run: () => void) => void; onRefused?: (msg: string) => boolean; onDone: (address: string) => void; onCancel: () => void; step: Step; flow: Flow }) {
   const platform = usePlatform();
   const [st, setSt] = useState<Wait>({ k: "starting" });
   const [attempt, setAttempt] = useState(0);
@@ -312,7 +325,12 @@ function LinkWait({ hub, hubName, name, code, aliases, other, confirmReplace, on
     setSt((s) => (s.k === "review" ? { ...s, busy: true, err: null } : s));
     let address: string;
     try { address = await api.linkConfirm(urls); }
-    catch (e) { setSt((s) => (s.k === "review" ? { ...s, busy: false, err: errText(e) } : s)); return; }
+    catch (e) {
+      const msg = errText(e);
+      if (onRefused?.(msg)) { phase.current = "over"; return; }
+      setSt((s) => (s.k === "review" ? { ...s, busy: false, err: msg } : s));
+      return;
+    }
     phase.current = "over";
     onDoneRef.current(address);
   };
@@ -385,7 +403,7 @@ function LinkWait({ hub, hubName, name, code, aliases, other, confirmReplace, on
 
 /** `start`: open at that step (the lost-key screen's choices); `home`: Back
  *  from the first steps returns there instead of to the welcome screen. */
-export function Onboarding({ start, home }: { start?: "method" | "restore"; home?: () => void } = {}) {
+export function Onboarding({ start, home, onMismatchRefused }: { start?: "method" | "restore"; home?: () => void; onMismatchRefused?: (msg: string) => void } = {}) {
   const snap = useSnap();
   const platform = usePlatform();
   // Hubchat Web: a page scans nothing, and for now recovery words are its one way to bring an identity
@@ -458,10 +476,18 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
     if (replaceFound) setReplaceRun(() => run);
     else run();
   };
+  const handleMismatchRefusal = (msg: string): boolean => {
+    if (isMismatchRefusal(msg, replaceFound) && onMismatchRefused) {
+      onMismatchRefused(msg);
+      void refreshState();
+      return true;
+    }
+    return false;
+  };
   const replaceDialog = replaceRun && replaceFound ? (
     <Confirm
-      title="Replace key in this session's key store?"
-      okLabel="Replace key"
+      title={`Restore ${replaceOwner}?`}
+      okLabel={`Restore ${replaceOwner}`}
       danger
       busy={busy}
       onOk={() => { const fn = replaceRun; setReplaceRun(null); fn(); }}
@@ -536,7 +562,11 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
         setBusy(false);
         confirmReplace(() => {
           setBusy(true); setErr(null); setFlow("qr");
-          void api.restoreQr(t).then(arrived, (e) => { setErr(errText(e)); setBusy(false); });
+          void api.restoreQr(t).then(arrived, (e) => {
+            const msg = errText(e);
+            if (!handleMismatchRefusal(msg)) setErr(msg);
+            setBusy(false);
+          });
         });
         return;
       }
@@ -737,7 +767,7 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
   }
 
   if (step === "linkcode" && linkHub) {
-    return <><LinkWait step={step} flow={flow} hub={linkHub.url} hubName={linkHub.name} name={devName.trim()} confirmReplace={confirmReplace} onDone={(a) => void arrived(a)} onCancel={() => go("method")} />{replaceDialog}</>;
+    return <><LinkWait step={step} flow={flow} hub={linkHub.url} hubName={linkHub.name} name={devName.trim()} confirmReplace={confirmReplace} onRefused={handleMismatchRefusal} onDone={(a) => void arrived(a)} onCancel={() => go("method")} />{replaceDialog}</>;
   }
 
   if (step === "typecode") {
@@ -807,7 +837,7 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
     const other: Action | undefined = flow === "type"
       ? { label: "Type a new code", onClick: () => { setCode(""); go("typecode"); } }
       : platform === "android" ? { label: <><Icon name="camera" />Scan again</>, onClick: () => { go("scan"); void scanLink(); } } : undefined;
-    return <><LinkWait step={step} flow={flow} hub={join.ok.url} hubName={join.ok.name} name={devName.trim()} code={join.code} aliases={join.hubs} other={other} confirmReplace={confirmReplace} onDone={(a) => void arrived(a)} onCancel={() => go("method")} />{replaceDialog}</>;
+    return <><LinkWait step={step} flow={flow} hub={join.ok.url} hubName={join.ok.name} name={devName.trim()} code={join.code} aliases={join.hubs} other={other} confirmReplace={confirmReplace} onRefused={handleMismatchRefusal} onDone={(a) => void arrived(a)} onCancel={() => go("method")} />{replaceDialog}</>;
   }
 
   if (step === "scan") {
@@ -863,7 +893,7 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
       if (!keyFile || !pass) return;
       setBusy(true); setErr(null);
       try { const a = await api.keyFileImport(keyFile, pass); await arrived(a); }
-      catch (e) { setErr(errText(e)); setBusy(false); }
+      catch (e) { const msg = errText(e); if (!handleMismatchRefusal(msg)) setErr(msg); setBusy(false); }
     };
     const startUnlock = () => { if (!keyFile || !pass || busy) return; confirmReplace(() => void unlock()); };
     return (
@@ -913,7 +943,7 @@ export function Onboarding({ start, home }: { start?: "method" | "restore"; home
     setBusy(true); setErr(null);
     // the words of the identity whose key this device lost: its hubs are still here
     try { const a = await api.restoreWords(restore); setRestore(""); await arrived(a); }
-    catch (e) { setErr(errText(e)); }
+    catch (e) { const msg = errText(e); if (!handleMismatchRefusal(msg)) setErr(msg); }
     finally { setBusy(false); }
   };
   const startRestore = () => { if (!n || busy || readingWords) return; confirmReplace(() => void doRestore()); };
