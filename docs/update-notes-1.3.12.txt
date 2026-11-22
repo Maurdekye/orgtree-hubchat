@@ -1,0 +1,1 @@
+New: Hubchat adds itself to the Linux app menu, runs in the SteamVR session and works without a system keyring.
