@@ -24,15 +24,15 @@ Windows and Android, and there are first prototype builds for macOS and Linux.
 - Type `@` to mention someone. A mention shows their name with their picture
   or letters, as in your chat list, and opens your chat with them; someone none
   of your hubs lists gets a grey dot instead ([mentions](docs/inline-mentions.md)).
-- Use one identity on your phone and your PC: link them with a QR code, and
+- Use one identity on your phone and your desktop: link them with a QR code, and
   both get every message.
 - Recovery words bring your identity back if you lose a device. [Choose your saved words file or type them](docs/recovery-file.md) on desktop and Android.
 - On Android, Hubchat can stay connected for instant notifications, or check
   about every 15 minutes. Optional [UnifiedPush](docs/unifiedpush.md), with
   mail hub 2.1.0 or later, receives wake-ups through a distributor such as
-  ntfy, without Hubchat's ongoing connection notification. On Windows it sits
-  in the tray, starts with Windows unless you turn that off, and offers
-  updates when they come out.
+  ntfy, without Hubchat's ongoing connection notification. On desktop it sits
+  in the tray, can start at login (**Start with Windows** on Windows), and
+  offers updates when they come out.
 
 Linking devices and syncing between them need a hub running mail hub v2.0:
 the standalone hub, or the one built into Orgtree 4.1.0 and later.
@@ -150,8 +150,8 @@ For a developer team, follow the shared standalone mailhub setup above. For
 individuals and small teams using the built-in Orgtree mailhub, the phone setup
 below is a convenient option.
 
-This option needs Orgtree 4.1.0 or later on your PC, and
-[Tailscale](https://tailscale.com/download) on your PC and your phone:
+This option needs Orgtree 4.1.0 or later on your computer, and
+[Tailscale](https://tailscale.com/download) on your computer and your phone:
 
 1. In Orgtree, open **App settings › Mail hub › Connect your phone** and
    follow the panel.
@@ -160,17 +160,17 @@ This option needs Orgtree 4.1.0 or later on your PC, and
 3. Keep Tailscale on, on your phone: in Android's Settings › VPN, tap the gear
    beside Tailscale and turn on **Always-on VPN**, and set Tailscale's battery
    use to **Unrestricted**. Otherwise Android may switch it off, and Hubchat
-   can't reach your PC.
+   can't reach your computer.
 
-Hubchat checks that it can reach your PC, joins your PC's hub and links you
+Hubchat checks that it can reach your computer, joins your computer's hub and links you
 to your organization, so your agents know that messages from your phone come
-from you. To use the same identity on another phone or PC, link it from
+from you. To use the same identity on another phone or computer, link it from
 **Settings › Devices › Link a device**.
 
 The [setup guide](docs/setup.md) covers developer teams with a shared standalone
 mailhub, Orgtree with
 Tailscale, home Wi-Fi only, your own VPN, someone else's hub, and adding a
-phone or a PC. The same guide is in the app under **Settings › Help**.
+phone or another device. The same guide is in the app under **Settings › Help**.
 
 <p>
   <img src="docs/screenshots/setup-orgtree-panel.jpg" alt="Orgtree's Connect your phone panel: this PC on the Tailscale network, then Turn on phone access" width="430">
@@ -235,7 +235,7 @@ nothing is opened to the internet, only devices in your tailnet can reach the
 hub, and Tailscale encrypts the traffic (the hub has no encryption of its
 own).
 
-1. Install Tailscale on the hub's computer and on each phone or PC that runs
+1. Install Tailscale on the hub's computer and on each phone or device that runs
    Hubchat.
 2. In Hubchat, add the hub by the computer's Tailscale name and the door's
    port, for example `home-pc:7371` (or its `100.x.y.z` address).
@@ -318,13 +318,13 @@ Notes:
     `engine/mailhub`)
   - `HUBCHAT_V2_HUB`: the address of a scratch mail hub v2.0
 
-  The scripts in `tools/` drive the real apps on a PC and a phone; each one's
+  The scripts in `tools/` drive the real apps on desktop and phone; each one's
   header says what it needs.
 
 ## Releasing
 
 GitHub Actions builds, signs and drafts every release; nobody builds one on
-their own PC. [docs/ci-release.md](docs/ci-release.md) has the whole
+their own machine. [docs/ci-release.md](docs/ci-release.md) has the whole
 procedure, including checking a draft and rolling a release back. In short:
 
 1. **Bump the version** in five places, in one commit:
