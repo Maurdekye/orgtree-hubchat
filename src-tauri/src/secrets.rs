@@ -1416,4 +1416,19 @@ mod linux_r5_tests {
         assert_eq!(kr.calls(), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn r5_file_backend_save_does_not_create_missing_parent_data_dir() {
+        let base = temp_dir("no-parent");
+        let missing = base.join("absent-parent").join("data");
+        assert!(!missing.exists());
+        let me = Identity::generate("alex").unwrap();
+        let kr = MockKeyring::new();
+        with_test_backend(SecretServiceState::Absent, kr.clone(), || {
+            assert!(save_identity(&missing, &me).is_err(), "save must not create missing parent data dir");
+        });
+        assert!(!missing.exists(), "missing parent data dir must remain untouched");
+        assert_eq!(kr.calls(), 0);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
