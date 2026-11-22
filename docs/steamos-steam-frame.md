@@ -56,8 +56,14 @@ In a VR session where Hubchat confirms no Secret Service exists:
 The VR file (`identity-store/identity.key`) and Desktop Mode's KWallet are separate key stores:
 
 - To use the same identity in both modes, link this device or enter your recovery words once in the other mode. When the identity matches your local chats, your chats stay intact.
-- If the two stores hold different identities, Hubchat stops at the lost-key screen and asks which one to use — either switch this device to the identity in this session's store (removing the previous identity's local chats, hubs, and drafts) or bring back the local chats' identity (replacing the key in this session's store after confirmation).
+- If the two stores hold different identities, Hubchat stops at the lost-key screen and asks which one to use — either switch this device to the identity in this session's store (removing the previous identity's local chats, hubs, and drafts) or bring back the local chats' identity (replacing the key in this session's store after confirmation). While this choice is open, Hubchat refuses creating a new identity or restoring a third identity (so your chats cannot be erased by accident), and holds any incoming `hubchat://setup` invitation until you finish choosing an identity.
 - Signing out or starting over only touches the current session's key store; the other store is left untouched.
+
+### Known limits
+
+- **Switching to the session's key if saving fails after wipe:** choosing **Use \<address\> here** removes the previous identity's local chats first and then writes the chosen key to this session's store. If that save fails (for example, the disk is full or the keyring refuses writes), Hubchat reports an error after the old local chats have already been removed; the key already in the store can still load on a later launch.
+- **One file-backed Hubchat process per profile during identity changes:** do not run two file-backed Hubchat processes against the same data directory while creating, restoring, or signing out of an identity. File saves share a single temporary file (`identity.key.tmp`) without cross-process locking. Ordinary VR (file) and Desktop (KWallet) sessions use separate backends and do not share that file.
+- **64 KiB file limit for legacy imports:** Hubchat refuses to read a permissions-only key file larger than 64 KiB. Newly generated keys are well under 1 KiB, but an imported legacy identity whose encoded form exceeds 64 KiB can be saved and then rejected at the next start.
 
 ### Optional private KWallet wrapper
 
