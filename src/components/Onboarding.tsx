@@ -117,7 +117,6 @@ export function LostKey({ lost, err, onPick }: { lost: KeyLost; err?: string | n
     try { await api.retryKey(); } catch { /* still not answering */ }
     setTries((n) => n + 1);
     await refreshAll();
-    if (found && getSnap().state?.me) setOnboarding(false);
   };
   useEffect(() => {
     if (!retrying) return;
@@ -133,7 +132,6 @@ export function LostKey({ lost, err, onPick }: { lost: KeyLost; err?: string | n
     setBusy(true);
     try {
       await api.useFoundIdentity(found);
-      setOnboarding(false);
       await refreshAll();
     } catch (e) {
       toast(errText(e));
