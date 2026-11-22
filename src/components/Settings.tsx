@@ -24,7 +24,7 @@ import { GuideBody } from "./Guide";
 import { TransfersPanel } from "./Transfers";
 import { pickStatus } from "./StatusPicker";
 import { scanSetup } from "../lib/setup";
-import { Addr, Avatar, Confirm, NoteCard, QR, Switch, pressKeys, useDialogFocus, useNow, usePlatform, useWeb } from "./ui";
+import { Addr, Avatar, Confirm, NoteCard, QR, Switch, pressKeys, useDeviceWord, useDialogFocus, useIsWindowsDesktop, useNow, usePlatform, useWeb } from "./ui";
 
 export type SetTab = "profile" | "hubs" | "devices" | "transfers" | "notifications" | "recovery" | "privacy" | "appearance" | "general" | "developer" | "help" | "about";
 /** Every section (Android titles its screens from this too; General and Developer are desktop only). */
@@ -293,10 +293,12 @@ function UseAnother({ onApprove }: { onApprove: (input: string) => void }) {
       await go(t);
     } catch (e) { setErr(errText(e)); }
   };
+  const word = useDeviceWord();
+  const thisSelf = word === "phone" ? "This phone" : word === "PC" ? "This PC" : word === "browser" ? "This browser" : "This device";
   const label = <><Icon name="sync" />Use another identity on this device</>;
   const help = platform === "android"
     ? "Scan its link QR: on the device with that identity, Settings › Devices › Link a device. This phone asks before it switches."
-    : "Type or paste its link code: on the device with that identity, Settings › Devices › Link a device. This PC asks before it switches.";
+    : `Type or paste its link code: on the device with that identity, Settings › Devices › Link a device. ${thisSelf} asks before it switches.`;
   if (platform === "android") {
     return (
       <>
@@ -317,7 +319,7 @@ function UseAnother({ onApprove }: { onApprove: (input: string) => void }) {
                 <input id="ua-code" value={code} autoFocus placeholder="XXXX-XXXX-XXXX-XXXX" autoComplete="off" autoCapitalize="characters" spellCheck={false} disabled={busy}
                   onChange={(e) => { setCode(formatCode(e.target.value)); setErr(null); }} onKeyDown={(e) => { if (e.key === "Enter" && ok && !busy) void go(code); }} />
               </label>
-              <div className={"help" + (err ? " bad" : "")}>{err || "On that device: Settings › Devices › Link a device › Show a QR code. The code is under the QR code. This PC asks before it switches."}</div>
+              <div className={"help" + (err ? " bad" : "")}>{err || `On that device: Settings › Devices › Link a device › Show a QR code. The code is under the QR code. ${thisSelf} asks before it switches.`}</div>
             </div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button className="btn ghost" onClick={() => { setOpen(false); setCode(""); setErr(null); }} disabled={busy}>Cancel</button>
@@ -331,10 +333,12 @@ function UseAnother({ onApprove }: { onApprove: (input: string) => void }) {
 function Devices({ onLink, goTab }: { onLink?: (tab?: LinkTab, input?: string) => void; goTab?: (t: SetTab) => void }) {
   const snap = useSnap();
   const platform = usePlatform();
+  const word = useDeviceWord();
+  const isWin = useIsWindowsDesktop();
   const me = snap.state!.me!;
   const [linking, setLinking] = useState<{ tab?: LinkTab; input?: string } | null>(null);
   const link = (tab?: LinkTab, input?: string) => (onLink ? onLink(tab, input) : setLinking({ tab, input }));
-  const self = platform === "android" ? "This phone" : "This PC";
+  const self = platform === "android" ? "This phone" : word === "PC" ? "This PC" : word === "browser" ? "This browser" : "This device";
   const pad = platform === "android" ? " pad" : "";
   // Mail hub v2.0 lists every device that syncs as us; older hubs list none.
   const [list, setList] = useState<Devices | null>(null);
@@ -364,7 +368,7 @@ function Devices({ onLink, goTab }: { onLink?: (tab?: LinkTab, input?: string) =
           ) : null}
           {platform === "android"
             ? <div className="pad" style={{ marginTop: 6 }}><button className="btn block" onClick={() => link()}><Icon name="link" />Link a device</button></div>
-            : <div className="set-row"><button className="btn" onClick={() => link()}><Icon name="link" />Link a device</button><span className="help">Bring your identity to a new phone or PC: show a QR code for it to scan, approve its code, show your key as a QR code, or save a key file.</span></div>}
+            : <div className="set-row"><button className="btn" onClick={() => link()}><Icon name="link" />Link a device</button><span className="help">Bring your identity to a new phone or {isWin ? "PC" : "device"}: show a QR code for it to scan, approve its code, show your key as a QR code, or save a key file.</span></div>}
           <UseAnother onApprove={(input) => link("approve", input)} />
         </Card>
         {others.length ? (
@@ -387,9 +391,12 @@ function Devices({ onLink, goTab }: { onLink?: (tab?: LinkTab, input?: string) =
 
 function General() {
   const enter = useEnterKey();
+  const web = useWeb();
+  const isWin = useIsWindowsDesktop();
   const [on, setOn] = useState<boolean | null>(null);
   const [exit, setExit] = useState<boolean | null>(null);
   useEffect(() => {
+    if (web) return;
     const read = () => {
       autostart.get().then(setOn, () => setOn(false));
       exitOnClose.get().then(setExit, () => setExit(false));
@@ -398,7 +405,7 @@ function General() {
     // the tray's menu changes the same two settings
     const off = api.onSettingsChanged(read);
     return () => { void off.then((f) => f()); };
-  }, []);
+  }, [web]);
   const set = async (v: boolean) => {
     setOn(v);
     try { setOn(await autostart.set(v)); } catch (e) { toast(errText(e)); setOn(!v); }
@@ -407,14 +414,20 @@ function General() {
     setExit(v);
     try { setExit(await exitOnClose.set(v)); } catch (e) { toast(errText(e)); setExit(!v); }
   };
+  const startLabel = isWin ? "Start with Windows" : "Start at login";
+  const startHint = isWin
+    ? "Hubchat starts hidden in the tray when you sign in to Windows, so messages arrive before you open it."
+    : "Hubchat starts hidden in the tray when you sign in, so messages arrive before you open it.";
   return (
     <Sec first>
       <Card>
-        <ToggleRow icon="play" t1="Start with Windows" t2="Hubchat starts hidden in the tray when you sign in to Windows, so messages arrive before you open it." on={on} onChange={set} label="Start with Windows" />
-        <ToggleRow icon="minimize" t1="Exit on close"
-          t2={exit ? "Closing the window quits Hubchat. No notifications arrive until you open it again."
-            : "Closing the window keeps Hubchat running in the tray. To quit, right-click the Hubchat icon in the tray and choose Quit Hubchat."}
-          on={exit} onChange={setExitOn} label="Exit on close" />
+        {web ? null : <>
+          <ToggleRow icon="play" t1={startLabel} t2={startHint} on={on} onChange={set} label={startLabel} />
+          <ToggleRow icon="minimize" t1="Exit on close"
+            t2={exit ? "Closing the window quits Hubchat. No notifications arrive until you open it again."
+              : "Closing the window keeps Hubchat running in the tray. To quit, right-click the Hubchat icon in the tray and choose Quit Hubchat."}
+            on={exit} onChange={setExitOn} label="Exit on close" />
+        </>}
         <Row icon="send" t1="Enter key" t2={enter === "newline"
           ? "Enter starts a new line in a message; Ctrl+Enter (or Command+Enter) sends it."
           : "Enter sends a message; Shift+Enter starts a new line."}
@@ -740,28 +753,30 @@ export function SettingsModal({ tab, setTab, onClose, onOpenChat }: { tab: SetTa
   const snap = useSnap();
   const hubBad = snap.state?.hubs.some((h) => h.state === "disconnected" || h.state === "refused");
   const dlg = useDialogFocus();
-  // Quit Hubchat: a page has no process to quit
+  // Quit Hubchat and Developer logs: a page has no desktop process or local log folder
   const web = useWeb();
+  const tabs = web ? TABS.filter(([k]) => k !== "developer") : TABS;
+  const activeTab: SetTab = tabs.some(([k]) => k === tab) ? tab : "general";
   const [profileDraft, setProfileDraft] = useState<ProfileDraft | null>(null);
   // the section list is a tab list, as Orgtree's SettingsTabs: the open section is announced as selected, one tab
   // stop for the list, and arrows, Home and End move between sections (symmetry audit ux08 S4)
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
-  const go = (to: number) => { setTab(TABS[to]![0]); tabRefs.current[to]?.focus(); };
+  const go = (to: number) => { setTab(tabs[to]![0]); tabRefs.current[to]?.focus(); };
   return (
     <div className="scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal settings" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabIndex={-1} ref={dlg.ref} onKeyDown={dlg.onKeyDown}>
         <nav className="set-nav">
           <h3 id="settings-title" aria-level={2}>Settings</h3>
           <div role="tablist" aria-label="Settings sections" aria-orientation="vertical" className="set-tabs">
-            {TABS.map(([k, label, ic], i) => (
-              <button key={k} type="button" role="tab" id={"settab-" + k} aria-selected={tab === k} aria-controls={tab === k ? "set-panel" : undefined}
-                tabIndex={tab === k ? 0 : -1} className={tab === k ? "on" : ""} ref={(el) => { tabRefs.current[i] = el; }} onClick={() => setTab(k)}
+            {tabs.map(([k, label, ic], i) => (
+              <button key={k} type="button" role="tab" id={"settab-" + k} aria-selected={activeTab === k} aria-controls={activeTab === k ? "set-panel" : undefined}
+                tabIndex={activeTab === k ? 0 : -1} className={activeTab === k ? "on" : ""} ref={(el) => { tabRefs.current[i] = el; }} onClick={() => setTab(k)}
                 onKeyDown={(e) => {
                   if (e.altKey || e.ctrlKey || e.metaKey || e.nativeEvent.isComposing) return;
-                  if (e.key === "ArrowDown" || e.key === "ArrowRight") { e.preventDefault(); go((i + 1) % TABS.length); }
-                  else if (e.key === "ArrowUp" || e.key === "ArrowLeft") { e.preventDefault(); go((i - 1 + TABS.length) % TABS.length); }
+                  if (e.key === "ArrowDown" || e.key === "ArrowRight") { e.preventDefault(); go((i + 1) % tabs.length); }
+                  else if (e.key === "ArrowUp" || e.key === "ArrowLeft") { e.preventDefault(); go((i - 1 + tabs.length) % tabs.length); }
                   else if (e.key === "Home") { e.preventDefault(); go(0); }
-                  else if (e.key === "End") { e.preventDefault(); go(TABS.length - 1); }
+                  else if (e.key === "End") { e.preventDefault(); go(tabs.length - 1); }
                 }}>
                 <Icon name={ic} />{label}
                 {k === "recovery" && !snap.state?.recovery_saved ? <span className="warnmark" title="Recovery words not saved" /> : null}
@@ -775,8 +790,8 @@ export function SettingsModal({ tab, setTab, onClose, onOpenChat }: { tab: SetTa
           </>}
         </nav>
         <div className="set-main">
-          <div className="modal-h"><h3>{TABS.find((t) => t[0] === tab)![1]}</h3><button className="icon-btn" onClick={onClose} title="Close (Esc)" aria-label="Close"><Icon name="close" /></button></div>
-          <div className="set-body scroll" key={tab} role="tabpanel" id="set-panel" aria-labelledby={"settab-" + tab}><SettingsSection tab={tab} goTab={setTab} onOpenChat={onOpenChat} profileDraft={profileDraft} onProfileDraft={setProfileDraft} /></div>
+          <div className="modal-h"><h3>{tabs.find((t) => t[0] === activeTab)![1]}</h3><button className="icon-btn" onClick={onClose} title="Close (Esc)" aria-label="Close"><Icon name="close" /></button></div>
+          <div className="set-body scroll" key={activeTab} role="tabpanel" id="set-panel" aria-labelledby={"settab-" + activeTab}><SettingsSection tab={activeTab} goTab={setTab} onOpenChat={onOpenChat} profileDraft={profileDraft} onProfileDraft={setProfileDraft} /></div>
         </div>
       </div>
     </div>

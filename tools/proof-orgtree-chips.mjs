@@ -141,7 +141,7 @@ const menuButtons = () => [...document.querySelectorAll('.pop.ctx button.mi')];
   const item = chip(a.host, 'o1', '@item:alpha/fix-login');
   if (item) await click(item, a.act);
   check('A1 on a phone a chip never opens, and a tap shows the hint',
-    item && !item.classList.contains('on') && a.opened.length === 0 && document.getElementById('toasts')?.textContent === 'Opens in Orgtree on the PC that runs alpha');
+    item && !item.classList.contains('on') && a.opened.length === 0 && document.getElementById('toasts')?.textContent === 'Opens in Orgtree on the device that runs alpha');
   const target = item ?? bubble(a.host, 'o1');
   if (target) await a.act(() => target.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 5, clientY: 5 })));
   const sheet = [...document.querySelectorAll('.sheet [role="menuitem"]')].map(e => e.textContent.trim());

@@ -17,7 +17,7 @@ import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { createRoot } from "react-dom/client";
 import { Icon } from "../lib/icons";
 import { openLink } from "../lib/native";
-import { Modal, ModalHead, PlatformCtx, usePlatform, type Platform } from "./ui";
+import { Modal, ModalHead, PlatformCtx, useIsWindowsDesktop, usePlatform, type Platform } from "./ui";
 import { openGuide } from "./Guide";
 import "../styles/hubhelp.css";
 
@@ -35,6 +35,7 @@ const M = ({ children }: { children: ReactNode }) => <span className="mono">{chi
 /** The help itself. */
 export function HubHelpBody() {
   const android = usePlatform() === "android";
+  const isWin = useIsWindowsDesktop();
   return (
     <div className="hubhelp">
       <p>Hubchat's messages travel through a mail hub. You can run your own, in Orgtree or on its own.</p>
@@ -52,7 +53,7 @@ export function HubHelpBody() {
       <h5>From outside your network: use Tailscale</h5>
       <p>Tailscale is the safer, simpler choice: nothing is opened to the internet, only devices in your tailnet can reach the hub, and Tailscale encrypts the traffic (the hub has no encryption of its own).</p>
       <ol>
-        <li>Install <Ext href={TAILSCALE}>Tailscale</Ext> on the hub's computer and on each phone or PC that runs Hubchat.</li>
+        <li>Install <Ext href={TAILSCALE}>Tailscale</Ext> on the hub's computer and on each phone or {isWin ? "PC" : "device"} that runs Hubchat.</li>
         <li>In Hubchat, add the hub by the computer's Tailscale name and the door's port, for example <M>home-pc:7371</M> (or its <M>100.x.y.z</M> address).</li>
         <li>On an Android phone, keep Tailscale on: in Android's Settings › VPN, tap the gear beside Tailscale and turn on <b>Always-on VPN</b>, and set Tailscale's battery use to <b>Unrestricted</b>.</li>
       </ol>

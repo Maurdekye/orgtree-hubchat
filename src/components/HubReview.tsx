@@ -8,7 +8,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, type HubRow, type Probe } from "../api";
 import { Icon } from "../lib/icons";
 import { errText } from "../lib/native";
-import { NoteCard, usePlatform } from "./ui";
+import { NoteCard, useDeviceWord } from "./ui";
 
 type Check =
   | { k: "empty" }
@@ -143,8 +143,7 @@ export type HubReviewState = ReturnType<typeof useHubReview>;
 
 /** The rows, "Add a hub", and a note when no hub is ticked. `head`: a title over the rows. */
 export function HubReview({ rev, disabled, head }: { rev: HubReviewState; disabled?: boolean; head?: ReactNode }) {
-  const platform = usePlatform();
-  const device = platform === "android" ? "phone" : "PC";
+  const device = useDeviceWord();
   return (
     <div className="hubrev">
       {head ? <div className="hr-h">{head}</div> : null}
@@ -156,14 +155,14 @@ export function HubReview({ rev, disabled, head }: { rev: HubReviewState; disabl
 }
 
 function HubLine({ r, rev, disabled }: { r: Row; rev: HubReviewState; disabled?: boolean }) {
-  const platform = usePlatform();
+  const device = useDeviceWord();
   const c = r.check;
   // the other addresses tried, offered when the one shown doesn't answer
   const tries = c.k === "bad" || c.k === "invalid" ? r.candidates.filter((x) => x.trim() && !same(x, r.value)) : [];
   let status: ReactNode;
   if (c.k === "checking") status = <span className="hr-s busy"><span className="spin" />Checking…</span>;
   else if (c.k === "ok") status = <span className="hr-s ok"><Icon name="check_circle" />{c.found ? <span>Found <b>{c.name}</b> {foundWhere(c.found)}</span> : <b>{c.name}</b>}</span>;
-  else if (c.k === "empty") status = <span className="hr-s">Type the address this {platform === "android" ? "phone" : "PC"} should use</span>;
+  else if (c.k === "empty") status = <span className="hr-s">Type the address this {device} should use</span>;
   else {
     status = (
       <span className="hr-s bad"><Icon name="error" /><span>{c.error}{c.k === "bad"
@@ -183,7 +182,7 @@ function HubLine({ r, rev, disabled }: { r: Row; rev: HubReviewState; disabled?:
         <div className="hr-st">
           {status}
           {r.theirs && !same(r.theirs, r.value)
-            ? <span className="hr-theirs">{platform === "android" ? "Your PC" : "Your other device"} uses <span className="mono">{short(r.theirs)}</span></span> : null}
+            ? <span className="hr-theirs">Your other device uses <span className="mono">{short(r.theirs)}</span></span> : null}
         </div>
         {tries.length ? (
           <div className="hr-try"><span>Try:</span>{tries.map((x) => <button key={x} className="chip" onClick={() => rev.pick(r.key, short(x))} disabled={disabled}>{short(x)}</button>)}</div>

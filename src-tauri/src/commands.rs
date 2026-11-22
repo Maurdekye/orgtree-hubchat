@@ -72,6 +72,7 @@ pub struct State {
     file_background_hint: Option<String>,
     hubs: Vec<HubStatus>,
     platform: &'static str,
+    os: &'static str,
     /// What other devices see this one called (linking uses it as is).
     device_name: String,
     /// The phone's maker on Android ("samsung": Settings › Notifications
@@ -124,6 +125,7 @@ pub fn hc_state() -> R<State> {
         } else {
             "desktop"
         },
+        os: std::env::consts::OS,
     })
 }
 

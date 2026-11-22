@@ -16,7 +16,7 @@ import { toast } from "../lib/toast";
 import { HubAdder } from "./HubAdder";
 import { HubReview, useHubReview } from "./HubReview";
 import { Acts, Lead } from "./LinkDevice";
-import { Addr, Modal, ModalHead, NoteCard, useNow, usePlatform } from "./ui";
+import { Addr, Modal, ModalHead, NoteCard, defaultDeviceName, useDeviceWord, useNow, useOs, usePlatform, useWeb } from "./ui";
 
 type Hub = { url: string; name: string };
 type Arrived = Extract<LinkEvent, { state: "review" }>;
@@ -56,7 +56,7 @@ function Shell({ title, heading, onClose, children }: { title: ReactNode; headin
 function ReviewScreen({ ev, busy, onKeep, onConfirm }: { ev: Arrived; busy?: boolean; onKeep: () => void; onConfirm: (urls: string[]) => void }) {
   const platform = usePlatform();
   const snap = useSnap();
-  const self = platform === "android" ? "phone" : "PC";
+  const self = useDeviceWord();
   const blk = platform === "android" ? " block" : "";
   const rev = useHubReview(ev.hubs);
   const [ack, setAck] = useState(false);
@@ -109,7 +109,9 @@ function ReviewScreen({ ev, busy, onKeep, onConfirm }: { ev: Arrived; busy?: boo
 export function JoinFlow({ req }: { req: JoinReq }) {
   const platform = usePlatform();
   const snap = useSnap();
-  const self = platform === "android" ? "phone" : "PC";
+  const web = useWeb();
+  const os = useOs();
+  const self = useDeviceWord();
   const [st, setSt] = useState<St>(() => (req.hub ? { k: "probe", hub: req.hub, all: req.hubs } : { k: "hub", hub: null, why: null }));
   const [attempt, setAttempt] = useState(0);
   const now = useNow(st.k === "waiting");
@@ -169,13 +171,13 @@ export function JoinFlow({ req }: { req: JoinReq }) {
     const hub = st.hub;
     hubRef.current = hub;
     void (async () => {
-      const name = getSnap().state?.device_name || (platform === "android" ? "Android phone" : "Windows PC");
+      const name = getSnap().state?.device_name || defaultDeviceName(platform, web, os);
       try {
         const s = await api.linkStart(hub.url, name, req.code, req.hubs);
         setSt((c) => (c.k === "starting" ? { k: "waiting", hub, s, until: Date.now() + 600e3 } : c));
       } catch (e) { setSt({ k: "failed", hub, msg: errText(e) }); }
     })();
-  }, [st, attempt, platform, req.code]);
+  }, [st, attempt, platform, web, os, req.code]);
 
   const close = () => endJoin();
   const again = (hub: Hub) => { setAttempt((a) => a + 1); setSt({ k: "starting", hub }); };

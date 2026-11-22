@@ -106,6 +106,8 @@ export interface OrefContext {
   /** this PC's Orgtree takes links but listed no orgs (user 2026-11-18):
    *  every hint says so instead of naming another PC */
   unlisted?: boolean;
+  /** Whether the local desktop runs Windows (keeps "PC" on Windows, uses "device" off Windows). */
+  windows?: boolean;
 }
 
 /** The rules, decided by the user 2026-11-08 m7c183781895c (Q1-Q4):
@@ -117,7 +119,7 @@ export interface OrefContext {
  *    orgtree:// links. */
 export function orefContext(o: {
   peer: string; peerKind: string; peerName: string; outgoing: boolean;
-  desktop: boolean; links: boolean; orgs: readonly LocalOrg[];
+  desktop: boolean; links: boolean; orgs: readonly LocalOrg[]; windows?: boolean;
 }): OrefContext {
   const org = o.peerKind === "org";
   const local = org ? o.orgs.find((x) => x.address === o.peer) ?? null : null;
@@ -128,6 +130,7 @@ export function orefContext(o: {
     nodes: org ? { slug: local?.slug ?? null, name: local?.name || o.peerName } : null,
     orgName: (slug) => o.orgs.find((x) => x.slug === slug)?.name || slug,
     unlisted: o.desktop && o.links && o.orgs.length === 0,
+    windows: o.windows,
   };
 }
 
@@ -157,11 +160,16 @@ const ESC: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ESC[c]!);
 
 /** The hint on a chip that cannot open here (accepted copy, Q5). */
-export const notHere = (org: string) => `Opens in Orgtree on the PC that runs ${org}`;
+export const notHere = (org: string, windows = true) =>
+  windows ? `Opens in Orgtree on the PC that runs ${org}` : `Opens in Orgtree on the device that runs ${org}`;
 /** The hint when this PC's Orgtree takes links but listed no orgs: its
  *  local-orgs.json is missing or empty, so nothing can be matched here. */
 export const NOT_LISTED = "Orgtree on this PC didn't list its orgs";
-const hint = (ctx: OrefContext, org: string) => (ctx.unlisted ? NOT_LISTED : notHere(org));
+export const NOT_LISTED_NON_WINDOWS = "Orgtree on this device didn't list its orgs";
+const hint = (ctx: OrefContext, org: string) => {
+  const win = ctx.windows !== false;
+  return ctx.unlisted ? (win ? NOT_LISTED : NOT_LISTED_NON_WINDOWS) : notHere(org, win);
+};
 
 /** One chip's facts: what it shows, its token, and whether it opens. */
 export interface OrefChip {

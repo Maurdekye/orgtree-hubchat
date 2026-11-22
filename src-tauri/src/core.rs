@@ -152,7 +152,7 @@ fn computer_name() -> String {
         }
     }
     #[cfg(target_os = "linux")]
-    const FALLBACK: &str = "Linux PC";
+    const FALLBACK: &str = "Linux device";
     #[cfg(target_os = "macos")]
     const FALLBACK: &str = "Mac";
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]

@@ -23,7 +23,7 @@ import { refreshKey, useRestoredRefreshState, useRefreshState } from "../lib/ref
 import { HubHelpLink } from "./HubHelp";
 import { HubChip, routeLabel, routeVia } from "./HubPicker";
 import { MessageView } from "./MessageView";
-import { Addr, KindChip, KindGlyph, NoteCard, PeerAvatar, PresText, pressKeys, useNow, usePlatform, useSeenTick } from "./ui";
+import { Addr, KindChip, KindGlyph, NoteCard, PeerAvatar, PresText, pressKeys, useIsWindowsDesktop, useNow, usePlatform, useSeenTick } from "./ui";
 
 const GROUP_GAP = 5 * 60000;
 const NONE: Message[] = [];
@@ -50,6 +50,7 @@ interface Props {
 
 export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, onContact, infoOn, onMenu, onCloseDm, showMessage }: Props) {
   const platform = usePlatform();
+  const isWin = useIsWindowsDesktop();
   const snap = useSnap();
   const hubs = snap.state?.hubs || [];
   const c = snap.byAddr.get(peer);
@@ -402,9 +403,9 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
         onReply={reply} onSelect={toggleSel} onPick={onPick} onInfo={info} onDelete={del} onJump={jump} onOpenAddr={onOpenAddr} onContactInfo={onContactInfo} />,
     );
     prev = m;
-    if (setup?.reply_id === m.id) rows.push(setupNote(setup, platform));
+    if (setup?.reply_id === m.id) rows.push(setupNote(setup, platform, isWin));
   }
-  if (setup && (!setup.outcome || !msgs.some((m) => m.id === setup.reply_id))) rows.push(setupNote(setup, platform));
+  if (setup && (!setup.outcome || !msgs.some((m) => m.id === setup.reply_id))) rows.push(setupNote(setup, platform, isWin));
   const p = presence(c, hubs);
   useSeenTick(p.state === "offline");
   if (p.state === "offline" && msgs.some((m) => m.outgoing && m.state === "sent")) {
@@ -618,11 +619,11 @@ function DropZone({ lim }: { lim: ReturnType<typeof limitFor> }) {
 }
 
 /** The setup note: waiting for the org's answer, Linked, or the code didn't work. */
-function setupNote(s: SetupState, platform: string) {
+function setupNote(s: SetupState, platform: string, isWin: boolean) {
   if (s.outcome === "linked") return <div className="sysnote linked" key="setup" data-setup="linked"><Icon name="link" />Linked — {s.orgname} knows this address is you.</div>;
   if (s.outcome === "expired") {
     return (
-      <div className="sysnote setup-bad" key="setup" data-setup="expired"><Icon name="error_outline" />That setup code didn't work. It may have expired or already been used. Show a new code on your PC, then scan again.
+      <div className="sysnote setup-bad" key="setup" data-setup="expired"><Icon name="error_outline" />That setup code didn't work. It may have expired or already been used. Show a new code on {isWin ? "your PC" : "your other device"}, then scan again.
         {platform === "android" ? <div><button className="btn sm" onClick={() => void scanSetup()}><Icon name="qr" />Scan again</button></div> : null}
       </div>
     );

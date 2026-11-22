@@ -36,7 +36,7 @@ export function useSetup(): SetupReq | null {
 /** A hubchat://setup link (a deep link from the phone's camera, or a scan). */
 export const isSetupLink = (t: string) => /^hubchat:\/\/setup(?:[/?#]|$)/i.test(t.trim());
 
-export const NOT_SETUP = "That isn't a setup code. On your PC, open Orgtree › App settings › Mail hub › Connect your phone.";
+export const NOT_SETUP = "That isn't a setup code. On the device running Orgtree, open Orgtree › App settings › Mail hub › Connect your phone.";
 
 /** What the browser mock's camera reads by default: Orgtree's setup QR. */
 export const MOCK_SETUP_QR = "hubchat://setup?v=1&hub=" + encodeURIComponent("http://100.101.102.103:7371") +

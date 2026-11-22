@@ -17,12 +17,46 @@ export const usePlatform = () => useContext(PlatformCtx);
  *  installed app can do. `usePlatform` stays the layout. */
 export const WebCtx = createContext(false);
 export const useWeb = () => useContext(WebCtx);
-/** What this device is called in a sentence: "this phone", "this PC", "this browser" (Hubchat Web). */
-export const useDeviceWord = (): "browser" | "phone" | "PC" => {
+export type DesktopOs = "windows" | "linux" | "macos" | "android" | string;
+export const OsCtx = createContext<DesktopOs | null>(null);
+export function detectOs(platform: Platform): DesktopOs {
+  if (platform === "android") return "android";
+  const nav = typeof navigator === "undefined" ? undefined : navigator;
+  const raw = `${nav?.platform ?? ""} ${nav?.userAgent ?? ""}`;
+  if (/Mac/i.test(raw)) return "macos";
+  if (/Windows|win32/i.test(raw)) return "windows";
+  if (/Linux|X11/i.test(raw)) return "linux";
+  return "windows";
+}
+export const useOs = (): DesktopOs => {
+  const provided = useContext(OsCtx);
+  const stateOs = useSnap().state?.os;
+  const platform = usePlatform();
+  return provided ?? stateOs ?? detectOs(platform);
+};
+export const useIsWindowsDesktop = (): boolean => {
   const web = useContext(WebCtx);
   const platform = usePlatform();
-  return web ? "browser" : platform === "android" ? "phone" : "PC";
+  const os = useOs();
+  return !web && platform === "desktop" && os === "windows";
 };
+/** What this device is called in a sentence: "this phone", "this PC" (Windows), "this device" (non-Windows), "this browser" (Hubchat Web). */
+export const useDeviceWord = (): "browser" | "phone" | "PC" | "device" => {
+  const web = useContext(WebCtx);
+  const platform = usePlatform();
+  const os = useOs();
+  if (web) return "browser";
+  if (platform === "android") return "phone";
+  return os === "windows" ? "PC" : "device";
+};
+export function defaultDeviceName(platform: Platform, web: boolean, os: DesktopOs): string {
+  if (web) return "Web browser";
+  if (platform === "android") return "Android phone";
+  if (os === "windows") return "Windows PC";
+  if (os === "macos") return "Mac";
+  if (os === "linux") return "Linux device";
+  return "Desktop";
+}
 
 export function Avatar({ kind, name, size, pres, presTitle, address, picture }: { kind: Kind | "me"; name: string; size: number; pres?: PresState; presTitle?: string; address?: string; picture?: PictureMeta | null }) {
   const fallback = avatarFallback(kind, name);

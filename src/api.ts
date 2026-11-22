@@ -144,6 +144,8 @@ export interface State {
   device_maker: string;
   hubs: HubStatus[];
   platform: "desktop" | "android";
+  /** Host OS (`std::env::consts::OS`, e.g. "windows", "linux", "macos"). Absent from older shells or Hubchat Web. */
+  os?: string;
   /** What runs the core: an installed app, or this page (Hubchat Web). `platform` stays the layout; the UI
    *  hides what a web page cannot do by this. Absent from an older shell: an app. */
   shell?: "tauri" | "web";

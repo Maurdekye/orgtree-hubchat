@@ -24,7 +24,7 @@ import { languageInEnglish, toggleOriginal, translatedText, untranslatedReason, 
 import { AttImage } from "./AttImage";
 import { AttMedia } from "./AttMedia";
 import { useMentionMarks } from "./MentionMark";
-import { pressKeys, usePlatform } from "./ui";
+import { pressKeys, useIsWindowsDesktop, usePlatform } from "./ui";
 
 function metaHTML(m: Message): string {
   // the clock; its hover and spoken label carry the full date and time (a message with no time keeps a plain clock)
@@ -121,9 +121,10 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
   // Orgtree mention chips (lib/orgtreeRefs.ts): this message's org, and whether
   // this PC's Orgtree can open what they name (user 2026-11-08)
   const desktop = platform === "desktop";
+  const isWin = useIsWindowsDesktop();
   const localOrgtree = useLocalOrgtree(desktop);
   const oref = useMemo(() => orefContext({ peer: m.peer, peerKind, peerName, outgoing: m.outgoing, desktop,
-    links: localOrgtree.links, orgs: localOrgtree.orgs }), [m.peer, peerKind, peerName, m.outgoing, desktop, localOrgtree]);
+    links: localOrgtree.links, orgs: localOrgtree.orgs, windows: isWin }), [m.peer, peerKind, peerName, m.outgoing, desktop, localOrgtree, isWin]);
   // a chip opens its target in Orgtree, navigation only; elsewhere a tap says where it opens
   const openChip = (chip: HTMLElement) => {
     const go = chipOpen(chip.dataset.oref, oref);

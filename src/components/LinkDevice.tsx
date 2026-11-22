@@ -15,7 +15,7 @@ import { routeLink, startJoin } from "../lib/join";
 import { errText, saveKeyFileTo, scanQr } from "../lib/native";
 import { refreshDirectory, refreshState, useSnap } from "../lib/store";
 import { toast } from "../lib/toast";
-import { Modal, ModalHead, NoteCard, QR, useNow, useDeviceWord, usePlatform } from "./ui";
+import { Modal, ModalHead, NoteCard, QR, useNow, useDeviceWord, useIsWindowsDesktop, usePlatform } from "./ui";
 
 export type LinkTab = "offer" | "approve" | "qr" | "file";
 const TAB_LABELS: [LinkTab, string, string][] = [
@@ -114,6 +114,7 @@ function OfferTab({ onClose }: { onClose: () => void }) {
   const blk = platform === "android" ? " block" : "";
   const hubs = snap.state?.hubs;
   const self = useDeviceWord();
+  const isWin = useIsWindowsDesktop();
 
   if (st.k === "done") {
     return (
@@ -165,7 +166,7 @@ function OfferTab({ onClose }: { onClose: () => void }) {
         <div className="offer-hub">Through <b>{hubLabel(hubs, st.o.hub)}</b> <span className="mono">{st.o.hub}</span></div>
       </div>
       {st.o.phone_access_off
-        ? <NoteCard icon="warning" warn><b>Phone access is off on this PC,</b> so other devices can't reach its hub. In Orgtree, open App settings › Mail hub › Connect your phone and turn on phone access, then show a new code.</NoteCard>
+        ? <NoteCard icon="warning" warn><b>Phone access is off on this {isWin ? "PC" : "device"},</b> so other devices can't reach its hub. In Orgtree, open App settings › Mail hub › Connect your phone and turn on phone access, then show a new code.</NoteCard>
         : null}
       <div className="offer-how">
         {platform === "android"
@@ -244,8 +245,8 @@ function ApproveTab({ onClose, initialInput }: { onClose: () => void; initialInp
     try {
       const t = await scanQr("hubchat-link:K7QD-4MXP-9TRA-2HZE@http://hub.office.lan:7370");
       if (!t) return;
-      if (chatLinkTarget(t) !== null) { setSt({ k: "error", msg: "That's someone's chat QR code, not a link code. On the new device choose “I already use Hubchat”, then “Show a code on this phone instead” (a PC: “Link through a hub”), and scan the code it shows." }); return; }
-      if (!/^(hubchat-link:|hubchat:\/\/)/i.test(t.trim())) { setSt({ k: "error", msg: "That QR code isn't a Hubchat link code. On the new device choose “I already use Hubchat”, then “Show a code on this phone instead” (a PC: “Link through a hub”), and scan the code it shows." }); return; }
+      if (chatLinkTarget(t) !== null) { setSt({ k: "error", msg: "That's someone's chat QR code, not a link code. On the new device choose “I already use Hubchat”, then “Show a code on this phone instead” (a desktop device: “Link through a hub”), and scan the code it shows." }); return; }
+      if (!/^(hubchat-link:|hubchat:\/\/)/i.test(t.trim())) { setSt({ k: "error", msg: "That QR code isn't a Hubchat link code. On the new device choose “I already use Hubchat”, then “Show a code on this phone instead” (a desktop device: “Link through a hub”), and scan the code it shows." }); return; }
       if (await route(t)) return;
       const p = await api.parseLink(t);
       setCode(p.code); setQrText(t.trim());

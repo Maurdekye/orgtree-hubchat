@@ -24,7 +24,7 @@ import { isSetupLink, scanSetup, startSetup, useLinkInstead } from "../lib/setup
 import { FINISH_IDENTITY_NOTICE, isMismatchRefusal } from "../lib/mismatchFlow";
 import { formatCode } from "./LinkDevice";
 import { openGuide } from "./Guide";
-import { Confirm, NoteCard, QR, useNow, usePlatform, useWeb } from "./ui";
+import { Confirm, NoteCard, QR, defaultDeviceName, useDeviceWord, useIsWindowsDesktop, useNow, useOs, usePlatform, useWeb } from "./ui";
 import footerCrop from "../assets/desktop-footer-qr.png";
 import footerQr from "../assets/desktop-footer-qr.json";
 
@@ -101,8 +101,8 @@ export function LostKey({ lost, err, onPick }: { lost: KeyLost; err?: string | n
   const platform = usePlatform();
   // Hubchat Web: the device is this browser, which keeps the key itself
   const web = useWeb();
-  const device = web ? "browser" : platform === "android" ? "phone" : "PC";
-  const windows = !web && platform === "desktop" && /Windows/.test(navigator.userAgent);
+  const device = useDeviceWord();
+  const windows = useIsWindowsDesktop();
   const [confirm, setConfirm] = useState(false);
   const [useFoundAsk, setUseFoundAsk] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -212,8 +212,9 @@ const pad = (platform: string) => (platform === "android" ? { padding: "0 20px" 
 
 /** Under Scan setup code (hubchat-ux-flow.md §5): where the code comes from. */
 export function NoCode() {
+  const isWin = useIsWindowsDesktop();
   return (
-    <p className="nocode">No code? On your PC, open <b>Orgtree › App settings › Mail hub › Connect your phone</b>. No Orgtree? <button className="link" onClick={() => openGuide()}>See the guide.</button></p>
+    <p className="nocode">No code? On {isWin ? "your PC" : "the device running Orgtree"}, open <b>Orgtree › App settings › Mail hub › Connect your phone</b>. No Orgtree? <button className="link" onClick={() => openGuide()}>See the guide.</button></p>
   );
 }
 
@@ -224,13 +225,16 @@ const MOCK_LINK_QR = "hubchat://link?code=M3PX-7QRT-K2ZD-9HAW&hub=" + encodeURIC
  *  its QR button ringed: where to click on the PC to show the link QR. */
 function FooterHint() {
   const q = footerQr;
+  const isWin = useIsWindowsDesktop();
   return (
     <figure className="fhint">
       <div className="fhint-img">
-        <img src={footerCrop} alt="The bottom of Hubchat's chat list on a PC: your address, the copy button and the QR code button" />
+        <img src={footerCrop} alt={isWin
+          ? "The bottom of Hubchat's chat list on a PC: your address, the copy button and the QR code button"
+          : "The bottom of Hubchat's chat list on desktop: your address, the copy button and the QR code button"} />
         <i className="fhint-ring" style={{ left: `calc(${q.x}% - 5px)`, top: `calc(${q.y}% - 5px)`, width: `calc(${q.w}% + 10px)`, height: `calc(${q.h}% + 10px)` }} />
       </div>
-      <figcaption>On your PC, click this button in Hubchat to show the code.</figcaption>
+      <figcaption>{isWin ? "On your PC" : "On your other device"}, click this button in Hubchat to show the code.</figcaption>
     </figure>
   );
 }
@@ -243,9 +247,7 @@ type Wait = { k: "starting" } | { k: "waiting"; s: LinkStart; until: number } | 
 /** An identity arrived: its hubs, as this device reaches them, to check
  *  before anything is saved. Confirm adopts it with the ticked hubs. */
 function ReviewStep({ ev, flow, busy, err, onConfirm, onCancel }: { ev: Arrived; flow: Flow; busy?: boolean; err?: string | null; onConfirm: (urls: string[]) => void; onCancel: () => void }) {
-  const platform = usePlatform();
-  const web = useWeb();
-  const device = web ? "browser" : platform === "android" ? "phone" : "PC";
+  const device = useDeviceWord();
   const rev = useHubReview(ev.hubs);
   const back = () => { if (!busy) onCancel(); };
   return (
@@ -332,9 +334,9 @@ function LinkWait({ hub, hubName, name, code, aliases, other, confirmReplace, on
     phase.current = "over";
     onDoneRef.current(address);
   };
-  const web = useWeb();
-  const device = web ? "browser" : platform === "android" ? "phone" : "PC";
-  const otherDev = platform === "android" ? "your PC" : "your other device";
+  const device = useDeviceWord();
+  const isWin = useIsWindowsDesktop();
+  const otherDev = "your other device";
   if (st.k === "review") return <ReviewStep ev={st.ev} flow={flow} busy={st.busy} err={st.err} onConfirm={(urls) => (confirmReplace ? confirmReplace(() => void confirm(urls)) : void confirm(urls))} onCancel={cancel} />;
   if (code) {
     let jb: ReactNode;
@@ -345,13 +347,13 @@ function LinkWait({ hub, hubName, name, code, aliases, other, confirmReplace, on
         <>
           <div className="approve"><Icon name={platform === "android" ? "phone" : "computer"} /><div className="t"><b>“{name}”</b><span>Asking to be linked · code {st.s.code}</span></div></div>
           <div className="waiting"><span className="spin" /><span>Waiting for you to approve it on {otherDev}…</span><span className="cd" title="The code works for 10 minutes">{mmss}</span></div>
-          <div className="help" style={{ marginTop: 10, ...pad(platform) }}>{otherDev === "your PC" ? "Your PC" : "Your other device"} shows <b>Link “{name}”?</b> under <b>Link a device › Show a QR code</b>. Your key, hub list and profile come back sealed with the code through {hubName}: the hub carries them but can't read them.</div>
+          <div className="help" style={{ marginTop: 10, ...pad(platform) }}>Your other device shows <b>Link “{name}”?</b> under <b>Link a device › Show a QR code</b>. Your key, hub list and profile come back sealed with the code through {hubName}: the hub carries them but can't read them.</div>
         </>
       );
     } else if (st.k === "starting") {
       jb = <div className="probe-card busy"><span className="spin" /><div>Joining through {hubName}…</div></div>;
     } else if (st.k === "expired") {
-      jb = <div className="probe-card bad"><Icon name="hourglass" /><div><b>The code expired</b>It wasn't approved within 10 minutes. Show a new code on {otherDev} ({otherDev === "your PC" ? "the QR button, or " : ""}Link a device › Show a QR code) and try again.</div></div>;
+      jb = <div className="probe-card bad"><Icon name="hourglass" /><div><b>The code expired</b>It wasn't approved within 10 minutes. Show a new code on {otherDev} ({platform === "android" ? "the QR button, or " : ""}Link a device › Show a QR code) and try again.</div></div>;
     } else {
       jb = <div className="probe-card bad"><Icon name="error" /><div><b>Linking didn't work</b>{st.msg}</div></div>;
     }
@@ -375,7 +377,7 @@ function LinkWait({ hub, hubName, name, code, aliases, other, confirmReplace, on
         {platform === "android"
           ? <div className="obpair"><QR text={st.s.qr} size={190} /><div className="paircode long">{st.s.code}</div></div>
           : <div className="pair"><QR text={st.s.qr} size={168} /><div style={{ minWidth: 0 }}><div className="help">This {device}'s code</div><div className="paircode long">{st.s.code}</div>
-              <ol><li>A phone scans the QR code.</li><li>A PC types the code.</li><li>Check that it names <b>{name}</b>, then approve.</li></ol></div></div>}
+              <ol><li>A phone scans the QR code.</li><li>{isWin ? "A PC types the code." : "Another device types the code."}</li><li>Check that it names <b>{name}</b>, then approve.</li></ol></div></div>}
         <div className="waiting"><span className="spin" /><span>Waiting for your other device to approve…</span><span className="cd" title="The code works for 10 minutes">{mmss}</span></div>
         <div className="help" style={{ marginTop: 10, ...pad(platform) }}>The code works once, for 10 minutes, through {hubName}. Your key, hub list and profile come back sealed with it: the hub carries them but can't read them.</div>
       </>
@@ -406,7 +408,9 @@ export function Onboarding({ start, home, onMismatchRefused }: { start?: "method
   const platform = usePlatform();
   // Hubchat Web: a page scans nothing, and for now recovery words are its one way to bring an identity
   const web = useWeb();
-  const device = web ? "browser" : platform === "android" ? "phone" : "PC";
+  const os = useOs();
+  const device = useDeviceWord();
+  const isWin = useIsWindowsDesktop();
   const [step, setStep] = useState<Step>(start ?? "welcome");
   const [flow, setFlow] = useState<Flow>(start ? "words" : "new");
   const [id, setId] = useState("");
@@ -460,13 +464,13 @@ export function Onboarding({ start, home, onMismatchRefused }: { start?: "method
   useEffect(() => () => { recoveryRead.current++; }, []);
   const [linkHub, setLinkHub] = useState<{ url: string; name: string } | null>(null);
   // what the other device shows when it asks to approve: this device's own name
-  const devName = snap.state?.device_name || (platform === "android" ? "Android phone" : "Windows PC");
+  const devName = snap.state?.device_name || defaultDeviceName(platform, web, os);
   const [keyFile, setKeyFile] = useState<string | null>(null);
   const [pass, setPass] = useState("");
   const [join, setJoin] = useState<Join | null>(null);
   const [joinProbe, setJoinProbe] = useState<Probe | null>(null);
   const [code, setCode] = useState("");
-  const otherDev = platform === "android" ? "your PC" : "your other device";
+  const otherDev = "your other device";
   const replaceFound = snap.state?.key_lost?.found ?? null;
   const replaceOwner = snap.state?.key_lost?.address ?? "your identity";
   const [replaceRun, setReplaceRun] = useState<(() => void) | null>(null);
@@ -569,11 +573,11 @@ export function Onboarding({ start, home, onMismatchRefused }: { start?: "method
         return;
       }
       if (chatLinkTarget(t) !== null) {
-        setErr("That's someone's chat QR code, not a link code. On your PC, click the QR button at the bottom of Hubchat's chat list, then scan the code it shows.");
+        setErr("That's someone's chat QR code, not a link code. On your other device, click the QR button at the bottom of Hubchat's chat list, then scan the code it shows.");
         setBusy(false); return;
       }
       if (!/^(hubchat:\/\/|hubchat-link:)/i.test(t)) {
-        setErr("That QR code isn't from Hubchat. On your PC, click the QR button at the bottom of Hubchat's chat list, then scan the code it shows.");
+        setErr("That QR code isn't from Hubchat. On your other device, click the QR button at the bottom of Hubchat's chat list, then scan the code it shows.");
         setBusy(false); return;
       }
       const p = await api.parseLink(t);
@@ -601,7 +605,7 @@ export function Onboarding({ start, home, onMismatchRefused }: { start?: "method
           <Feat ic="bot" t="Agents are first-class" s="Talk to Orgtree orgs and AI agent sessions, such as Claude Code or Codex, the way you talk to people." />
         </div>
         <div className="fork" style={pad(platform)}>
-          {platform === "android" && !web ? <Opt cls="fork-opt primary" ic="qr" t="Scan setup code" s="From Orgtree on your PC" onClick={() => void scanSetup()} /> : null}
+          {platform === "android" && !web ? <Opt cls="fork-opt primary" ic="qr" t="Scan setup code" s="From Orgtree on your other device" onClick={() => void scanSetup()} /> : null}
           <Opt cls={"fork-opt" + (platform === "android" && !web ? "" : " primary")} ic="add" t="Create a new identity" s="Choose an id. Hubchat makes your key and your address." onClick={() => pick("new", "id")} />
           <Opt cls="fork-opt" ic="sync" t="I already use Hubchat" s={"Bring your identity from another device, a key file or your recovery words."} onClick={() => pick("words", "method")} />
         </div>
@@ -724,9 +728,9 @@ export function Onboarding({ start, home, onMismatchRefused }: { start?: "method
       return (
         <Frame step={step} flow={flow} back={toWelcome} wide actions={[]}>
           <h2>Bring your identity to this {device}</h2>
-          <p className="lead">Your identity is a key, and your address comes with it: there is no id to choose. The easiest way: your PC shows a QR code, this {device} scans it.</p>
+          <p className="lead">Your identity is a key, and your address comes with it: there is no id to choose. The easiest way: your other device shows a QR code, this {device} scans it.</p>
           <div className="methods">
-            <Opt cls="method primary" ic="qr" t="Scan the QR code from your other device" s={"This " + device + " joins through your hub; you approve it on the PC. Your key, hubs and profile arrive sealed."} onClick={startScan} />
+            <Opt cls="method primary" ic="qr" t="Scan the QR code from your other device" s={"This " + device + " joins through your hub; you approve it on the other device. Your key, hubs and profile arrive sealed."} onClick={startScan} />
           </div>
           <FooterHint />
           <div className="ob-alt"><button className="link" onClick={() => { setCode(""); pick("type", "typecode"); }}>Type the code instead</button></div>
@@ -745,7 +749,7 @@ export function Onboarding({ start, home, onMismatchRefused }: { start?: "method
         <p className="lead">Your identity is a key, and your address comes with it: there is no id to choose. How should this {device} get it?</p>
         <div className="methods">
           <Opt cls="method" ic="link" t="Link through a hub" s={"This " + device + " shows a code and your other device approves it. Your key, hubs and profile arrive sealed with that code."} tag={<Tag acc>Recommended</Tag>} onClick={() => pick("link", "linkhub")} />
-          <Opt cls="method" ic="dialpad" t="Type a code from your other device" s="Your other device shows a code under Link a device › Show a QR code. Type it here, and approve this PC there." onClick={() => { setCode(""); pick("type", "typecode"); }} />
+          <Opt cls="method" ic="dialpad" t="Type a code from your other device" s={"Your other device shows a code under Link a device › Show a QR code. Type it here, and approve this " + device + " there."} onClick={() => { setCode(""); pick("type", "typecode"); }} />
           <Opt cls="method" ic="qr" t="Scan a QR code" s="Your other device shows your key as a QR code. No network needed." tag={<Tag>Needs a camera</Tag>} onClick={() => pick("qr", "scan")} />
           <Opt cls="method" ic="file" t="Key file" s="Open a key file saved from Hubchat, with its passphrase." onClick={() => pick("file", "keyfile")} />
           <Opt cls="method" ic="key" t="Recovery words" s="Choose your saved recovery words file, or type your 24 words." onClick={() => pick("words", "restore")} />
@@ -825,7 +829,7 @@ export function Onboarding({ start, home, onMismatchRefused }: { start?: "method
         {join.hub
           ? <p className="lead">The code goes through <span className="mono">{join.hub}</span>, but this {device} can't reach that address{why ? <> ({why})</> : null}.</p>
           : <p className="lead">Enter the hub {otherDev} uses.</p>}
-        {join.hub ? <NoteCard icon="dns">{platform === "android" ? "Your PC" : "Your other device"} reached the hub at this address; enter the address this {device} can use (for example its Tailscale name).</NoteCard> : null}
+        {join.hub ? <NoteCard icon="dns">Your other device reached the hub at this address; enter the address this {device} can use (for example its Tailscale name).</NoteCard> : null}
         <HubAdder key={join.hub ?? ""} existing={[]} initial={join.hub ?? ""} autoFocus onPick={(url, n) => { setJoin({ ...join, hub: url, ok: { url, name: n } }); go("joinname"); }} />
       </Frame>
     );
@@ -843,10 +847,12 @@ export function Onboarding({ start, home, onMismatchRefused }: { start?: "method
     if (platform === "desktop" && !web) {
       return (
         <Frame step={step} flow={flow} back={() => go("method")} wide actions={[]}>
-          <h2>This PC can't scan a code</h2>
-          <p className="lead">Scanning your key needs a camera, and PCs rarely have one that can read a phone's screen. Use one of these instead:</p>
+          <h2>This {device} can't scan a code</h2>
+          <p className="lead">{isWin
+            ? "Scanning your key needs a camera, and PCs rarely have one that can read a phone's screen. Use one of these instead:"
+            : "Scanning your key needs a camera, and desktop devices rarely have one that can read a phone's screen. Use one of these instead:"}</p>
           <div className="methods">
-            <Opt cls="method" ic="link" t="Link through a hub" s="This PC shows a code and your phone approves it." tag={<Tag acc>Recommended</Tag>} onClick={() => pick("link", "linkhub")} />
+            <Opt cls="method" ic="link" t="Link through a hub" s={"This " + device + " shows a code and your phone approves it."} tag={<Tag acc>Recommended</Tag>} onClick={() => pick("link", "linkhub")} />
             <Opt cls="method" ic="dialpad" t="Type a code from your other device" s="Your phone shows a code under Link a device › Show a QR code. Type it here." onClick={() => { setCode(""); pick("type", "typecode"); }} />
             <Opt cls="method" ic="file" t="Key file" s="Save a key file on your other device, then open it here." onClick={() => pick("file", "keyfile")} />
             <Opt cls="method" ic="key" t="Recovery words" s="Type the 24 words you saved." onClick={() => pick("words", "restore")} />
@@ -858,7 +864,7 @@ export function Onboarding({ start, home, onMismatchRefused }: { start?: "method
       <>
       <Frame step={step} flow={flow} back={() => go("method")} actions={[{ label: busy ? "Scanning…" : <><Icon name="camera" />Open the camera</>, primary: true, disabled: busy, onClick: () => void scanLink() }]}>
         <h2>Scan the QR code from your other device</h2>
-        <p className="lead">On your PC, open Hubchat and click the QR button at the bottom of the chat list (or <b>Settings › Devices › Link a device</b>). Then scan the code it shows.</p>
+        <p className="lead">On your other device, open Hubchat and click the QR button at the bottom of the chat list (or <b>Settings › Devices › Link a device</b>). Then scan the code it shows.</p>
         <FooterHint />
         {err ? <div className="probe-card bad"><Icon name="error" /><div><b>Couldn't use that code</b>{err}</div></div>
           : <div className="help" style={{ marginTop: 12, ...pad(platform) }}>A QR code of your key (<b>Link a device › My key as a QR code</b>) works here too, with no network.</div>}
@@ -877,7 +883,7 @@ export function Onboarding({ start, home, onMismatchRefused }: { start?: "method
       <Frame step={step} flow={flow} back={() => go("method")} wide actions={acts}>
         <h2>That device is waiting for an identity too</h2>
         <p className="lead">The code you {platform === "android" ? "scanned" : "entered"} comes from a device that is waiting to be given an identity, and this {device} has none to give yet.</p>
-        <NoteCard icon="qr"><b>Scan the QR your signed-in device shows (Settings › Devices › Link a device).</b> {platform === "android" ? "On a PC, the QR button at the bottom of Hubchat's chat list shows it too." : "This PC can also type the code shown under that QR code."}</NoteCard>
+        <NoteCard icon="qr"><b>Scan the QR your signed-in device shows (Settings › Devices › Link a device).</b> {platform === "android" ? "On desktop, the QR button at the bottom of Hubchat's chat list shows it too." : `This ${device} can also type the code shown under that QR code.`}</NoteCard>
       </Frame>
     );
   }

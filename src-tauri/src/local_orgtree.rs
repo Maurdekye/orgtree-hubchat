@@ -299,15 +299,30 @@ pub fn link_url(org: &str, token: Option<&str>) -> Option<String> {
     shaped.then(|| format!("orgtree://{kind}/{path}"))
 }
 
-/// The link to open, when this PC's Orgtree takes links and hosts the org.
-pub fn link_for(listing: &[LocalOrg], takes: bool, org: &str, token: Option<&str>) -> Result<String, String> {
+/// The link to open, when this device's Orgtree takes links and hosts the org.
+pub fn link_for_os(listing: &[LocalOrg], takes: bool, org: &str, token: Option<&str>, windows: bool) -> Result<String, String> {
     if !takes {
-        return Err("This PC's Orgtree can't open links yet".into());
+        return Err(if windows {
+            "This PC's Orgtree can't open links yet"
+        } else {
+            "This device's Orgtree can't open links yet"
+        }
+        .into());
     }
     if !listing.iter().any(|o| o.slug == org) {
-        return Err("That org isn't on this PC's Orgtree".into());
+        return Err(if windows {
+            "That org isn't on this PC's Orgtree"
+        } else {
+            "That org isn't on this device's Orgtree"
+        }
+        .into());
     }
     link_url(org, token).ok_or_else(|| "That isn't an Orgtree link".to_string())
+}
+
+/// The link to open, when this PC's Orgtree takes links and hosts the org.
+pub fn link_for(listing: &[LocalOrg], takes: bool, org: &str, token: Option<&str>) -> Result<String, String> {
+    link_for_os(listing, takes, org, token, cfg!(windows))
 }
 
 /// orgtree:// is registered for this user (Orgtree claims it at start).
@@ -897,5 +912,25 @@ mod tests {
         std::fs::write(data.join(FILE), LISTING).unwrap();
         assert_eq!(listing(&dirs.config).len(), 2);
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn link_for_os_keeps_windows_exact_and_uses_device_off_windows() {
+        assert_eq!(
+            link_for_os(&[], false, "alpha", None, true).unwrap_err(),
+            "This PC's Orgtree can't open links yet"
+        );
+        assert_eq!(
+            link_for_os(&[], false, "alpha", None, false).unwrap_err(),
+            "This device's Orgtree can't open links yet"
+        );
+        assert_eq!(
+            link_for_os(&[], true, "alpha", None, true).unwrap_err(),
+            "That org isn't on this PC's Orgtree"
+        );
+        assert_eq!(
+            link_for_os(&[], true, "alpha", None, false).unwrap_err(),
+            "That org isn't on this device's Orgtree"
+        );
     }
 }
