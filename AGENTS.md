@@ -1,13 +1,17 @@
 # Hubchat development invariants
 
 - 2026-11-21: Linux desktop integration & SteamOS (`linux_scheme.rs`,
-  `linux_gamescope.rs`): writes `dev.orgtree.hubchat.link.desktop`
+  `linux_gamescope.rs`, `secrets.rs`, `core.rs`): writes `dev.orgtree.hubchat.link.desktop`
   and (for verified AppImage/`HUBCHAT_LAUNCHER` launches without a system entry)
   `dev.orgtree.hubchat.desktop` + icon using no-replace/guarded writes (`X-Hubchat-Version=`),
   extract `APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1`, bare plain paths, and foreign-HOME
   guards. Gamescope re-execs once before GTK and restores launching env for external
-  openers. See `docs/linux-scheme-handler.md`, `docs/steamos-steam-frame.md`.
-  [decided: user 2026-11-21 m705e9611b564, mcfbe866f5243; verified: linux_scheme.rs, linux_gamescope.rs]
+  openers. On Linux only, a cached per-process 2s D-Bus probe picks Secret Service
+  (present/indeterminate) or a separate 0700/0600 file (`identity-store/identity.key`,
+  absent only); store disagreement shows the lost-key choice screen (`hc_use_found_identity`),
+  with zero cross-store moves or cleanup. See `docs/linux-scheme-handler.md`,
+  `docs/steamos-steam-frame.md`. [decided: user 2026-11-21 m705e9611b564,
+  mcfbe866f5243, mcf5eec9b9660; 2026-11-22 maa144b7bda6b]
 
 - 2026-11-16: Hub TLS trusts the built-in public roots AND the device's own
   (a LAN hub's CA), always on: every hub connection takes its TLS from

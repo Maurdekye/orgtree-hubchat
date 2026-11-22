@@ -45,7 +45,10 @@ Orgtree's `apps/desktop/main/orgtree-link-linux.ts`; user rulings 2026-11-21
     is already ours. Any other default is left untouched byte for byte.
 
 See [SteamOS and Steam Frame](steamos-steam-frame.md) for the Gamescope re-exec
-used on SteamOS systems without FUSE.
+and Linux-only permissions-only key file fallback (`<data dir>/identity-store/identity.key`,
+used only when no Secret Service exists; kept separate from Desktop Mode's
+KWallet — link or enter recovery words once in the other mode to share an
+identity, or choose on the lost-key screen when the two stores disagree).
 
 ## Launcher opt-in (`HUBCHAT_LAUNCHER`)
 
@@ -100,5 +103,7 @@ hand-written `dev.orgtree.hubchat.desktop` that does not carry
   hand-written `dev.orgtree.hubchat.desktop`.
 - CI `.github/workflows/build-linux.yml` (`keyring` runs the full
   `hubchat-core --lib` and `hubchat --lib` test suites plus the D-Bus /
-  GNOME Keyring scenarios; `build` builds and launch-smokes x86_64 and aarch64
-  AppImage and `.deb` packages).
+  GNOME Keyring scenarios — no bus, bus without Secret Service, locked
+  collection, unlocked GNOME Keyring, probe hang, and discoverable runtime bus;
+  `build` builds and launch-smokes x86_64 and aarch64 AppImage and `.deb`
+  packages).
