@@ -24,15 +24,8 @@ export default function App() {
   const [lostPick, setLostPick] = useState<"method" | "restore" | null>(null);
   const [lostErr, setLostErr] = useState<string | null>(null);
   useEffect(() => { void startStore(); }, []);
-  const lost = snap.state?.me ? null : (snap.state?.key_lost ?? null);
   const mismatch = isMismatchState(snap.state);
   const canOpenSetup = Boolean(snap.ready && snap.state?.me && !snap.onboarding && !mismatch);
-  useEffect(() => {
-    if (!lost) {
-      setLostPick(null);
-      setLostErr(null);
-    }
-  }, [lost]);
   useEffect(() => {
     if (snap.ready) syncSetupGate(mismatch, canOpenSetup);
   }, [snap.ready, mismatch, canOpenSetup]);
@@ -62,7 +55,8 @@ export default function App() {
     );
   }
   let body;
-  if (lost && !lostPick) body = <><LostKey lost={lost} err={lostErr} onPick={(s) => { setLostErr(null); setLostPick(s); }} /><Toasts /></>;
+  const lost = snap.state.me ? null : snap.state.key_lost;
+  if (lost && !lostPick) body = <><LostKey lost={lost} err={mismatch ? lostErr : null} onPick={(s) => { setLostErr(null); setLostPick(s); }} /><Toasts /></>;
   else if (snap.onboarding || !snap.state.me) body = <><Onboarding key={lostPick ?? "new"} start={lost ? lostPick ?? undefined : undefined} home={lost ? () => setLostPick(null) : undefined} onMismatchRefused={mismatch ? (msg) => { setLostErr(msg); setLostPick(null); toast(msg); } : undefined} /><Toasts /></>;
   // keyed by address: after switching identity the layout starts afresh
   else body = platform === "android" ? <Android key={snap.state.me.address} /> : <Desktop key={snap.state.me.address} />;
