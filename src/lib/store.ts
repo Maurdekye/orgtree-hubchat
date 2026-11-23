@@ -205,6 +205,9 @@ export function useMessages(peer: string | null, page = PAGE) {
   const shown = useMemo(() => withLocal(stored, locals), [stored, locals]);
   const reload = useCallback(() => { forceFull.current = true; setTick((t) => t + 1); }, []);
   const refresh = useCallback(() => { windowed.current = true; setTick((t) => t + 1); }, []);
+  // keep only the newest `keep` loaded rows; older ones load again on scroll
+  const trim = useCallback((keep: number) => setData((prev) => (prev.peer === peer && prev.msgs.length > keep
+    ? { ...prev, msgs: prev.msgs.slice(prev.msgs.length - keep), more: true } : prev)), [peer]);
   const retryOlder = useCallback(() => setData((prev) => (prev.peer === peer && prev.unreachable.length ? { ...prev, more: true } : prev)), [peer]);
   return {
     msgs: shown,
@@ -221,6 +224,8 @@ export function useMessages(peer: string | null, page = PAGE) {
     unreachable: same ? data.unreachable : NO_HUBS,
     /** A hub that couldn't be reached is back: go on loading from it. */
     retryOlder,
+    /** Back at the newest message: drop all but the newest `keep` rows. */
+    trim,
     loadingOlder,
     loadOlder,
   };

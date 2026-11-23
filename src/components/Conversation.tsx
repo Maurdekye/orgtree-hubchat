@@ -26,6 +26,9 @@ import { MessageView } from "./MessageView";
 import { Addr, KindChip, KindGlyph, NoteCard, PeerAvatar, PresText, pressKeys, useIsWindowsDesktop, useNow, usePlatform, useSeenTick } from "./ui";
 
 const GROUP_GAP = 5 * 60000;
+/** Loaded rows past which returning to the newest message drops the older ones, and how many it keeps. */
+export const TRIM_AT = 300;
+export const TRIM_KEEP = 100;
 const NONE: Message[] = [];
 
 interface Props {
@@ -61,7 +64,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
   const refreshId = refreshKey("timeline", snap.state?.me?.address ?? "", peer);
   const refreshed = useRestoredRefreshState<{count:number;top:number;pinned:boolean}>(refreshId);
   const restoreScroll = useRef(refreshed);
-  const { msgs, loaded, reload, refresh, more, loadingOlder, loadOlder, unreachable, retryOlder } = useMessages(peer, refreshed?.count || undefined);
+  const { msgs, loaded, reload, refresh, more, loadingOlder, loadOlder, unreachable, retryOlder, trim } = useMessages(peer, refreshed?.count || undefined);
   // what the next message answers: the messages it replies to and the
   // options picked on question cards, kept per chat across restarts
   const pending = useDraftAnswers(peer);
@@ -219,11 +222,22 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
     const el = tl.current;
     if (el && loaded && more && !loadingOlder && el.scrollHeight <= el.clientHeight + 40) older();
   }, [loaded, more, loadingOlder, msgs, older]);
+  // Back at the newest message after scrolling far back: the older pages are
+  // dropped again (they load again on scroll), so a long history read once
+  // doesn't stay mounted and slow everything after (user 2026-11-23). Not while
+  // a selection, a highlighted message or a jump needs older rows.
+  const trimNow = () => {
+    if (pinned.current && msgs.length > TRIM_AT && !sel.length && !hl && !jumpTo.current && !loadingOlder && !olderBusy.current) trim(TRIM_KEEP);
+  };
+  const trimRef = useRef(trimNow);
+  trimRef.current = trimNow;
+  useEffect(() => { trimRef.current(); }, [msgs.length, sel.length, hl, loadingOlder]);
   const onScroll = () => {
     const el = tl.current; if (!el) return;
     const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
     pinned.current = gap < 80; setFar(gap > 300);
     if (el.scrollTop < 400 && more && !loadingOlder) older();
+    trimNow();
   };
   const toBottom = () => { const el = tl.current; if (el) { el.scrollTop = el.scrollHeight; pinned.current = true; setFar(false); } };
 
