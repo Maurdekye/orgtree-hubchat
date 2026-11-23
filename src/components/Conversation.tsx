@@ -78,6 +78,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
   const [extra, setExtra] = useState<Record<string, Message | null>>({});
   const tl = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
+  const jumpHold = useRef(false);
   useRefreshState(refreshId, () => ({count:msgs.length,top:tl.current?.scrollTop ?? 0,pinned:pinned.current}));
   const [far, setFar] = useState(false);
   const newMark = useRef<{ peer: string; id: string | null } | null>(null);
@@ -235,13 +236,18 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
   const onScroll = () => {
     const el = tl.current; if (!el) return;
     const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
-    pinned.current = gap < 80; setFar(gap > 300);
+    // after a jump the view stays where the jump put it until the user moves
+    // it: the smooth scroll's first event comes still at the bottom, and a
+    // resize meanwhile would pull it back down (and trimming could follow)
+    pinned.current = gap < 80 && !jumpHold.current; setFar(gap > 300);
     if (el.scrollTop < 400 && more && !loadingOlder) older();
     trimNow();
   };
-  const toBottom = () => { const el = tl.current; if (el) { el.scrollTop = el.scrollHeight; pinned.current = true; setFar(false); } };
+  const toBottom = () => { const el = tl.current; if (el) { jumpHold.current = false; el.scrollTop = el.scrollHeight; pinned.current = true; setFar(false); } };
+  const userMoves = () => { jumpHold.current = false; };
 
   const flash = (el: HTMLElement, smooth = true) => {
+    jumpHold.current = true;
     el.scrollIntoView({ block: "center", behavior: smooth ? "smooth" : "auto" });
     el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash");
     setTimeout(() => el.classList.remove("flash"), 1500);
@@ -588,7 +594,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
       <div className="tl-wrap">
         <div className="timeline scroll" ref={tl} onScroll={onScroll} tabIndex={platform === "desktop" ? -1 : undefined} role="region" aria-label={"Messages with " + name}
           onContextMenu={(e) => { if (hlRef.current && e.target === e.currentTarget) { e.preventDefault(); menuOnHl(); } }}
-          onMouseDown={() => { if (hlRef.current) leaveHl(); }}
+          onMouseDown={() => { userMoves(); if (hlRef.current) leaveHl(); }} onWheel={userMoves} onTouchStart={userMoves} onKeyDown={userMoves}
           onBlur={(e) => { if (hlRef.current && document.hasFocus() && !e.currentTarget.contains(e.relatedTarget as Node | null)) leaveHl(); }}><div className="tl-inner">{rows}{typingNow ? <TypingRow name={name} /> : null}</div></div>
         {jumpBtn}
         {dragging ? <DropZone lim={limitFor(c, hubs)} /> : null}

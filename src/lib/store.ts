@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { forgetDraftAnswers } from "./answers";
 import { api, type ChatSummary, type Contact, type HcEvent, type Message, type NewOutgoing, type OlderPage, type SendRoute, type State, type TransferView } from "../api";
 import { errText } from "./native";
-import { earlier, focusGained, mergeWindow, readPlan, reuseSame, WINDOW } from "./chatwindow";
+import { earlier, focusGained, mergeWindow, readPlan, reuseSame, sameRows, WINDOW } from "./chatwindow";
 import { Outgoing, withLocal } from "./outgoing";
 
 export interface Snap {
@@ -134,11 +134,14 @@ export function useMessages(peer: string | null, page = PAGE) {
       if (!live) return;
       setData((prev) => {
         if (prev.peer === peer) msgs = reuseSame(prev.msgs, msgs);
-        if (win && prev.peer === peer) return { ...prev, msgs: mergeWindow(prev.msgs, msgs), loaded: true, error: "" };
+        // a re-read that changed nothing keeps the state: no render, and the
+        // view isn't pulled back to the bottom in the middle of a jump
+        const same = (next: Message[]): Paged => (prev.loaded && !prev.error && sameRows(prev.msgs, next) ? prev : { ...prev, msgs: next, loaded: true, error: "" });
+        if (win && prev.peer === peer) return same(mergeWindow(prev.msgs, msgs));
         // fewer than a page: the hubs may still hold older ones (lazy history)
         if (!oldest || prev.peer !== peer) return { peer, msgs, loaded: true, more: true, unreachable: [], error: "" };
         // an older page that arrived meanwhile stays
-        return { ...prev, msgs: [...prev.msgs.filter((m) => earlier(m, oldest)), ...msgs], loaded: true, error: "" };
+        return same([...prev.msgs.filter((m) => earlier(m, oldest)), ...msgs]);
       });
     }, (e) => {
       console.warn("hc_chat", e);

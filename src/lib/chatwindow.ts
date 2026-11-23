@@ -31,6 +31,11 @@ export function reuseSame(shown: readonly Message[], fresh: Message[]): Message[
   });
 }
 
+/** The same rows: the same message objects in the same order. */
+export function sameRows(a: readonly Message[], b: readonly Message[]): boolean {
+  return a.length === b.length && a.every((m, i) => m === b[i]);
+}
+
 /** What a re-read of an open chat is: the newest WINDOW rows merged, or the
  *  whole loaded range. `windowed`: asked for by a chat change or a send;
  *  `forceFull`: asked for by a delete (`reload()`), which wins. */
