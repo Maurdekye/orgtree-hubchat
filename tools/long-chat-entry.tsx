@@ -117,15 +117,19 @@ async function run(n: number, back = n) {
   }, 50);
   r.open = { ...open, rows: rows() };
   // scrolled back through the history (all of it, or the newest `back` rows): older pages as the top comes near
-  const t = performance.now(); let pages = 0;
+  const t = performance.now(); let pages = 0; let drift = 0;
+  const at = (id: string) => (document.getElementById(id)?.getBoundingClientRect().top ?? NaN) - tl().getBoundingClientRect().top;
   while (rows() < Math.min(n, back) && pages < 2000) {
     const before = rows();
-    await act(async () => { const el = tl(); el.scrollTop = 0; el.dispatchEvent(new Event("scroll")); await sleep(0); });
+    // the row at the top before the page loads must stay where it is (the page goes in above it)
+    let topId = "", topAt = 0;
+    await act(async () => { const el = tl(); el.scrollTop = 0; topId = el.querySelector(".tl-inner > [id^='m-']")?.id ?? ""; topAt = at(topId); el.dispatchEvent(new Event("scroll")); await sleep(0); });
     for (let i = 0; i < 100 && rows() === before; i++) await act(async () => { await sleep(5); });
     if (rows() === before) break;
+    if (pages < 5 && topId) drift = Math.max(drift, Math.abs(at(topId) - topAt));
     pages++;
   }
-  r.scrollback = { ms: +(performance.now() - t).toFixed(1), pages, rows: rows(), dom_nodes: host.querySelectorAll("*").length };
+  r.scrollback = { ms: +(performance.now() - t).toFixed(1), pages, anchor_drift_px: Math.round(drift), rows: rows(), dom_nodes: host.querySelectorAll("*").length };
   // typing in the composer with the whole history loaded (still scrolled back)
   const box = host.querySelector("textarea") as HTMLTextAreaElement;
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
@@ -174,6 +178,7 @@ async function run(n: number, back = n) {
   r.incoming = { ...summary(incoming.slice(2)), rows: rows(), rows_rerendered_per_message: total(inMiss) / incoming.length, by_prop: inMiss };
   // the gate (red on 1.3.12): typing re-renders no message row, whatever the history
   r.checks = [
+    { name: "scrolling back, the row in view stays put while an older page loads above it", ok: pages === 0 || drift <= 2 },
     { name: "a keystroke re-renders no message row", ok: total(keyMiss) === 0 },
     { name: "back at the newest message, at most 300 rows stay mounted, still at the bottom", ok: (r.return_to_newest as { rows: number }).rows <= 300 && (r.return_to_newest as { at_bottom: boolean }).at_bottom },
   ];
@@ -215,10 +220,11 @@ async function run(n: number, back = n) {
   const flashed = !!document.getElementById("m-" + far)?.classList.contains("flash");
   await act(async () => { await sleep(1600); });
   r.jump_far_back = { ...jump, was_mounted: wasMounted, rows_before: rowsBeforeJump, rows_after: rows(), flashed, still_mounted: !!document.getElementById("m-" + far), in_view: shown() };
-  // in_view is recorded, not gated: with older pages still unloaded above it, 1.3.12 already ends such a jump with
-  // the original out of view (one more older page loads after it; measured at base, 2,000 messages, 200 loaded)
+  // with older pages still unloaded above it, one more page loads once the jump lands near the top: the
+  // original must stay in view (1.3.12 lost it: its anchor kept the distance from the bottom, coordinator 2026-11-23)
   (r.checks as { name: string; ok: boolean }[]).push({ name: "after trimming, jumping to a reply's original far back loads it, highlights it and keeps it mounted",
     ok: flashed && !!document.getElementById("m-" + far) }, {
+    name: "a jump far back ends with the original in view, even when another older page loads after it", ok: shown() }, {
     name: "a jump to an original already mounted ends with it in view (a smooth scroll isn't pulled back to the bottom)", ok: !wasMounted || shown() });
   r.calls = { ...calls };
   await act(async () => { root.unmount(); });
