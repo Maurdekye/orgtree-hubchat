@@ -38,9 +38,12 @@ theres no lag."
   it until the user moves it (wheel, touch, pointer, key, jump-to-bottom), so
   a resize during the smooth scroll can't pull it back to the bottom, and a
   chat re-read that changed nothing keeps its state (`chatwindow.sameRows`).
-- Known, older than this: jumping to an original with older pages still
-  unloaded above it can end with the original loaded and highlighted but out
-  of view (one more older page loads after it). Measured on 1.3.12 too.
+- An older page (scrolling back, or after a jump lands near the top) keeps
+  the first message in view where it is: the anchor is that message and its
+  offset from the top, held until the page is in. Keeping the distance from
+  the bottom (1.3.13 and before) moved the view when rows below changed in
+  the same commit: a far jump could end with its original out of view, and
+  scrolling back drifted up to 469 px per page.
 
 ## The benchmark
 
@@ -60,5 +63,7 @@ message re-renders at most 2 older rows; a focus gain's re-read re-renders
 no unchanged row (and did re-read); back at the newest message at most 300
 rows stay mounted and the view is still at the bottom; after trimming, a jump
 to an original 1,000 messages back loads, highlights and keeps it, and a jump
-to an original already mounted ends with it in view. Timings are recorded,
+to an original already mounted ends with it in view; a far jump ends with the
+original in view even when another older page loads after it; scrolling back,
+the row in view moves at most 2 px while a page loads above it. Timings are recorded,
 not gated: Chromium on a PC is only a proxy for WebKitGTK on the Frame.
