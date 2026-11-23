@@ -195,19 +195,31 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
   }, [peer]);
   // older history a page at a time, as the top comes near (user 23:46Z),
   // keeping what is on screen where it was
-  const anchor = useRef<{ h: number; t: number } | null>(null);
+  // The anchor is the first message in view and how far below the top it
+  // sits: it stays there however the rest of the timeline changes height
+  // meanwhile. (Keeping the distance from the bottom lost a jump's original
+  // when rows below it changed in the same commit, coordinator 2026-11-23.)
+  // It holds until the older page is in (the oldest row changes).
+  const anchor = useRef<{ id: string; off: number; first: string | undefined } | { h: number; t: number; first: string | undefined } | null>(null);
   const olderBusy = useRef(false);
+  const oldest = useRef<string | undefined>(undefined);
+  oldest.current = msgs[0]?.id;
   const older = useCallback(() => {
     const el = tl.current; if (!el || olderBusy.current) return;
     olderBusy.current = true;
-    anchor.current = { h: el.scrollHeight, t: el.scrollTop };
+    const top = el.getBoundingClientRect().top;
+    const inView = [...el.querySelectorAll<HTMLElement>(".tl-inner > [id^='m-']")].find((r) => r.getBoundingClientRect().bottom > top);
+    anchor.current = inView ? { id: inView.id, off: inView.getBoundingClientRect().top - top, first: oldest.current } : { h: el.scrollHeight, t: el.scrollTop, first: oldest.current };
     void loadOlder().then((p) => { if (!p.length) anchor.current = null; }).finally(() => { olderBusy.current = false; });
   }, [loadOlder]);
   useLayoutEffect(() => {
     const el = tl.current, a = anchor.current;
     if (!el || !a) return;
-    anchor.current = null;
-    el.scrollTop = el.scrollHeight - a.h + a.t;
+    if (msgs[0]?.id !== a.first) anchor.current = null;
+    if ("id" in a) {
+      const row = document.getElementById(a.id);
+      if (row) el.scrollTop += row.getBoundingClientRect().top - el.getBoundingClientRect().top - a.off;
+    } else el.scrollTop = el.scrollHeight - a.h + a.t;
   }, [msgs]);
   // a hub whose older messages couldn't be loaded is back: go on from it
   const backOnline = unreachable.some((u) => hubByUrl(hubs, u)?.state === "connected");
