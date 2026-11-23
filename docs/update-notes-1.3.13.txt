@@ -1,0 +1,1 @@
+New: long chats stay fast; typing and new messages no longer slow down as history grows.
