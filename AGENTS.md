@@ -45,6 +45,7 @@
   verified: orgtreeRefs.ts, md.ts, local_orgtree.rs]
 
 - 2026-11-06: Send cost is flat in history (user 2026-11-06 12:09Z-12:10Z "close to a full second from hubchat"). A chat change re-reads only the newest `WINDOW` (200) rows once more than that are loaded, merged by id (`src/lib/chatwindow.ts` `mergeWindow`, `readPlan`); a send (`refresh()`) does the same; opening the chat, a focus gain (once per gain), a delete (`reload()`) and a page change re-read the whole loaded range. Accepted: a late receipt on a row older than 200 shows on reopen. `Store::messages_where` reads attachments in one statement per 500 rows (`attach_queries` counts them; `store_send_scale_tests.rs`, `tools/chat-window.test.ts`). `chats()` stays O(history) in SQL (7 ms at 20k rows on a PC) and is already coalesced in `schedule`. [decided: coordinator-opus 2026-11-06 12:39Z; verified: store.ts useMessages, store.rs]
+- 2026-11-23: Long chats: rows re-render only when they change; back at the newest, >300 loaded rows trim to 100. docs/long-chat.md.
 
 - 2026-11-01: Mention kind filters: `@org:` / `@person:` / `@chat:` in the
   composer narrow the `@` hint list to addresses of that kind (by `kindOf`).
