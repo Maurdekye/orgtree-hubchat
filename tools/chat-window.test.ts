@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mergeWindow, readPlan, focusGained, WINDOW } from "../src/lib/chatwindow.ts";
+import { mergeWindow, readPlan, focusGained, reuseSame, WINDOW } from "../src/lib/chatwindow.ts";
 import type { Message } from "../src/api";
 
 const msg = (i: number, state = "sent"): Message =>
@@ -49,4 +49,15 @@ test("focus gain reads once per gain", () => {
   assert.equal(focusGained(true, true), false);
   assert.equal(focusGained(true, false), false);
   assert.equal(focusGained(false, false), false);
+});
+
+test("a re-read keeps the shown object of every unchanged row; a changed or new row is the fresh one (user 2026-11-23)", () => {
+  const shown = range(1, 5);
+  const fresh = [...range(1, 4), msg(5, "read"), msg(6)].map((m) => ({ ...m }));
+  const out = reuseSame(shown, fresh);
+  for (let i = 0; i < 4; i++) assert.equal(out[i], shown[i]);
+  assert.equal(out[4], fresh[4]);
+  assert.equal(out[4].state, "read");
+  assert.equal(out[5], fresh[5]);
+  assert.deepEqual(reuseSame([], fresh), fresh);
 });

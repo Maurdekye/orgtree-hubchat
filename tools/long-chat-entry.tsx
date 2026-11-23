@@ -84,7 +84,7 @@ function install(n: number) {
     sendRoute: async () => ({ pinned: null, automatic: "http://hub.invalid", next: "http://hub.invalid", hubs: ["http://hub.invalid"] }),
     loadOlder: async () => ({ added: 0, more: [], unreachable: [] }),
     localOrgtreeOrgs: async () => [], orgtreeLinks: async () => false, appInstalled: async () => false, vpnActive: async () => false,
-    devices: async () => [], message: async (id: string) => all.find((m) => m.id === id) ?? null,
+    devices: async () => [], message: async (id: string) => structuredClone(all.find((m) => m.id === id) ?? null),
     // the store's paging: the newest `limit` before a message, or everything from one on
     chat: async (_p: string, o: { before?: Message | null; from?: Message | null; limit?: number } = {}) => {
       calls.chat++;
@@ -93,7 +93,8 @@ function install(n: number) {
       if (o.from) { const f = { at: o.from.created_at, id: o.from.id }; v = v.filter((m) => later(m, f)); }
       const out = v.slice(Math.max(0, v.length - (o.limit ?? 50)));
       calls.rowsReturned += out.length;
-      return out;
+      // like the core over IPC: new objects on every read
+      return structuredClone(out);
     },
   });
 }
@@ -125,8 +126,7 @@ async function run(n: number) {
     pages++;
   }
   r.scrollback = { ms: +(performance.now() - t).toFixed(1), pages, rows: rows(), dom_nodes: host.querySelectorAll("*").length };
-  await act(async () => { const el = tl(); el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event("scroll")); await sleep(20); });
-  // typing in the composer with the whole history loaded
+  // typing in the composer with the whole history loaded (still scrolled back)
   const box = host.querySelector("textarea") as HTMLTextAreaElement;
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
   box.focus();
@@ -142,6 +142,23 @@ async function run(n: number) {
   }
   const keyMiss = takeMisses();
   r.keystroke = { ...summary(keys.slice(5)), rows_rerendered_per_key: total(keyMiss) / keys.length, by_prop: keyMiss };
+  // back to the newest message
+  const back = await measure(async () => {
+    await act(async () => { const el = tl(); el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event("scroll")); await sleep(20); });
+    await act(async () => { const el = tl(); el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event("scroll")); await sleep(20); });
+  });
+  const tlEl = tl();
+  r.return_to_newest = { ...back, rows: rows(), dom_nodes: host.querySelectorAll("*").length, at_bottom: tlEl.scrollHeight - tlEl.scrollTop - tlEl.clientHeight < 80 };
+  // typing there
+  const keys2: Sample[] = [];
+  for (let i = 0; i < 20; i++) {
+    keys2.push(await measure(() => act(async () => {
+      setter.call(box, box.value + "b");
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    })));
+  }
+  r.keystroke_at_newest = summary(keys2.slice(3));
+  takeMisses();
   // the peer's typing heartbeat (about once a second while they write)
   const typing: Sample[] = [];
   for (let i = 0; i < 15; i++) typing.push(await measure(() => act(async () => { listener?.({ type: "typing", peer: PEER }); await sleep(0); })));
@@ -156,7 +173,32 @@ async function run(n: number) {
   const inMiss = takeMisses();
   r.incoming = { ...summary(incoming.slice(2)), rows: rows(), rows_rerendered_per_message: total(inMiss) / incoming.length, by_prop: inMiss };
   // the gate (red on 1.3.12): typing re-renders no message row, whatever the history
-  r.checks = [{ name: "a keystroke re-renders no message row", ok: total(keyMiss) === 0 }];
+  r.checks = [
+    { name: "a keystroke re-renders no message row", ok: total(keyMiss) === 0 },
+    { name: "back at the newest message, at most 300 rows stay mounted, still at the bottom", ok: (r.return_to_newest as { rows: number }).rows <= 300 && (r.return_to_newest as { at_bottom: boolean }).at_bottom },
+  ];
+  // the window gains focus (VR overlays and alt-tab do this often): the open chat re-reads all it shows
+  // an offscreen window never has the OS focus: the page's own answer follows these events
+  let focused = true;
+  document.hasFocus = () => focused;
+  takeMisses();
+  const reads0 = calls.chat;
+  const focus: Sample[] = [];
+  for (let i = 0; i < 5; i++) {
+    const before = calls.chat;
+    focus.push(await measure(async () => {
+      focused = false; window.dispatchEvent(new Event("blur"));
+      focused = true; window.dispatchEvent(new Event("focus"));
+      for (let k = 0; k < 400 && calls.chat === before; k++) await sleep(5);
+      await sleep(30);
+    }));
+  }
+  const focusMiss = takeMisses();
+  r.focus = { ...summary(focus), reads: calls.chat - reads0, rows_rerendered_per_focus: total(focusMiss) / focus.length, by_prop: focusMiss };
+  (r.checks as { name: string; ok: boolean }[]).push(
+    { name: "a new incoming message re-renders at most 2 older rows", ok: total(inMiss) <= 2 * incoming.length },
+    { name: "a focus gain's re-read re-renders no row whose message didn't change", ok: calls.chat - reads0 >= focus.length && total(focusMiss) === 0 },
+  );
   r.calls = { ...calls };
   await act(async () => { root.unmount(); });
   return r;
