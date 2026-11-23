@@ -41,8 +41,8 @@ android {
         minSdk = 24
         targetSdk = 37
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1003012").toInt()
-        versionName = tauriProperties.getProperty("tauri.android.versionName", "1.3.12")
+        versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1003013").toInt()
+        versionName = tauriProperties.getProperty("tauri.android.versionName", "1.3.13")
     }
     signingConfigs {
         if (releaseSigning.getProperty("storeFile") != null) {
