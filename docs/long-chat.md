@@ -34,6 +34,14 @@ theres no lag."
   messages are selected, one is highlighted (Shift+Tab), a jump to a reply is
   under way or an older page is loading.
 
+- A jump to a message (reply quote, Contact info) holds the view where it put
+  it until the user moves it (wheel, touch, pointer, key, jump-to-bottom), so
+  a resize during the smooth scroll can't pull it back to the bottom, and a
+  chat re-read that changed nothing keeps its state (`chatwindow.sameRows`).
+- Known, older than this: jumping to an original with older pages still
+  unloaded above it can end with the original loaded and highlighted but out
+  of view (one more older page loads after it). Measured on 1.3.12 too.
+
 ## The benchmark
 
 `tools/proof-long-chat.mjs` bundles `tools/long-chat-entry.tsx` (the real
@@ -50,5 +58,7 @@ with the failed gates and exits 0, 2 (a gate failed) or 1 (it broke).
 Gates, per history length: a keystroke re-renders no row; a new incoming
 message re-renders at most 2 older rows; a focus gain's re-read re-renders
 no unchanged row (and did re-read); back at the newest message at most 300
-rows stay mounted and the view is still at the bottom. Timings are recorded,
+rows stay mounted and the view is still at the bottom; after trimming, a jump
+to an original 1,000 messages back loads, highlights and keeps it, and a jump
+to an original already mounted ends with it in view. Timings are recorded,
 not gated: Chromium on a PC is only a proxy for WebKitGTK on the Frame.
