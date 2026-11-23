@@ -43,7 +43,8 @@ offscreen Electron, Session 0 only, muted, no network or clipboard, inside a
 kernel Job. Environment: `HUBCHAT_DEPENDENCY_ROOT`, `HUBCHAT_DOM_DEPENDENCY_ROOT`
 (esbuild and electron), `HUBCHAT_RENDERER_OUT`, optional
 `HUBCHAT_LONG_CHAT_SIZES` (default 100,1000,5000,20000) and
-`HUBCHAT_LONG_CHAT_LABEL`. It prints `LONG-CHAT PASS` or `LONG-CHAT FAIL`
+`HUBCHAT_LONG_CHAT_LABEL`, and `HUBCHAT_LONG_CHAT_BACK` (scroll back only that many rows; default the
+whole history, which takes minutes past a few thousand). It prints `LONG-CHAT PASS` or `LONG-CHAT FAIL`
 with the failed gates and exits 0, 2 (a gate failed) or 1 (it broke).
 
 Gates, per history length: a keystroke re-renders no row; a new incoming

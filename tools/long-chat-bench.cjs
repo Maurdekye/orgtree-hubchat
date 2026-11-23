@@ -7,6 +7,8 @@ const { app, BrowserWindow, session } = require('electron');
 const out = process.env.HUBCHAT_RENDERER_OUT;
 const sizes = (process.env.HUBCHAT_LONG_CHAT_SIZES || '100,1000,5000,20000').split(',').map(Number);
 const label = process.env.HUBCHAT_LONG_CHAT_LABEL || 'run';
+// how far back each run scrolls (rows); default the whole history
+const back = Number(process.env.HUBCHAT_LONG_CHAT_BACK) || 0;
 app.commandLine.appendSwitch('mute-audio'); app.disableHardwareAcceleration(); app.setPath('userData', path.join(out, 'user-data-' + label));
 app.on('window-all-closed', () => {});
 const sessionOf = pid => { try { return Number(execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid}).SessionId`], { encoding: 'utf8', windowsHide: true }).trim()); } catch { return null; } };
@@ -22,7 +24,7 @@ app.whenReady().then(async () => {
       await win.loadFile(path.join(out, 'long-chat.html'));
       const js = c => win.webContents.executeJavaScript(c);
       await js(`(async()=>{const d=performance.now()+20000;while(!window.longChat){if(window.longChatError)throw Error(window.longChatError);if(performance.now()>d)throw Error('No fixture');await new Promise(r=>setTimeout(r,20));}})()`);
-      const r = await js(`window.longChat.run(${n})`);
+      const r = await js(`window.longChat.run(${n}${back ? ', ' + back : ''})`);
       r.session = { main: sessionOf(process.pid), renderer: sessionOf(win.webContents.getOSProcessId()) };
       console.log(JSON.stringify(r));
       results.push(r); win.destroy();

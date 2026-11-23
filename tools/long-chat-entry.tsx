@@ -99,14 +99,14 @@ function install(n: number) {
   });
 }
 
-async function run(n: number) {
+async function run(n: number, back = n) {
   install(n);
   await act(async () => { await store.startStore(); });
   const host = document.getElementById("root")!;
   const root = createRoot(host);
   const rows = () => host.querySelectorAll(".timeline [id^='m-']").length;
   const tl = () => host.querySelector(".timeline") as HTMLElement;
-  const r: Record<string, unknown> = { n };
+  const r: Record<string, unknown> = { n, back };
   // open: what the chat draws first (the newest page)
   const open = await measure(async () => {
     await act(async () => {
@@ -116,9 +116,9 @@ async function run(n: number) {
     for (let i = 0; i < 200 && !rows(); i++) await act(async () => { await sleep(10); });
   }, 50);
   r.open = { ...open, rows: rows() };
-  // scrolled back through the whole history: older pages as the top comes near
+  // scrolled back through the history (all of it, or the newest `back` rows): older pages as the top comes near
   const t = performance.now(); let pages = 0;
-  while (rows() < n && pages < 2000) {
+  while (rows() < Math.min(n, back) && pages < 2000) {
     const before = rows();
     await act(async () => { const el = tl(); el.scrollTop = 0; el.dispatchEvent(new Event("scroll")); await sleep(0); });
     for (let i = 0; i < 100 && rows() === before; i++) await act(async () => { await sleep(5); });
@@ -143,12 +143,12 @@ async function run(n: number) {
   const keyMiss = takeMisses();
   r.keystroke = { ...summary(keys.slice(5)), rows_rerendered_per_key: total(keyMiss) / keys.length, by_prop: keyMiss };
   // back to the newest message
-  const back = await measure(async () => {
+  const toNewest = await measure(async () => {
     await act(async () => { const el = tl(); el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event("scroll")); await sleep(20); });
     await act(async () => { const el = tl(); el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event("scroll")); await sleep(20); });
   });
   const tlEl = tl();
-  r.return_to_newest = { ...back, rows: rows(), dom_nodes: host.querySelectorAll("*").length, at_bottom: tlEl.scrollHeight - tlEl.scrollTop - tlEl.clientHeight < 80 };
+  r.return_to_newest = { ...toNewest, rows: rows(), dom_nodes: host.querySelectorAll("*").length, at_bottom: tlEl.scrollHeight - tlEl.scrollTop - tlEl.clientHeight < 80 };
   // typing there
   const keys2: Sample[] = [];
   for (let i = 0; i < 20; i++) {
@@ -204,6 +204,6 @@ async function run(n: number) {
   return r;
 }
 
-declare global { interface Window { longChat?: { run: (n: number) => Promise<unknown> }; longChatError?: string } }
+declare global { interface Window { longChat?: { run: (n: number, back?: number) => Promise<unknown> }; longChatError?: string } }
 window.longChat = { run };
 window.addEventListener("error", (e) => { window.longChatError = String(e.message); });
