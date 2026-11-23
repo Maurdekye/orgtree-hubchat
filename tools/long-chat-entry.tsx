@@ -199,6 +199,27 @@ async function run(n: number, back = n) {
     { name: "a new incoming message re-renders at most 2 older rows", ok: total(inMiss) <= 2 * incoming.length },
     { name: "a focus gain's re-read re-renders no row whose message didn't change", ok: calls.chat - reads0 >= focus.length && total(focusMiss) === 0 },
   );
+  // after trimming: a new message answers one from far back; clicking its quote loads older pages
+  // until the original shows, highlighted, and it stays (trimming must not drop it again)
+  // 1,000 back (or the oldest): far behind the 100 rows trimming keeps
+  const far = "m" + String(n - Math.min(n, 1000)).padStart(6, "0");
+  const ask = make(n + 100); ask.outgoing = false; ask.state = "received"; ask.reply_to = far; ask.body = "about that one"; all.push(ask);
+  await act(async () => { listener?.({ type: "incoming", peer: PEER, id: ask.id, preview: "x" }); for (let k = 0; k < 100 && !host.querySelector(`#m-${ask.id} .quote[role=button]`); k++) await sleep(10); });
+  const rowsBeforeJump = rows();
+  const wasMounted = !!document.getElementById("m-" + far);
+  const jump = await measure(async () => {
+    await act(async () => { (host.querySelector(`#m-${ask.id} .quote[role=button]`) as HTMLElement | null)?.click(); });
+    for (let k = 0; k < 2000 && !document.getElementById("m-" + far); k++) await act(async () => { await sleep(5); });
+  });
+  const shown = () => { const el = document.getElementById("m-" + far), box2 = tl().getBoundingClientRect(); const b2 = el?.getBoundingClientRect(); return !!b2 && b2.bottom > box2.top && b2.top < box2.bottom; };
+  const flashed = !!document.getElementById("m-" + far)?.classList.contains("flash");
+  await act(async () => { await sleep(1600); });
+  r.jump_far_back = { ...jump, was_mounted: wasMounted, rows_before: rowsBeforeJump, rows_after: rows(), flashed, still_mounted: !!document.getElementById("m-" + far), in_view: shown() };
+  // in_view is recorded, not gated: with older pages still unloaded above it, 1.3.12 already ends such a jump with
+  // the original out of view (one more older page loads after it; measured at base, 2,000 messages, 200 loaded)
+  (r.checks as { name: string; ok: boolean }[]).push({ name: "after trimming, jumping to a reply's original far back loads it, highlights it and keeps it mounted",
+    ok: flashed && !!document.getElementById("m-" + far) }, {
+    name: "a jump to an original already mounted ends with it in view (a smooth scroll isn't pulled back to the bottom)", ok: !wasMounted || shown() });
   r.calls = { ...calls };
   await act(async () => { root.unmount(); });
   return r;
