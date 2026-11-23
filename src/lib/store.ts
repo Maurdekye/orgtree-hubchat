@@ -2,11 +2,11 @@
 // (state, chat list, directory) plus in-memory transfer progress. It loads
 // once and re-reads only what an `hc` event says changed; transfer progress
 // is kept apart so a progress tick re-renders only the file card it concerns.
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { forgetDraftAnswers } from "./answers";
 import { api, type ChatSummary, type Contact, type HcEvent, type Message, type NewOutgoing, type OlderPage, type SendRoute, type State, type TransferView } from "../api";
 import { errText } from "./native";
-import { earlier, focusGained, mergeWindow, readPlan, WINDOW } from "./chatwindow";
+import { earlier, focusGained, mergeWindow, readPlan, reuseSame, WINDOW } from "./chatwindow";
 import { Outgoing, withLocal } from "./outgoing";
 
 export interface Snap {
@@ -133,6 +133,7 @@ export function useMessages(peer: string | null, page = PAGE) {
     (win ? api.chat(peer, { limit: WINDOW }) : oldest ? api.chat(peer, { from: oldest, limit: 5000 }) : api.chat(peer, { limit: page })).then((msgs) => {
       if (!live) return;
       setData((prev) => {
+        if (prev.peer === peer) msgs = reuseSame(prev.msgs, msgs);
         if (win && prev.peer === peer) return { ...prev, msgs: mergeWindow(prev.msgs, msgs), loaded: true, error: "" };
         // fewer than a page: the hubs may still hold older ones (lazy history)
         if (!oldest || prev.peer !== peer) return { peer, msgs, loaded: true, more: true, unreachable: [], error: "" };
@@ -196,22 +197,30 @@ export function useMessages(peer: string | null, page = PAGE) {
   const same = data.peer === peer;
   // a read that returns a just-sent message drops its local row (the stored one is drawn in its place)
   useEffect(() => { if (peer && same) outgoing.settle(peer, data.msgs.map((m) => m.id)); }, [peer, same, data.msgs, locals]);
-  const shown = withLocal(same ? data.msgs : NO_MESSAGES, locals);
+  // Everything below is the SAME value until it changes: every row of the
+  // open chat is memoised on props built from these, so a new list or a new
+  // callback on each render re-renders the whole loaded history (user
+  // 2026-11-23: a chat with a long history lagged on every keystroke).
+  const stored = same ? data.msgs : NO_MESSAGES;
+  const shown = useMemo(() => withLocal(stored, locals), [stored, locals]);
+  const reload = useCallback(() => { forceFull.current = true; setTick((t) => t + 1); }, []);
+  const refresh = useCallback(() => { windowed.current = true; setTick((t) => t + 1); }, []);
+  const retryOlder = useCallback(() => setData((prev) => (prev.peer === peer && prev.unreachable.length ? { ...prev, more: true } : prev)), [peer]);
   return {
     msgs: shown,
     loaded: same && data.loaded,
     /** Why the last read failed ("" when it did not). */
     error: same ? data.error : "",
     /** After a delete: the whole loaded range is read again. */
-    reload: () => { forceFull.current = true; setTick((t) => t + 1); },
+    reload,
     /** After a send: the newest rows only (the new message is at the tail). */
-    refresh: () => { windowed.current = true; setTick((t) => t + 1); },
+    refresh,
     /** Older messages exist beyond what is shown. */
     more: same && data.more,
     /** Hubs whose older messages aren't loaded because they can't be reached. */
     unreachable: same ? data.unreachable : NO_HUBS,
     /** A hub that couldn't be reached is back: go on loading from it. */
-    retryOlder: () => setData((prev) => (prev.peer === peer && prev.unreachable.length ? { ...prev, more: true } : prev)),
+    retryOlder,
     loadingOlder,
     loadOlder,
   };

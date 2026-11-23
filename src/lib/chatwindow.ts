@@ -18,6 +18,19 @@ export function mergeWindow(prev: Message[], fresh: Message[], limit: number = W
   return [...prev.filter((m) => earlier(m, first)), ...fresh];
 }
 
+/** A re-read's rows, with every row whose message didn't change kept as the
+ *  object already shown. The core sends new objects on every read, and each
+ *  row of the open chat is memoised on its message: without this, a re-read
+ *  re-renders every row it returns (user 2026-11-23: a long chat lagged). */
+export function reuseSame(shown: readonly Message[], fresh: Message[]): Message[] {
+  if (!shown.length || !fresh.length) return fresh;
+  const byId = new Map(shown.map((m) => [m.id, m]));
+  return fresh.map((m) => {
+    const old = byId.get(m.id);
+    return old && old !== m && JSON.stringify(old) === JSON.stringify(m) ? old : m;
+  });
+}
+
 /** What a re-read of an open chat is: the newest WINDOW rows merged, or the
  *  whole loaded range. `windowed`: asked for by a chat change or a send;
  *  `forceFull`: asked for by a delete (`reload()`), which wins. */

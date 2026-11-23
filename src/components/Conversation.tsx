@@ -15,7 +15,7 @@ import { displayName, hubByUrl, hubName, hubStatusText, kindInfo, kindOf, limitF
 import { scanSetup } from "../lib/setup";
 import { refreshChats, useMessages, useSendRoute, useSnap, useTyping } from "../lib/store";
 import { replyIds } from "../lib/replies";
-import { cardOf, answerNotes, cardKnown, isOpen, isSettled, settlement } from "../lib/questions";
+import { cardOf, answerNotes, cardKnown, isOpen, isSettled, settlement, type CardState } from "../lib/questions";
 import { addReplies, loadDraftAnswers, pick, removeReply, sentDraftAnswers, setReplies, unpick, useDraftAnswers } from "../lib/answers";
 import { toast } from "../lib/toast";
 import { Composer, type ComposerApi } from "./Composer";
@@ -112,7 +112,6 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
     });
     return () => { live = false; };
   }, [msgs, byId, extra, pending]);
-  const quoted = (id: string | null) => (id ? byId.get(id) ?? extra[id] : undefined);
   // a multi-reply's quotes, made once per change so the bubbles stay memoized
   const quoteLists = useMemo(() => {
     const out = new Map<string, (Message | null | undefined)[]>();
@@ -135,7 +134,15 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
   }, [peer, asked]);
   const held = found.peer === peer ? found.msgs : NONE;
   const settled = useMemo(() => settlement(msgs, held), [msgs, held]);
-  const cards = settled.states;
+  // a card whose state didn't change keeps its object, so its row doesn't
+  // re-render when another message comes (every question row did)
+  const lastCards = useRef(settled.states);
+  const cards = useMemo(() => {
+    const prev = lastCards.current, next = new Map(settled.states);
+    for (const [id, st] of next) { const old = prev.get(id); if (old && sameCard(old, st)) next.set(id, old); }
+    lastCards.current = next;
+    return next;
+  }, [settled]);
   const notes = useMemo(() => answerNotes(msgs, cards, held), [msgs, cards, held]);
   const open = useCallback((id: string) => isOpen(settled, id), [settled]);
   const cardState = useCallback((id: string) => cardKnown(settled, id), [settled]);
@@ -152,11 +159,16 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
     const done = Object.keys(pending.picks).filter((id) => isSettled(settled, id));
     if (done.length) unpick(peer, done);
   }, [settled, pending.picks, peer]);
+  // The rows' callbacks read the latest draft and messages through a ref: a
+  // callback that changed with every new message would re-render every row.
+  const latest = useRef({ pending, byId, extra });
+  latest.current = { pending, byId, extra };
   const onPick = useCallback((m: Message, label: string) => {
+    const { pending, byId, extra } = latest.current;
     const targets = [...pending.replies, ...Object.keys(pending.picks)].map(id => byId.get(id) ?? extra[id]);
     if (m.peer !== peer || targets.some(q => !q || q.peer !== peer)) { toast("A multi-reply can only answer messages in this chat."); return; }
     const card = cardOf(m); if (card) pick(peer, m.id, label, card.multiple);
-  }, [peer,pending,byId,extra]);
+  }, [peer]);
 
   // keep pinned to the newest message while at the bottom
   useLayoutEffect(() => {
@@ -255,11 +267,12 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
   // into this draft (user/coordinator 2026-10-14 multi-reply ruling).
   // (the box takes the focus only then: replies saved from before don't open the keyboard)
   const collectReplies = useCallback((ids: string[]) => {
+    const { pending, byId, extra } = latest.current;
     const all = [...new Set([...pending.replies, ...Object.keys(pending.picks), ...ids])].map(id => byId.get(id) ?? extra[id]);
     if (all.some(m => !m)) { toast("Wait for the reply targets to load before adding another."); return false; }
     if (all.some(m => m!.peer !== peer)) { toast("A multi-reply can only answer messages in this chat."); return false; }
     addReplies(peer, ids); return true;
-  }, [peer,pending,byId,extra]);
+  }, [peer]);
   const reply = useCallback((m: Message) => { if (collectReplies([m.id])) { setSel([]); comp.current?.focus(); } },[collectReplies]);
   const toggleSel = useCallback((m: Message) => setSel((s) => (s.includes(m.id) ? s.filter((x) => x !== m.id) : [...s, m.id])), []);
   const replySel = () => { const ids = msgs.filter((m) => sel.includes(m.id)).map((m) => m.id); if (ids.length && collectReplies(ids)) { setSel([]); comp.current?.focus(); } };
@@ -389,22 +402,32 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
       </div>,
     );
   }
-  let day = 0; let prev: Message | null = null;
-  for (const m of msgs) {
-    const t = msgTime(m); const d = dayStart(t);
-    if (d !== day) { rows.push(<div className="day" key={"d" + d}><span>{dayLabel(t)}</span></div>); day = d; prev = null; }
-    if (newMark.current?.id === m.id) {
-      const n = msgs.filter((x) => !x.outgoing && msgTime(x) >= t).length;
-      rows.push(<div className="newmark" key="new">{n} new message{n > 1 ? "s" : ""}</div>);
+  // The messages' rows, built again only when what they show changes: typing
+  // re-renders this view (the draft is in the store), and with a long loaded
+  // history a fresh list of every row on each keystroke lagged (user 2026-11-23).
+  const newId = newMark.current?.id;
+  const msgRows = useMemo(() => {
+    const out: React.ReactNode[] = [];
+    const quotedOf = (id: string | null) => (id ? byId.get(id) ?? extra[id] : undefined);
+    let day = 0; let prev: Message | null = null;
+    for (const m of msgs) {
+      const t = msgTime(m); const d = dayStart(t);
+      if (d !== day) { out.push(<div className="day" key={"d" + d}><span>{dayLabel(t)}</span></div>); day = d; prev = null; }
+      if (newId === m.id) {
+        const n = msgs.filter((x) => !x.outgoing && msgTime(x) >= t).length;
+        out.push(<div className="newmark" key="new">{n} new message{n > 1 ? "s" : ""}</div>);
+      }
+      const first = !prev || prev.outgoing !== m.outgoing || t - msgTime(prev) > GROUP_GAP || (!m.outgoing && m.kind === "question");
+      out.push(
+        <MessageView key={m.id} m={m} first={first} peerName={name} peerKind={kind} quoted={quotedOf(m.reply_to)} quotes={quoteLists.get(m.id)} card={cards.get(m.id)} picks={pending.picks[m.id]} notes={notes.get(m.id)} hover={platform === "desktop"} selected={sel.includes(m.id)} highlighted={hl === m.id}
+          onReply={reply} onSelect={toggleSel} onPick={onPick} onInfo={info} onDelete={del} onJump={jump} onOpenAddr={onOpenAddr} onContactInfo={onContactInfo} />,
+      );
+      prev = m;
+      if (setup?.reply_id === m.id) out.push(setupNote(setup, platform, isWin));
     }
-    const first = !prev || prev.outgoing !== m.outgoing || t - msgTime(prev) > GROUP_GAP || (!m.outgoing && m.kind === "question");
-    rows.push(
-      <MessageView key={m.id} m={m} first={first} peerName={name} peerKind={kind} quoted={quoted(m.reply_to)} quotes={quoteLists.get(m.id)} card={cards.get(m.id)} picks={pending.picks[m.id]} notes={notes.get(m.id)} hover={platform === "desktop"} selected={sel.includes(m.id)} highlighted={hl === m.id}
-        onReply={reply} onSelect={toggleSel} onPick={onPick} onInfo={info} onDelete={del} onJump={jump} onOpenAddr={onOpenAddr} onContactInfo={onContactInfo} />,
-    );
-    prev = m;
-    if (setup?.reply_id === m.id) rows.push(setupNote(setup, platform, isWin));
-  }
+    return out;
+  }, [msgs, newId, name, kind, byId, extra, quoteLists, cards, pending.picks, notes, platform, sel, hl, reply, toggleSel, onPick, info, del, jump, onOpenAddr, onContactInfo, setup, isWin]);
+  rows.push(...msgRows);
   if (setup && (!setup.outcome || !msgs.some((m) => m.id === setup.reply_id))) rows.push(setupNote(setup, platform, isWin));
   const p = presence(c, hubs);
   useSeenTick(p.state === "offline");
@@ -619,6 +642,15 @@ function DropZone({ lim }: { lim: ReturnType<typeof limitFor> }) {
 }
 
 /** The setup note: waiting for the org's answer, Linked, or the code didn't work. */
+/** The same card state: same settlement, by the same message, same picks. */
+function sameCard(a: CardState, b: CardState): boolean {
+  if (a.st !== b.st) return false;
+  if (a.st === "open" || b.st === "open") return true;
+  if (a.by !== b.by) return false;
+  if (a.st === "skipped" || b.st === "skipped") return true;
+  return JSON.stringify(a.picked) === JSON.stringify(b.picked);
+}
+
 function setupNote(s: SetupState, platform: string, isWin: boolean) {
   if (s.outcome === "linked") return <div className="sysnote linked" key="setup" data-setup="linked"><Icon name="link" />Linked — {s.orgname} knows this address is you.</div>;
   if (s.outcome === "expired") {
