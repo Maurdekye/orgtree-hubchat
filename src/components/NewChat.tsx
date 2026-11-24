@@ -45,7 +45,7 @@ export function NewChatResults({ q, r, onOpen, onInfo, onDirectory }: { q: strin
   // the Directory's own list and counts (no waiting link addresses, not you)
   const everyone = listed(snap.directory, snap.state?.me?.address);
   const onlineN = everyone.filter((c) => presence(c, hubs).state === "online").length;
-  useSeenTick(everyone.some((c) => presence(c, hubs).state === "offline"));
+  useSeenTick(everyone.some((c) => presence(c, hubs).ticks));
 
   // a contact is the Directory's own row here too (symmetry audit ux05 S3/S4): its about line, a chip per hub, its menu
   const row = (c: Contact) => <ContactRow key={c.address} c={c} hubs={hubs} onOpen={onOpen} onInfo={onInfo} />;

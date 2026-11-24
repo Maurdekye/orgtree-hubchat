@@ -313,6 +313,15 @@ END;
     // 24: the language a person reads in, as each hub's roster says it (Mail
     // hub 2.4.0; shown in Contact info)
     r#"ALTER TABLE roster ADD COLUMN language TEXT;"#,
+    // 25: last active (Mail hub 2.6.0, feature `last_active`): active now on
+    // that hub, and when they were last active as its roster says it. Every
+    // saved hub fetches its whole directory once more, as migration 17 does
+    // (Engine::refresh_directory_once), so a hub that already has the times
+    // sends them for every row; its sync position stays. A hub upgraded later
+    // sends them itself (its schema 15 marks the rows it fills).
+    r#"ALTER TABLE roster ADD COLUMN active INTEGER NOT NULL DEFAULT 0;
+       ALTER TABLE roster ADD COLUMN active_at TEXT;
+       INSERT OR REPLACE INTO meta(key, value) SELECT 'sync.directory_refresh_due.' || url, 'yes' FROM hubs;"#,
 ];
 
 pub struct Store {
@@ -429,6 +438,10 @@ pub struct Contact {
     /// hub 2.3.0; a part of busy).
     pub dnd: bool,
     pub last_seen: Option<String>,
+    /// Active now on any hub that lists them (Mail hub 2.6.0).
+    pub active: bool,
+    /// The latest last-active time any hub of theirs says (Mail hub 2.6.0).
+    pub active_at: Option<String>,
     pub hubs: Vec<String>,
     pub picture: Option<crate::pictures::PictureMeta>,
     /// The language a person reads in, from the first hub that lists one.
@@ -591,10 +604,10 @@ impl Store {
             tx.execute("DELETE FROM roster WHERE hub=?", [hub])?;
             {
                 let mut st = tx.prepare(
-                    "INSERT INTO roster(address, hub, kind, org_name, username, blurb, online, busy, dnd, last_seen, language) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO roster(address, hub, kind, org_name, username, blurb, online, busy, dnd, last_seen, language, active, active_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 )?;
                 for e in entries {
-                    st.execute(params![e.slug, hub, e.kind, e.org_name, e.username, e.blurb, e.online, e.busy, e.dnd, e.last_seen, e.language])?;
+                    st.execute(params![e.slug, hub, e.kind, e.org_name, e.username, e.blurb, e.online, e.busy, e.dnd, e.last_seen, e.language, e.active, e.active_at])?;
                     store_pictures::roster_owner(&tx,hub,e)?;
                 }
             }
@@ -610,7 +623,7 @@ impl Store {
     pub fn directory(&self) -> Result<Vec<Contact>> {
         self.with(|c| {
             let mut st = c.prepare(
-                "SELECT r.address, r.kind, r.org_name, r.username, r.blurb, r.online, r.busy, r.dnd, r.last_seen, r.hub, r.language FROM roster r ORDER BY r.address, r.hub",
+                "SELECT r.address, r.kind, r.org_name, r.username, r.blurb, r.online, r.busy, r.dnd, r.last_seen, r.hub, r.language, r.active, r.active_at FROM roster r ORDER BY r.address, r.hub",
             )?;
             let mut out: Vec<Contact> = Vec::new();
             let rows = st.query_map([], |r| {
@@ -626,13 +639,17 @@ impl Store {
                     r.get::<_, Option<String>>(8)?,
                     r.get::<_, String>(9)?,
                     r.get::<_, Option<String>>(10)?,
+                    r.get::<_, bool>(11)?,
+                    r.get::<_, Option<String>>(12)?,
                 ))
             })?;
             for row in rows {
-                let (address, kind, org_name, username, blurb, online, busy, dnd, last_seen, hub, language) = row?;
+                let (address, kind, org_name, username, blurb, online, busy, dnd, last_seen, hub, language, active, active_at) = row?;
                 let language = language.filter(|l| !l.is_empty());
                 let busy = online && busy;
                 let dnd = online && dnd;
+                // active only while online there (the hub never lists one offline)
+                let active = online && active;
                 let picture=if matches!(kind.as_str(),"person"|"org") { store_pictures::visible_meta(c,&address)? } else {None};
                 match out.last_mut() {
                     Some(c) if c.address == address => {
@@ -644,12 +661,17 @@ impl Store {
                         if last_seen > c.last_seen {
                             c.last_seen = last_seen;
                         }
+                        // the most recent any hub says (ISO times order as strings)
+                        c.active |= active;
+                        if active_at > c.active_at {
+                            c.active_at = active_at;
+                        }
                         c.hubs.push(hub);
                         if c.language.is_none() {
                             c.language = language;
                         }
                     }
-                    _ => out.push(Contact { address, kind, org_name, username, blurb, online, busy, dnd, last_seen, hubs: vec![hub], picture, language }),
+                    _ => out.push(Contact { address, kind, org_name, username, blurb, online, busy, dnd, last_seen, active, active_at, hubs: vec![hub], picture, language }),
                 }
             }
             Ok(out)
@@ -1342,13 +1364,14 @@ impl Store {
             let tx = c.transaction()?;
             {
                 let mut st = tx.prepare(
-                    "INSERT INTO roster(address, hub, kind, org_name, username, blurb, online, busy, dnd, last_seen, language) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                    "INSERT INTO roster(address, hub, kind, org_name, username, blurb, online, busy, dnd, last_seen, language, active, active_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
                      ON CONFLICT(address, hub) DO UPDATE SET kind=excluded.kind, org_name=excluded.org_name,
                        username=excluded.username, blurb=excluded.blurb, online=excluded.online, busy=excluded.busy,
-                       dnd=excluded.dnd, last_seen=excluded.last_seen, language=excluded.language",
+                       dnd=excluded.dnd, last_seen=excluded.last_seen, language=excluded.language,
+                       active=excluded.active, active_at=excluded.active_at",
                 )?;
                 for e in entries {
-                    st.execute(params![e.slug, hub, e.kind, e.org_name, e.username, e.blurb, e.online, e.busy, e.dnd, e.last_seen, e.language])?;
+                    st.execute(params![e.slug, hub, e.kind, e.org_name, e.username, e.blurb, e.online, e.busy, e.dnd, e.last_seen, e.language, e.active, e.active_at])?;
                     store_pictures::roster_owner(&tx,hub,e)?;
                 }
             }
@@ -1411,6 +1434,19 @@ impl Store {
                     "UPDATE roster SET dnd=1 WHERE hub=? AND address=?",
                     params![hub, a],
                 )?;
+            }
+            tx.commit()
+        })
+    }
+
+    /// Exactly these addresses are active now on this hub (Mail hub 2.6.0:
+    /// `active_now` comes with `online` from a hub with `last_active`).
+    pub fn set_active(&self, hub: &str, active: &[String]) -> Result<()> {
+        self.with(|c| {
+            let tx = c.transaction()?;
+            tx.execute("UPDATE roster SET active=0 WHERE hub=?", [hub])?;
+            for a in active {
+                tx.execute("UPDATE roster SET active=1 WHERE hub=? AND address=?", params![hub, a])?;
             }
             tx.commit()
         })
@@ -1625,6 +1661,10 @@ fn attachment_ids(tx: &rusqlite::Transaction, cond: &str, arg: &str) -> rusqlite
 #[cfg(test)]
 #[path = "store_busy_tests.rs"]
 mod busy_tests;
+
+#[cfg(test)]
+#[path = "store_last_active_tests.rs"]
+mod last_active_tests;
 
 #[cfg(test)]
 #[path = "store_send_scale_tests.rs"]
@@ -1981,6 +2021,8 @@ mod tests {
             kind: "chat".into(),
             picture: None,
             language: None,
+            active: false,
+            active_at: None,
         };
         s.set_roster("http://a:7370", &[e(false)]).unwrap();
         s.set_roster("http://b:7370", &[e(true)]).unwrap();

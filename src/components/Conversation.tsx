@@ -462,7 +462,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
   rows.push(...msgRows);
   if (setup && (!setup.outcome || !msgs.some((m) => m.id === setup.reply_id))) rows.push(setupNote(setup, platform, isWin));
   const p = presence(c, hubs);
-  useSeenTick(p.state === "offline");
+  useSeenTick(p.ticks);
   if (p.state === "offline" && msgs.some((m) => m.outgoing && m.state === "sent")) {
     rows.push(<div className="sysnote" key="pend"><Icon name="schedule" />{name} is offline ({p.short}). Your message waits on hub {via?.name} and is delivered when they reconnect.</div>);
   }
@@ -563,7 +563,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
               <PeerAvatar address={peer} c={c} hubs={hubs} size={40} />
               <div className="t">
                 <span className="n"><span className="ell">{name}</span> <KindGlyph kind={kind} /></span>
-                <span className="s">{p.state === "disconnected" ? <Icon name="cloud_off" /> : null}{p.state === "online" ? "online" : p.short}{viaLabel && hubs.length > 1 ? " · " + viaLabel : ""}</span>
+                <span className="s">{p.state === "disconnected" ? <Icon name="cloud_off" /> : null}{p.short}{viaLabel && hubs.length > 1 ? " · " + viaLabel : ""}</span>
               </div>
             </div>
             <button className="icon-btn" onClick={onMenu} aria-label="More"><Icon name="more_vert" /></button>

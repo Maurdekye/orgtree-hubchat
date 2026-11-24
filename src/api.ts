@@ -268,6 +268,13 @@ export interface Contact {
    *  say it. */
   dnd?: boolean;
   last_seen: string | null;
+  /** Active now (Mail hub 2.6.0, feature `last_active`): a person with
+   *  Hubchat in front, an org with an agent in charge of its org mailbox
+   *  mid-turn; on any hub of theirs. Older cores never say it. */
+  active?: boolean;
+  /** When they were last active (Mail hub 2.6.0): the latest any hub of
+   *  theirs says; null when none says. Older cores never say it. */
+  active_at?: string | null;
   hubs: string[];
   picture?: PictureMeta | null;
   /** The language a person reads in (Mail hub 2.4.0), when they chose one. */

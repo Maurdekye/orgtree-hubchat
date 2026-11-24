@@ -6,6 +6,7 @@ import { isImage } from "./images";
 import { plain } from "./md";
 import type { IconName } from "./icons";
 import { translatedText } from "./translation";
+import { lastSeenWords, withSeen } from "./lastseen";
 
 export type Kind = "org" | "chat" | "person";
 export const kindOf = (c: Contact | undefined): Kind => (c?.kind === "org" || c?.kind === "chat" ? c.kind : "person");
@@ -42,7 +43,27 @@ export const peerHubs = (c: Contact | undefined, hubs: HubStatus[]) => (c ? hubs
 export const viaHub = (c: Contact | undefined, hubs: HubStatus[]) => peerHubs(c, hubs).find((h) => h.state === "connected");
 
 export type PresState = "online" | "busy" | "dnd" | "offline" | "disconnected";
-export interface Presence { state: PresState; text: string; short: string }
+/** `ticks`: the words hold a relative time ("5 min ago") that must be drawn
+ *  again as it moves on (useSeenTick). */
+export interface Presence { state: PresState; text: string; short: string; ticks: boolean }
+
+/** "Last seen" per kind (Mail hub 2.6.0, feature `last_active`): the words
+ *  and the user's two choices live in ./lastseen. */
+export { ACTIVE_NOW, OLD_HUBS_SHOW_LAST_CALL } from "./lastseen";
+
+/** A connected hub that lists them knows `last_active`. */
+export const knowsLastActive = (c: Contact | undefined, hubs: HubStatus[]) =>
+  peerHubs(c, hubs).some((h) => h.state === "connected" && h.features.includes("last_active"));
+
+/** "active now", "last seen 5 min ago", or null (no time to show). */
+export function lastSeen(c: Contact | undefined, hubs: HubStatus[]): { words: string; ticks: boolean } | null {
+  if (!c) return null;
+  return lastSeenWords({ known: knowsLastActive(c, hubs), online: c.online, active: !!c.active, activeAt: ms(c.active_at), lastCall: ms(c.last_seen) }, ago);
+}
+
+/** For ordering by how recently someone was around: their last active time
+ *  where a hub says it, else their last call. */
+export const lastAround = (c: Contact) => (c.active ? Date.now() : ms(c.active_at) || ms(c.last_seen));
 
 /** The definitions, per hub: online = I'm connected to a hub that holds
  *  them and they are connected; busy = online, but no one can answer now
@@ -67,18 +88,17 @@ export function myPresence(status: MyStatus, hubs: HubStatus[]): { state: PresSt
 }
 
 export function presence(c: Contact | undefined, hubs: HubStatus[]): Presence {
-  if (!c) return { state: "disconnected", text: "Status unknown — not in your hubs' directories", short: "status unknown" };
+  if (!c) return { state: "disconnected", text: "Status unknown — not in your hubs' directories", short: "status unknown", ticks: false };
   if (!viaHub(c, hubs)) {
     const names = peerHubs(c, hubs).map((h) => h.name);
-    return { state: "disconnected", text: "Status unknown — no connection to " + (names.join(" or ") || "their hub"), short: "status unknown" };
+    return { state: "disconnected", text: "Status unknown — no connection to " + (names.join(" or ") || "their hub"), short: "status unknown", ticks: false };
   }
-  if (c.online && c.dnd) return { state: "dnd", text: "Do not disturb", short: "do not disturb" };
-  if (c.online && c.busy) return { state: "busy", text: "Busy", short: "busy" };
-  if (c.online) return { state: "online", text: "Online", short: "online" };
-  const seen = ms(c.last_seen);
-  return seen
-    ? { state: "offline", text: "Offline · last seen " + ago(seen), short: "last seen " + ago(seen) }
-    : { state: "offline", text: "Offline", short: "offline" };
+  const seen = lastSeen(c, hubs);
+  const word = (state: PresState, text: string): Presence => ({ state, ...withSeen(text, state === "offline", seen), ticks: !!seen?.ticks });
+  if (c.online && c.dnd) return word("dnd", "Do not disturb");
+  if (c.online && c.busy) return word("busy", "Busy");
+  if (c.online) return word("online", "Online");
+  return word("offline", "Offline");
 }
 
 /** The per-message limit for a peer: the connected hub that reaches them,

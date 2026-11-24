@@ -169,6 +169,11 @@ pub struct SyncResult {
     /// DND.
     #[serde(default)]
     pub dnd: Option<Vec<String>>,
+    /// The online addresses active now (Mail hub 2.6.0, feature
+    /// `last_active`; never ourselves): it comes with `online` from a hub
+    /// with the feature. Not `active`, which is our own devices in use.
+    #[serde(default)]
+    pub active_now: Option<Vec<String>>,
     /// The status we picked, as this hub keeps it (Mail hub 2.3.0, feature
     /// `status`): in every answer; absent from a hub before it.
     #[serde(default)]

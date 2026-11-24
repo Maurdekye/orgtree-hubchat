@@ -84,7 +84,7 @@ export function Addr({ a, net }: { a: string; net?: boolean }) {
 
 export function PresText({ c, hubs }: { c: Contact | undefined; hubs: HubStatus[] }) {
   const p = presence(c, hubs);
-  useSeenTick(p.state === "offline");
+  useSeenTick(p.ticks);
   return <span className={"ptext p-" + p.state}>{p.state === "disconnected" ? <Icon name="cloud_off" /> : null}{p.text}</span>;
 }
 

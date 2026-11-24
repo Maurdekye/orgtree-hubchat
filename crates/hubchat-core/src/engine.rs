@@ -1149,6 +1149,9 @@ impl Engine {
             }
             let start_ms: Option<i64> = self.store.meta(&start_key)?.and_then(|v| v.parse().ok());
             self.admit_roster_batch(client,&r.roster,first_page&&!r.roster.is_empty(),&r.roster_removed,r.online.as_deref(),r.busy.as_deref(),r.dnd.as_deref())?;
+            if let Some(active) = r.active_now.as_deref() {
+                self.admit_active_now(client, active)?;
+            }
             let t = now();
             let mut to_deliver = Vec::new();
             let mut peers = std::collections::BTreeSet::new();

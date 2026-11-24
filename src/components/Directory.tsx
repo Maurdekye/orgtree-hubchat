@@ -5,8 +5,7 @@
 import { useState } from "react";
 import type { Contact, HubStatus } from "../api";
 import { Icon } from "../lib/icons";
-import { ms } from "../lib/format";
-import { displayName, kindOf, presence, type Kind } from "../lib/peers";
+import { displayName, kindOf, lastAround, presence, type Kind } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { HubHelpLink } from "./HubHelp";
 import { chatMenu } from "./ChatList";
@@ -42,7 +41,7 @@ export function ContactRow({ c, hubs, onOpen, onInfo }: { c: Contact; hubs: HubS
       </div>
       {platform === "desktop" ? <div className="via">{via}</div> : null}
       <div className="r">
-        <span>{p.state === "online" ? "online" : p.short}</span>
+        <span>{p.short}</span>
       </div>
     </div>
   );
@@ -72,9 +71,9 @@ export function Directory({ onOpen, onClose, onBack, onInfo }: { onOpen: (addres
   const busy = shown.filter((c) => live(c) === "busy").sort(byName);
   const dnd = shown.filter((c) => live(c) === "dnd").sort(byName);
   const rest = shown.filter((c) => live(c) !== "online" && live(c) !== "busy" && live(c) !== "dnd");
-  useSeenTick(rest.some((c) => live(c) === "offline"));
-  const recent = rest.filter((c) => ms(c.last_seen) >= week).sort((a, b) => ms(b.last_seen) - ms(a.last_seen));
-  const quiet = rest.filter((c) => ms(c.last_seen) < week).sort((a, b) => ms(b.last_seen) - ms(a.last_seen) || byName(a, b));
+  useSeenTick(shown.some((c) => presence(c, hubs).ticks));
+  const recent = rest.filter((c) => lastAround(c) >= week).sort((a, b) => lastAround(b) - lastAround(a));
+  const quiet = rest.filter((c) => lastAround(c) < week).sort((a, b) => lastAround(b) - lastAround(a) || byName(a, b));
   const onlineCount = all.filter((c) => live(c) === "online").length;
 
   const row = (c: Contact) => <ContactRow key={c.address} c={c} hubs={hubs} onOpen={onOpen} onInfo={onInfo} />;

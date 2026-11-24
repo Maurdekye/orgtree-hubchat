@@ -28,6 +28,18 @@ impl Engine {
         Ok(())
         }).ok_or(Error::FilePaused)?
     }
+
+    /// A sync answer's `active_now` (Mail hub 2.6.0): exactly these are
+    /// active now on this hub. Absent (a hub before it, or no change in the
+    /// sets), the rows' own `active` stands.
+    pub(crate) fn admit_active_now(&self, client:&HubClient, active:&[String])->Result<()> {
+        client.session_commit(|| {
+            if self.stopped.load(std::sync::atomic::Ordering::Relaxed) {return Err(Error::Cancelled);}
+            self.store.set_active(client.address().as_str(),active)?;
+            self.host.event(Event::Directory);
+            Ok(())
+        }).ok_or(Error::FilePaused)?
+    }
     #[cfg(test)] // Earlier narrow-helper proof, separate from production batch proof.
     pub(crate) fn observe_pictures_for(&self, client:&HubClient, entries:&[crate::hub::RosterEntry])->Result<()> {
         client.session_commit(|| {

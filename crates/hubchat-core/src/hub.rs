@@ -209,6 +209,17 @@ pub struct RosterEntry {
     /// roster entry, user 2026-11-01 16:13Z); none for others.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    /// Active now as the row was sent (Mail hub 2.6.0, feature
+    /// `last_active`): a snapshot; a sync answer's `active_now` is the truth
+    /// whenever it comes.
+    #[serde(default)]
+    pub active: bool,
+    /// When they were last active (Mail hub 2.6.0): a person, Hubchat last in
+    /// front; an org, an agent in charge of its org mailbox last finished a
+    /// turn; an agent session, its last message sent. None: never, or not
+    /// known, or a hub before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
