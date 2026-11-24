@@ -1,6 +1,7 @@
 // Symmetry S4 #12/#13 (audit ux05 S3/S4): a contact in New chat is the Directory's contact row (about text,
 // one chip per hub with the not-connected distinction) and has its right-click menu (desktop). Mounted real
 // NewChatResults and Directory, synthetic API.
+// Blocking (Mail hub 2.6.0, docket blocking-contacts-on-the-hub-hubchat-1-4-0-orgtr) ends every contact menu with Block.
 import {boot} from './symmetry-s4-harness.mjs';
 const {mod, h, act, check, settle, click, render, finish, document, window} = await boot('symmetry-s4-newchat-entry.tsx');
 const {api, Directory, NewChatResults, CtxMenu, PlatformCtx, store, closeMenu} = mod;
@@ -42,7 +43,7 @@ for (const platform of ['desktop', 'android']) {
   if (platform === 'desktop') {
     await render(results(platform, 'maya', match));
     await rightClick(rowOf(document, 'Maya'));
-    c('right-click offers Message, Contact info and Copy mention', JSON.stringify(menuLabels()) === '["Message","Contact info","Copy mention"]');
+    c('right-click offers Message, Contact info, Copy mention and Block', JSON.stringify(menuLabels()) === '["Message","Contact info","Copy mention","Block"]');
     await click([...document.querySelectorAll('[role="menuitem"]')].find(e => e.textContent.trim() === 'Contact info'));
     c('Contact info opens that contact', JSON.stringify(infos) === '["maya.e71f2b"]');
     // the Recent rows of an empty search are the same row with the same menu
@@ -50,7 +51,7 @@ for (const platform of ['desktop', 'android']) {
     const rec = rowOf(document, 'Maya');
     c('a Recent row has the same about text and chips', /Design · Android/.test(rec?.textContent || '') && rec?.querySelectorAll('.hubchip').length === 2);
     await rightClick(rec);
-    c('a Recent row has the same menu', JSON.stringify(menuLabels()) === '["Message","Contact info","Copy mention"]');
+    c('a Recent row has the same menu', JSON.stringify(menuLabels()) === '["Message","Contact info","Copy mention","Block"]');
   } else {
     await render(results(platform, 'maya', match));
     await rightClick(rowOf(document, 'Maya'));

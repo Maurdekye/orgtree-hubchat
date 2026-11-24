@@ -5,6 +5,7 @@
 // Run under the repository Job limiter (HUBCHAT_JOB_CONTAINED=1, an assigned C:\orgtree-build output).
 // Phase green: every check passes. Phase red (HUBCHAT_PROOF_PHASE=red, the base before the change): exactly C1-C13
 // fail and the controls CT1-CT4 pass, so the controls really ran.
+// Blocking (Mail hub 2.6.0, docket blocking-contacts-on-the-hub-hubchat-1-4-0-orgtr) ends every contact menu with Block.
 import fs from 'node:fs';
 import path from 'node:path';
 import {boot} from './symmetry-s4-harness.mjs';
@@ -77,7 +78,7 @@ await group('C1', async () => {
     h(ChatRows, {rows: list, selected: null, onOpen: p => picked.push(p), onInfo: p => infos.push(p), onCloseDm: p => closed.push(p)})));
   await wait();
   await rightClick(document.querySelector('.crow'));
-  check('C1 chat-row menu is Open, Contact info, Copy mention, Close DM (no Copy address)', json(labels()) === '["Open","Contact info","Copy mention","Close DM"]');
+  check('C1 chat-row menu is Open, Contact info, Copy mention, Close DM, Block (no Copy address)', json(labels()) === '["Open","Contact info","Copy mention","Close DM","Block"]');
   await act(async () => { pick('Copy mention')?.click(); await Promise.resolve(); }); await settle();
   check('C1 Copy mention copies @net:<address> and says "Mention copied"', json(copied) === json(['@net:' + MAYA]) && toasts().endsWith('Mention copied'));
 });
@@ -87,13 +88,13 @@ await group('C2', async () => {
     h(RailRows, {rows: list, selected: null, onOpen: noop, onInfo: noop, onCloseDm: noop})));
   await wait();
   await rightClick(document.querySelector('.rrow'));
-  check('C2 collapsed-rail menu has the same entries as the chat list', json(labels()) === '["Open","Contact info","Copy mention","Close DM"]');
+  check('C2 collapsed-rail menu has the same entries as the chat list', json(labels()) === '["Open","Contact info","Copy mention","Close DM","Block"]');
 });
 await group('C3', async () => {
   const row = c => h(PlatformCtx.Provider, {value: 'desktop'}, h(CtxMenu), h(ToastProbe), h(ContactRow, {c, hubs, onOpen: noop, onInfo: noop}));
   await render(row(directory[0]));
   await rightClick(document.querySelector('.nc-row'));
-  check('C3 directory-row menu is Message, Contact info, Copy mention', json(labels()) === '["Message","Contact info","Copy mention"]');
+  check('C3 directory-row menu is Message, Contact info, Copy mention, Block', json(labels()) === '["Message","Contact info","Copy mention","Block"]');
   await act(async () => { closeMenu(); });
   await render(row(directory[1]));
   await rightClick(document.querySelector('.nc-row'));
@@ -167,11 +168,11 @@ await group('C9', async () => {
     onContact: () => infos.push(1), onCloseDm: () => closed.push(1)}), h(CtxMenu), h(ToastProbe)));
   await wait(80);
   await rightClick(document.querySelector('.conv-head .who'));
-  check('C9 the chat header has a menu: Contact info, Copy mention, Close DM', json(labels()) === '["Contact info","Copy mention","Close DM"]');
+  check('C9 the chat header has a menu: Contact info, Copy mention, Close DM, Block', json(labels()) === '["Contact info","Copy mention","Close DM","Block"]');
   await act(async () => { pick('Contact info')?.click(); await Promise.resolve(); }); await settle();
   check('C9 Contact info does what a click on the header does', infos.length === 1);
   await rightClick(document.querySelector('.conv-head .conv-av'));
-  check('C9 the avatar opens the same menu', json(labels()) === '["Contact info","Copy mention","Close DM"]');
+  check('C9 the avatar opens the same menu', json(labels()) === '["Contact info","Copy mention","Close DM","Block"]');
   await act(async () => { pick('Copy mention')?.click(); await Promise.resolve(); }); await settle();
   check('C9 Copy mention copies the peer\'s @net: address', json(copied) === json(['@net:' + MAYA]));
 });

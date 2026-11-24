@@ -1,6 +1,7 @@
 // Symmetry S4 #10 (audit ux02 S4): right-clicking an address in a message offers the contact's own actions,
 // Contact info included, the same block the chat list and the Directory offer. Mounted real MessageView and the
 // shared chat menu, synthetic API.
+// Blocking (Mail hub 2.6.0, docket blocking-contacts-on-the-hub-hubchat-1-4-0-orgtr) ends every contact menu with Block.
 import {boot} from './symmetry-s4-harness.mjs';
 const {mod, h, act, check, settle, click, render, finish, document, window} = await boot('symmetry-s4-mention-entry.tsx');
 const {api, store, MessageView, chatMenu, CtxMenu, PlatformCtx} = mod;
@@ -27,7 +28,7 @@ check('Contact info opens that address\'s contact, not the open chat\'s', JSON.s
 await render(h(PlatformCtx.Provider, {value: 'desktop'}, h(CtxMenu), h('div', {id: 'row', onContextMenu: e => chatMenu(e, peer, noop, noop, 'Message')}, 'row')));
 await rightClick(document.getElementById('row'));
 const list = labels();
-check('the chat menu offers the same block for the same contact', JSON.stringify(list.slice(1)) === JSON.stringify(got.slice(1, 3)) || JSON.stringify(list) === '["Message","Contact info","Copy mention"]');
+check('the chat menu offers the same block for the same contact', JSON.stringify(list.slice(1)) === JSON.stringify(got.slice(1, 3)) || JSON.stringify(list) === '["Message","Contact info","Copy mention","Block"]');
 // without a Contact info handler (a surface that cannot open it) the entry is not offered
 await render(view(false));
 await rightClick(document.querySelector('a.addr'));

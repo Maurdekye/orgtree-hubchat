@@ -5,6 +5,8 @@
 // Run under the repository Job limiter (HUBCHAT_JOB_CONTAINED=1, an assigned C:\orgtree-build output).
 // Phase green: every check passes. Phase red (HUBCHAT_PROOF_PHASE=red, the base before the change): exactly L1-L6
 // fail and the controls L7, L8, CT1-CT3 pass, so the controls really ran.
+// Blocking (Mail hub 2.6.0, docket blocking-contacts-on-the-hub-hubchat-1-4-0-orgtr) adds Block (Unblock when blocked)
+// to every contact menu, after a separator: the list ends with it.
 import fs from 'node:fs';
 import path from 'node:path';
 import {boot} from './symmetry-s4-harness.mjs';
@@ -62,7 +64,7 @@ const screen = async () => {
 await group('L1', async () => {
   const {went} = await screen();
   await press(rowOf(MAYA));
-  check('L1 a long-press on a DM row opens a sheet with exactly Open, Contact info, Copy mention, Close DM', json(labels()) === '["Open","Contact info","Copy mention","Close DM"]');
+  check('L1 a long-press on a DM row opens a sheet with exactly Open, Contact info, Copy mention, Close DM, Block', json(labels()) === '["Open","Contact info","Copy mention","Close DM","Block"]');
   check('L1 the sheet is the phone bottom sheet (with its scrim)', !!document.querySelector('.sheet.contact-file-menu') && !!document.querySelector('.sheet-scrim'));
   check('L1 the long-press itself opens no chat', went.length === 0);
 });
@@ -107,7 +109,7 @@ await group('CT1', async () => {
   await render(h(PlatformCtx.Provider, {value: 'desktop'}, h(CtxMenu), h(ChatRows, {rows: [{peer: MAYA, last: null, unread: 0}], selected: null, onOpen: () => {}, onInfo: () => {}, onCloseDm: () => {}})));
   await wait();
   await press(document.querySelector('.crow'));
-  check('CT1 desktop right-click on a row still gives the same four entries', json(labels()) === '["Open","Contact info","Copy mention","Close DM"]');
+  check('CT1 desktop right-click on a row still gives the same five entries', json(labels()) === '["Open","Contact info","Copy mention","Close DM","Block"]');
 });
 await group('CT2', async () => {
   const went = [];
