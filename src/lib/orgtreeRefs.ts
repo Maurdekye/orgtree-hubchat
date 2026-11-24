@@ -2,8 +2,10 @@
 // hubchat-render-orgtree-mentions-as-chips-linking). The contract both apps
 // implement is Orgtree's docs/rust-engine/orgtree-links.md.
 //
-// An agent writes `@item:<org>/<slug>`, `@doc:`, `@app:`, `@panel:`, `@mail:`,
-// `@agent:`/`@project:` and bare `@name`. Hubchat draws each as a chip from the
+// An agent writes `@ticket:<org>/<slug>` (Orgtree 4.7.0; `@item:<org>/<slug>`
+// before, which stays valid: one ticket, two written forms, both the kind
+// `item`), `@doc:`, `@app:`, `@panel:`, `@mail:`, `@agent:`/`@project:` and
+// bare `@name`. Hubchat draws each as a chip from the
 // TEXT ALONE (it fetches nothing from Orgtree). On the PC that runs the
 // mentioned org, a click opens the target in Orgtree through an orgtree://
 // link, and the right-click menu opens just the org. Everywhere else the chip
@@ -18,8 +20,8 @@
  *  `@<generation>`; a token ends at a boundary or it is not one. */
 const SEG = "[a-z0-9-]+";
 const NODE = "[a-z0-9-]+(?:@[0-9]+)?";
-const END = "(?![A-Za-z0-9_/-])(?!@(?!(?:item|doc|agent|project|mail|app|panel):))";
-const TOKEN = "@(?:(item|doc|app|panel):(" + SEG + "/" + SEG + ")"
+const END = "(?![A-Za-z0-9_/-])(?!@(?!(?:item|ticket|doc|agent|project|mail|app|panel):))";
+const TOKEN = "@(?:(item|ticket|doc|app|panel):(" + SEG + "/" + SEG + ")"
   + "|(agent|project):(" + SEG + "/" + NODE + ")"
   + "|(mail):(" + SEG + "/(?:user|org)/" + SEG + "|" + SEG + "/node/" + NODE + "/" + SEG + "))" + END;
 const LEAD = /[A-Za-z0-9_@-]/;
@@ -41,7 +43,9 @@ export interface Oref {
 export function parseOref(token: string): Oref | null {
   const m = new RegExp("^" + TOKEN + "$").exec(String(token ?? ""));
   if (!m) return null;
-  const kind = (m[1] ?? m[3] ?? m[5]) as OrefKind;
+  // a ticket's two forms are one kind; `token` below keeps the form written
+  const written = m[1] ?? m[3] ?? m[5];
+  const kind = (written === "ticket" ? "item" : written) as OrefKind;
   const path = String(m[2] ?? m[4] ?? m[6]);
   const at = path.indexOf("/");
   const org = path.slice(0, at), rest = path.slice(at + 1);
@@ -237,5 +241,9 @@ export function orgMenuEntry(token: string | undefined, ctx: OrefContext): { lab
  *  here. Decided again from the token, never from the chip's class. */
 export function chipOpen(token: string | undefined, ctx: OrefContext): { org: string; token: string } | null {
   const ref = token ? parseOref(token) : null;
-  return ref && ctx.opens(ref.org) ? { org: ref.org, token: ref.token } : null;
+  // A TICKET OPENS BY ITS OLDER FORM: the link is built from this token
+  // (src-tauri local_orgtree.rs `link_url`), and orgtree://item/... is the one
+  // link every Orgtree that takes links opens, also one from before 4.7.0.
+  const opens = ref && ref.kind === "item" ? `@item:${ref.org}/${ref.rest}` : ref?.token;
+  return ref && opens && ctx.opens(ref.org) ? { org: ref.org, token: opens } : null;
 }
