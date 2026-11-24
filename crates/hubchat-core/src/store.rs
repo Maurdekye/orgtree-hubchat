@@ -451,6 +451,25 @@ pub struct Contact {
     /// The language a person reads in, from the first hub that lists one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    /// We block them (Mail hub 2.6.0, feature `blocking`): on any saved hub,
+    /// or a block we owe one (`engine_blocks`).
+    pub blocked: bool,
+    /// They block us: on any saved hub (its sync's `blocked_by`).
+    pub blocked_by: bool,
+}
+
+/// Whom we block on this hub, as its last sync answer said (Mail hub 2.6.0).
+pub fn blocks_mine_key(url: &str) -> String {
+    format!("blocks.mine.{url}")
+}
+/// Who blocks us on this hub, as its last sync answer said.
+pub fn blocks_by_key(url: &str) -> String {
+    format!("blocks.by.{url}")
+}
+/// Blocks and unblocks picked here and not yet taken by this hub:
+/// `{address: true|false}`.
+pub fn blocks_owed_key(url: &str) -> String {
+    format!("blocks.owed.{url}")
 }
 
 /// How `open_refusing_newer` starts what it says of a store written by a
@@ -678,12 +697,44 @@ impl Store {
                     }
                     _ => {
                         let active_hub = active_at.as_ref().map(|_| hub.clone());
-                        out.push(Contact { address, kind, org_name, username, blurb, online, busy, dnd, last_seen, active, active_at, active_hub, hubs: vec![hub], picture, language })
+                        out.push(Contact { address, kind, org_name, username, blurb, online, busy, dnd, last_seen, active, active_at, active_hub, hubs: vec![hub], picture, language, blocked: false, blocked_by: false })
                     }
                 }
             }
             Ok(out)
         })
+        .and_then(|mut out| {
+            let (mine, by) = self.block_sets()?;
+            for c in &mut out {
+                c.blocked = mine.contains(&c.address);
+                c.blocked_by = by.contains(&c.address);
+            }
+            Ok(out)
+        })
+    }
+
+    /// Whom we block and who blocks us, over every saved hub (Mail hub
+    /// 2.6.0): each hub's last word, with the changes it still owes applied
+    /// (a block picked here shows at once). Sorted.
+    pub fn block_sets(&self) -> Result<(std::collections::BTreeSet<String>, std::collections::BTreeSet<String>)> {
+        let mut mine = std::collections::BTreeSet::new();
+        let mut by = std::collections::BTreeSet::new();
+        let list = |v: Option<String>| -> Vec<String> { v.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default() };
+        for h in self.hubs()? {
+            let mut here: std::collections::BTreeSet<String> = list(self.meta(&blocks_mine_key(&h.url))?).into_iter().collect();
+            let owed: std::collections::BTreeMap<String, bool> =
+                self.meta(&blocks_owed_key(&h.url))?.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+            for (a, on) in owed {
+                if on {
+                    here.insert(a);
+                } else {
+                    here.remove(&a);
+                }
+            }
+            mine.extend(here);
+            by.extend(list(self.meta(&blocks_by_key(&h.url))?));
+        }
+        Ok((mine, by))
     }
 
     /// The hubs where `address` is online but busy (the hub picker).

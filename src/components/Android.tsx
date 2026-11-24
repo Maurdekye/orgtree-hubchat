@@ -18,6 +18,7 @@ import { startUpdateChecks } from "../lib/updates";
 import { isSetupLink, startSetup, useSetupChat } from "../lib/setup";
 import { ChatRows, EmptyChats, useFilteredChats, type ChatFilter } from "./ChatList";
 import { ContactInfo } from "./ContactInfo";
+import { blockEntry } from "./Block";
 import { Conversation } from "./Conversation";
 import { Directory } from "./Directory";
 import { hasChoice, HubSheet, routeLabel } from "./HubPicker";
@@ -139,6 +140,7 @@ export function ConvMenu({ peer, onContact, onClose, onCloseDm }: { peer: string
         {hasChoice(route) ? <button className="mi" role="menuitem" onClick={() => setHubSheet(true)}><Icon name="dns" />Send through…<span className="s">{routeLabel(route, snap.state?.hubs || []).replace(/^via /, "")}</span></button> : null}
         <button className="mi" role="menuitem" onClick={() => { onClose(); void copyText(mentionWireToken(peer), "Mention copied"); }}><Icon name="copy" />Copy mention</button>
         <button className="mi" role="menuitem" onClick={onCloseDm}><Icon name="close" />Close DM</button>
+        {(() => { const b = blockEntry(peer, snap.byAddr.get(peer), snap.state?.hubs || []); return <button className={"mi" + (b.bad ? " bad" : "")} role="menuitem" disabled={b.disabled} title={b.title} onClick={() => { onClose(); b.run(); }}><Icon name="block" />{b.label}</button>; })()}
       </div>
     </>
   );

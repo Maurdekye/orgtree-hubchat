@@ -11,7 +11,7 @@ import { bytes, dayLabel, dayStart, MAX_FILES } from "../lib/format";
 import { copyText, errText } from "../lib/native";
 import { openMenu } from "../lib/ctxmenu";
 import { mentionWireToken } from "../lib/mentions";
-import { displayName, hubByUrl, hubName, hubStatusText, kindInfo, kindOf, lastSeen, limitFor, msgTime, notOnYourHubs, offlineNote, peerHubs, presence, preview, viaHub } from "../lib/peers";
+import { displayName, hubByUrl, hubName, hubStatusText, kindInfo, kindOf, lastSeen, limitFor, msgTime, notOnYourHubs, offlineNote, peerHubs, presence, dmPresence, preview, viaHub } from "../lib/peers";
 import { scanSetup } from "../lib/setup";
 import { refreshChats, useMessages, useSendRoute, useSnap, useTyping } from "../lib/store";
 import { replyIds } from "../lib/replies";
@@ -19,6 +19,7 @@ import { cardOf, answerNotes, cardKnown, isOpen, isSettled, settlement, type Car
 import { addReplies, loadDraftAnswers, pick, removeReply, sentDraftAnswers, setReplies, unpick, useDraftAnswers } from "../lib/answers";
 import { toast } from "../lib/toast";
 import { Composer, type ComposerApi } from "./Composer";
+import { BlockBar, blockEntry } from "./Block";
 import { refreshKey, useRestoredRefreshState, useRefreshState } from "../lib/refresh";
 import { HubHelpLink } from "./HubHelp";
 import { HubChip, routeLabel, routeVia } from "./HubPicker";
@@ -461,7 +462,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
   }, [msgs, newId, name, kind, byId, extra, quoteLists, cards, pending.picks, notes, platform, sel, hl, reply, toggleSel, onPick, info, del, jump, onOpenAddr, onContactInfo, setup, isWin]);
   rows.push(...msgRows);
   if (setup && (!setup.outcome || !msgs.some((m) => m.id === setup.reply_id))) rows.push(setupNote(setup, platform, isWin));
-  const p = presence(c, hubs);
+  const p = dmPresence(c, hubs);
   useSeenTick(p.ticks);
   if (p.state === "offline" && msgs.some((m) => m.outgoing && m.state === "sent")) {
     rows.push(<div className="sysnote" key="pend"><Icon name="schedule" />{offlineNote(name, lastSeen(c, hubs))}. Your message waits on hub {via?.name} and is delivered when they reconnect.</div>);
@@ -530,6 +531,8 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
   const dragging = useFileDrop(conv, platform === "desktop" && !off, (paths) => comp.current?.addFiles(paths));
   const composer = <Composer ref={comp} peer={peer} c={c} hubs={hubs} msgs={msgs} replies={replies} picked={picked} cardState={cardState} pos={pos} onRemoveReply={(id) => removeReply(peer, id)} onUnpick={(id) => unpick(peer, [id])} onCancelReply={() => setReplies(peer, [])}
     onSent={(m) => { sentDraftAnswers(peer, m); pinned.current = true; refresh(); }} off={off} />;
+  // either side blocks the other (Mail hub 2.6.0): the composer gives way to the bar that says so
+  const blockBar = c?.blocked || c?.blocked_by ? <BlockBar peer={peer} c={c} /> : null;
   const jumpBtn = <button className={"jump" + (far ? "" : " hide")} onClick={toBottom} title="Jump to the newest message" aria-label="Jump to the newest message"><Icon name="arrow_down" /></button>;
   const copyAddr = () => copyText("@net:" + peer, "Address copied");
   // desktop right-click on the header's avatar or name (user 2026-11-10): what a click does, Copy mention, Close DM
@@ -539,6 +542,8 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
       ...(onContact ? [{ label: "Contact info", icon: "info" as const, run: onContact }] : []),
       { label: "Copy mention", icon: "copy" as const, run: () => void copyText(mentionWireToken(peer), "Mention copied") },
       ...(onCloseDm ? [{ label: "Close DM", icon: "close" as const, run: onCloseDm }] : []),
+      "sep" as const,
+      blockEntry(peer, c, hubs),
     ]);
   };
 
@@ -560,7 +565,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
           <div className="appbar">
             <button className="icon-btn" onClick={onBack} aria-label="Back"><Icon name="back" /></button>
             <div className="who" onClick={onContact} role="button" tabIndex={0} title="Contact info" onKeyDown={onContact ? pressKeys(onContact) : undefined}>
-              <PeerAvatar address={peer} c={c} hubs={hubs} size={40} />
+              <PeerAvatar address={peer} c={c} hubs={hubs} size={40} dm />
               <div className="t">
                 <span className="n"><span className="ell">{name}</span> <KindGlyph kind={kind} /></span>
                 <span className="s">{p.state === "disconnected" ? <Icon name="cloud_off" /> : null}{p.short}{viaLabel && hubs.length > 1 ? " · " + viaLabel : ""}</span>
@@ -580,7 +585,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
           <div className="timeline" ref={tl} onScroll={onScroll} {...touch}><div>{rows}{typingNow ? <TypingRow name={name} /> : null}</div></div>
           {jumpBtn}
         </div>
-        {composer}
+        {blockBar ?? composer}
       </div>
     );
   }
@@ -588,11 +593,11 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
   return (
     <section className="conv" role="main" ref={conv} onKeyDown={keys}>
       <div className="conv-head">
-        <span className="conv-av" onClick={onContact} onContextMenu={headMenu} title="Contact info"><PeerAvatar address={peer} c={c} hubs={hubs} size={40} /></span>
+        <span className="conv-av" onClick={onContact} onContextMenu={headMenu} title="Contact info"><PeerAvatar address={peer} c={c} hubs={hubs} size={40} dm /></span>
         <div className="who" onClick={onContact} onContextMenu={headMenu} title="Contact info">
           <div className="n1"><span className="name">{name}</span>{c ? <KindChip kind={kind} /> : null}</div>
           <div className="n2" ref={line}>
-            <PresText c={c} hubs={hubs} />
+            <PresText c={c} hubs={hubs} dm />
             <span className={"sep" + gone(parts.addr)} />
             <span className={"mono ell" + gone(parts.addr)}><Addr a={peer} net /></span>
             {routed ? <><span className={"sep" + gone(parts.hub)} /><HubChip peer={peer} route={route} who={name} /></>
@@ -619,7 +624,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
           <button className="icon-btn" onClick={() => setSel([])} title="Clear selection (Esc)" aria-label="Clear selection"><Icon name="close" /></button>
         </div>
       ) : null}
-      {composer}
+      {blockBar ?? composer}
       <div className="sr" role="status" aria-live="polite">{said}</div>
     </section>
   );

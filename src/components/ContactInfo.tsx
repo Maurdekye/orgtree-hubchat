@@ -15,6 +15,7 @@ import { toast } from "../lib/toast";
 import { languageName } from "../lib/translation";
 import { Addr, KindChip, PeerAvatar, PresText, useNow, usePlatform } from "./ui";
 import { ContactFile } from "./ContactFile";
+import { blockEntry } from "./Block";
 
 const ONLINE_NOTE = "“Online” means its Orgtree is connected to the hub — not that an agent is typing.";
 /** What busy means (Mail hub 2.3.0; user 2026-10-30), said while they are busy. */
@@ -51,6 +52,8 @@ export function ContactInfo({ peer, onClose, onShowMessage }: { peer: string; on
   } : undefined;
   const ph = peerHubs(c, hubs);
   const pres = presence(c, hubs).state;
+  // Block / Unblock (Mail hub 2.6.0): as every contact menu offers it
+  const block = blockEntry(peer, c, hubs);
   const stateNote = pres === "busy" ? BUSY_NOTE[kind] : pres === "dnd" ? DND_NOTE[kind] : undefined;
   const via = viaHub(c, hubs);
   const now = useNow(ph.some((h) => h.state === "disconnected"));
@@ -81,14 +84,15 @@ export function ContactInfo({ peer, onClose, onShowMessage }: { peer: string; on
         <div className="appbar flat"><button className="icon-btn" onClick={onClose} aria-label="Back"><Icon name="back" /></button><div className="title">Contact info</div></div>
         <div className="scr-body">
           <div className="hero">
-            <PeerAvatar address={peer} c={c} hubs={hubs} size={96} />
+            <PeerAvatar address={peer} c={c} hubs={hubs} size={96} dm />
             <div className="name">{name}</div>
             {c ? <KindChip kind={kind} /> : null}
-            <div><PresText c={c} hubs={hubs} /></div>
+            <div><PresText c={c} hubs={hubs} dm /></div>
           </div>
           <div className="quick">
             <button onClick={onClose}><Icon name="forum" />Message</button>
             <button onClick={copy}><Icon name="copy" />Copy address</button>
+            <button onClick={block.run} disabled={block.disabled} title={block.title} className={block.bad ? "bad" : undefined}><Icon name="block" />{block.label}</button>
           </div>
           <div className="sec-h">Address</div>
           <div className="li">
@@ -121,10 +125,10 @@ export function ContactInfo({ peer, onClose, onShowMessage }: { peer: string; on
       <div className="info-head"><span>Contact info</span><button className="icon-btn" onClick={onClose} title="Close" aria-label="Close"><Icon name="close" /></button></div>
       <div className="info-body scroll">
         <div className="info-hero">
-          <PeerAvatar address={peer} c={c} hubs={hubs} size={96} />
+          <PeerAvatar address={peer} c={c} hubs={hubs} size={96} dm />
           <div className="name">{name}</div>
           {c ? <KindChip kind={kind} open={openLocal} /> : null}
-          <div style={{ marginTop: 4 }}><PresText c={c} hubs={hubs} /></div>
+          <div style={{ marginTop: 4 }}><PresText c={c} hubs={hubs} dm /></div>
         </div>
         <div className="info-sec">
           <h4 aria-level={2}>Address</h4>
@@ -152,6 +156,9 @@ export function ContactInfo({ peer, onClose, onShowMessage }: { peer: string; on
         <div className="info-sec">
           <h4 aria-level={2}>Files</h4>
           {filesBody}
+        </div>
+        <div className="info-sec">
+          <button className={"btn " + (block.bad ? "danger" : "ghost")} onClick={block.run} disabled={block.disabled} title={block.title}><Icon name="block" />{block.label} {name}</button>
         </div>
       </div>
     </aside>

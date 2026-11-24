@@ -6,7 +6,7 @@ import { usePicture } from "../lib/pictures";
 import { useSnap } from "../lib/store";
 import { Icon, type IconName } from "../lib/icons";
 import { avatarFallback } from "../lib/avatarFallback";
-import { displayName, kindInfo, kindOf, presence, splitAddr, tickInfo, type Kind, type PresState } from "../lib/peers";
+import { displayName, kindInfo, kindOf, presence, splitAddr, tickInfo, type Kind, type PresState, dmPresence } from "../lib/peers";
 import { useToasts } from "../lib/toast";
 import { appVersion } from "../lib/native";
 
@@ -71,8 +71,8 @@ export function Avatar({ kind, name, size, pres, presTitle, address, picture }: 
 }
 
 /** Avatar for an address, with presence from the directory. */
-export function PeerAvatar({ address, c, hubs, size, withPres = true }: { address: string; c: Contact | undefined; hubs: HubStatus[]; size: number; withPres?: boolean }) {
-  const p = presence(c, hubs);
+export function PeerAvatar({ address, c, hubs, size, withPres = true, dm = false }: { address: string; c: Contact | undefined; hubs: HubStatus[]; size: number; withPres?: boolean; /** their DM or Contact info: a block shows (dmPresence) */ dm?: boolean }) {
+  const p = dm ? dmPresence(c, hubs) : presence(c, hubs);
   return <Avatar kind={kindOf(c)} name={displayName(c, address)} address={address} picture={c?.picture} size={size} pres={withPres ? p.state : undefined} presTitle={p.text} />;
 }
 
@@ -82,10 +82,10 @@ export function Addr({ a, net }: { a: string; net?: boolean }) {
   return <>{net ? "@net:" : ""}{head}{tag ? <span className="tg">{tag}</span> : null}</>;
 }
 
-export function PresText({ c, hubs }: { c: Contact | undefined; hubs: HubStatus[] }) {
-  const p = presence(c, hubs);
+export function PresText({ c, hubs, dm = false }: { c: Contact | undefined; hubs: HubStatus[]; dm?: boolean }) {
+  const p = dm ? dmPresence(c, hubs) : presence(c, hubs);
   useSeenTick(p.ticks);
-  return <span className={"ptext p-" + p.state}>{p.state === "disconnected" ? <Icon name="cloud_off" /> : null}{p.text}</span>;
+  return <span className={"ptext p-" + p.state}>{p.state === "disconnected" ? <Icon name="cloud_off" /> : p.state === "blocked" ? <Icon name="block" /> : null}{p.text}</span>;
 }
 
 /** `open`: the chip is a button that does it (Contact info: a local Orgtree

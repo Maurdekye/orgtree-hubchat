@@ -174,6 +174,13 @@ pub struct SyncResult {
     /// with the feature. Not `active`, which is our own devices in use.
     #[serde(default)]
     pub active_now: Option<Vec<String>>,
+    /// Whom we block here (Mail hub 2.6.0, feature `blocking`): with
+    /// `online`, in a first answer and whenever it changed.
+    #[serde(default)]
+    pub blocks: Option<Vec<String>>,
+    /// Who blocks us here (Mail hub 2.6.0): likewise.
+    #[serde(default)]
+    pub blocked_by: Option<Vec<String>>,
     /// The status we picked, as this hub keeps it (Mail hub 2.3.0, feature
     /// `status`): in every answer; absent from a hub before it.
     #[serde(default)]
@@ -383,6 +390,21 @@ impl HubClient {
             .post_json(me, "/api/devices/active", &body, Duration::from_secs(20))
             .await?;
         Ok(())
+        }).await
+    }
+
+    /// Block or unblock an address (hub feature `blocking`, Mail hub 2.6.0):
+    /// the hub's list of whom we block, after the change.
+    pub async fn set_block(&self, me: &Identity, address: &str, blocked: bool) -> Result<Vec<String>> {
+        self.session_work(async {
+        #[derive(serde::Deserialize)]
+        struct R {
+            blocked: Vec<String>,
+        }
+        let r: R = self
+            .post_json(me, "/api/blocks", &serde_json::json!({ "address": address, "blocked": blocked }), Duration::from_secs(20))
+            .await?;
+        Ok(r.blocked)
         }).await
     }
 

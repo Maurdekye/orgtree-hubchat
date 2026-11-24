@@ -281,6 +281,10 @@ export interface Contact {
   picture?: PictureMeta | null;
   /** The language a person reads in (Mail hub 2.4.0), when they chose one. */
   language?: string | null;
+  /** We block them (Mail hub 2.6.0, feature `blocking`). Older cores never say it. */
+  blocked?: boolean;
+  /** They block us (Mail hub 2.6.0). Older cores never say it. */
+  blocked_by?: boolean;
 }
 
 /** Where a chat's messages go (the hub picker, hc_send_route). */
@@ -507,6 +511,10 @@ export const makeApi = ({ invoke, listen, mediaUrl }: Transport) => ({
   setPicture: (owner: string, data: string | null, crop?: PictureCrop) => invoke<PictureRecord>("hc_set_picture", { owner, data, crop }),
   setReadReceipts: (on: boolean) => invoke<void>("hc_set_read_receipts", { on }),
   setStatus: (status: MyStatus) => invoke<void>("hc_set_status", { status }),
+  /** Block (`on`) or unblock a contact (Mail hub 2.6.0, hub feature `blocking`). */
+  setBlocked: (address: string, on: boolean) => invoke<void>("hc_set_blocked", { address, on }),
+  /** Whom we block, over every hub (Settings › Blocked contacts). */
+  blocked: () => invoke<string[]>("hc_blocked"),
   setLanguage: (language: string) => invoke<void>("hc_set_language", { language }),
   setNotifications: (n: NotifySettings) => invoke<void>("hc_set_notifications", { enabled: n.enabled, preview: n.preview, sound: n.sound }),
   /** Hubchat Web only: what each hub has of this browser's notifications (crates/hubchat-web, `hc_web_push`). */

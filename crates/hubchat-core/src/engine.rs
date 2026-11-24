@@ -1057,6 +1057,8 @@ impl Engine {
             self.tell_language(client, url, features).await?;
             // and where a browser's notifications go (engine_webpush)
             self.tell_web_push(client, url, features).await?;
+            // and the blocks picked here (engine_blocks)
+            self.tell_blocks(client, url, features).await?;
             let first_page = cursor.is_none();
             self.mark_for(url, stop, |s| s.waiting_since_ms = Some(unix_ms()));
             let asked = unix_ms();
@@ -1130,6 +1132,8 @@ impl Engine {
             }
             // our status as the hub keeps it, before this answer's mail, so
             // its notifications follow it (engine_status)
+            // who we block and who blocks us there (engine_blocks)
+            self.hub_said_blocks(url, r.blocks.as_deref(), r.blocked_by.as_deref())?;
             if let Some(s) = r.status.as_deref() {
                 self.hub_said_status(url, s, r.reset)?;
             }
@@ -2639,6 +2643,7 @@ mod engine_pictures;
 mod engine_typing;
 
 #[path = "engine_status.rs"]
+mod engine_blocks;
 mod engine_status;
 pub use engine_status::{chosen_status, STATUSES};
 

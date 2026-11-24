@@ -8,7 +8,8 @@ import { Icon, Logo, type IconName } from "../lib/icons";
 import { bytes } from "../lib/format";
 import { appVersion, autostart, copyText, errText, exitOnClose, openLink, scanQr } from "../lib/native";
 import { routeLink, startJoin } from "../lib/join";
-import { hubCls, hubStatusText, hubSummary, hubVersion } from "../lib/peers";
+import { displayName, hubCls, hubStatusText, hubSummary, hubVersion } from "../lib/peers";
+import { blockNeedsUpdate, canBlock, unblock } from "./Block";
 import { refreshDirectory, refreshState, useSnap } from "../lib/store";
 import { setThemePref, useThemePref, type ThemePref } from "../lib/theme";
 import { setEnterKey, useEnterKey } from "../lib/enterKey";
@@ -597,13 +598,35 @@ function Privacy() {
       : null;
   const set = async (v: boolean) => { try { await api.setReadReceipts(v); await refreshState(); } catch (e) { toast(errText(e)); } };
   return (
+    <>
     <Sec first>
       <Card>
         <ToggleRow icon="done_all" t1="Send read receipts" t2="Off: people and agents see your messages as delivered, never read. You still see theirs." on={on} onChange={set} label="Send read receipts" />
         {ksLine ? <Row icon="key" t1={ksLine} /> : null}
         <Row icon="contacts" t1="Directory" t2="Everyone on your hubs finds you in their directory: your name, address and about line. Being on a hub means being listed." />
         <Row icon="person" t1="Online status" t2="The hub shows you as online while Hubchat is connected, to everyone on that hub, and as busy once Hubchat hasn't been in front on any of your devices for an hour. This can't be hidden." />
-        <Row icon="privacy" t1="Who can message you" t2="Anyone on your hubs who has your address." />
+        <Row icon="privacy" t1="Who can message you" t2="Anyone on your hubs who has your address, except contacts you block." />
+      </Card>
+    </Sec>
+    <BlockedContacts />
+    </>
+  );
+}
+
+/** Settings › Privacy › Blocked contacts (Mail hub 2.6.0): whom you block, over every hub, each with Unblock. */
+function BlockedContacts() {
+  const snap = useSnap();
+  const hubs = snap.state?.hubs || [];
+  const [list, setList] = useState<string[] | null>(null);
+  const known = snap.directory.filter((c) => c.blocked).map((c) => c.address).join(",");
+  useEffect(() => { let live = true; api.blocked().then((l) => { if (live) setList(l); }).catch(() => { if (live) setList([]); }); return () => { live = false; }; }, [known]);
+  return (
+    <Sec title="Blocked contacts">
+      <Card>
+        {!canBlock(hubs) ? <Row icon="block" t1={blockNeedsUpdate(hubs)} /> : null}
+        {list === null ? <Row t1="Loading…" /> : !list.length ? <Row icon="block" t1="No one" t2="Block a contact from their chat's menu or Contact info. They can't message you, and you can't message them until you unblock them." /> : list.map((a) => (
+          <Row key={a} icon="block" t1={displayName(snap.byAddr.get(a), a)} t2={<Addr a={a} net />} right={<button className="btn ghost" onClick={() => { unblock(a); setList((l) => (l || []).filter((x) => x !== a)); }}>Unblock</button>} />
+        ))}
       </Card>
     </Sec>
   );

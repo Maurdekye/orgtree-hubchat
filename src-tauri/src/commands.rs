@@ -339,6 +339,19 @@ pub fn hc_set_device_name(name: String) -> R<String> {
     core::get()?.set_device_name(&name)
 }
 
+/// Block (`on`) or unblock a contact (Mail hub 2.6.0): owed to every hub,
+/// shown at once, told to each connected hub that can keep it.
+#[tauri::command]
+pub fn hc_set_blocked(address: String, on: bool) -> R<()> {
+    engine()?.set_blocked(&address, on).map_err(s)
+}
+
+/// Settings › Blocked contacts: whom we block, over every hub.
+#[tauri::command]
+pub fn hc_blocked() -> R<Vec<String>> {
+    engine()?.blocked().map_err(s)
+}
+
 /// Your status, picked on your avatar: kept, and told to your hubs.
 #[tauri::command]
 pub fn hc_set_status(status: String) -> R<()> {

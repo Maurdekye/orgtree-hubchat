@@ -706,6 +706,8 @@ export const mockApi: Api = {
   setPicture: async () => { throw new Error("Image processing requires the native app"); },
   setReadReceipts: async (on) => { st.read_receipts = on; },
   setStatus: async (status) => { st.status = status; },
+  setBlocked: async (address, on) => { await sleep(120); const c = dir.find((x) => x.address === address); if (c) c.blocked = on; emit({ type: "directory" }); },
+  blocked: async () => dir.filter((c) => c.blocked).map((c) => c.address),
   setLanguage: async (language) => { await sleep(150); st.language = language; },
   setNotifications: async (n) => { st.notifications = { ...n }; },
   webPush: async () => ({ hubs: [] }),

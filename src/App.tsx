@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import { Android } from "./components/Android";
 import { CtxMenu } from "./components/CtxMenu";
+import { BlockConfirm } from "./components/Block";
 import { Desktop } from "./components/Desktop";
 import { LostKey, Onboarding } from "./components/Onboarding";
 import { SetupFlow } from "./components/SetupFlow";
@@ -63,5 +64,5 @@ export default function App() {
   // Scan setup code: a screen over everything on Android, a modal on desktop
   if (setup && !mismatch) body = <>{body}<SetupFlow key={setup.n} req={setup} /></>;
   const os = snap.state.os ?? detectOs(platform);
-  return <WebCtx.Provider value={web}><PlatformCtx.Provider value={platform}><OsCtx.Provider value={os}>{framed(<>{body}<CtxMenu /></>)}</OsCtx.Provider></PlatformCtx.Provider></WebCtx.Provider>;
+  return <WebCtx.Provider value={web}><PlatformCtx.Provider value={platform}><OsCtx.Provider value={os}>{framed(<>{body}<CtxMenu /><BlockConfirm /></>)}</OsCtx.Provider></PlatformCtx.Provider></WebCtx.Provider>;
 }

@@ -4,7 +4,8 @@ import type { ChatSummary } from "../api";
 import { Icon, Logo } from "../lib/icons";
 import { shortWhen } from "../lib/format";
 import { displayName, isAgent, kindOf, msgTime, preview } from "../lib/peers";
-import { useSnap, useTypingPeers } from "../lib/store";
+import { getSnap, useSnap, useTypingPeers } from "../lib/store";
+import { blockEntry } from "./Block";
 import { openMenu, type MenuEntry, type MenuItem } from "../lib/ctxmenu";
 import { copyText } from "../lib/native";
 import { mentionWireToken } from "../lib/mentions";
@@ -51,9 +52,13 @@ export function contactEntries(peer: string, onOpen: (peer: string) => void, onI
  *  header and Android's chat menu offer. */
 export function chatMenu(e: ReactMouseEvent, peer: string, onOpen: (peer: string) => void, onInfo?: (peer: string) => void, open = "Open", onCloseDm?: (peer: string) => void) {
   e.preventDefault();
+  const snap = getSnap();
   openMenu(e.clientX, e.clientY, [
     ...contactEntries(peer, onOpen, onInfo, open),
     ...(onCloseDm ? [{ label: "Close DM", icon: "close" as const, run: () => onCloseDm(peer) }] : []),
+    "sep",
+    // Block / Unblock (Mail hub 2.6.0), as the chat's header menu offers it
+    blockEntry(peer, snap.byAddr.get(peer), snap.state?.hubs || []),
   ]);
 }
 
@@ -89,7 +94,7 @@ export function ChatRows({ rows, selected, onOpen, onInfo, onCloseDm, onShowQues
             onKeyDown={pressKeys(() => onOpen(c.peer))}>
             <PeerAvatar address={c.peer} c={ct} hubs={hubs} size={platform === "android" ? 52 : 44} />
             <div className="crow-main">
-              <div className="crow-l1"><span className="crow-name" title={name}>{name}</span><KindGlyph kind={kindOf(ct)} /><span className="crow-time">{m ? shortWhen(msgTime(m)) : ""}</span></div>
+              <div className="crow-l1"><span className="crow-name" title={name}>{name}</span><KindGlyph kind={kindOf(ct)} />{ct?.blocked ? <span className="crow-blocked">Blocked</span> : null}<span className="crow-time">{m ? shortWhen(msgTime(m)) : ""}</span></div>
               <div className="crow-l2"><span className="crow-prev">{prev}</span>{c.needs_answer ? <span className="badge asks-badge" title={needsAnswerLabel(c.needs_answer)} role="img" aria-label={needsAnswerLabel(c.needs_answer)}>?</span> : null}{c.unread ? <span className="badge" title={unreadLabel(c.unread)} role="img" aria-label={unreadLabel(c.unread)}>{c.unread}</span> : null}</div>
             </div>
           </div>
