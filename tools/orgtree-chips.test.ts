@@ -51,6 +51,29 @@ test("apps, panels and projects too; the label is the target's own id", () => {
   assert.equal(orefAtStart("x @item:alpha/one"), null);
 });
 
+// Orgtree 4.7.0 (its USER 2026-11-24 mc6e8d9a7dab7): a ticket is written @ticket:<org>/<slug>, and @item: keeps
+// working. One ticket, two written forms.
+test("a ticket's two forms are one ticket: the same chip, the same link, the text as written", () => {
+  const old = parseOref("@item:alpha/fix-login")!, now = parseOref("@ticket:alpha/fix-login")!;
+  assert.deepEqual([now.kind, now.org, now.rest, now.id], [old.kind, old.org, old.rest, old.id], "the same ticket");
+  assert.equal(now.token, "@ticket:alpha/fix-login", "the token as written");
+  assert.equal(orefAtStart("@ticket:alpha/one, then more")?.token, "@ticket:alpha/one");
+  assert.deepEqual(scanOrefs("see @ticket:alpha/a, @item:alpha/b and @agent:alpha/luna@ticket:alpha/c").map(({ ref }) => [ref.kind, ref.rest]),
+    [["item", "a"], ["item", "b"], ["agent", "luna"], ["item", "c"]]);
+  for (const bad of ["@ticket:alpha/a/b", "@ticket:Alpha/x", "@ticket:alpha/x@4", "@tickets:alpha/x"]) assert.equal(parseOref(bad), null, bad);
+  // the chip: the ticket mark and word, the id shown, the written prefix hidden
+  const chip = tokenChip(now, ctx());
+  assert.deepEqual(chip, { mark: "item", token: "@ticket:alpha/fix-login", org: "alpha", hidden: "@ticket:alpha/", id: "fix-login", open: true,
+    title: "Ticket alpha/fix-login \u00b7 Open in Orgtree" });
+  assert.match(chipHtml(chip), /^<a class="oref k-item on" data-oref="@ticket:alpha\/fix-login"/);
+  // the link: the one every Orgtree that takes links opens (orgtree://item/...), also for the new form
+  assert.deepEqual(chipOpen("@ticket:alpha/fix-login", ctx()), chipOpen("@item:alpha/fix-login", ctx()));
+  assert.deepEqual(chipOpen("@ticket:alpha/fix-login", ctx()), { org: "alpha", token: "@item:alpha/fix-login" });
+  assert.equal(chipOpen("@ticket:beta/x", ctx()), null, "another PC's org does not open");
+  // a name before a colon is still no bare name
+  assert.equal(nodeNameAtStart("@ticket:alpha/x"), null);
+});
+
 test("a bare name is Orgtree's node alphabet, and never @user", () => {
   assert.equal(nodeNameAtStart("@luna-reserve, hi"), "luna-reserve");
   assert.equal(nodeNameAtStart("@luna."), "luna");
