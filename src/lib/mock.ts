@@ -653,6 +653,13 @@ function parseSetupLink(input: string): { link: SetupLink | null; error: { kind:
 const setups = new Map<string, SetupState>();
 const setupFail = params.get("setupfail");
 
+// Captures (browser mock only): make a contact block us, as a 2.6.0 hub's sync would say
+// (`blocked_by`). Called over CDP: __hubchatMockBlockedBy("maya.e71f2b", true).
+(globalThis as unknown as { __hubchatMockBlockedBy?: (address: string, on: boolean) => void }).__hubchatMockBlockedBy = (address, on) => {
+  const c = dir.find((x) => x.address === address);
+  if (c) { c.blocked_by = on; emit({ type: "directory" }); }
+};
+
 export const mockApi: Api = {
   // an identity arrived (any way): nothing is lost any more
   state: async () => { if (st.me) st.key_lost = null; return clone(st); },
