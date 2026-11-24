@@ -1675,6 +1675,10 @@ mod busy_tests;
 mod last_active_tests;
 
 #[cfg(test)]
+#[path = "store_block_tests.rs"]
+mod block_tests;
+
+#[cfg(test)]
 #[path = "store_send_scale_tests.rs"]
 mod send_scale_tests;
 
