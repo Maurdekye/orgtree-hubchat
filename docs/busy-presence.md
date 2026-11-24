@@ -132,3 +132,6 @@ disturb stays the mute), and what you send, your typing and read receipts still 
 
 Not measured here: a phone (Android runs the same web code; the proof's Android view is the mobile layout in
 Electron) and a real hub end to end with Orgtree (the Orgtree integration covers the hub and the engine).
+
+Last seen (Hubchat 1.4.0, Mail hub 2.6.0): presence words also say "active now" or "last seen ..." per kind; see
+[last-seen.md](last-seen.md).
