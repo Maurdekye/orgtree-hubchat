@@ -1,5 +1,23 @@
 # Hubchat development invariants
 
+- 2026-11-24: Blocking (Mail hub 2.6.0 feature `blocking`). The HUB keeps
+  and enforces blocks, two-way; the app only asks and shows. A pick is owed
+  to every saved hub (`blocks.owed.<url>`, engine_blocks.rs `tell_blocks`
+  before each sync, woken by `status_wake`); each sync's `blocks` and
+  `blocked_by` are kept per hub (`blocks.mine.<url>`, `blocks.by.<url>`) and
+  merged in `Store::directory` as `Contact.blocked`/`blocked_by`, owed
+  changes applied at once. A block shows ONLY in the DM header and Contact
+  info (`dmPresence`, red cancel sign: user "their status appears as a red
+  cancel sign in their dm"); lists keep presence, the chat list adds a
+  "Blocked" label (coordinator Q6). The composer gives way to `BlockBar`;
+  the blocked side reads the user's words "You have been blocked by @<name>
+  and cannot message them" (user 19:06Z: shown at once, not only after a
+  failed send). Every contact menu offers `blockEntry` (Block asks first via
+  the root `BlockConfirm`). [decided: user 2026-11-24 18:56Z m020bbd1926c3,
+  19:06Z m61f5367a61e7 via Orgtree docket
+  blocking-contacts-on-the-hub-hubchat-1-4-0-orgtr; verified:
+  engine_blocks.rs, store.rs, Block.tsx; store_block_tests.rs]
+
 - 2026-11-21: Linux desktop integration & SteamOS (`linux_scheme.rs`,
   `linux_gamescope.rs`, `secrets.rs`, `core.rs`): writes `dev.orgtree.hubchat.link.desktop`
   and (for verified AppImage/`HUBCHAT_LAUNCHER` launches without a system entry)
