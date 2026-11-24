@@ -16,8 +16,10 @@ the contract both apps follow.
 
 ## What the user sees
 
-- Orgtree's mention tokens in any message become chips: `@item:<org>/<slug>`
-  (tickets), `@doc:`, `@app:`, `@panel:`, `@mail:`, `@agent:` and `@project:`.
+- Orgtree's mention tokens in any message become chips: `@ticket:<org>/<slug>`
+  (tickets, Orgtree 4.7.0; the older `@item:<org>/<slug>` is the same ticket and
+  the same chip, and a click on either opens `orgtree://item/...`, the link
+  every Orgtree that takes links opens), `@doc:`, `@app:`, `@panel:`, `@mail:`, `@agent:` and `@project:`.
   A chip shows Orgtree's own mark for its kind, then the target's own id.
   Agents and projects share one generic mark (a node in a tree). Hubchat
   fetches nothing from Orgtree, so there is no title, read state or model.

@@ -29,7 +29,7 @@ conversation's ⋮ menu. There is no per-message sender name or avatar (chats ar
 | Target | Copied |
 | --- | --- |
 | A contact of any kind (person, org, chat) | `@net:<full address>` (`mentionWireToken`), also for a mention written as `@maya` |
-| An Orgtree token chip | the token as written, e.g. `@item:alpha/fix-login` |
+| An Orgtree token chip | the token as written, e.g. `@ticket:alpha/fix-login` or the older `@item:alpha/fix-login` |
 | A bare-name chip whose org is on this PC | `@agent:<org>/<name>` |
 | A bare-name chip whose org is not on this PC | `@<name>` as written |
 
