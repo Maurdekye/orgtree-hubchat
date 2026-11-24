@@ -42,7 +42,9 @@ export const peerHubs = (c: Contact | undefined, hubs: HubStatus[]) => (c ? hubs
 /** A connected hub that reaches them (the core sends through one of these). */
 export const viaHub = (c: Contact | undefined, hubs: HubStatus[]) => peerHubs(c, hubs).find((h) => h.state === "connected");
 
-export type PresState = "online" | "busy" | "dnd" | "offline" | "disconnected" | "blocked";
+export type PresState = "online" | "busy" | "dnd" | "offline" | "disconnected";
+/** What a DM and Contact info show: presence, or a block (Mail hub 2.6.0). */
+export type ShownState = PresState | "blocked";
 /** `ticks`: the words hold a relative time ("5 min ago") that must be drawn
  *  again as it moves on (useSeenTick). */
 export interface Presence { state: PresState; text: string; short: string; ticks: boolean }
@@ -106,7 +108,7 @@ export function presence(c: Contact | undefined, hubs: HubStatus[]): Presence {
 
 /** In their DM and Contact info a block wins over presence (Mail hub 2.6.0; user 2026-11-24 18:56Z "their status
  *  appears as a red cancel sign in their dm", 19:06Z the blocked side is shown it too). Lists elsewhere show presence. */
-export function dmPresence(c: Contact | undefined, hubs: HubStatus[]): Presence {
+export function dmPresence(c: Contact | undefined, hubs: HubStatus[]): Omit<Presence, "state"> & { state: ShownState } {
   if (c?.blocked) return { state: "blocked", text: "Blocked", short: "blocked", ticks: false };
   if (c?.blocked_by) return { state: "blocked", text: "Has blocked you", short: "has blocked you", ticks: false };
   return presence(c, hubs);

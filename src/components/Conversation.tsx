@@ -11,7 +11,7 @@ import { bytes, dayLabel, dayStart, MAX_FILES } from "../lib/format";
 import { copyText, errText } from "../lib/native";
 import { openMenu } from "../lib/ctxmenu";
 import { mentionWireToken } from "../lib/mentions";
-import { displayName, hubByUrl, hubName, hubStatusText, kindInfo, kindOf, lastSeen, limitFor, msgTime, notOnYourHubs, offlineNote, peerHubs, presence, dmPresence, preview, viaHub } from "../lib/peers";
+import { displayName, hubByUrl, hubName, hubStatusText, kindInfo, kindOf, lastSeen, limitFor, msgTime, notOnYourHubs, offlineNote, peerHubs, dmPresence, preview, viaHub } from "../lib/peers";
 import { scanSetup } from "../lib/setup";
 import { refreshChats, useMessages, useSendRoute, useSnap, useTyping } from "../lib/store";
 import { replyIds } from "../lib/replies";

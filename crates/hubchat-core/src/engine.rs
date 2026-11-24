@@ -2642,8 +2642,10 @@ mod engine_pictures;
 #[path = "engine_typing.rs"]
 mod engine_typing;
 
-#[path = "engine_status.rs"]
+#[path = "engine_blocks.rs"]
 mod engine_blocks;
+
+#[path = "engine_status.rs"]
 mod engine_status;
 pub use engine_status::{chosen_status, STATUSES};
 

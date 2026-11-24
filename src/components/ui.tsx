@@ -6,7 +6,7 @@ import { usePicture } from "../lib/pictures";
 import { useSnap } from "../lib/store";
 import { Icon, type IconName } from "../lib/icons";
 import { avatarFallback } from "../lib/avatarFallback";
-import { displayName, kindInfo, kindOf, presence, splitAddr, tickInfo, type Kind, type PresState, dmPresence } from "../lib/peers";
+import { displayName, kindInfo, kindOf, presence, splitAddr, tickInfo, type Kind, type ShownState, dmPresence } from "../lib/peers";
 import { useToasts } from "../lib/toast";
 import { appVersion } from "../lib/native";
 
@@ -57,7 +57,7 @@ export function defaultDeviceName(platform: Platform, web: boolean, os: DesktopO
   return "Desktop";
 }
 
-export function Avatar({ kind, name, size, pres, presTitle, address, picture }: { kind: Kind | "me"; name: string; size: number; pres?: PresState; presTitle?: string; address?: string; picture?: PictureMeta | null }) {
+export function Avatar({ kind, name, size, pres, presTitle, address, picture }: { kind: Kind | "me"; name: string; size: number; pres?: ShownState; presTitle?: string; address?: string; picture?: PictureMeta | null }) {
   const fallback = avatarFallback(kind, name);
   const me = useSnap().state?.me;
   const src = usePicture(kind === "chat" ? undefined : kind === "me" ? me?.address : address, kind === "me" ? me?.picture : picture);
