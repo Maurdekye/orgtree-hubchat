@@ -431,6 +431,7 @@ function loadAppStack(initialState) {
     ...baseMocks,
     "./components/Android": { Android },
     "./components/CtxMenu": { CtxMenu },
+    "./components/Block": { BlockConfirm: () => null },
     "./components/Desktop": { Desktop },
     "./components/Onboarding": onboardingMod,
     "./components/SetupFlow": { SetupFlow },
