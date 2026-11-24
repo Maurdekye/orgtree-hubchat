@@ -49,7 +49,10 @@ export interface Presence { state: PresState; text: string; short: string; ticks
 
 /** "Last seen" per kind (Mail hub 2.6.0, feature `last_active`): the words
  *  and the user's two choices live in ./lastseen. */
-export { ACTIVE_NOW, OLD_HUBS_SHOW_LAST_CALL } from "./lastseen";
+export { ACTIVE_NOW, OLD_HUBS_SHOW_LAST_CALL, offlineNote } from "./lastseen";
+
+/** The clock offset of the hub that said their time (0 when unknown). */
+const saidOffset = (c: Contact, hubs: HubStatus[]) => (c.active_hub ? hubs.find((h) => h.url === c.active_hub)?.clock_offset_ms ?? 0 : 0);
 
 /** A connected hub that lists them knows `last_active`. */
 export const knowsLastActive = (c: Contact | undefined, hubs: HubStatus[]) =>
@@ -58,7 +61,7 @@ export const knowsLastActive = (c: Contact | undefined, hubs: HubStatus[]) =>
 /** "active now", "last seen 5 min ago", or null (no time to show). */
 export function lastSeen(c: Contact | undefined, hubs: HubStatus[]): { words: string; ticks: boolean } | null {
   if (!c) return null;
-  return lastSeenWords({ known: knowsLastActive(c, hubs), online: c.online, active: !!c.active, activeAt: ms(c.active_at), lastCall: ms(c.last_seen) }, ago);
+  return lastSeenWords({ known: knowsLastActive(c, hubs), online: c.online, active: !!c.active, activeAt: ms(c.active_at), hubOffset: saidOffset(c, hubs), lastCall: ms(c.last_seen) }, ago);
 }
 
 /** For ordering by how recently someone was around: their last active time

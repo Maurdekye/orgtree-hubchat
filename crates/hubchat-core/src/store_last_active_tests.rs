@@ -31,12 +31,18 @@ fn seen(s: &Store) -> (bool, Option<String>) {
     (c.active, c.active_at.clone())
 }
 
+/// The hub whose clock the time is on.
+fn said_by(s: &Store) -> Option<String> {
+    s.directory().unwrap().into_iter().find(|c| c.address == ACME).unwrap().active_hub
+}
+
 #[test]
 fn the_directory_takes_the_latest_time_and_active_from_any_hub() {
     let s = store();
     s.set_roster(A, &[row(true, false, Some("2026-11-24T10:40:00.000Z"))]).unwrap();
     s.set_roster(B, &[row(true, false, Some("2026-11-24T11:05:00.000Z"))]).unwrap();
     assert_eq!(seen(&s), (false, Some("2026-11-24T11:05:00.000Z".into())), "the latest any hub says");
+    assert_eq!(said_by(&s).as_deref(), Some(B), "said by the hub whose time it is");
     s.set_active(A, &[ACME.into()]).unwrap();
     assert_eq!(seen(&s).0, true, "active on one hub where it is online: active");
     s.set_active(A, &[]).unwrap();
@@ -44,8 +50,10 @@ fn the_directory_takes_the_latest_time_and_active_from_any_hub() {
     s.upsert_roster(A, &[row(false, true, Some("2026-11-24T12:00:00.000Z"))]).unwrap();
     s.set_roster(B, &[row(false, false, None)]).unwrap();
     assert_eq!(seen(&s), (false, Some("2026-11-24T12:00:00.000Z".into())), "offline is never active; a hub with no time doesn't hide another's");
+    assert_eq!(said_by(&s).as_deref(), Some(A), "the time and its hub move together");
     s.set_roster(A, &[row(true, false, None)]).unwrap();
     assert_eq!(seen(&s), (false, None), "no hub says a time: none");
+    assert_eq!(said_by(&s), None, "no time: no hub");
 }
 
 #[test]

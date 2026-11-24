@@ -9,7 +9,8 @@ they visited the app [...] for independent chats it the last time they sent a me
   lease). An agent session (kind `chat`): the last time it sent a message to anyone; never "active now".
 - **Where it shows.** Wherever presence words show, in every state: the chat header and the avatar tooltip
   ("Online · last seen 12 min ago", "Busy · active now", "Offline · last seen yesterday at 18:02"), Contact info, the
-  Directory and New chat rows and the "is offline (...)" note. A mention's hover keeps the bare word ("Busy · org"). The words are built in one place,
+  Directory and New chat rows and the note under a message waiting for someone offline ("Maya is offline (last seen
+  12 min ago)"; with no time, "Maya is offline": `offlineNote`). A mention's hover keeps the bare word ("Busy · org"). The words are built in one place,
   `src/lib/lastseen.ts` (`ACTIVE_NOW`, `lastSeenWords`, `withSeen`); `peers.ts presence()` uses them. A time that
   moves on is drawn again every 30 s (`Presence.ticks`, `useSeenTick`).
 - **The user's two choices** (2026-11-24 ma46b9293f2d5), one constant each in `lastseen.ts`: the words "active now"
@@ -18,7 +19,8 @@ they visited the app [...] for independent chats it the last time they sent a me
 - **Where the times come from** (hubchat-core). Roster rows carry `active` (a snapshot) and `active_at`; a sync
   answer's `active_now` (never ourselves; not `active`, which is our own devices in use) sets `roster.active` per
   hub (`Store::set_active`). The directory takes `active_at` from the latest any hub says and `active` from any hub
-  where they are online. A hub is known to have the feature when `/healthz` lists `last_active`
+  where they are online, and keeps the hub that said the time (`Contact.active_hub`): the UI words the time against
+  that hub's clock offset (`HubStatus.clock_offset_ms`), so a device whose clock is off doesn't shift it. A hub is known to have the feature when `/healthz` lists `last_active`
   (`HubStatus.features`; `peers.ts knowsLastActive` looks at the connected hubs that list the contact).
 - **Upgrade.** Store migration 25 adds the two roster columns and, like migration 17, has every saved hub fetch its
   whole directory once more (`Engine::refresh_directory_once`; `/api/roster` carries the times), so a hub that is
@@ -28,3 +30,9 @@ they visited the app [...] for independent chats it the last time they sent a me
 - Tests: `tools/last-seen.test.ts` (the words and the two choices), `tools/proof-last-seen.mjs` (mounted, desktop and
   Android: headers per kind, Contact info, Directory rows), `store_last_active_tests.rs` (merging across hubs,
   `active_now`, the directory fetched again). The hub's side: Mail hub `tests/last_active.rs`.
+- **Known limits** (accepted, @coordinator-opus 2026-11-24): (1) mixed hubs: `online` comes from any hub and
+  `active_at` from the latest any hub says, so an org listed on a 2.6.0 hub it no longer reaches and on an older hub
+  it does reach can show "Online · last seen 3 days ago"; (2) a hub whose connection dropped keeps its roster flags
+  until it reconnects, so a contact also listed on a connected hub can keep "active now" from the hub that is down
+  (as `online` does today); (3) the avatar tooltip holds a relative time and isn't drawn again until it changes for
+  another reason.

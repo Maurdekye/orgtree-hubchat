@@ -3,10 +3,10 @@
 // that hubs without the feature show no time (user 2026-11-24 ma46b9293f2d5).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ACTIVE_NOW, OLD_HUBS_SHOW_LAST_CALL, lastSeenWords, withSeen, type SeenInput } from "../src/lib/lastseen.ts";
+import { ACTIVE_NOW, OLD_HUBS_SHOW_LAST_CALL, lastSeenWords, offlineNote, withSeen, type SeenInput } from "../src/lib/lastseen.ts";
 
 const ago = (t: number) => (t === 1000 ? "5 min ago" : t === 2000 ? "yesterday at 18:02" : "?");
-const base: SeenInput = { known: true, online: true, active: false, activeAt: 0, lastCall: 0 };
+const base: SeenInput = { known: true, online: true, active: false, activeAt: 0, hubOffset: 0, lastCall: 0 };
 
 test("the user's two choices", () => {
   assert.equal(ACTIVE_NOW, "active now");
@@ -35,4 +35,16 @@ test("the words around a presence", () => {
   assert.deepEqual(withSeen("Do not disturb", false, null), { text: "Do not disturb", short: "do not disturb" });
   assert.deepEqual(withSeen("Offline", true, { words: "last seen 5 min ago" }), { text: "Offline · last seen 5 min ago", short: "last seen 5 min ago" });
   assert.deepEqual(withSeen("Offline", true, null), { text: "Offline", short: "offline" });
+});
+
+test("the time is worded on the clock of the hub that said it (H4)", () => {
+  // the hub's clock is 4 ms ahead of this device's: its 1004 is the device's 1000
+  assert.deepEqual(lastSeenWords({ ...base, online: false, activeAt: 1004, hubOffset: 4 }, ago), { words: "last seen 5 min ago", ticks: true });
+  assert.equal(lastSeenWords({ ...base, online: false, activeAt: 1996, hubOffset: -4 }, ago)?.words, "last seen yesterday at 18:02");
+});
+
+test("the offline note: the time in brackets, or none on a hub without last_active (H1)", () => {
+  const old = { ...base, known: false, online: false, lastCall: 2000 };
+  assert.equal(offlineNote("Maya", lastSeenWords(old, ago)), "Maya is offline", "never 'Maya is offline (offline)'");
+  assert.equal(offlineNote("Maya", lastSeenWords({ ...base, online: false, activeAt: 1000 }, ago)), "Maya is offline (last seen 5 min ago)");
 });

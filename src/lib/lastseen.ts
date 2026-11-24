@@ -20,8 +20,12 @@ export interface SeenInput {
   online: boolean;
   /** active now on a hub of theirs */
   active: boolean;
-  /** their last active time in ms, 0 for none */
+  /** their last active time in ms on the clock of the hub that said it, 0 for none */
   activeAt: number;
+  /** that hub's clock minus this device's, ms (0 when unknown): the time is
+   *  worded against the hub's clock, so a device whose clock is off doesn't
+   *  shift it (review H4) */
+  hubOffset: number;
   /** their last call to a hub in ms (the old `last_seen`), 0 for none */
   lastCall: number;
 }
@@ -31,10 +35,17 @@ export interface SeenInput {
 export function lastSeenWords(i: SeenInput, ago: (t: number) => string): { words: string; ticks: boolean } | null {
   if (i.known) {
     if (i.active && i.online) return { words: ACTIVE_NOW, ticks: false };
-    return i.activeAt ? { words: "last seen " + ago(i.activeAt), ticks: true } : null;
+    return i.activeAt ? { words: "last seen " + ago(i.activeAt - i.hubOffset), ticks: true } : null;
   }
   const t = OLD_HUBS_SHOW_LAST_CALL && !i.online ? i.lastCall : 0;
   return t ? { words: "last seen " + ago(t), ticks: true } : null;
+}
+
+/** The note under a message waiting for someone offline: the time in
+ *  brackets when there is one, nothing otherwise (never "offline (offline)",
+ *  review H1). */
+export function offlineNote(name: string, seen: { words: string } | null): string {
+  return name + " is offline" + (seen ? " (" + seen.words + ")" : "");
 }
 
 /** A presence's words with the last seen after them: "Online · active now"

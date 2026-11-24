@@ -442,6 +442,10 @@ pub struct Contact {
     pub active: bool,
     /// The latest last-active time any hub of theirs says (Mail hub 2.6.0).
     pub active_at: Option<String>,
+    /// The hub that said `active_at`: the time is on its clock, so the UI
+    /// words it against that hub's clock offset.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_hub: Option<String>,
     pub hubs: Vec<String>,
     pub picture: Option<crate::pictures::PictureMeta>,
     /// The language a person reads in, from the first hub that lists one.
@@ -665,13 +669,17 @@ impl Store {
                         c.active |= active;
                         if active_at > c.active_at {
                             c.active_at = active_at;
+                            c.active_hub = Some(hub.clone());
                         }
                         c.hubs.push(hub);
                         if c.language.is_none() {
                             c.language = language;
                         }
                     }
-                    _ => out.push(Contact { address, kind, org_name, username, blurb, online, busy, dnd, last_seen, active, active_at, hubs: vec![hub], picture, language }),
+                    _ => {
+                        let active_hub = active_at.as_ref().map(|_| hub.clone());
+                        out.push(Contact { address, kind, org_name, username, blurb, online, busy, dnd, last_seen, active, active_at, active_hub, hubs: vec![hub], picture, language })
+                    }
                 }
             }
             Ok(out)

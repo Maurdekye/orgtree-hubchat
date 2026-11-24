@@ -275,6 +275,8 @@ export interface Contact {
   /** When they were last active (Mail hub 2.6.0): the latest any hub of
    *  theirs says; null when none says. Older cores never say it. */
   active_at?: string | null;
+  /** The hub that said `active_at` (its clock). Older cores never say it. */
+  active_hub?: string | null;
   hubs: string[];
   picture?: PictureMeta | null;
   /** The language a person reads in (Mail hub 2.4.0), when they chose one. */

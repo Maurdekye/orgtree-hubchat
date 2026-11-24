@@ -11,7 +11,7 @@ import { bytes, dayLabel, dayStart, MAX_FILES } from "../lib/format";
 import { copyText, errText } from "../lib/native";
 import { openMenu } from "../lib/ctxmenu";
 import { mentionWireToken } from "../lib/mentions";
-import { displayName, hubByUrl, hubName, hubStatusText, kindInfo, kindOf, limitFor, msgTime, notOnYourHubs, peerHubs, presence, preview, viaHub } from "../lib/peers";
+import { displayName, hubByUrl, hubName, hubStatusText, kindInfo, kindOf, lastSeen, limitFor, msgTime, notOnYourHubs, offlineNote, peerHubs, presence, preview, viaHub } from "../lib/peers";
 import { scanSetup } from "../lib/setup";
 import { refreshChats, useMessages, useSendRoute, useSnap, useTyping } from "../lib/store";
 import { replyIds } from "../lib/replies";
@@ -464,7 +464,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
   const p = presence(c, hubs);
   useSeenTick(p.ticks);
   if (p.state === "offline" && msgs.some((m) => m.outgoing && m.state === "sent")) {
-    rows.push(<div className="sysnote" key="pend"><Icon name="schedule" />{name} is offline ({p.short}). Your message waits on hub {via?.name} and is delivered when they reconnect.</div>);
+    rows.push(<div className="sysnote" key="pend"><Icon name="schedule" />{offlineNote(name, lastSeen(c, hubs))}. Your message waits on hub {via?.name} and is delivered when they reconnect.</div>);
   }
   const waiting = msgs.some((m) => m.outgoing && (m.state === "queued" || m.state === "sending"));
   if (waiting && route?.pinned && !route.next) {
