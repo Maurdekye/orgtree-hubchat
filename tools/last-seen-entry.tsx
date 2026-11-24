@@ -20,7 +20,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const until = async (f: () => boolean, ms: number) => { const t = performance.now(); while (performance.now() - t < ms) { if (f()) return true; await sleep(25); } return f(); };
 
 const A = "wss://hub-a.invalid", B = "wss://hub-b.invalid";
-const ME = "scratch.abcdef", ACME = "acme.4d5e6f", BETA = "beta.222222", PAT = "pat.1a2b3c", ALICE = "alice.111111", OLLIE = "ollie.333333", SESS = "sess.444444";
+const ME = "scratch.abcdef", ACME = "acme.4d5e6f", BETA = "beta.222222", PAT = "pat.1a2b3c", ALICE = "alice.111111", OLLIE = "ollie.333333", SESS = "sess.444444", BO = "bo.555555", CY = "cy.666666";
 
 async function run() {
   const platform = new URLSearchParams(location.search).get("platform") === "android" ? "android" : "desktop";
@@ -38,6 +38,10 @@ async function run() {
     contact(ALICE, "person", "Alice", { online: false, active_at: minAgo(30), last_seen: minAgo(3) }), // last visit 30 min ago, last call 3 min ago
     contact(OLLIE, "person", "Ollie", { online: false, hubs: [B], last_seen: minAgo(2 * 1440), active_at: minAgo(20) }), // hub B has no last_active
     contact(SESS, "chat", "Night shift", { active_at: minAgo(5) }), // an agent session's last message sent
+    // blocking (Mail hub 2.6.0, docket blocking-contacts-on-the-hub-hubchat-1-4-0-orgtr): in the DM a block wins over
+    // active now / last seen (@coordinator-opus 2026-11-24 m4645f83a565d)
+    contact(BO, "person", "Bo", { active: true, active_at: minAgo(1), blocked: true }), // we block them
+    contact(CY, "person", "Cy", { active: true, active_at: minAgo(1), blocked_by: true }), // they block us
   ];
   const hub = (url: string, name: string, features: string[]): HubStatus => ({ url, name, state: "connected", error: null, retry_at_ms: null, max_attachment_bytes: 1 << 30, features });
   const hubs: HubStatus[] = [hub(A, "Hub A", ["v2", "busy", "last_active"]), hub(B, "Hub B", ["v2", "busy"])];
@@ -45,7 +49,7 @@ async function run() {
   const message = (peer: string, body: string): Message => ({ id: peer + "-" + n, peer, outgoing: false, hub: peer === OLLIE ? B : A, body, kind: null, reply_to: null,
     created_at: new Date(1700000000000 + n++ * 60000).toISOString(), sent_at: null, received_at: null, state: "received", fetched_at: null, delivered_at: null, read_at: null,
     error: null, seen: true, attachments: [] } as Message);
-  const chats: Record<string, Message[]> = Object.fromEntries([ACME, BETA, PAT, ALICE, OLLIE, SESS].map((p) => [p, [message(p, "Hello")]]));
+  const chats: Record<string, Message[]> = Object.fromEntries([ACME, BETA, PAT, ALICE, OLLIE, SESS, BO, CY].map((p) => [p, [message(p, "Hello")]]));
   const all = Object.values(chats).flat();
   Object.assign(api, mockApi, {
     state: async () => ({ ...await mockApi.state(), me: { id: "scratch", address: ME, name: "Scratch", about: "" }, hubs, platform, recovery_saved: true, file_background_hint: null }),
@@ -83,6 +87,8 @@ async function run() {
     ["Alice", "an offline person: last seen at their last visit, not their last call", "Offline · last seen 30 min ago", "last seen 30 min ago"],
     ["Ollie", "a hub without last_active: no time at all", "Offline", "offline"],
     ["Night shift", "an agent session: last seen at its last message, never active now", "Online · last seen 5 min ago", "online · last seen 5 min ago"],
+    ["Bo", "a contact we block: Blocked, not active now", "Blocked", "blocked"],
+    ["Cy", "a contact who blocks us: Has blocked you, not active now", "Has blocked you", "has blocked you"],
   ];
   const steps: Record<string, () => Promise<unknown>> = {
     "headers": async () => {

@@ -18,6 +18,7 @@ const views={
 const seenChecks=["the open chat's header: an org with an agent in charge mid-turn: active now","the open chat's header: an org: last seen when its last turn ended",
  "the open chat's header: a busy person with Hubchat in front: busy, active now","the open chat's header: an offline person: last seen at their last visit, not their last call",
  "the open chat's header: a hub without last_active: no time at all","the open chat's header: an agent session: last seen at its last message, never active now",
+ "the open chat's header: a contact we block: Blocked, not active now","the open chat's header: a contact who blocks us: Has blocked you, not active now",
  'Contact info of an org mid-turn says Online · active now','the Directory rows say active now or last seen per kind'];
 const expectedRed={'desktop/seen':seenChecks,'android/seen':seenChecks};
 app.whenReady().then(async()=>{
