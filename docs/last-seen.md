@@ -9,7 +9,7 @@ they visited the app [...] for independent chats it the last time they sent a me
   lease). An agent session (kind `chat`): the last time it sent a message to anyone; never "active now".
 - **Where it shows.** Wherever presence words show, in every state: the chat header and the avatar tooltip
   ("Online · last seen 12 min ago", "Busy · active now", "Offline · last seen yesterday at 18:02"), Contact info, the
-  Directory and New chat rows, mention hovers and the "is offline (...)" note. The words are built in one place,
+  Directory and New chat rows and the "is offline (...)" note. A mention's hover keeps the bare word ("Busy · org"). The words are built in one place,
   `src/lib/lastseen.ts` (`ACTIVE_NOW`, `lastSeenWords`, `withSeen`); `peers.ts presence()` uses them. A time that
   moves on is drawn again every 30 s (`Presence.ticks`, `useSeenTick`).
 - **The user's two choices** (2026-11-24 ma46b9293f2d5), one constant each in `lastseen.ts`: the words "active now"
@@ -25,5 +25,6 @@ they visited the app [...] for independent chats it the last time they sent a me
   already 2.6.0 sends every row with its time; the sync position stays. A hub upgraded later sends them itself (its
   schema 15 marks the rows it fills).
 - **Directory order.** Offline contacts sort by `lastAround` (active now, else `active_at`, else the last call).
-- Tests: `tools/last-seen.test.ts` (the words and the two choices), `store_last_active_tests.rs` (merging across hubs,
+- Tests: `tools/last-seen.test.ts` (the words and the two choices), `tools/proof-last-seen.mjs` (mounted, desktop and
+  Android: headers per kind, Contact info, Directory rows), `store_last_active_tests.rs` (merging across hubs,
   `active_now`, the directory fetched again). The hub's side: Mail hub `tests/last_active.rs`.
