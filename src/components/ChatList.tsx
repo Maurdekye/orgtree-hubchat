@@ -92,7 +92,7 @@ export function ChatRows({ rows, selected, onOpen, onInfo, onCloseDm, onShowQues
           <div key={c.peer} className={"crow" + (selected === c.peer ? " sel" : "") + (c.unread ? " unread" : "") + (c.needs_answer ? " asks" : "")} onClick={() => { if (Date.now() - pressedAt.current <= PRESS_CLICK_MS) return; const go = rowClick(c, !!onShowQuestion); if (go.to === "question") onShowQuestion?.(c.peer, go.id); else onOpen(c.peer); }} role="button" tabIndex={0}
             onContextMenu={(e) => { if (platform === "android") pressedAt.current = Date.now(); chatMenu(e, c.peer, onOpen, onInfo, "Open", onCloseDm); }}
             onKeyDown={pressKeys(() => onOpen(c.peer))}>
-            <PeerAvatar address={c.peer} c={ct} hubs={hubs} size={platform === "android" ? 52 : 44} />
+            <PeerAvatar address={c.peer} c={ct} hubs={hubs} size={platform === "android" ? 52 : 44} dm />
             <div className="crow-main">
               <div className="crow-l1"><span className="crow-name" title={name}>{name}</span><KindGlyph kind={kindOf(ct)} />{ct?.blocked ? <span className="crow-blocked">Blocked</span> : null}<span className="crow-time">{m ? shortWhen(msgTime(m)) : ""}</span></div>
               <div className="crow-l2"><span className="crow-prev">{prev}</span>{c.needs_answer ? <span className="badge asks-badge" title={needsAnswerLabel(c.needs_answer)} role="img" aria-label={needsAnswerLabel(c.needs_answer)}>?</span> : null}{c.unread ? <span className="badge" title={unreadLabel(c.unread)} role="img" aria-label={unreadLabel(c.unread)}>{c.unread}</span> : null}</div>
