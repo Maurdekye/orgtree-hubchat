@@ -1,5 +1,18 @@
 # Hubchat development invariants
 
+- 2026-11-25: Lockdown (Mail hub 2.6.0 feature `lockdown`). An address in
+  lockdown takes mail only from its list; the HUB enforces it. Each sync's
+  `locked` ({address: open|closed}, with the presence sets) and our own
+  `lockdown` are kept per hub (`Store::hear_locked`: an answer with presence
+  but no map clears it) and merged as `Contact.locked`, closed on any hub
+  winning (review I9). `presence()` shows a closed contact as a lock
+  everywhere; an open one keeps its dot with a corner lock (`lockBadge`).
+  The DM's composer gives way to `LockBar` (a block wins) and question
+  cards get no answer buttons; a refused send fails with Retry. Settings
+  shows our own lockdown (1.4.0 has no switch). [decided: user 2026-11-25
+  13:26Z m0388b64a9372 via Orgtree docket
+  org-mailbox-lockdown-allow-list-mode-that-denies; verified:
+  lib/lockdown.ts, store.rs; store_lockdown_tests.rs, tools/lockdown.test.ts]
 - 2026-11-24: Blocking (Mail hub 2.6.0 feature `blocking`). The HUB keeps
   and enforces blocks, two-way; the app only asks and shows. A pick is owed
   to every saved hub (`blocks.owed.<url>`, engine_blocks.rs `tell_blocks`
