@@ -48,7 +48,8 @@ automatically.
      Tauri regenerates the ignored `app/tauri.properties` during an Android
      build; do not edit or commit that generated file as release source.
 2. In the same commit, add the two notes files:
-   - `docs/release-notes-<v>.md`: the GitHub release's text;
+   - `docs/release-notes-<v>.md`: the GitHub release's text, which is also Settings ›
+     Changelog's entry: add its `?raw` import to `src/lib/releaseNotes.ts` in the same commit;
    - `docs/update-notes-<v>.txt`: one or two sentences the app shows when it offers
      the update (`latest.json`'s `notes`).
 3. Push that commit to `main`, then tag it and push the tag:
