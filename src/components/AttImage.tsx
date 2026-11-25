@@ -7,6 +7,8 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, ty
 import { api, isWeb, type Attachment, type Message } from "../api";
 import { bytes } from "../lib/format";
 import { Icon } from "../lib/icons";
+import { attachmentMenu } from "../lib/attachmentActions";
+import { menuIsOpen, openMenu } from "../lib/ctxmenu";
 import { closeImage, openImage, usePreview, useShownImage } from "../lib/images";
 import { errText, openAttachment, openFile } from "../lib/native";
 import { attView } from "../lib/peers";
@@ -91,6 +93,8 @@ function Viewer({ m, a }: { m: Message; a: Attachment }) {
   const fingers = useRef(new Map<number, Pt>());
   const gesture = useRef<{ view: View; a: Pt; b: Pt } | { view: View; at: Pt } | null>(null);
   const moved = useRef(false);
+  // the click that dismisses the picture's menu (desktop) is not the click that closes the viewer
+  const dismissing = useRef(false);
   const put = (v: View) => { viewRef.current = v; setZoom(v); };
   useEffect(() => {
     resetPageZoom(document);
@@ -109,6 +113,7 @@ function Viewer({ m, a }: { m: Message; a: Attachment }) {
       : pts.length === 1 ? { view: viewRef.current, at: pts[0]! } : null;
   };
   const down = (e: ReactPointerEvent) => {
+    dismissing.current = menuIsOpen();
     if ((e.target as HTMLElement).closest(".iv-close, .iv-cap")) return;
     fingers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     // no setPointerCapture: capture would retarget the click that ends a tap to the overlay (the picture's
@@ -157,12 +162,13 @@ function Viewer({ m, a }: { m: Message; a: Attachment }) {
         : <button className="link" onClick={download}>{view.retry ? "Retry download" : "Download"}</button>;
 
   return (
-    <div className="imgview" role="dialog" aria-label={a.name} onClick={() => { if (!moved.current) close(); moved.current = false; }}
+    <div className="imgview" role="dialog" aria-label={a.name} onClick={() => { if (!moved.current && !dismissing.current) close(); moved.current = false; dismissing.current = false; }}
       onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onWheel={wheel}>
       <button className="icon-btn iv-close" onClick={(e) => { e.stopPropagation(); close(); }} title={platform === "desktop" ? "Close (Esc)" : undefined} aria-label="Close">
         <Icon name={platform === "android" ? "back" : "close"} />
       </button>
-      {url ? <img ref={img} src={url} alt={a.name} draggable={false} style={{ transform: `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.scale})` }} onClick={(e) => e.stopPropagation()} onDoubleClick={dbl} /> : <span className="att-ph"><Icon name="image" /></span>}
+      {url ? <img ref={img} src={url} alt={a.name} draggable={false} style={{ transform: `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.scale})` }} onClick={(e) => e.stopPropagation()} onDoubleClick={dbl}
+        onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); openMenu(e.clientX, e.clientY, attachmentMenu(m, current, platform, true)); }} /> : <span className="att-ph"><Icon name="image" /></span>}
       <div className="iv-cap" onClick={(e) => e.stopPropagation()}>
         <span className="ell">{a.name}</span><span className="dim"> · {bytes(a.bytes)}</span>{actions ? <span className="iv-acts">{actions}</span> : null}
       </div>

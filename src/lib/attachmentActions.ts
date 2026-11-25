@@ -1,7 +1,7 @@
 // Shared by chat attachments and Contact info's file list.
 import { api, isWeb, type Attachment, type Message } from "../api";
 import type { MenuEntry } from "./ctxmenu";
-import { openImage, previewable } from "./images";
+import { copyImage, openImage, previewable } from "./images";
 import { errText, openAttachment } from "./native";
 import { attView } from "./peers";
 import { toast } from "./toast";
@@ -11,10 +11,14 @@ export const localAttachment = (m: Message, a: Attachment) =>
 
 /** The same file operations the chat card/viewer offers, using native bound
  *  message/attachment IDs (also resolves Android retained content URIs). */
-export function attachmentMenu(m: Message, a: Attachment, platform: "desktop" | "android"): MenuEntry[] {
+export function attachmentMenu(m: Message, a: Attachment, platform: "desktop" | "android", viewing = false): MenuEntry[] {
   const v = attView(a, m), out: MenuEntry[] = [];
   const run = (p: Promise<unknown>) => void p.catch(e => toast(errText(e)));
-  if (previewable(a) && v.st !== "expired") out.push({ label: "View", icon: "image", run: () => openImage(m, a) });
+  // the zoomed viewer (`viewing`) offers the same actions, less the View it already is (user 2026-11-25 mee317e7dbd9a)
+  if (previewable(a) && v.st !== "expired") {
+    if (!viewing) out.push({ label: "View", icon: "image", run: () => openImage(m, a) });
+    out.push({ label: "Copy image", icon: "copy", run: () => void copyImage(m, a) });
+  }
   if (v.download) out.push({ label: "Download", icon: "download", run: () => run(api.download(m.id, a.local_id)) });
   if (v.retry === "download") out.push({ label: "Retry download", icon: "refresh", run: () => run(api.download(m.id, a.local_id)) });
   if (v.retry === "send") out.push({ label: "Retry upload", icon: "refresh", run: () => run(api.retry(m.id)) });

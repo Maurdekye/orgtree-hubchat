@@ -4,6 +4,8 @@
 // images pasted into the composer (user 23:40Z).
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { api, type Attachment, type Message } from "../api";
+import { errText } from "./native";
+import { toast } from "./toast";
 
 /** Larger images keep the file card. In step with src-tauri/src/media.rs. */
 export const PREVIEW_MAX = 20 * 1024 * 1024;
@@ -68,6 +70,31 @@ export function useFilePreview(source: string, name: string): string | null | "f
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
   return r.key === key ? r.url : null;
+}
+
+// ------------------------------------------------------------ copying
+
+/** Copy image (user 2026-11-25 mee317e7dbd9a): the picture itself on the clipboard, as PNG, the one picture type
+ *  every clipboard takes (a JPEG, WebP or GIF is drawn into PNG first; a GIF's first frame). The write starts inside
+ *  the menu click, with the picture still on its way, so the click is the user gesture the clipboard asks for. */
+export async function copyImage(m: Message, a: Attachment): Promise<void> {
+  const png = previewUrl(m, a).then(async (url) => {
+    const blob = await (await fetch(url)).blob();
+    if (blob.type === "image/png") return blob;
+    const bmp = await createImageBitmap(blob);
+    const c = document.createElement("canvas");
+    c.width = bmp.width; c.height = bmp.height;
+    c.getContext("2d")!.drawImage(bmp, 0, 0);
+    bmp.close();
+    return await new Promise<Blob>((ok, no) => c.toBlob((b) => (b ? ok(b) : no(new Error("the picture could not be converted"))), "image/png"));
+  });
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+    toast("Image copied");
+  } catch (e) {
+    png.catch(() => {});
+    toast("Couldn't copy the image: " + errText(e));
+  }
 }
 
 // ------------------------------------------------------------ the viewer

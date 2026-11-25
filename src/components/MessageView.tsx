@@ -291,11 +291,19 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
   };
   const menu = (e: MouseEvent<HTMLDivElement>) => {
     if (platform === "android") {
-      // a long-press on a mention (and only there; any other target is left alone) opens its sheet
+      // a long-press on a mention or a picture (and only there; any other target is left alone) opens its sheet;
+      // a picture's is the desktop menu's picture block, then Reply and Select (user 2026-11-25 mee317e7dbd9a)
       const mention = (e.target as HTMLElement).closest("a.addr, a.oref") as HTMLElement | null;
-      if (!mention) return;
+      const pic = mention ? null : (e.target as HTMLElement).closest(".att-img[data-att]") as HTMLElement | null;
+      const a = pic ? m.attachments.find((x) => x.local_id === pic.dataset.att) : undefined;
+      if (!mention && !a) return;
       e.preventDefault(); e.stopPropagation();
-      openMenu(e.clientX, e.clientY, mention.matches("a.addr") ? addrBlock(mention) : chipBlock(mention));
+      if (a) {
+        openMenu(e.clientX, e.clientY, [...attachmentMenu(m, a, platform), "sep", { label: "Reply", icon: "reply", run: () => onReply(m) },
+          ...(onSelect ? [{ label: selected ? "Unselect" : "Select", icon: "check_circle" as const, run: () => onSelect(m) }] : [])]);
+        return;
+      }
+      openMenu(e.clientX, e.clientY, mention!.matches("a.addr") ? addrBlock(mention!) : chipBlock(mention!));
       return;
     }
     if (platform !== "desktop") return;

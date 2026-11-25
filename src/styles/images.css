@@ -28,3 +28,6 @@
 
 .imgview .iv-progress { white-space: normal; overflow-wrap: anywhere; font-size: 13px; color: #bbb; }
 [data-platform=android] .imgview .iv-acts { flex-basis: 100%; min-width: 0; margin: 8px 0 0; }
+/* the picture's menu (Android: its sheet) opens over the viewer (user 2026-11-25 mee317e7dbd9a) */
+:root:has(.imgview) .sheet-scrim { z-index: 70; }
+:root:has(.imgview) .sheet { z-index: 71; }

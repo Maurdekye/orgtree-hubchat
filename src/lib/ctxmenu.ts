@@ -38,6 +38,9 @@ export function openMenu(x: number, y: number, items: MenuEntry[]): void {
   emit();
 }
 
+/** A menu is open (the image viewer: the click that dismisses it doesn't close the viewer too). */
+export const menuIsOpen = () => open !== null;
+
 export function closeMenu(): boolean {
   if (open) { open = null; emit(); return true; }
   return false;

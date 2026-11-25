@@ -491,8 +491,10 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
       // a player's controls (inline video and audio) are no swipe or long-press either
       if (!msg || t.closest("button, a, .att-file, .quote, video, audio")) return;
       const id = msg.dataset.id!;
+      // a long-press on a picture opens its menu instead (MessageView); a swipe from it still replies
+      const pic = !!t.closest(".att-img");
       gesture.current = { id, row: msg.querySelector(".row") as HTMLElement, ic: msg.querySelector(".swipe-ic"), x: e.clientX, y: e.clientY, dx: 0, swiping: false, done: false,
-        lp: setTimeout(() => { const g = gesture.current; if (g && !g.swiping) { g.done = true; setSel((s) => (s.includes(id) ? s : [...s, id])); } }, 450) };
+        lp: setTimeout(() => { const g = gesture.current; if (g && !g.swiping && !pic) { g.done = true; setSel((s) => (s.includes(id) ? s : [...s, id])); } }, 450) };
     },
     onPointerMove: (e: React.PointerEvent) => {
       const g = gesture.current; if (!g) return;
