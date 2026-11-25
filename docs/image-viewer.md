@@ -20,6 +20,9 @@ Tap an image in a chat to open it full size. In the viewer:
   picture (desktop: Esc too). The end of a pinch or a drag is never read as that
   tap, so letting go does not close the viewer.
 
+- **Right-click** (Android: long-press) the picture for its menu: Copy image and the picture's other actions
+  (docs/copy-image.md). Dismissing that menu does not close the viewer.
+
 Closing, however it happens, leaves the app at its normal size. Zooming in the
 viewer moves only the picture.
 
