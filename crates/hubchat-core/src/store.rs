@@ -456,6 +456,9 @@ pub struct Contact {
     pub blocked: bool,
     /// They block us: on any saved hub (its sync's `blocked_by`).
     pub blocked_by: bool,
+    /// In lockdown (Mail hub 2.6.0): `open` when their list counts us, `closed` when it doesn't (closed on any hub
+    /// wins); none when not.
+    pub locked: Option<String>,
 }
 
 /// Whom we block on this hub, as its last sync answer said (Mail hub 2.6.0).
@@ -697,7 +700,7 @@ impl Store {
                     }
                     _ => {
                         let active_hub = active_at.as_ref().map(|_| hub.clone());
-                        out.push(Contact { address, kind, org_name, username, blurb, online, busy, dnd, last_seen, active, active_at, active_hub, hubs: vec![hub], picture, language, blocked: false, blocked_by: false })
+                        out.push(Contact { address, kind, org_name, username, blurb, online, busy, dnd, last_seen, active, active_at, active_hub, hubs: vec![hub], picture, language, blocked: false, blocked_by: false, locked: None })
                     }
                 }
             }
@@ -711,6 +714,15 @@ impl Store {
             }
             Ok(out)
         })
+    }
+
+    /// RED STUB
+    pub fn hear_locked(&self, _url: &str, _locked: Option<&std::collections::BTreeMap<String, String>>, _own: Option<&serde_json::Value>) -> Result<bool> {
+        Ok(false)
+    }
+    /// RED STUB
+    pub fn own_lockdown(&self) -> Result<Vec<String>> {
+        Ok(vec![])
     }
 
     /// Whom we block and who blocks us, over every saved hub (Mail hub
@@ -1728,6 +1740,10 @@ mod last_active_tests;
 #[cfg(test)]
 #[path = "store_block_tests.rs"]
 mod block_tests;
+
+#[cfg(test)]
+#[path = "store_lockdown_tests.rs"]
+mod lockdown_tests;
 
 #[cfg(test)]
 #[path = "store_send_scale_tests.rs"]
