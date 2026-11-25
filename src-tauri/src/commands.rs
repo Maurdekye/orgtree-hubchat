@@ -352,6 +352,12 @@ pub fn hc_blocked() -> R<Vec<String>> {
     engine()?.blocked().map_err(s)
 }
 
+/// Settings: the hubs where our own address is in lockdown (Mail hub 2.6.0).
+#[tauri::command]
+pub fn hc_own_lockdown() -> R<Vec<String>> {
+    engine()?.own_lockdown().map_err(s)
+}
+
 /// Your status, picked on your avatar: kept, and told to your hubs.
 #[tauri::command]
 pub fn hc_set_status(status: String) -> R<()> {

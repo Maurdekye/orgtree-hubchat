@@ -531,6 +531,7 @@ impl Shell {
             "hc_set_status" => unit(self.engine()?.set_status(&arg::<String>(args, "status")?)),
             "hc_set_blocked" => unit(self.engine()?.set_blocked(&arg::<String>(args, "address")?, arg::<bool>(args, "on")?)),
             "hc_blocked" => out(self.engine()?.blocked().map_err(s)?),
+            "hc_own_lockdown" => out(self.engine()?.own_lockdown().map_err(s)?),
             "hc_set_language" => unit(self.engine()?.set_language(arg::<String>(args, "language")?.trim())),
             "hc_set_read_receipts" => {
                 let on: bool = arg(args, "on")?;

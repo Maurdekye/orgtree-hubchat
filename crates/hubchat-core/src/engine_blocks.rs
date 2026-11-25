@@ -27,6 +27,12 @@ impl Engine {
         Ok(self.store.block_sets()?.0.into_iter().collect())
     }
 
+    /// The names of our hubs where our own address is in lockdown (Settings says so: 1.4.0 has no switch).
+    pub fn own_lockdown(&self) -> Result<Vec<String>> {
+        let hubs = self.store.hubs()?;
+        Ok(self.store.own_lockdown()?.into_iter().map(|u| hubs.iter().find(|h| h.url == u).map_or(u.clone(), |h| h.name.clone())).collect())
+    }
+
     /// Block (`on`) or unblock an address: owed to every saved hub, shown at
     /// once, told now to each connected hub with the feature.
     pub fn set_blocked(&self, address: &str, on: bool) -> Result<()> {

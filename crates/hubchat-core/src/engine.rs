@@ -1134,6 +1134,10 @@ impl Engine {
             // its notifications follow it (engine_status)
             // who we block and who blocks us there (engine_blocks)
             self.hub_said_blocks(url, r.blocks.as_deref(), r.blocked_by.as_deref())?;
+            // who is in lockdown there, and our own (Mail hub 2.6.0): only an answer with presence says it
+            if r.online.is_some() && self.store.hear_locked(url, r.locked.as_ref(), r.lockdown.as_ref())? {
+                self.host.event(Event::Directory);
+            }
             if let Some(s) = r.status.as_deref() {
                 self.hub_said_status(url, s, r.reset)?;
             }

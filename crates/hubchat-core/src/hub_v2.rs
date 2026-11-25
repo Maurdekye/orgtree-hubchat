@@ -181,6 +181,13 @@ pub struct SyncResult {
     /// Who blocks us here (Mail hub 2.6.0): likewise.
     #[serde(default)]
     pub blocked_by: Option<Vec<String>>,
+    /// Who is in lockdown here as we see it (Mail hub 2.6.0, `lockdown`): `{address: open|closed}`, with the
+    /// presence sets (`online`); a hub without the feature sends presence without it.
+    #[serde(default)]
+    pub locked: Option<std::collections::BTreeMap<String, String>>,
+    /// Our own lockdown here (`{on, allow, since, rev}`), with the presence sets; absent when none.
+    #[serde(default)]
+    pub lockdown: Option<serde_json::Value>,
     /// The status we picked, as this hub keeps it (Mail hub 2.3.0, feature
     /// `status`): in every answer; absent from a hub before it.
     #[serde(default)]

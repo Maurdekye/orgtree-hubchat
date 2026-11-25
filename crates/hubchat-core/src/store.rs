@@ -469,6 +469,14 @@ pub fn blocks_mine_key(url: &str) -> String {
 pub fn blocks_by_key(url: &str) -> String {
     format!("blocks.by.{url}")
 }
+/// Who is in lockdown on this hub as we see it, as its last sync answer said (Mail hub 2.6.0): `{address: open|closed}`.
+pub fn locked_key(url: &str) -> String {
+    format!("lockdown.locked.{url}")
+}
+/// Our own address is in lockdown on this hub (present) or not (absent).
+pub fn own_lockdown_key(url: &str) -> String {
+    format!("lockdown.own.{url}")
+}
 /// Blocks and unblocks picked here and not yet taken by this hub:
 /// `{address: true|false}`.
 pub fn blocks_owed_key(url: &str) -> String {
@@ -708,21 +716,60 @@ impl Store {
         })
         .and_then(|mut out| {
             let (mine, by) = self.block_sets()?;
+            let locked = self.locked_map()?;
             for c in &mut out {
                 c.blocked = mine.contains(&c.address);
                 c.blocked_by = by.contains(&c.address);
+                c.locked = locked.get(&c.address).cloned();
             }
             Ok(out)
         })
     }
 
-    /// RED STUB
-    pub fn hear_locked(&self, _url: &str, _locked: Option<&std::collections::BTreeMap<String, String>>, _own: Option<&serde_json::Value>) -> Result<bool> {
-        Ok(false)
+    /// A hub's word on lockdowns (Mail hub 2.6.0; it comes with the presence sets): who is in lockdown there as we
+    /// see it (`open`/`closed`) and our own lockdown there. None is an explicit "none" (a hub without the feature
+    /// sends presence without it; review: an omitted map must not leave an old lock behind). True when it moved.
+    pub fn hear_locked(&self, url: &str, locked: Option<&std::collections::BTreeMap<String, String>>, own: Option<&serde_json::Value>) -> Result<bool> {
+        let kept: std::collections::BTreeMap<&String, &String> =
+            locked.into_iter().flatten().filter(|(_, v)| matches!(v.as_str(), "open" | "closed")).collect();
+        let text = serde_json::to_string(&kept).unwrap_or_default();
+        let mut moved = false;
+        if self.meta(&locked_key(url))?.unwrap_or_else(|| "{}".into()) != text {
+            if kept.is_empty() { self.delete_meta(&locked_key(url))?; } else { self.set_meta(&locked_key(url), &text)?; }
+            moved = true;
+        }
+        let on = own.is_some_and(|o| o["on"].as_bool().unwrap_or(false));
+        if self.meta(&own_lockdown_key(url))?.is_some() != on {
+            if on { self.set_meta(&own_lockdown_key(url), "1")?; } else { self.delete_meta(&own_lockdown_key(url))?; }
+            moved = true;
+        }
+        Ok(moved)
     }
-    /// RED STUB
+
+    /// The saved hubs where our own address is in lockdown (set by another client: Hubchat 1.4.0 has no switch).
     pub fn own_lockdown(&self) -> Result<Vec<String>> {
-        Ok(vec![])
+        let mut out = Vec::new();
+        for h in self.hubs()? {
+            if self.meta(&own_lockdown_key(&h.url))?.is_some() {
+                out.push(h.url);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Who is in lockdown, over every saved hub: closed on any hub wins (review I9).
+    fn locked_map(&self) -> Result<std::collections::BTreeMap<String, String>> {
+        let mut out: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+        for h in self.hubs()? {
+            let here: std::collections::BTreeMap<String, String> =
+                self.meta(&locked_key(&h.url))?.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+            for (a, v) in here {
+                if v == "closed" || !out.contains_key(&a) {
+                    out.insert(a, v);
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// Whom we block and who blocks us, over every saved hub (Mail hub
