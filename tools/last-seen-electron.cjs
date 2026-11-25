@@ -10,8 +10,8 @@ const sessionOf=pid=>{try{return Number(execFileSync('powershell',['-NoProfile',
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 // What each view does: fixture steps and captures (green only).
 const views={
- 'desktop/seen':[['step','headers'],['step','header-org'],['shot','desktop-header'],['step','info-org'],['shot','desktop-info-org'],['step','directory'],['shot','desktop-directory']],
- 'android/seen':[['step','headers'],['step','header-org'],['shot','android-header'],['step','info-org'],['shot','android-info-org'],['step','directory'],['shot','android-directory']],
+ 'desktop/seen':[['step','headers'],['step','list-avatars'],['shot','desktop-list'],['step','header-org'],['shot','desktop-header'],['step','info-org'],['shot','desktop-info-org'],['step','directory'],['shot','desktop-directory']],
+ 'android/seen':[['step','headers'],['step','list-avatars'],['shot','android-list'],['step','header-org'],['shot','android-header'],['step','info-org'],['shot','android-info-org'],['step','directory'],['shot','android-directory']],
 };
 // What the source before last seen fails, view by view (and nothing else): every check. Before it no header says
 // active now or last seen with a time, and an offline person showed their last call (Alice 3 min, Ollie 2 days).
@@ -19,7 +19,8 @@ const seenChecks=["the open chat's header: an org with an agent in charge mid-tu
  "the open chat's header: a busy person with Hubchat in front: busy, active now","the open chat's header: an offline person: last seen at their last visit, not their last call",
  "the open chat's header: a hub without last_active: no time at all","the open chat's header: an agent session: last seen at its last message, never active now",
  "the open chat's header: a contact we block: Blocked, not active now","the open chat's header: a contact who blocks us: Has blocked you, not active now",
- 'Contact info of an org mid-turn says Online · active now','the Directory rows say active now or last seen per kind'];
+ 'Contact info of an org mid-turn says Online · active now','the Directory rows say active now or last seen per kind',
+ "the chats list row's picture shows the block's red cancel, as the header does"];
 const expectedRed={'desktop/seen':seenChecks,'android/seen':seenChecks};
 app.whenReady().then(async()=>{
  const s=session.defaultSession;

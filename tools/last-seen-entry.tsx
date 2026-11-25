@@ -101,6 +101,15 @@ async function run() {
       }
       return seen;
     },
+    "list-avatars": async () => {
+      // the chats list row's picture carries the same red cancel as the open chat's header (USER 2026-11-25 09:05Z
+      // m2d43462b28f6 "the dm is missing the red cancel icon in the dms list, but it appears in the chat header")
+      await backToList(); await until(() => !!row("Bo") && !!row("Cy"), 3000); await settle();
+      const dot = (name: string) => row(name)?.querySelector(".av .pres")?.className ?? null;
+      const got = { Bo: dot("Bo"), Cy: dot("Cy"), Pat: dot("Pat") };
+      check("the chats list row's picture shows the block's red cancel, as the header does", got.Bo === "pres p-blocked" && got.Cy === "pres p-blocked" && got.Pat === "pres p-busy", got);
+      return got;
+    },
     "header-org": async () => { await open("Acme Labs"); return words(); },
     "info-org": async () => {
       (document.querySelector(platform === "desktop" ? '[aria-label="Contact info"]' : ".appbar .who") as HTMLElement | null)?.click();
