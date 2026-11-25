@@ -1,4 +1,5 @@
 // Small shared pieces: platform context, avatar, address, chips, dialogs.
+import { lockBadge } from "../lib/lockdown";
 import { createContext, useContext, useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyEvent, type ReactNode } from "react";
 import QRCode from "qrcode";
 import type { Contact, HubStatus, Message, PictureMeta } from "../api";
@@ -57,7 +58,7 @@ export function defaultDeviceName(platform: Platform, web: boolean, os: DesktopO
   return "Desktop";
 }
 
-export function Avatar({ kind, name, size, pres, presTitle, address, picture }: { kind: Kind | "me"; name: string; size: number; pres?: ShownState; presTitle?: string; address?: string; picture?: PictureMeta | null }) {
+export function Avatar({ kind, name, size, pres, presTitle, address, picture, lock }: { kind: Kind | "me"; name: string; size: number; pres?: ShownState; presTitle?: string; address?: string; picture?: PictureMeta | null; /** in lockdown, their list counts us: a small lock in the status's corner */ lock?: boolean }) {
   const fallback = avatarFallback(kind, name);
   const me = useSnap().state?.me;
   const src = usePicture(kind === "chat" ? undefined : kind === "me" ? me?.address : address, kind === "me" ? me?.picture : picture);
@@ -65,7 +66,8 @@ export function Avatar({ kind, name, size, pres, presTitle, address, picture }: 
   return (
     <span className={"av s" + size + " " + fallback.cls}>
       {src && src !== failed ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "inherit" }} onError={() => setFailed(src)} /> : kind === "chat" ? <Icon name="terminal" /> : fallback.text}
-      {pres ? <i className={"pres p-" + pres} title={presTitle} /> : null}
+      {pres === "locked" ? <i className="pres p-locked" title={presTitle}><Icon name="lock" /></i>
+        : pres ? <i className={"pres p-" + pres} title={lock ? presTitle + " · in lockdown, you can message them" : presTitle}>{lock ? <Icon name="lock" className="pres-lock" /> : null}</i> : null}
     </span>
   );
 }
@@ -73,7 +75,7 @@ export function Avatar({ kind, name, size, pres, presTitle, address, picture }: 
 /** Avatar for an address, with presence from the directory. */
 export function PeerAvatar({ address, c, hubs, size, withPres = true, dm = false }: { address: string; c: Contact | undefined; hubs: HubStatus[]; size: number; withPres?: boolean; /** their DM or Contact info: a block shows (dmPresence) */ dm?: boolean }) {
   const p = dm ? dmPresence(c, hubs) : presence(c, hubs);
-  return <Avatar kind={kindOf(c)} name={displayName(c, address)} address={address} picture={c?.picture} size={size} pres={withPres ? p.state : undefined} presTitle={p.text} />;
+  return <Avatar kind={kindOf(c)} name={displayName(c, address)} address={address} picture={c?.picture} size={size} pres={withPres ? p.state : undefined} presTitle={p.text} lock={p.state !== "blocked" && lockBadge(c)} />;
 }
 
 /** maya.<span class="tg">e71f2b</span> */
@@ -85,7 +87,7 @@ export function Addr({ a, net }: { a: string; net?: boolean }) {
 export function PresText({ c, hubs, dm = false }: { c: Contact | undefined; hubs: HubStatus[]; dm?: boolean }) {
   const p = dm ? dmPresence(c, hubs) : presence(c, hubs);
   useSeenTick(p.ticks);
-  return <span className={"ptext p-" + p.state}>{p.state === "disconnected" ? <Icon name="cloud_off" /> : p.state === "blocked" ? <Icon name="block" /> : null}{p.text}</span>;
+  return <span className={"ptext p-" + p.state}>{p.state === "disconnected" ? <Icon name="cloud_off" /> : p.state === "blocked" ? <Icon name="block" /> : p.state === "locked" ? <Icon name="lock" /> : null}{p.text}</span>;
 }
 
 /** `open`: the chip is a button that does it (Contact info: a local Orgtree

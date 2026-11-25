@@ -19,7 +19,8 @@ import { cardOf, answerNotes, cardKnown, isOpen, isSettled, settlement, type Car
 import { addReplies, loadDraftAnswers, pick, removeReply, sentDraftAnswers, setReplies, unpick, useDraftAnswers } from "../lib/answers";
 import { toast } from "../lib/toast";
 import { Composer, type ComposerApi } from "./Composer";
-import { BlockBar, blockEntry } from "./Block";
+import { BlockBar, LockBar, blockEntry } from "./Block";
+import { canMessage } from "../lib/lockdown";
 import { refreshKey, useRestoredRefreshState, useRefreshState } from "../lib/refresh";
 import { HubHelpLink } from "./HubHelp";
 import { HubChip, routeLabel, routeVia } from "./HubPicker";
@@ -439,6 +440,8 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
   // re-renders this view (the draft is in the store), and with a long loaded
   // history a fresh list of every row on each keystroke lagged (user 2026-11-23).
   const newId = newMark.current?.id;
+  // in lockdown without us on their list: their question cards can't be answered (review I8)
+  const closed = !canMessage(c);
   const msgRows = useMemo(() => {
     const out: React.ReactNode[] = [];
     const quotedOf = (id: string | null) => (id ? byId.get(id) ?? extra[id] : undefined);
@@ -453,13 +456,13 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
       const first = !prev || prev.outgoing !== m.outgoing || t - msgTime(prev) > GROUP_GAP || (!m.outgoing && m.kind === "question");
       out.push(
         <MessageView key={m.id} m={m} first={first} peerName={name} peerKind={kind} quoted={quotedOf(m.reply_to)} quotes={quoteLists.get(m.id)} card={cards.get(m.id)} picks={pending.picks[m.id]} notes={notes.get(m.id)} hover={platform === "desktop"} selected={sel.includes(m.id)} highlighted={hl === m.id}
-          onReply={reply} onSelect={toggleSel} onPick={onPick} onInfo={info} onDelete={del} onJump={jump} onOpenAddr={onOpenAddr} onContactInfo={onContactInfo} />,
+          onReply={reply} onSelect={toggleSel} onPick={closed ? undefined : onPick} onInfo={info} onDelete={del} onJump={jump} onOpenAddr={onOpenAddr} onContactInfo={onContactInfo} />,
       );
       prev = m;
       if (setup?.reply_id === m.id) out.push(setupNote(setup, platform, isWin));
     }
     return out;
-  }, [msgs, newId, name, kind, byId, extra, quoteLists, cards, pending.picks, notes, platform, sel, hl, reply, toggleSel, onPick, info, del, jump, onOpenAddr, onContactInfo, setup, isWin]);
+  }, [msgs, newId, name, kind, byId, extra, quoteLists, cards, pending.picks, notes, platform, sel, hl, reply, toggleSel, onPick, info, del, jump, onOpenAddr, onContactInfo, setup, isWin, closed]);
   rows.push(...msgRows);
   if (setup && (!setup.outcome || !msgs.some((m) => m.id === setup.reply_id))) rows.push(setupNote(setup, platform, isWin));
   const p = dmPresence(c, hubs);
@@ -534,7 +537,8 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
   const composer = <Composer ref={comp} peer={peer} c={c} hubs={hubs} msgs={msgs} replies={replies} picked={picked} cardState={cardState} pos={pos} onRemoveReply={(id) => removeReply(peer, id)} onUnpick={(id) => unpick(peer, [id])} onCancelReply={() => setReplies(peer, [])}
     onSent={(m) => { sentDraftAnswers(peer, m); pinned.current = true; refresh(); }} off={off} />;
   // either side blocks the other (Mail hub 2.6.0): the composer gives way to the bar that says so
-  const blockBar = c?.blocked || c?.blocked_by ? <BlockBar peer={peer} c={c} /> : null;
+  // a block wins; then a lockdown that doesn't list us (Mail hub 2.6.0): they can't be messaged
+  const blockBar = c?.blocked || c?.blocked_by ? <BlockBar peer={peer} c={c} /> : !canMessage(c) ? <LockBar peer={peer} c={c} /> : null;
   const jumpBtn = <button className={"jump" + (far ? "" : " hide")} onClick={toBottom} title="Jump to the newest message" aria-label="Jump to the newest message"><Icon name="arrow_down" /></button>;
   const copyAddr = () => copyText("@net:" + peer, "Address copied");
   // desktop right-click on the header's avatar or name (user 2026-11-10): what a click does, Copy mention, Close DM

@@ -655,9 +655,19 @@ const setupFail = params.get("setupfail");
 
 // Captures (browser mock only): make a contact block us, as a 2.6.0 hub's sync would say
 // (`blocked_by`). Called over CDP: __hubchatMockBlockedBy("maya.e71f2b", true).
+// Lockdown (Mail hub 2.6.0), for captures: __hubchatMockLocked("maya.e71f2b", "closed" | "open" | null), and our
+// own address in lockdown on hubs: __hubchatMockOwnLockdown(["Home hub"]).
+let mockOwnLockdown: string[] = [];
 (globalThis as unknown as { __hubchatMockBlockedBy?: (address: string, on: boolean) => void }).__hubchatMockBlockedBy = (address, on) => {
   const c = dir.find((x) => x.address === address);
   if (c) { c.blocked_by = on; emit({ type: "directory" }); }
+};
+(globalThis as unknown as { __hubchatMockLocked?: (address: string, locked: "open" | "closed" | null) => void }).__hubchatMockLocked = (address, locked) => {
+  const c = dir.find((x) => x.address === address);
+  if (c) { c.locked = locked; emit({ type: "directory" }); }
+};
+(globalThis as unknown as { __hubchatMockOwnLockdown?: (hubs: string[]) => void }).__hubchatMockOwnLockdown = (hubs) => {
+  mockOwnLockdown = hubs; emit({ type: "directory" });
 };
 
 export const mockApi: Api = {
@@ -715,6 +725,7 @@ export const mockApi: Api = {
   setStatus: async (status) => { st.status = status; },
   setBlocked: async (address, on) => { await sleep(120); const c = dir.find((x) => x.address === address); if (c) c.blocked = on; emit({ type: "directory" }); },
   blocked: async () => dir.filter((c) => c.blocked).map((c) => c.address),
+  ownLockdown: async () => mockOwnLockdown,
   setLanguage: async (language) => { await sleep(150); st.language = language; },
   setNotifications: async (n) => { st.notifications = { ...n }; },
   webPush: async () => ({ hubs: [] }),

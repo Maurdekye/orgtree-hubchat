@@ -1,6 +1,7 @@
 // Settings: Profile, Hubs, Devices, Recovery words, Privacy, Appearance,
 // General (desktop), About.
 // Desktop: one modal with a nav column. Android: a list and a screen each.
+import { ownLockdownText } from "../lib/lockdown";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { api, type Devices, type HubStatus, type LogInfo, type WebPushHub } from "../api";
 import { chatLink, chatLinkTarget } from "../lib/chatlink";
@@ -610,8 +611,19 @@ function Privacy() {
       </Card>
     </Sec>
     <BlockedContacts />
+    <OwnLockdown />
     </>
   );
+}
+
+/** Settings › Privacy: a read-only line while our own address is in lockdown on any hub (Mail hub 2.6.0; set by
+ *  another client, as Hubchat 1.4.0 has no switch: review I9, or nobody could tell why no one reaches them). */
+function OwnLockdown() {
+  const snap = useSnap();
+  const [hubs, setHubs] = useState<string[]>([]);
+  useEffect(() => { let live = true; api.ownLockdown().then((l) => { if (live) setHubs(l); }).catch(() => { if (live) setHubs([]); }); return () => { live = false; }; }, [snap.directory]);
+  const text = ownLockdownText(hubs);
+  return text ? <Sec title="Lockdown"><Card><Row icon="lock" t1={text} /></Card></Sec> : null;
 }
 
 /** Settings › Privacy › Blocked contacts (Mail hub 2.6.0): whom you block, over every hub, each with Unblock. */

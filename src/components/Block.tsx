@@ -15,6 +15,7 @@ import { errText } from "../lib/native";
 import { toast } from "../lib/toast";
 import { useSnap } from "../lib/store";
 import { Confirm } from "./ui";
+import { lockBarText } from "../lib/lockdown";
 
 let asking: string | null = null;
 const subs = new Set<() => void>();
@@ -57,6 +58,16 @@ export function BlockConfirm() {
       onOk={() => { close(); void api.setBlocked(peer, true).catch((e) => toast(errText(e))); }}>
       <p>They can't message you, and you can't message them until you unblock them. Your chat history stays.</p>
     </Confirm>
+  );
+}
+
+/** In the DM, in place of the composer, while they are in lockdown and don't list us (Mail hub 2.6.0): the hub's own
+ *  refusal words (user 2026-11-25 13:26Z "they cannot be messaged"). */
+export function LockBar({ peer, c }: { peer: string; c: Contact | undefined }) {
+  return (
+    <div className="block-bar lock" role="status">
+      <Icon name="lock" /><span>{lockBarText(displayName(c, peer))}</span>
+    </div>
   );
 }
 

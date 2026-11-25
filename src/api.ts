@@ -285,6 +285,8 @@ export interface Contact {
   blocked?: boolean;
   /** They block us (Mail hub 2.6.0). Older cores never say it. */
   blocked_by?: boolean;
+  /** In lockdown (Mail hub 2.6.0): `open` when their list counts us, `closed` when not (closed on any hub wins). */
+  locked?: "open" | "closed" | null;
 }
 
 /** Where a chat's messages go (the hub picker, hc_send_route). */
@@ -515,6 +517,8 @@ export const makeApi = ({ invoke, listen, mediaUrl }: Transport) => ({
   setBlocked: (address: string, on: boolean) => invoke<void>("hc_set_blocked", { address, on }),
   /** Whom we block, over every hub (Settings › Blocked contacts). */
   blocked: () => invoke<string[]>("hc_blocked"),
+  /** The names of my hubs where my own address is in lockdown (Mail hub 2.6.0; set by another client). */
+  ownLockdown: () => invoke<string[]>("hc_own_lockdown"),
   setLanguage: (language: string) => invoke<void>("hc_set_language", { language }),
   setNotifications: (n: NotifySettings) => invoke<void>("hc_set_notifications", { enabled: n.enabled, preview: n.preview, sound: n.sound }),
   /** Hubchat Web only: what each hub has of this browser's notifications (crates/hubchat-web, `hc_web_push`). */

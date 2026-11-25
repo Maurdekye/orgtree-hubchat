@@ -1,5 +1,6 @@
 // Who someone is, how to reach them and what state they are in, computed from
 // the directory and the hub statuses the core reports.
+import { lockedPresence } from "./lockdown";
 import type { Attachment, Contact, HubStatus, Message, MyStatus } from "../api";
 import { ago, bytes, ms } from "./format";
 import { isImage } from "./images";
@@ -44,7 +45,7 @@ export const viaHub = (c: Contact | undefined, hubs: HubStatus[]) => peerHubs(c,
 
 export type PresState = "online" | "busy" | "dnd" | "offline" | "disconnected";
 /** What a DM and Contact info show: presence, or a block (Mail hub 2.6.0). */
-export type ShownState = PresState | "blocked";
+export type ShownState = PresState | "blocked" | "locked";
 /** `ticks`: the words hold a relative time ("5 min ago") that must be drawn
  *  again as it moves on (useSeenTick). */
 export interface Presence { state: PresState; text: string; short: string; ticks: boolean }
@@ -92,7 +93,10 @@ export function myPresence(status: MyStatus, hubs: HubStatus[]): { state: PresSt
   return { state, title: "Your status: " + STATUS_WORD[status] + why };
 }
 
-export function presence(c: Contact | undefined, hubs: HubStatus[]): Presence {
+export function presence(c: Contact | undefined, hubs: HubStatus[]): Omit<Presence, "state"> & { state: ShownState } {
+  // lockdown (Mail hub 2.6.0): closed, the lock replaces their whole status, everywhere (user 2026-11-25 13:26Z)
+  const locked = lockedPresence(c);
+  if (locked) return locked;
   if (!c) return { state: "disconnected", text: "Status unknown — not in your hubs' directories", short: "status unknown", ticks: false };
   if (!viaHub(c, hubs)) {
     const names = peerHubs(c, hubs).map((h) => h.name);
