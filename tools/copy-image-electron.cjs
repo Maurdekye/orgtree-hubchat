@@ -8,14 +8,15 @@ app.commandLine.appendSwitch('mute-audio');app.disableHardwareAcceleration();app
 app.on('window-all-closed',()=>{});
 const sessionOf=pid=>{try{return Number(execFileSync('powershell',['-NoProfile','-NonInteractive','-Command',`(Get-Process -Id ${pid}).SessionId`],{encoding:'utf8',windowsHide:true}).trim());}catch{return null;}};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-const script=platform=>[['step','chat-menu'],['shot',platform+'-chat-menu'],['step','chat-copy'],['step','viewer-menu'],['shot',platform+'-viewer-menu'],['step','viewer-copy'],['step','dismiss']];
+const script=platform=>[['step','chat-menu'],['shot',platform+'-chat-menu'],['step','chat-copy'],['step','viewer-menu'],['shot',platform+'-viewer-menu'],['step','viewer-copy'],['step','dismiss'],['step','escape-back']];
 // what the source before Copy image fails, and nothing else. Desktop already had a picture menu (on top); Android had
 // none, and a long-press on a picture selected its message. A plain click on the backdrop closed the viewer before too.
 const common=["the chat picture's menu offers Copy image, after View",'Copy image puts the picture on the clipboard as PNG','it says Image copied',
  "the zoomed picture has a menu: the chat's picture actions without View","the zoomed picture's menu is on top of the viewer",
- "the viewer's Copy image copies the picture too","dismissing the picture's menu leaves the viewer open"];
+ "the viewer's Copy image copies the picture too","dismissing the picture's menu leaves the viewer open",
+ "the first Escape or Back closes the picture's menu and keeps the viewer"];
 const expectedRed={desktop:[...common].sort(),android:[...common,"the chat picture's menu is on top","Android: a long-press on a picture doesn't select its message"].sort()};
-const counts={desktop:9,android:11};
+const counts={desktop:11,android:13};
 app.whenReady().then(async()=>{
  const s=session.defaultSession;
  s.setPermissionRequestHandler((_w,_p,cb)=>cb(false));s.setPermissionCheckHandler(()=>false);

@@ -160,6 +160,30 @@ async function run() {
       check("a click on the backdrop still closes the viewer", !viewer());
       return null;
     },
+    // Escape (desktop) or the system Back (Android) closes the menu first and the viewer only the next time
+    // (@build-sol, round 1 bounce: both closed at once on desktop; on Android Back closed the viewer under the sheet)
+    "escape-back": async () => {
+      chatPic()?.click();
+      await until(() => !!viewerPic()?.complete, 3000); await settle();
+      await ctx(viewerPic());
+      const open = !!menuEl() && !!viewer();
+      const away = async () => {
+        if (platform === "desktop") {
+          (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+          await settle();
+        } else {
+          const popped = new Promise<void>((ok) => window.addEventListener("popstate", () => ok(), { once: true }));
+          history.back();
+          await Promise.race([popped, sleep(2000)]); await settle();
+        }
+      };
+      await away();
+      const first = { menu: !!menuEl(), viewer: !!viewer() };
+      check("the first Escape or Back closes the picture's menu and keeps the viewer", open && !first.menu && first.viewer, { open, first });
+      await away();
+      check("the next Escape or Back closes the viewer", !viewer() && !menuEl(), { menu: !!menuEl(), viewer: !!viewer() });
+      return first;
+    },
   };
   window.copyFixture = { checks, platform, step: async (name) => { const f = steps[name]; if (!f) throw Error("no step " + name); return f(); } };
 }
