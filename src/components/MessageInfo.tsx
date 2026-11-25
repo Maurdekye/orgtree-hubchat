@@ -2,7 +2,7 @@
 import type { Message } from "../api";
 import { Icon } from "../lib/icons";
 import { dayLabel, ms, timeSec } from "../lib/format";
-import { displayName, hubName, isAgent } from "../lib/peers";
+import { hubName, isAgent } from "../lib/peers";
 import { useSnap } from "../lib/store";
 import { usePlatform } from "./ui";
 import type { ReactNode } from "react";
@@ -32,7 +32,6 @@ export function MessageInfoBody({ m }: { m: Message }) {
   const platform = usePlatform();
   const hubs = snap.state?.hubs || [];
   const c = snap.byAddr.get(m.peer);
-  const who = displayName(c, m.peer);
   const agent = isAgent(c);
   const hub = hubName(hubs, m.hub);
   const when = (s: string | null) => { const t = ms(s); return t ? timeSec(t) + " · " + dayLabel(t) : null; };
@@ -54,8 +53,6 @@ export function MessageInfoBody({ m }: { m: Message }) {
   const steps = [
     { label: "Written on this device", at: m.created_at, note: "Your clock" },
     { label: "Sent: hub " + (hub || "") + " has it", at: m.received_at || (m.state === "sent" ? m.sent_at : null), note: "Hub clock: orders the conversation" },
-    // Later receipts prove a fetch, but do not supply its timestamp (user 2026-10-18).
-    { label: "Fetched by " + who, at: m.fetched_at, implied: !!(ms(m.delivered_at) || ms(m.read_at)), note: agent ? "Its Orgtree pulled it from the hub" : "One of their devices pulled it" },
     { label: "Delivered", at: m.delivered_at, note: agent ? "In its org mailbox" : "On their device" },
     { label: "Read", at: m.read_at, note: agent ? "An agent or a person opened it" : "They opened the chat" },
   ];
@@ -66,7 +63,7 @@ export function MessageInfoBody({ m }: { m: Message }) {
       <ul className="ladder">
         {steps.map((s, i) => {
           const w = when(s.at);
-          const done = !!w || !!s.implied;
+          const done = !!w;
           // the last step, once the hub has it: say it plainly (user 23:51Z)
           const wait = !w && i === steps.length - 1 && !!steps[1].at ? "Not read yet" : "—";
           return (
@@ -80,7 +77,7 @@ export function MessageInfoBody({ m }: { m: Message }) {
         })}
       </ul>
       <div className={"help" + (platform === "android" ? " pad" : "")} style={{ fontSize: 12 }}>
-        Ticks: <Icon name="schedule" style={{ display: "inline", width: 13, height: 13, verticalAlign: -2 }} /> waiting · <Icon name="check" style={{ display: "inline", width: 14, height: 14, verticalAlign: -3 }} /> sent · <Icon name="done_all" style={{ display: "inline", width: 14, height: 14, verticalAlign: -3 }} /> delivered · <span style={{ color: "var(--ok)" }}><Icon name="done_all" style={{ display: "inline", width: 14, height: 14, verticalAlign: -3 }} /> read</span>. Delivered covers both “fetched” and “delivered”; this list shows each step.
+        Ticks: <Icon name="schedule" style={{ display: "inline", width: 13, height: 13, verticalAlign: -2 }} /> waiting · <Icon name="check" style={{ display: "inline", width: 14, height: 14, verticalAlign: -3 }} /> sent · <Icon name="done_all" style={{ display: "inline", width: 14, height: 14, verticalAlign: -3 }} /> delivered · <span style={{ color: "var(--ok)" }}><Icon name="done_all" style={{ display: "inline", width: 14, height: 14, verticalAlign: -3 }} /> read</span>. Delivered covers both “fetched” and “delivered”.
       </div>
     </div>
   );

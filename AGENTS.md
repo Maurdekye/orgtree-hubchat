@@ -289,13 +289,13 @@
   launcher change. [decided: user 2026-10-19, ships1.2.3; verified: store_taskbar.rs,
   taskbar_attention.sql, taskbar.rs, tray_recent.rs; docs/taskbar-attention.md]
 
-- 2026-10-18: Message Info retains Fetched and marks it complete when either
-  Delivered or Read has a recorded time. Keep fetched_at's own time when known;
-  otherwise show "time not recorded", never substitute a later receipt time.
-  This is display-only on desktop/Android. Ladder markers use .ladder-marker,
-  not the hub-link screen's .lk class (its icon margins displaced checkmarks).
-  [decided: user 2026-10-18; verified: MessageInfo.tsx, desktop.css, mobile.css;
-  focused fixture: tools/proof-message-info.mjs]
+- 2026-11-25: Message Info's Delivery ladder is Written, Sent, Delivered,
+  Read, each with its own recorded time; there is no Fetched step (user
+  2026-11-25 me83c70c1c128 "it's redundant", replacing 2026-10-18's
+  Fetched-with-implied-completion rule; the core still keeps fetched_at).
+  Ladder markers use .ladder-marker, not the hub-link screen's .lk class
+  (its icon margins displaced checkmarks). [verified: MessageInfo.tsx,
+  desktop.css, mobile.css; focused fixture: tools/proof-message-info.mjs]
 
 - 2026-10-30: Typing `@` in the composer (`Composer.tsx`, desktop and Android)
   opens a bottom-up completion hint list of known Hubchat contacts
