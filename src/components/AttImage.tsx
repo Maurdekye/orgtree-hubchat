@@ -8,7 +8,7 @@ import { api, isWeb, type Attachment, type Message } from "../api";
 import { bytes } from "../lib/format";
 import { Icon } from "../lib/icons";
 import { attachmentMenu } from "../lib/attachmentActions";
-import { menuIsOpen, openMenu } from "../lib/ctxmenu";
+import { closeMenu, menuIsOpen, openMenu } from "../lib/ctxmenu";
 import { closeImage, openImage, usePreview, useShownImage } from "../lib/images";
 import { errText, openAttachment, openFile } from "../lib/native";
 import { attView } from "../lib/peers";
@@ -75,11 +75,17 @@ function Viewer({ m, a }: { m: Message; a: Attachment }) {
       // once per opening (effects may run twice), keeping the screen's depth
       const id = m.id + "/" + a.local_id;
       if (entry !== id) { entry = id; history.pushState({ ...(history.state || {}), hcImage: id }, ""); }
-      const pop = () => { entry = null; closeImage(); };
+      // Back with the picture's menu open closes the menu only: the entry Back used is put back, so the
+      // next Back closes the viewer
+      const pop = () => {
+        if (menuIsOpen()) { closeMenu(); history.pushState({ ...(history.state || {}), hcImage: id }, ""); return; }
+        entry = null; closeImage();
+      };
       window.addEventListener("popstate", pop);
       return () => window.removeEventListener("popstate", pop);
     }
-    const key = (e: KeyboardEvent) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeImage(); } };
+    // Escape with the picture's menu open is the menu's (CtxMenu closes it); the next one closes the viewer
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape" && !menuIsOpen()) { e.preventDefault(); e.stopPropagation(); closeImage(); } };
     window.addEventListener("keydown", key, true);
     return () => window.removeEventListener("keydown", key, true);
   }, [platform, m.id, a.local_id]);

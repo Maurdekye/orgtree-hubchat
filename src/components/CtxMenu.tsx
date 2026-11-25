@@ -36,7 +36,8 @@ export function CtxMenu() {
     const down = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) closeMenu(); };
     const key = (e: KeyboardEvent) => {
       const at = enabled.indexOf(activeRef.current);
-      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeMenu(); }
+      // stopImmediatePropagation: another window listener (the image viewer's) must not take the same Escape
+      if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); closeMenu(); }
       else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault(); e.stopPropagation();
         if (!enabled.length) return;
