@@ -1,6 +1,7 @@
 // One message: question tag, reply quotes, file cards, markdown body with the
 // time and ticks, a question card's options, the failed line, and
 // (desktop) the hover actions.
+import { answerOptionsShown } from "../lib/lockdown";
 import { memo, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { api, isWeb, type Attachment, type Message } from "../api";
 import { Icon, iconHTML } from "../lib/icons";
@@ -77,6 +78,8 @@ export interface MsgHandlers {
   onSelect?: (m: Message) => void;
   /** Pick (or unpick) an option of a question card. */
   onPick?: (m: Message, label: string) => void;
+  /** the sender is in lockdown and doesn't list us (Mail hub 2.6.0): an open question shows no answer buttons */
+  closed?: boolean;
   onInfo: (m: Message) => void;
   onDelete: (m: Message) => void;
   onJump: (id: string) => void;
@@ -107,7 +110,7 @@ interface Props extends MsgHandlers {
   mentionOpen?: boolean;
 }
 
-export const MessageView = memo(function MessageView({ m, first, peerName, peerKind, quoted, quotes, card, picks, notes, hover, selected, highlighted, mentionOpen = true, onReply, onSelect, onPick, onInfo, onDelete, onJump, onOpenAddr, onContactInfo }: Props) {
+export const MessageView = memo(function MessageView({ m, first, peerName, peerKind, quoted, quotes, card, picks, notes, hover, selected, highlighted, mentionOpen = true, onReply, onSelect, onPick, onInfo, onDelete, onJump, onOpenAddr, onContactInfo, closed = false }: Props) {
   const platform = usePlatform();
   const [open, setOpen] = useState(false);
   const [allQuotes, setAllQuotes] = useState(false);
@@ -209,7 +212,7 @@ export const MessageView = memo(function MessageView({ m, first, peerName, peerK
           : settled ? <button className={"q-state " + settled.st} onClick={(e) => { e.stopPropagation(); onJump(settled.by.id); }} title="Show the answer">{settled.st === "skipped" ? "Skipped" : "Answered"} · {time(msgTime(settled.by))}</button> : null}
       </div>
     );
-    if (qc.options.length) {
+    if (qc.options.length && answerOptionsShown({ settled: !!settled, closed })) {
       const chosen = settled?.st === "answered" ? settled.picked ?? [] : canPick ? picks ?? [] : [];
       qopts = (
         <div className={"q-opts" + (qc.multiple ? " multi" : "")} role={qc.multiple ? "group" : "radiogroup"} aria-label={qc.multiple ? "Pick one or more" : "Pick one"}>

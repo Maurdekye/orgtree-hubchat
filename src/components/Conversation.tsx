@@ -456,7 +456,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
       const first = !prev || prev.outgoing !== m.outgoing || t - msgTime(prev) > GROUP_GAP || (!m.outgoing && m.kind === "question");
       out.push(
         <MessageView key={m.id} m={m} first={first} peerName={name} peerKind={kind} quoted={quotedOf(m.reply_to)} quotes={quoteLists.get(m.id)} card={cards.get(m.id)} picks={pending.picks[m.id]} notes={notes.get(m.id)} hover={platform === "desktop"} selected={sel.includes(m.id)} highlighted={hl === m.id}
-          onReply={reply} onSelect={toggleSel} onPick={closed ? undefined : onPick} onInfo={info} onDelete={del} onJump={jump} onOpenAddr={onOpenAddr} onContactInfo={onContactInfo} />,
+          onReply={reply} onSelect={toggleSel} onPick={closed ? undefined : onPick} closed={closed} onInfo={info} onDelete={del} onJump={jump} onOpenAddr={onOpenAddr} onContactInfo={onContactInfo} />,
       );
       prev = m;
       if (setup?.reply_id === m.id) out.push(setupNote(setup, platform, isWin));

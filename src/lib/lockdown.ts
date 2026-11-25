@@ -29,5 +29,6 @@ export function ownLockdownText(hubs: string[]): string | null {
   return `Your address is in lockdown on ${names}: only addresses on its list can message you.`;
 }
 
-/** RED STUB */
-export const answerOptionsShown = (_s: { settled: boolean; closed: boolean }) => true;
+/** A question card's answer buttons: none at all on a closed contact's open question (review I8: its answer would
+ *  be refused), while an answered card still shows what was picked. */
+export const answerOptionsShown = ({ settled, closed }: { settled: boolean; closed: boolean }) => settled || !closed;
