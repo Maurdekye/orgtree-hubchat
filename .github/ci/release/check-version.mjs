@@ -51,11 +51,15 @@ for (const notes of [`docs/release-notes-${version}.md`, `docs/update-notes-${ve
   else console.log(`::warning::${notes} is missing (fine for a test run)`)
 }
 
-// the changelog in Settings shows only the notes src/lib/releaseNotes.ts bundles
-const bundled = read('src/lib/releaseNotes.ts').includes(`../../docs/release-notes-${version}.md?raw`)
-if (bundled) console.log(`ok   src/lib/releaseNotes.ts bundles release-notes-${version}.md`)
-else if (mode === 'release') fail(`src/lib/releaseNotes.ts does not import docs/release-notes-${version}.md: Settings › Changelog would miss this release`)
-else console.log(`::warning::src/lib/releaseNotes.ts does not bundle release-notes-${version}.md (fine for a test run)`)
+// the changelog in Settings shows only the notes src/lib/releaseNotes.ts bundles. A test build of a ref from before
+// the changelog (no such file) only warns, as missing notes do
+const manifest = 'src/lib/releaseNotes.ts'
+const hasManifest = fs.existsSync(manifest)
+const bundled = hasManifest && read(manifest).includes(`../../docs/release-notes-${version}.md?raw`)
+const why = hasManifest ? `${manifest} does not import docs/release-notes-${version}.md` : `${manifest} is missing`
+if (bundled) console.log(`ok   ${manifest} bundles release-notes-${version}.md`)
+else if (mode === 'release') fail(`${why}: Settings › Changelog would miss this release`)
+else console.log(`::warning::${why} (fine for a test run)`)
 
 const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
 console.log(`${mode} ${tag} = ${sha}`)

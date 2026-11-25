@@ -11,7 +11,7 @@ navigate to and view").
   and even before this tab, Quit Hubchat. `.set-nav` now scrolls on its own.
 - **Source.** The text is `docs/release-notes-<v>.md`, the GitHub release text. Each file is bundled through a
   `?raw` import in `src/lib/releaseNotes.ts`, so the tab works offline. The release adds its import in the same
-  commit as the notes. `.github/ci/release/check-version.mjs` refuses a release tag whose notes aren't imported, and
+  commit as the notes. `.github/ci/release/check-version.mjs` refuses a release tag whose notes aren't imported. A test build only warns, including a test build of a ref from before the changelog, which has no `releaseNotes.ts`. And
   the unit test checks that the list matches `docs/`.
 - **What is shown.** The sections about getting the files (`## Downloads`, `## First run on macOS and Linux`) are
   left out. Every other heading moves three levels down, to sit under the version's own heading. Code blocks are left
