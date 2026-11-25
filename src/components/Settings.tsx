@@ -21,15 +21,16 @@ import { copyWords, downloadWords } from "../lib/recovery";
 import { HubAdder } from "./HubAdder";
 import { HubHelpLink } from "./HubHelp";
 import { PictureEditor } from "./PictureEditor";
+import { Changelog } from "./Changelog";
 import { GuideBody } from "./Guide";
 import { TransfersPanel } from "./Transfers";
 import { pickStatus } from "./StatusPicker";
 import { scanSetup } from "../lib/setup";
 import { Addr, Avatar, Confirm, NoteCard, QR, Switch, pressKeys, useDeviceWord, useDialogFocus, useIsWindowsDesktop, useNow, usePlatform, useWeb } from "./ui";
 
-export type SetTab = "profile" | "hubs" | "devices" | "transfers" | "notifications" | "recovery" | "privacy" | "appearance" | "general" | "developer" | "help" | "about";
+export type SetTab = "profile" | "hubs" | "devices" | "transfers" | "notifications" | "recovery" | "privacy" | "appearance" | "general" | "developer" | "help" | "changelog" | "about";
 /** Every section (Android titles its screens from this too; General and Developer are desktop only). */
-export const TABS: [SetTab, string, IconName][] = [["profile", "Profile", "person"], ["hubs", "Hubs", "dns"], ["devices", "Devices", "computer"], ["transfers", "Transfers", "transfers"], ["notifications", "Notifications", "bell"], ["recovery", "Recovery words", "key"], ["privacy", "Privacy", "privacy"], ["appearance", "Appearance", "palette"], ["general", "General", "tune"], ["developer", "Developer", "terminal"], ["help", "Help", "help"], ["about", "About", "info"]];
+export const TABS: [SetTab, string, IconName][] = [["profile", "Profile", "person"], ["hubs", "Hubs", "dns"], ["devices", "Devices", "computer"], ["transfers", "Transfers", "transfers"], ["notifications", "Notifications", "bell"], ["recovery", "Recovery words", "key"], ["privacy", "Privacy", "privacy"], ["appearance", "Appearance", "palette"], ["general", "General", "tune"], ["developer", "Developer", "terminal"], ["help", "Help", "help"], ["changelog", "Changelog", "history"], ["about", "About", "info"]];
 
 // ---------------------------------------------------------------- shapes
 function Row({ icon, t1, t2, right, onClick }: { icon?: IconName; t1: ReactNode; t2?: ReactNode; right?: ReactNode; onClick?: () => void }) {
@@ -719,6 +720,11 @@ function useVersion(): string {
   return v;
 }
 
+/** Settings › Changelog, with the running version to mark. */
+function ChangelogTab() {
+  return <Changelog running={useVersion()} />;
+}
+
 /** Hubchat Web's About, where the apps have their update check (a page is whatever its server serves): which
  *  server that is and what trusting it means, and whether the browser promised to keep Hubchat's data. */
 function AboutWeb() {
@@ -767,6 +773,7 @@ export function SettingsSection({ tab, onLink, goTab, onOpenChat, profileDraft, 
     case "privacy": return <Privacy />;
     case "appearance": return <Appearance />;
     case "help": return <GuideBody />;
+    case "changelog": return <ChangelogTab />;
     default: return <About />;
   }
 }
@@ -847,6 +854,7 @@ export function SettingsList({ onOpen, onBack }: { onOpen: (t: SetTab) => void; 
         <Row icon="privacy" t1="Privacy" t2="Read receipts · who can reach you" right={chev} onClick={() => onOpen("privacy")} />
         <Row icon="palette" t1="Appearance" t2={pref === "system" ? "Match system" : pref === "light" ? "Light" : "Dark"} right={chev} onClick={() => onOpen("appearance")} />
         <Row icon="help" t1="Help" t2="Setting up Hubchat" right={chev} onClick={() => onOpen("help")} />
+        <Row icon="history" t1="Changelog" t2="What changed in each version" right={chev} onClick={() => onOpen("changelog")} />
         <Row icon="info" t1="About" t2={version ? "Version " + version : undefined} right={chev} onClick={() => onOpen("about")} />
       </div>
     </div>

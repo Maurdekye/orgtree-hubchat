@@ -51,3 +51,9 @@
 .guide-section[hidden] { display: none; }
 .guide-section > .md-h:first-child { margin-top: 0; }
 [data-platform="android"] .guide-tabs > button { min-height: 44px; }
+
+/* Settings › Changelog (Changelog.tsx): Help's typography, one block per version */
+.changelog-pending { color: var(--dim); }
+.changelog-entry { padding: 0 0 14px; margin: 0 0 16px; border-bottom: 1px solid var(--line); }
+.changelog-entry:last-child { border-bottom: 0; margin-bottom: 0; }
+.guide .changelog-v { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; font: 600 15px var(--font-display); color: var(--ink-strong); }
