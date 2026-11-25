@@ -28,3 +28,6 @@ export function ownLockdownText(hubs: string[]): string | null {
   const names = hubs.length === 1 ? hubs[0] : hubs.slice(0, -1).join(", ") + " and " + hubs[hubs.length - 1];
   return `Your address is in lockdown on ${names}: only addresses on its list can message you.`;
 }
+
+/** RED STUB */
+export const answerOptionsShown = (_s: { settled: boolean; closed: boolean }) => true;

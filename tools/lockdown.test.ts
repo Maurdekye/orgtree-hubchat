@@ -3,7 +3,7 @@
 // without access, their whole status symbol is replaced with a lock, and they cannot be messaged").
 import test from "node:test";
 import assert from "node:assert/strict";
-import { LOCKED_TEXT, canMessage, lockBadge, lockBarText, lockedPresence, ownLockdownText } from "../src/lib/lockdown.ts";
+import { LOCKED_TEXT, answerOptionsShown, canMessage, lockBadge, lockBarText, lockedPresence, ownLockdownText } from "../src/lib/lockdown.ts";
 
 test("closed: the lock replaces the status, and they can't be messaged", () => {
   assert.deepEqual(lockedPresence({ locked: "closed" }), { state: "locked", text: LOCKED_TEXT, short: "in lockdown", ticks: false });
@@ -31,4 +31,11 @@ test("the words: the bar names them as the hub's refusal does; our own lockdown 
   assert.equal(ownLockdownText([]), null);
   assert.equal(ownLockdownText(["Home hub"]), "Your address is in lockdown on Home hub: only addresses on its list can message you.");
   assert.equal(ownLockdownText(["A", "B"]), "Your address is in lockdown on A and B: only addresses on its list can message you.");
+});
+
+test("a closed contact's open question shows no answer buttons; an answered one still shows what was picked", () => {
+  // review I8 + capture C2 (@integ-sol-d m1066d517fa86: disabled buttons are still buttons)
+  assert.equal(answerOptionsShown({ settled: false, closed: true }), false);
+  assert.equal(answerOptionsShown({ settled: true, closed: true }), true);
+  assert.equal(answerOptionsShown({ settled: false, closed: false }), true);
 });
