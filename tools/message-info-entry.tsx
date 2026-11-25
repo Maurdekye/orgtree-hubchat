@@ -24,22 +24,23 @@ const mount = (patch: Partial<Message>) => {
 };
 const stamp = (at: string) => timeSec(ms(at)) + " · " + dayLabel(ms(at));
 
-const cases: [string, Partial<Message>, boolean, string][] = [
-  ["pending", {}, false, "—"],
-  ["fetched only", { fetched_at: fetched }, true, stamp(fetched)],
-  ["delivered implies fetched", { delivered_at: t }, true, "time not recorded"],
-  ["read alone implies fetched", { read_at: t }, true, "time not recorded"],
-  ["delivered preserves fetched time", { fetched_at: fetched, delivered_at: t }, true, stamp(fetched)],
-  ["read preserves fetched time", { fetched_at: fetched, read_at: t }, true, stamp(fetched)],
+// The ladder has no "Fetched by" step (USER 2026-11-25 09:11Z me83c70c1c128 "remove the "fetched" step from this ui,
+// it's redundant"); it replaced the 2026-10-18 rule that kept it. Written, Sent, Delivered and Read stay, each actual.
+const labels = (steps: HTMLLIElement[]) => steps.map((li) => li.querySelector(".ll")?.textContent ?? "");
+const cases: [string, Partial<Message>][] = [
+  ["pending", {}],
+  ["fetched only", { fetched_at: fetched }],
+  ["delivered", { delivered_at: t }],
+  ["read alone", { read_at: t }],
+  ["fetched, delivered and read", { fetched_at: fetched, delivered_at: t, read_at: t }],
 ];
-for (const [name, patch, done, at] of cases) {
-  const steps = mount(patch), row = steps[2];
-  check(name + ": all five steps retained", steps.length === 5);
-  check(name + ": fetched completion", row.classList.contains("done") === done);
-  check(name + ": fetched checkmark", !!row.querySelector("svg") === done);
-  check(name + ": fetched time", row.querySelector(".lt")?.textContent === at, row.querySelector(".lt")?.textContent);
-  check(name + ": read remains actual", steps[4].classList.contains("done") === !!patch.read_at);
-  check(name + ": delivered remains actual", steps[3].classList.contains("done") === !!patch.delivered_at);
+for (const [name, patch] of cases) {
+  const steps = mount(patch);
+  check(name + ": four steps, no Fetched", steps.length === 4 && !labels(steps).some((l) => /fetched/i.test(l)), labels(steps));
+  check(name + ": written, sent, delivered, read", JSON.stringify(labels(steps).map((l) => l.split(":")[0])) === JSON.stringify(["Written on this device", "Sent", "Delivered", "Read"]), labels(steps));
+  check(name + ": delivered remains actual", !!steps[2]?.classList.contains("done") === !!patch.delivered_at);
+  check(name + ": read remains actual", !!steps[3]?.classList.contains("done") === !!patch.read_at);
+  check(name + ": read waits plainly", !!patch.read_at || steps[3]?.querySelector(".lt")?.textContent === "Not read yet", steps[3]?.querySelector(".lt")?.textContent);
 }
 mount({ outgoing: false, delivered_at: t });
 check("incoming keeps Received layout", !document.querySelector(".ladder") && document.body.textContent!.includes("Received"));
