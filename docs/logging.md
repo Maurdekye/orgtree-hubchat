@@ -318,3 +318,30 @@ keeps its start-time name.
 - The renderer does not write arbitrary text to the log. Desktop update checks
   send only a fixed failure class and an asked flag; page beats send visibility.
 - Measured results and what was not measured: see the hand-in for the landing.
+
+## Invariants (from AGENTS.md)
+
+Moved verbatim from AGENTS.md on 2026-11-25 to keep it under the 60,000-byte integration cap; AGENTS.md keeps a summary and points here.
+
+- 2026-10-11: Normal logging is `hubchat_core::diag` (events only) plus
+  `src-tauri/src/trace.rs` (file, rotation, retention, verbose switch). Log
+  tags (`diag::tag`) and error kinds (`diag::err_kind`), never message or file
+  bodies, names, addresses, hosts, URLs, keys or error text, in verbose mode
+  too; new logging goes through the `diag` helpers. The identity-key file
+  (`keylog::note`) reaches the log only as fixed `Fact` phrases; a dependency's
+  warning keeps its level and source and loses its text. If the diagnostics
+  folder cannot be written the log goes to an owned, pruned temporary folder
+  and the Developer page says so. A hub's own words (its version, its answers)
+  are never logged, and a log file that cannot roll over drops lines instead of
+  growing past its limit. The panic hook's pointer line (`trace::emergency`)
+  shares the file's lock and size account with the writer (2026-10-13; it
+  used to append through a second handle outside both): it stops at the limit,
+  has a reserve ordinary lines leave for it, never lands between a rollover's
+  archive and the fresh file, and never waits longer than 2 s. The size account
+  counts every byte the file took, the prefix of a failed write included
+  (2026-10-13; it used to add only after a whole write). Logs
+  (`diagnostics/logs`) and crash reports (`diagnostics/crash-reports`) are
+  separate folders with separate owners. Rotation at 8 MiB and a 64 MiB budget
+  are coordinator choices; 30 days follows Orgtree. [decided: coordinator
+  2026-10-11; verified: `trace.rs`, `diag.rs`; mapping from Orgtree, invariants
+  and limits: `docs/logging.md`]

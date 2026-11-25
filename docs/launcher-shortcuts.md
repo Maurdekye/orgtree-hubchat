@@ -344,3 +344,39 @@ Proof: `store_taskbar::tests::pending_questions_list_what_the_dot_counts_newest_
 `jumplist::tests::a_question_entry_*` and `the_attention_group_*`,
 `node --test tools/chatlink-question.test.ts`. Not tested: the shell showing the
 group (it needs Explorer's real taskbar), and the click-to-card in a running app.
+
+## Invariants (from AGENTS.md)
+
+Moved verbatim from AGENTS.md on 2026-11-25 to keep it under the 60,000-byte integration cap; AGENTS.md keeps a summary and points here.
+
+- 2026-10-16: Windows taskbar Jump List tasks launch this executable with
+  encoded Hubchat URLs and reuse single-instance/pending-link navigation.
+  Contacts belong to custom category Recent; Settings/Directory/New chat stay
+  separate as bottom tasks. Profile pictures use content-addressed ICO files
+  under app data's jump-list-icons. Missing/removed pictures use the client's
+  initials avatar: shared avatarFallback/initials/kindInfo plus computed .av
+  styles, rasterized by the desktop WebView (including when hidden). Native
+  admission checks owner, open-DM name and kind; content-addressed ICOs keep
+  name/theme changes fresh. Before the WebView supplies it, the executable is
+  the temporary fallback. Fixed task icons use the shared TASK_ICONS/iconHTML
+  source on the dark rounded background taken from design/hubchat-icon.svg;
+  keep their primary dark-palette ink, independent of Windows theme. Profile
+  alpha is composited over the app's actual avatar tint/surface: renderer CSS
+  supplies Windows backgrounds; generated client tokens supply Android's.
+  Windows composite cache keys include picture and background hashes; preserve
+  the client's outer rounded mask. Initials shortcut tints also flatten over
+  that same opaque surface: otherwise translucent org tint appears peach on
+  a bright shell panel even with the dark app palette. Picture metadata and admitted-byte
+  changes refresh both platforms through the existing engine picture API.
+  Android dynamic launcher shortcuts contain only four recently messaged
+  contacts, including closed DMs, with circular profile/initials bitmaps.
+  Its headless publisher coalesces the full avatar payload, not only names/order.
+  LauncherAvatarRecipe is generated from client CSS and a guarded translation
+  of format.initials; preBuild and focused checks reject drift. Keep the
+  client/native initials parity fixture. Effective app theme is persisted for
+  headless rendering; no activity is needed to refresh icons. Both platforms exclude groups and bind
+  contact activations to their originating identity. Refresh from native
+  events, not renderer visibility; skip identical projections to conserve
+  Android's shortcut update quota. Contract and proof limits:
+  docs/launcher-shortcuts.md. [verified: store_shortcuts.rs, jumplist.rs,
+  core.rs, jumplist_icons.rs, LauncherShortcuts.kt, chatlink.ts]

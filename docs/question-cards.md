@@ -296,3 +296,39 @@ rebased branches, except the mail hub's own tests (its branch is unchanged).
   a switch comes (the draft save or clear, the send command) can't be called
   back: which identity's store it reaches is decided by the core and was not
   measured.
+
+## Invariants (from AGENTS.md)
+
+Moved verbatim from AGENTS.md on 2026-11-25 to keep it under the 60,000-byte integration cap; AGENTS.md keeps a summary and points here.
+
+- 2026-10-12: Question cards and multi-reply travel in an additive, bounded
+  message `meta` (hub feature `meta`, at most 4096 bytes) with a plain-text
+  version in the body for older hubs and clients; never repurpose `reply_to`
+  or `thread_id`. A card has 2-10 options (user 2026-10-12 21:12Z). Received
+  `meta` is untrusted: `questions::incoming` checks each part on its own and
+  keeps only what passes, and the interface checks only a card's shape,
+  never more strictly than the core. A `fallback` range leaves the body only
+  where its text is exactly what the accepted `meta` stands for (a card's
+  numbered list; a reply's quote, `Answer:` and `Skipped` lines); anything
+  else stays readable (review R1, 2026-10-13). A card settles once, on the
+  first answer or empty-body skip from the other side in hub order
+  (received_at, then id; unsent after, in writing order); later replies never
+  revise it, its sender cannot withdraw it, and unanswered cards stay open
+  (no automatic skip). Settlement never comes from the loaded page alone: the
+  view asks `Store::card_answers` (indexed by reply_to and migration 16
+  `reply_links`) for each card it holds, and a card the store hasn't answered
+  for yet is unknown, never open. The composer checks each card a message
+  replies to: with no text (files or not) it waits while any card it plainly
+  replies to is unknown, keeping everything (review R2). Once a message is
+  queued only what it carried is cleared (`sentDraftAnswers(peer, message)`:
+  the messages it replied to and their picks), never the whole reply list:
+  Reply and picks in the chat still work while its files are prepared, and
+  what is chosen then goes with the next message (review R3, 2026-10-13).
+  Unsent replies and picks persist per chat
+  (migration 16 `draft_answers`, wiped with the identity); a saved-answers
+  read started under another identity is dropped. A migration test that
+  fakes an older store must remove every later migration's changes.
+  [decided: user 2026-10-11 13:01-13:27Z, 22:42-22:44Z, 2026-10-12 21:12Z;
+  verified: questions.rs, store_questions.rs, engine.rs, lib/questions.ts,
+  lib/answers.ts, Conversation.tsx, Composer.tsx; contract, measured proof
+  and limits: docs/question-cards.md]

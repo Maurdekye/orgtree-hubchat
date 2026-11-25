@@ -352,36 +352,13 @@
   Android mounted proof is in tools/proof-shortcut-avatars.mjs.
   [decided: user 2026-10-17; verified: Directory.tsx, desktop.css]
 
-- 2026-10-16: Windows taskbar Jump List tasks launch this executable with
-  encoded Hubchat URLs and reuse single-instance/pending-link navigation.
-  Contacts belong to custom category Recent; Settings/Directory/New chat stay
-  separate as bottom tasks. Profile pictures use content-addressed ICO files
-  under app data's jump-list-icons. Missing/removed pictures use the client's
-  initials avatar: shared avatarFallback/initials/kindInfo plus computed .av
-  styles, rasterized by the desktop WebView (including when hidden). Native
-  admission checks owner, open-DM name and kind; content-addressed ICOs keep
-  name/theme changes fresh. Before the WebView supplies it, the executable is
-  the temporary fallback. Fixed task icons use the shared TASK_ICONS/iconHTML
-  source on the dark rounded background taken from design/hubchat-icon.svg;
-  keep their primary dark-palette ink, independent of Windows theme. Profile
-  alpha is composited over the app's actual avatar tint/surface: renderer CSS
-  supplies Windows backgrounds; generated client tokens supply Android's.
-  Windows composite cache keys include picture and background hashes; preserve
-  the client's outer rounded mask. Initials shortcut tints also flatten over
-  that same opaque surface: otherwise translucent org tint appears peach on
-  a bright shell panel even with the dark app palette. Picture metadata and admitted-byte
-  changes refresh both platforms through the existing engine picture API.
-  Android dynamic launcher shortcuts contain only four recently messaged
-  contacts, including closed DMs, with circular profile/initials bitmaps.
-  Its headless publisher coalesces the full avatar payload, not only names/order.
-  LauncherAvatarRecipe is generated from client CSS and a guarded translation
-  of format.initials; preBuild and focused checks reject drift. Keep the
-  client/native initials parity fixture. Effective app theme is persisted for
-  headless rendering; no activity is needed to refresh icons. Both platforms exclude groups and bind
-  contact activations to their originating identity. Refresh from native
-  events, not renderer visibility; skip identical projections to conserve
-  Android's shortcut update quota. Contract and proof limits:
-  docs/launcher-shortcuts.md. [verified: store_shortcuts.rs, jumplist.rs,
+- 2026-10-16: Windows Jump List tasks and Android launcher shortcuts open
+  recent contacts with profile pictures or the client's own initials avatar,
+  rendered from shared client CSS/tokens and refreshed from native events
+  (not renderer visibility). Groups are excluded and activations bound to
+  their originating identity. Full invariants (icons, compositing, caches,
+  Android quota and parity fixture): docs/launcher-shortcuts.md, section
+  "Invariants (from AGENTS.md)". [verified: store_shortcuts.rs, jumplist.rs,
   core.rs, jumplist_icons.rs, LauncherShortcuts.kt, chatlink.ts]
 
 - 2026-10-16: A hook must hand out the SAME empty array/object for data that
@@ -632,37 +609,15 @@
   native version/hash checks alone are insufficient. CI retains `../dist`.
   [verified: Tauri2.10.1 config parser; docs/local-alpha-packaging.md]
 
-- 2026-10-12: Question cards and multi-reply travel in an additive, bounded
-  message `meta` (hub feature `meta`, at most 4096 bytes) with a plain-text
-  version in the body for older hubs and clients; never repurpose `reply_to`
-  or `thread_id`. A card has 2-10 options (user 2026-10-12 21:12Z). Received
-  `meta` is untrusted: `questions::incoming` checks each part on its own and
-  keeps only what passes, and the interface checks only a card's shape,
-  never more strictly than the core. A `fallback` range leaves the body only
-  where its text is exactly what the accepted `meta` stands for (a card's
-  numbered list; a reply's quote, `Answer:` and `Skipped` lines); anything
-  else stays readable (review R1, 2026-10-13). A card settles once, on the
-  first answer or empty-body skip from the other side in hub order
-  (received_at, then id; unsent after, in writing order); later replies never
-  revise it, its sender cannot withdraw it, and unanswered cards stay open
-  (no automatic skip). Settlement never comes from the loaded page alone: the
-  view asks `Store::card_answers` (indexed by reply_to and migration 16
-  `reply_links`) for each card it holds, and a card the store hasn't answered
-  for yet is unknown, never open. The composer checks each card a message
-  replies to: with no text (files or not) it waits while any card it plainly
-  replies to is unknown, keeping everything (review R2). Once a message is
-  queued only what it carried is cleared (`sentDraftAnswers(peer, message)`:
-  the messages it replied to and their picks), never the whole reply list:
-  Reply and picks in the chat still work while its files are prepared, and
-  what is chosen then goes with the next message (review R3, 2026-10-13).
-  Unsent replies and picks persist per chat
-  (migration 16 `draft_answers`, wiped with the identity); a saved-answers
-  read started under another identity is dropped. A migration test that
-  fakes an older store must remove every later migration's changes.
-  [decided: user 2026-10-11 13:01-13:27Z, 22:42-22:44Z, 2026-10-12 21:12Z;
-  verified: questions.rs, store_questions.rs, engine.rs, lib/questions.ts,
-  lib/answers.ts, Conversation.tsx, Composer.tsx; contract, measured proof
-  and limits: docs/question-cards.md]
+- 2026-10-12: Question cards and multi-reply travel in additive, bounded
+  message `meta` (feature `meta`, at most 4096 bytes) with a plain-text body
+  for older hubs; never repurpose `reply_to` or `thread_id`. Received `meta`
+  is untrusted; a card has 2-10 options, settles once on the first answer or
+  skip in hub order, and its settlement comes from `Store::card_answers`,
+  never the loaded page. Full invariants (fallback ranges, composer waits,
+  sent-draft clearing, migration 16, test rule): docs/question-cards.md,
+  section "Invariants (from AGENTS.md)". [decided: user 2026-10-11, 2026-10-12;
+  verified: questions.rs, store_questions.rs, Conversation.tsx, Composer.tsx]
 
 - 2026-10-13: A send's preparation (`store.ts` `prepareSend`) goes on after
   every wait (draft save, send command, draft clear) and in its failure path
@@ -830,27 +785,13 @@
   `autostart.rs`, `tray.rs`, `lib.rs`; details and limits: `docs/tray-menu.md`]
 
 - 2026-10-11: Normal logging is `hubchat_core::diag` (events only) plus
-  `src-tauri/src/trace.rs` (file, rotation, retention, verbose switch). Log
-  tags (`diag::tag`) and error kinds (`diag::err_kind`), never message or file
-  bodies, names, addresses, hosts, URLs, keys or error text, in verbose mode
-  too; new logging goes through the `diag` helpers. The identity-key file
-  (`keylog::note`) reaches the log only as fixed `Fact` phrases; a dependency's
-  warning keeps its level and source and loses its text. If the diagnostics
-  folder cannot be written the log goes to an owned, pruned temporary folder
-  and the Developer page says so. A hub's own words (its version, its answers)
-  are never logged, and a log file that cannot roll over drops lines instead of
-  growing past its limit. The panic hook's pointer line (`trace::emergency`)
-  shares the file's lock and size account with the writer (2026-10-13; it
-  used to append through a second handle outside both): it stops at the limit,
-  has a reserve ordinary lines leave for it, never lands between a rollover's
-  archive and the fresh file, and never waits longer than 2 s. The size account
-  counts every byte the file took, the prefix of a failed write included
-  (2026-10-13; it used to add only after a whole write). Logs
-  (`diagnostics/logs`) and crash reports (`diagnostics/crash-reports`) are
-  separate folders with separate owners. Rotation at 8 MiB and a 64 MiB budget
-  are coordinator choices; 30 days follows Orgtree. [decided: coordinator
-  2026-10-11; verified: `trace.rs`, `diag.rs`; mapping from Orgtree, invariants
-  and limits: `docs/logging.md`]
+  `src-tauri/src/trace.rs`. Logs carry tags and error kinds, never bodies,
+  names, addresses, hosts, URLs, keys, error text or a hub's own words, in
+  verbose mode too; new logging goes through the `diag` helpers. Full
+  invariants (key-file facts, fallback folder, size account, panic hook,
+  rotation 8 MiB / 64 MiB / 30 days): docs/logging.md, section "Invariants
+  (from AGENTS.md)". [decided: coordinator 2026-10-11; verified: `trace.rs`,
+  `diag.rs`]
 
 - 2026-10-14: Desktop and Android Profile share SquareCrop: drag/resize corner handles over the native preview, arrow movement and Shift-arrow resize; no crop sliders. Native PictureCrop coordinates and original-byte saves stay unchanged. Pointer cancellation ends the gesture. Contract and unrun batch checks: docs/crop-square.md. [decided: user 2026-10-14; verified from source: PictureEditor.tsx, SquareCrop.tsx, cropmath.ts]
 
