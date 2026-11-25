@@ -6,10 +6,11 @@
   before each sync, woken by `status_wake`); each sync's `blocks` and
   `blocked_by` are kept per hub (`blocks.mine.<url>`, `blocks.by.<url>`) and
   merged in `Store::directory` as `Contact.blocked`/`blocked_by`, owed
-  changes applied at once. A block shows ONLY in the DM header and Contact
-  info (`dmPresence`, red cancel sign: user "their status appears as a red
-  cancel sign in their dm"); lists keep presence, the chat list adds a
-  "Blocked" label (coordinator Q6). The composer gives way to `BlockBar`;
+  changes applied at once. A block shows as the red cancel sign
+  (`dmPresence`) in the DM header, Contact info and the chat list row's
+  picture (user "their status appears as a red cancel sign in their dm";
+  2026-11-25 m2d43462b28f6: the list row too); other lists keep presence,
+  and the chat list adds a "Blocked" label (coordinator Q6). The composer gives way to `BlockBar`;
   the blocked side reads the user's words "You have been blocked by @<name>
   and cannot message them" (user 19:06Z: shown at once, not only after a
   failed send). Every contact menu offers `blockEntry` (Block asks first via
