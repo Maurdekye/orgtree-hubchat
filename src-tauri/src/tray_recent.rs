@@ -234,13 +234,14 @@ pub fn cancel_click(app: &AppHandle) {
 
 /// The chat is checked inside the identity section; the window opens after it, so window code (whose
 /// show runs `sync` inline here on the main thread) never runs inside a section (the tray freeze, core.rs).
+/// The pending link carries `owner`, so a switch after the check can't hand the chat to another identity.
 pub fn open_chat(app: &AppHandle, owner: &str, peer: &str) -> Result<(), String> {
     core()?.tray_with_identity(Some(owner), |_| {
         let (chats, _) = core()?.store.tray_overview().map_err(|e|e.to_string())?;
         if !chats.iter().any(|c|c.peer == peer) { return Err("Chat list changed".into()); }
         Ok(())
     })?;
-    crate::desktop::open_chat_from_tray(app, peer);
+    crate::desktop::open_chat_from_tray(app, owner, peer);
     Ok(())
 }
 

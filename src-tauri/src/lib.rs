@@ -392,9 +392,15 @@ mod desktop {
         }
     }
 
+    /// The tray's chat link names the identity the tray checked (the Jump List's owner-scoped link), so a
+    /// sign-out or identity switch between that check and the UI taking the link drops it: chatLinkTarget
+    /// (src/lib/chatlink.ts) refuses a link whose owner isn't the signed-in address.
     #[cfg(windows)]
-    pub fn open_chat_from_tray(app: &AppHandle, peer: &str) {
-        *PENDING.lock().unwrap() = Some(toast::chat_link(peer));
+    pub(crate) fn tray_chat_link(owner: &str, peer: &str) -> String { crate::jumplist::chat_link(owner, peer) }
+
+    #[cfg(windows)]
+    pub fn open_chat_from_tray(app: &AppHandle, owner: &str, peer: &str) {
+        *PENDING.lock().unwrap() = Some(tray_chat_link(owner, peer));
         let _ = app.emit("hc-link-pending", ());
         show(app);
     }
@@ -718,6 +724,16 @@ mod start_tests {
         // the updater's restart: the old process's arguments, its link included
         let old = args(&["hubchat.exe", "hubchat://setup?v=1&code=ABCD-EFGH"]);
         assert_eq!(start_link_arg(old, true), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_tray_chat_link_names_the_identity_the_tray_checked() {
+        let link = url::Url::parse(&super::desktop::tray_chat_link("me.123456", "peer.123456")).unwrap();
+        let pairs: std::collections::HashMap<_, _> = link.query_pairs().into_owned().collect();
+        assert_eq!((link.scheme(), link.host_str()), ("hubchat", Some("chat")));
+        assert_eq!(pairs.get("to").map(String::as_str), Some("peer.123456"));
+        assert_eq!(pairs.get("owner").map(String::as_str), Some("me.123456"));
     }
 
     #[test]
