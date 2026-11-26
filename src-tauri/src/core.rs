@@ -1352,3 +1352,115 @@ mod file_lifecycle_tests {
         assert_eq!(background_policy(false,None,false,0),(false,false));
     }
 }
+
+/// THE TRAY'S CHAT LIST FROZE HUBCHAT (measured 2026-11-26 from a hang dump of 1.4.0-alpha.3, docket
+/// hubchat-freezes-about-half-the-time-when-a-conta): choosing a contact ran `tray_recent::open_chat`'s
+/// identity section, whose window show queued `tray_recent::sync`; Tauri runs `run_on_main_thread` inline on
+/// the main thread, so sync's own section waited on the lock its own thread held, forever.
+#[cfg(all(test, windows))]
+mod tray_identity_tests {
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex, OnceLock};
+    use std::time::Duration;
+
+    use hubchat_core::engine::Engine;
+    use hubchat_core::store::Store;
+    use hubchat_core::Identity;
+
+    use super::{Core, Platform, ShellHost};
+
+    struct StubPlatform(PathBuf);
+    impl Platform for StubPlatform {
+        fn notify(&self, _: &str, _: &str, _: &str, _: bool) {}
+        fn status(&self, _: &str) {}
+        fn open_source(&self, s: &str) -> std::io::Result<std::fs::File> {
+            std::fs::File::open(s)
+        }
+        fn download_dir(&self) -> PathBuf {
+            self.0.join("downloads")
+        }
+    }
+
+    /// A signed-in core whose engine is never started: no hub, no key store, no network. Leaked, so a test
+    /// thread that hangs can be left behind while the test reports.
+    fn signed_in(label: &str) -> &'static Core {
+        let dir = std::env::temp_dir().join(format!("hubchat-tray-identity-{label}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Arc::new(Store::open(&dir.join("hubchat.sqlite3")).unwrap());
+        let rt = Box::leak(Box::new(tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap()));
+        let host = Arc::new(ShellHost {
+            staging: dir.join("outbox"),
+            app: OnceLock::new(),
+            platform: Arc::new(StubPlatform(dir.clone())),
+            foreground: AtomicBool::new(false),
+            open_chat: Mutex::new(None),
+            store: store.clone(),
+            notify_on: AtomicBool::new(false),
+            notify_text: AtomicBool::new(false),
+            notify_sound: AtomicBool::new(false),
+        });
+        let core: &'static Core = Box::leak(Box::new(Core {
+            dir,
+            store,
+            engine: Mutex::new(None),
+            background_checks: Mutex::new(0),
+            file_admissions: std::sync::atomic::AtomicUsize::new(0),
+            file_lifetime: Mutex::new(()),
+            rt: rt.handle().clone(),
+            host,
+            key_lost: Mutex::new(None),
+            identity_load: Default::default(),
+            shortcut_projection: Mutex::new(None),
+        }));
+        let me = Identity::generate("alice").unwrap();
+        core.store.set_meta("identity.address", &me.address()).unwrap();
+        let profile = core.profile_from_store(&me);
+        *core.engine.lock().unwrap() = Some(Engine::new(core.store.clone(), me, profile, core.host.clone()));
+        core
+    }
+
+    /// `f` on its own thread; None when it hasn't finished in 5 s (it hung)
+    fn within<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || { let _ = tx.send(f()); });
+        rx.recv_timeout(Duration::from_secs(5)).ok()
+    }
+
+    #[test]
+    fn a_tray_section_entered_again_on_its_own_thread_finishes() {
+        let core = signed_in("nested");
+        let owner = core.engine().unwrap().me().address();
+        let expected = owner.clone();
+        // the chain the dump showed: open_chat's section -> show -> sync's section, plus sync's fallback read
+        let done = within(move || core.tray_with_identity(Some(&owner), |outer| {
+            let inner = core.tray_with_identity(None, |inner| Ok(inner.to_owned()))?;
+            let engine = core.engine()?.me().address();
+            Ok((outer.to_owned(), inner, engine))
+        }));
+        let (outer, inner, engine) = done.expect("a tray section inside another on the same thread hung").unwrap();
+        assert_eq!((outer.as_str(), inner.as_str(), engine.as_str()), (expected.as_str(), expected.as_str(), expected.as_str()));
+    }
+
+    /// POSITIVE CONTROL: another thread still waits for a section to end (what keeps identity adoption and
+    /// sign-out out of a tray read or action)
+    #[test]
+    fn another_thread_waits_for_a_tray_section_to_end() {
+        let core = signed_in("exclusive");
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let first_done = Arc::new(AtomicBool::new(false));
+        let flag = first_done.clone();
+        let first = std::thread::spawn(move || core.tray_with_identity(None, |_| {
+            entered_tx.send(()).unwrap();
+            std::thread::sleep(Duration::from_millis(300));
+            flag.store(true, Ordering::SeqCst);
+            Ok(())
+        }));
+        entered_rx.recv_timeout(Duration::from_secs(5)).expect("the first section started");
+        let saw = within(move || core.tray_with_identity(None, |_| Ok(first_done.load(Ordering::SeqCst))))
+            .expect("the second section ran once the first ended").unwrap();
+        assert!(saw, "the second thread's section ran while the first was still inside its own");
+        first.join().unwrap().unwrap();
+    }
+}
