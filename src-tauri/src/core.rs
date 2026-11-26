@@ -163,10 +163,52 @@ fn computer_name() -> String {
         .unwrap_or_else(|| FALLBACK.into())
 }
 
+/// WHO MAY CHANGE OR READ THE SIGNED-IN IDENTITY (tray reads and actions, identity adoption, sign-out).
+/// One thread at a time, and the thread inside may enter again: a tray section's window show runs
+/// `tray_recent::sync` inline on the main thread (Tauri's `run_on_main_thread` does so there), and sync opens
+/// its own section. With the engine's plain mutex as the guard that nested section waited on its own thread
+/// forever (the tray chat-list freeze, measured 2026-11-26). Nested sections can't see a half-done identity
+/// change: adoption and sign-out take the gate only around swapping the engine and call nothing inside it.
+#[derive(Default)]
+struct IdentityGate {
+    held: Mutex<(Option<std::thread::ThreadId>, usize)>,
+    free: std::sync::Condvar,
+}
+
+struct IdentityPass<'a>(&'a IdentityGate);
+
+impl IdentityGate {
+    fn enter(&self) -> IdentityPass<'_> {
+        let me = std::thread::current().id();
+        let mut held = self.held.lock().unwrap_or_else(|p| p.into_inner());
+        loop {
+            match held.0 {
+                None => { *held = (Some(me), 1); break; }
+                Some(owner) if owner == me => { held.1 += 1; break; }
+                Some(_) => held = self.free.wait(held).unwrap_or_else(|p| p.into_inner()),
+            }
+        }
+        IdentityPass(self)
+    }
+}
+
+impl Drop for IdentityPass<'_> {
+    fn drop(&mut self) {
+        let mut held = self.0.held.lock().unwrap_or_else(|p| p.into_inner());
+        held.1 -= 1;
+        if held.1 == 0 {
+            held.0 = None;
+            self.0.free.notify_all();
+        }
+    }
+}
+
 pub struct Core {
     pub dir: PathBuf,
     pub store: Arc<Store>,
+    /// Held only to read or swap the engine, never across other work: see IdentityGate.
     engine: Mutex<Option<Arc<Engine>>>,
+    identity_gate: IdentityGate,
     background_checks: Mutex<usize>,
     file_admissions: std::sync::atomic::AtomicUsize,
     file_lifetime: Mutex<()>,
@@ -394,6 +436,7 @@ pub fn init(dir: PathBuf, platform: Arc<dyn Platform>) -> Result<&'static Core, 
         dir,
         store,
         engine: Mutex::new(None),
+        identity_gate: IdentityGate::default(),
         background_checks: Mutex::new(0),
         file_admissions: std::sync::atomic::AtomicUsize::new(0),
         file_lifetime: Mutex::new(()),
@@ -442,8 +485,8 @@ impl Core {
     /// Never put an await/network call inside this closure.
     #[cfg(windows)]
     pub fn tray_with_identity<T>(&self, expected: Option<&str>, f: impl FnOnce(&str) -> Result<T, String>) -> Result<T, String> {
-        let current = self.engine.lock().unwrap();
-        let owner = current.as_ref().ok_or("No identity")?.me().address();
+        let _pass = self.identity_gate.enter();
+        let owner = self.engine().map_err(|_| "No identity".to_string())?.me().address();
         if expected.is_some_and(|e| e != owner) || self.store.meta("identity.address").map_err(|e|e.to_string())?.as_deref() != Some(owner.as_str()) {
             return Err("Identity changed".into());
         }
@@ -454,8 +497,8 @@ impl Core {
     /// Publishers do only local OS work and must never call back into the core.
     #[cfg(any(windows, target_os = "android"))]
     pub fn with_shortcut_data<T>(&self, open_only: bool, limit: Option<u32>, publish: impl FnOnce(&str, Vec<hubchat_core::store::ShortcutContact>) -> Result<T, String>) -> Result<T, String> {
-        let current = self.engine.lock().unwrap();
-        let owner = current.as_ref().map(|e|e.me().address()).unwrap_or_default();
+        let _pass = self.identity_gate.enter();
+        let owner = self.engine().map(|e|e.me().address()).unwrap_or_default();
         let rows = if owner.is_empty() {
             vec![]
         } else {
@@ -804,7 +847,8 @@ impl Core {
     /// devices.
     pub async fn leave_identity(&self) -> Result<(), String> {
         self.forget_push();
-        let Some(e) = self.engine.lock().unwrap().take() else {
+        let taken = { let _pass = self.identity_gate.enter(); self.engine.lock().unwrap().take() };
+        let Some(e) = taken else {
             return Ok(());
         };
         self.host.platform.shortcuts_changed();
@@ -889,7 +933,10 @@ impl Core {
         self.host
             .platform
             .status(&format!("Connected as {}", engine.me().address()));
-        *self.engine.lock().unwrap() = Some(engine);
+        {
+            let _pass = self.identity_gate.enter();
+            *self.engine.lock().unwrap() = Some(engine);
+        }
         self.host.platform.shortcuts_changed();
         #[cfg(windows)]
         if let Some(app) = self.host.app.get() { crate::tray_recent::changed(app); }
@@ -988,6 +1035,7 @@ mod linux_r5_core_tests {
             dir: dir.clone(),
             store,
             engine: Mutex::new(None),
+            identity_gate: Default::default(),
             background_checks: Mutex::new(0),
             file_admissions: std::sync::atomic::AtomicUsize::new(0),
             file_lifetime: Mutex::new(()),
@@ -1405,6 +1453,7 @@ mod tray_identity_tests {
             dir,
             store,
             engine: Mutex::new(None),
+            identity_gate: Default::default(),
             background_checks: Mutex::new(0),
             file_admissions: std::sync::atomic::AtomicUsize::new(0),
             file_lifetime: Mutex::new(()),

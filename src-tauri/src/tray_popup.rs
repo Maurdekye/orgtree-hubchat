@@ -290,8 +290,10 @@ pub fn hc_tray_popup_ready(window: WebviewWindow, app: AppHandle, generation: u3
         window.show().map_err(|e| e.to_string())?;
         window.set_focus().map_err(|e| e.to_string())
     };
-    if s.recent && !s.owner.is_empty() { crate::core::get()?.tray_with_identity(Some(&s.owner), |_|show())?; }
-    else { show()?; }
+    // the identity is checked first and the window shown after: window code never runs inside an
+    // identity section (the tray freeze, core.rs IdentityGate)
+    if s.recent && !s.owner.is_empty() { crate::core::get()?.tray_with_identity(Some(&s.owner), |_| Ok(()))?; }
+    show()?;
     app.state::<Popup>().0.lock().map_err(|_| "Tray menu is unavailable")?.shown = true;
     Ok(())
 }
