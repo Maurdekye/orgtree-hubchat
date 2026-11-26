@@ -1,0 +1,1 @@
+New: see when contacts were last around, block contacts, and see who is in lockdown (with Mail hub 2.6.0); Settings now has a Changelog.
