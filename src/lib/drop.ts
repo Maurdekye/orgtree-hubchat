@@ -5,6 +5,7 @@
 // The browser mock uses the page's own drag events with made-up paths.
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { isTauri, isWeb } from "../api";
+import { dropPoint } from "./droppoint";
 
 type DropEv = { type: "over"; x: number; y: number } | { type: "drop"; x: number; y: number; paths: string[] } | { type: "leave" };
 
@@ -21,9 +22,7 @@ function start() {
     void import("@tauri-apps/api/webview").then(({ getCurrentWebview }) =>
       getCurrentWebview().onDragDropEvent(({ payload: p }) => {
         if (p.type === "leave") { emit({ type: "leave" }); return; }
-        // physical pixels in the webview; the page works in CSS pixels
-        const k = window.devicePixelRatio || 1;
-        const x = p.position.x / k, y = p.position.y / k;
+        const { x, y } = dropPoint(p.position, window.devicePixelRatio, navigator.userAgent);
         emit(p.type === "drop" ? { type: "drop", x, y, paths: p.paths } : { type: "over", x, y });
       }));
     return;
