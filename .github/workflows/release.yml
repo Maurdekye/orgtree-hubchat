@@ -14,14 +14,14 @@
 # manual run, is a test: the same jobs with throwaway keys in place of the real ones and
 # no release at the end; the staged assets are left as the run's artifact. A manual run
 # with draft=true also rehearses the draft: a tagless draft named ci-test-draft-<run id>,
-# checked the same way and deleted at the end (keep_draft=true leaves it). It never pushes a tag.
+# checked the same way and deleted at the end; a push to ci-test/hubchat-release-draft does the same (keep_draft=true leaves it). It never pushes a tag.
 # How to cut, check, publish and roll back a release: docs/ci-release.md.
 name: release
 
 on:
   push:
     tags: ['v*']
-    branches: ['ci-test/hubchat-release']
+    branches: ['ci-test/hubchat-release', 'ci-test/hubchat-release-draft']   # -draft: a test that also rehearses the draft (as draft=true)
   workflow_dispatch:
     inputs:
       ref:
@@ -228,7 +228,7 @@ jobs:
   draft:
     # !cancelled(): a release run skips sign-test, and a skipped job also skips every
     # later job whose `if` has no status check of its own, even after stage succeeded.
-    if: ${{ !cancelled() && needs.stage.result == 'success' && (needs.resolve.outputs.mode == 'release' || inputs.draft) }}
+    if: ${{ !cancelled() && needs.stage.result == 'success' && (needs.resolve.outputs.mode == 'release' || inputs.draft || github.ref == 'refs/heads/ci-test/hubchat-release-draft') }}
     needs: [resolve, stage]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
