@@ -44,6 +44,14 @@ theres no lag."
   the bottom (1.3.13 and before) moved the view when rows below changed in
   the same commit: a far jump could end with its original out of view, and
   scrolling back drifted up to 469 px per page.
+- At the bottom, only the view moving up unpins it (Hubchat 1.4.1; user 2026-11-27 "when i click onto certain
+  chats it always starts scrolled a little bit up from the bottom"). Before, any scroll event more than 80 px from
+  the bottom unpinned it, including the pin's own event when content below grew in between (a picture decoding,
+  mention marks, a narrower window): the chat then stayed that far up and stopped following. Now a scroll event
+  that didn't move up follows the new bottom. Proof: `tools/proof-open-bottom.mjs` (red: the forced late growth
+  leaves a 240 px gap; green: 0). Natural opens of a chat ending in four pictures depend on timing: before the
+  fix one desktop run's first open stopped 319 px up (about one picture), another run's 16 opens all reached the
+  bottom; after it, every open did. Which content triggers it in the user's own chats is not measured.
 
 ## The benchmark
 

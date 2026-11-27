@@ -80,6 +80,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
   const [extra, setExtra] = useState<Record<string, Message | null>>({});
   const tl = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
+  const lastTop = useRef(0); // the timeline's scrollTop at its last scroll event
   const jumpHold = useRef(false);
   useRefreshState(refreshId, () => ({count:msgs.length,top:tl.current?.scrollTop ?? 0,pinned:pinned.current}));
   const [far, setFar] = useState(false);
@@ -253,7 +254,15 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
     // after a jump the view stays where the jump put it until the user moves
     // it: the smooth scroll's first event comes still at the bottom, and a
     // resize meanwhile would pull it back down (and trimming could follow)
-    pinned.current = gap < 80 && !jumpHold.current; setFar(gap > 300);
+    // Only the view moving up unpins it (user 2026-11-27 "it always starts scrolled a little bit up from the
+    // bottom"): a scroll event that didn't move up is the pin's own, arriving after content below grew in the
+    // meantime (pictures, mention marks, a narrower window), so it follows the new bottom instead.
+    const movedUp = el.scrollTop < lastTop.current - 1;
+    lastTop.current = el.scrollTop;
+    if (pinned.current && !movedUp && !jumpHold.current) {
+      if (gap > 1) { el.scrollTop = el.scrollHeight; lastTop.current = el.scrollTop; }
+      setFar(false);
+    } else { pinned.current = gap < 80 && !jumpHold.current; setFar(gap > 300); }
     if (el.scrollTop < 400 && more && !loadingOlder) older();
     trimNow();
   };
