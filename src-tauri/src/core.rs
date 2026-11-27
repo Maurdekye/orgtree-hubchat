@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
-use hubchat_core::engine::{Engine, Event, Host};
+use hubchat_core::engine::{Engine, Event, Host, Unreached};
 use hubchat_core::hub::Profile;
 use hubchat_core::store::Store;
 use hubchat_core::Identity;
@@ -217,6 +217,9 @@ pub struct Core {
     /// Set while this device had an identity but its key can't be found.
     key_lost: Mutex<Option<KeyLost>>,
     identity_load: hubchat_core::notification_reply::IdentityLoader,
+    /// Set while Sign out of this device runs (its hub phase takes up to LEAVE_BUDGET): no identity is
+    /// taken, loaded or started over meanwhile, and the sign-out isn't finished twice.
+    signing_out_now: std::sync::atomic::AtomicBool,
     #[cfg(windows)]
     shortcut_projection: Mutex<Option<(String, Vec<hubchat_core::store::ShortcutContact>)>>,
 }
@@ -244,6 +247,29 @@ pub struct KeyLost {
 /// with the wipe, so a sign-out that stops partway is finished, never resumed
 /// as the identity (whose device the hubs may already have dropped).
 pub(crate) const SIGNING_OUT: &str = "signout.pending";
+
+/// What adopting, loading or starting over answers while Sign out of this device runs.
+pub(crate) const STILL_SIGNING_OUT: &str = "Hubchat is still signing out of this device. Try again in a moment.";
+
+/// Clears `Core::signing_out_now` when the sign-out that set it ends, however it ends.
+struct SigningOut<'a>(&'a std::sync::atomic::AtomicBool);
+impl Drop for SigningOut<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// The hubs a sign-out couldn't tell, as kept in the SIGNING_OUT mark: a list once they were asked;
+/// "yes" (or anything else) while nobody knows which were told, so a retry asks them all.
+fn mark_of(missed: &[Unreached]) -> String {
+    if missed.iter().any(|u| u.url.is_empty()) { "yes".into() } else { serde_json::to_string(missed).unwrap_or_else(|_| "yes".into()) }
+}
+
+/// Stands for "Hubchat couldn't tell which hubs were told" in a sign-out's answer (src/lib/signOut.ts
+/// unreachedText: an empty name).
+fn unknown_hubs() -> Vec<Unreached> {
+    vec![Unreached { url: String::new(), name: String::new() }]
+}
 
 /// How long Sign out of this device waits for the hubs, all together.
 pub(crate) const LEAVE_BUDGET: std::time::Duration = std::time::Duration::from_secs(20);
@@ -456,6 +482,7 @@ pub fn init(dir: PathBuf, platform: Arc<dyn Platform>) -> Result<&'static Core, 
         host,
         key_lost: Mutex::new(None),
         identity_load: Default::default(),
+        signing_out_now: Default::default(),
         #[cfg(windows)]
         shortcut_projection: Mutex::new(None),
     };
@@ -687,7 +714,11 @@ impl Core {
     }
 
     fn load_key_inner(&self) -> Result<bool, String> {
-        // a sign-out that stopped partway is finished first; the identity never starts again
+        // a running sign-out finishes itself; one that stopped partway is finished first; the
+        // identity never starts again
+        if self.signing_out_now.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(false);
+        }
         if self.sign_out_pending() {
             let _ = self.finish_sign_out(crate::secrets::forget_identity);
             return Ok(false);
@@ -848,6 +879,9 @@ impl Core {
         if self.has_identity() {
             return Err("this device already has an identity".into());
         }
+        if self.signing_out_now.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(STILL_SIGNING_OUT.into());
+        }
         // The missing identity key prevents a signed hub unregister. Stop the
         // distributor locally; endpoint rejection or device revocation cleans
         // the hub registration when this device can no longer authenticate.
@@ -874,27 +908,72 @@ impl Core {
     /// sign-out that stops partway is finished by a retry or the next start.
     /// The answer: the hubs that weren't told.
     pub async fn sign_out(&self) -> Result<Vec<String>, String> {
-        self.sign_out_with(crate::secrets::forget_identity).await
+        let saved_key = |dir: &std::path::Path| match crate::secrets::load_identity(dir) {
+            Loaded::Found(me) | Loaded::Restored(me) => Some(me),
+            _ => None,
+        };
+        self.sign_out_with(crate::secrets::forget_identity, saved_key).await
     }
 
-    /// `sign_out`, with the key forgotten by `forget` (tests: never the real key store).
-    pub(crate) async fn sign_out_with(&self, forget: impl FnOnce(&std::path::Path) -> Result<(), String>) -> Result<Vec<String>, String> {
-        // marked and taken in one step under the gate: a second sign-out finds no engine
-        let taken = {
+    /// `sign_out`, with the key forgotten by `forget` and, for a retry, read by `saved_key` (tests:
+    /// never the real key store).
+    pub(crate) async fn sign_out_with(
+        &self,
+        forget: impl FnOnce(&std::path::Path) -> Result<(), String>,
+        saved_key: impl FnOnce(&std::path::Path) -> Option<Identity>,
+    ) -> Result<Vec<String>, String> {
+        // running, marked and taken in one step under the gate: a second sign-out finds it running,
+        // and nothing takes, loads or starts over an identity until it ends (SigningOut)
+        let (_running, taken) = {
             let _pass = self.identity_gate.enter();
+            if self.signing_out_now.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                return Err(STILL_SIGNING_OUT.into());
+            }
+            let running = SigningOut(&self.signing_out_now);
             let mut slot = self.engine.lock().unwrap();
             if slot.is_some() {
                 self.store.set_meta(SIGNING_OUT, "yes").map_err(|e| e.to_string())?;
             }
-            slot.take()
+            (running, slot.take())
         };
         let missed = match taken {
-            Some(e) => self.leave_engine(e).await,
-            None if self.sign_out_pending() => Vec::new(),
+            Some(e) => self.leave_engine(e, None).await,
+            // a retry of one that stopped partway: the hubs it couldn't tell are asked again while the
+            // key is still here; without it they are only named
+            None if self.sign_out_pending() => {
+                let mark = self.store.meta(SIGNING_OUT).ok().flatten().unwrap_or_default();
+                let kept: Option<Vec<Unreached>> = serde_json::from_str(&mark).ok();
+                let owner = self.store.meta("identity.address").ok().flatten();
+                let device = self.store.meta("device.id").ok().flatten();
+                match (saved_key(&self.dir).filter(|me| owner.as_deref() == Some(me.address().as_str())), device) {
+                    (Some(me), Some(device)) => {
+                        let profile = self.profile_from_store(&me);
+                        let e = Engine::new(self.store.clone(), me, profile, self.host.clone());
+                        e.set_device(&device, &self.device_name());
+                        let only = kept.map(|k| k.into_iter().map(|u| u.url).collect::<Vec<_>>());
+                        self.tell_hubs(e, only).await
+                    }
+                    _ => kept.unwrap_or_else(unknown_hubs),
+                }
+            }
             None => return Err("no identity yet".into()),
         };
+        let _ = self.store.set_meta(SIGNING_OUT, &mark_of(&missed));
         self.finish_sign_out(forget)?;
-        Ok(missed)
+        Ok(missed.into_iter().map(|u| u.name).collect())
+    }
+
+    /// Before an identity is taken on this device: never while a sign-out runs, and a sign-out that
+    /// stopped partway is finished first (its key and local data go). Otherwise its mark would stay,
+    /// and the next start would finish it, removing the identity just taken.
+    pub(crate) fn settle_sign_out(&self, forget: impl FnOnce(&std::path::Path) -> Result<(), String>) -> Result<(), String> {
+        if self.signing_out_now.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(STILL_SIGNING_OUT.into());
+        }
+        if self.sign_out_pending() {
+            self.finish_sign_out(forget)?;
+        }
+        Ok(())
     }
 
     pub(crate) fn sign_out_pending(&self) -> bool {
@@ -934,7 +1013,7 @@ impl Core {
         let Some(e) = taken else {
             return Ok(());
         };
-        self.leave_engine(e).await;
+        self.leave_engine(e, None).await;
         crate::secrets::forget_identity(&self.dir)?;
         self.store.wipe().map_err(|e| e.to_string())?;
         *self.key_lost.lock().unwrap() = None;
@@ -945,15 +1024,24 @@ impl Core {
 
     /// The hubs forget this device (push included) while the key can still
     /// sign, then the engine stops. The answer: the hubs that weren't told.
-    async fn leave_engine(&self, e: Arc<Engine>) -> Vec<String> {
+    async fn leave_engine(&self, e: Arc<Engine>, only: Option<Vec<String>>) -> Vec<Unreached> {
         self.forget_push();
         self.host.platform.shortcuts_changed();
         #[cfg(windows)]
         if let Some(app) = self.host.app.get() { crate::tray_recent::reset(app); }
+        self.tell_hubs(e, only).await
+    }
+
+    /// `Engine::leave_hubs` within LEAVE_BUDGET, then the engine stops. Saved hubs that can't be read,
+    /// or a task that fails, answer unknown_hubs: never "all told".
+    async fn tell_hubs(&self, e: Arc<Engine>, only: Option<Vec<String>>) -> Vec<Unreached> {
         let e2 = e.clone();
-        let missed = self.rt.spawn(async move { e2.leave_hubs(LEAVE_BUDGET).await }).await.unwrap_or_default();
+        let told = self.rt.spawn(async move { e2.leave_hubs(only.as_deref(), LEAVE_BUDGET).await }).await;
         e.shutdown();
-        missed
+        match told {
+            Ok(Ok(missed)) => missed,
+            _ => unknown_hubs(),
+        }
     }
 
     /// Take an identity on this device (new, recovery words, a link, a key
@@ -974,6 +1062,8 @@ impl Core {
         if let Some(err) = self.mismatch_guard_error(&me, brand_new) {
             return Err(err);
         }
+        // a running sign-out refuses; one that stopped partway is finished before this key is saved
+        self.settle_sign_out(crate::secrets::forget_identity)?;
         let owner = self.store.meta("identity.address").ok().flatten();
         if must_wipe(owner.as_deref(), self.had_identity(), &me.address(), brand_new) {
             self.forget_push();
@@ -1132,6 +1222,7 @@ mod linux_r5_core_tests {
             host,
             key_lost: Mutex::new(None),
             identity_load: Default::default(),
+            signing_out_now: Default::default(),
         };
         (core, rt, dir)
     }
@@ -1550,6 +1641,7 @@ mod tray_identity_tests {
             host,
             key_lost: Mutex::new(None),
             identity_load: Default::default(),
+            signing_out_now: Default::default(),
             shortcut_projection: Mutex::new(None),
         }));
         let me = Identity::generate("alice").unwrap();
@@ -1609,11 +1701,11 @@ mod sign_out_tests {
     use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, Mutex, OnceLock};
 
-    use hubchat_core::engine::Engine;
+    use hubchat_core::engine::{Engine, Unreached};
     use hubchat_core::store::Store;
     use hubchat_core::{HubAddress, Identity};
 
-    use super::{Core, Platform, ShellHost, SIGNING_OUT};
+    use super::{Core, Platform, ShellHost, SIGNING_OUT, STILL_SIGNING_OUT};
 
     struct StubPlatform(PathBuf);
     impl Platform for StubPlatform {
@@ -1658,6 +1750,7 @@ mod sign_out_tests {
             host,
             key_lost: Mutex::new(None),
             identity_load: Default::default(),
+            signing_out_now: Default::default(),
             shortcut_projection: Mutex::new(None),
         };
         let me = Identity::generate("alice").unwrap();
@@ -1702,7 +1795,7 @@ mod sign_out_tests {
         let hub = rt.block_on(fake_hub(core.store.clone(), order.clone()));
         core.store.add_hub(&hub, "t").unwrap();
         let log = order.clone();
-        let missed = rt.block_on(core.sign_out_with(move |_| { log.lock().unwrap().push("forget key".into()); Ok(()) })).unwrap();
+        let missed = rt.block_on(core.sign_out_with(move |_| { log.lock().unwrap().push("forget key".into()); Ok(()) }, |_| None)).unwrap();
         assert!(missed.is_empty(), "{missed:?}");
         assert_eq!(*order.lock().unwrap(), ["DELETE /api/push marked=true", "DELETE device marked=true", "forget key"]);
         // nothing of the identity is left: the next start is the welcome screen, not the lost-key screen
@@ -1711,13 +1804,13 @@ mod sign_out_tests {
         assert_eq!(core.store.draft("peer.111111").unwrap(), None);
         assert!(core.store.hubs().unwrap().is_empty());
         // nothing to sign out of a second time
-        assert_eq!(rt.block_on(core.sign_out_with(|_| Ok(()))).unwrap_err(), "no identity yet");
+        assert_eq!(rt.block_on(core.sign_out_with(|_| Ok(()), |_| None)).unwrap_err(), "no identity yet");
     }
 
     #[test]
     fn a_sign_out_that_stops_partway_stays_stopped_and_a_retry_finishes_it() {
         let (core, rt) = signed_in("partway");
-        let err = rt.block_on(core.sign_out_with(|_| Err("the key store is locked".into()))).unwrap_err();
+        let err = rt.block_on(core.sign_out_with(|_| Err("the key store is locked".into()), |_| None)).unwrap_err();
         assert_eq!(err, "Hubchat couldn't finish signing out: the key store is locked");
         // stopped, marked, its data still here, and the screen offers to finish
         assert!(!core.has_identity() && core.sign_out_pending());
@@ -1725,23 +1818,157 @@ mod sign_out_tests {
         let lost = serde_json::to_value(core.key_lost().unwrap()).unwrap();
         assert_eq!(lost["signing_out"], true, "{lost}");
         // a retry, with no engine, finishes it
-        assert!(rt.block_on(core.sign_out_with(|_| Ok(()))).unwrap().is_empty());
+        assert!(rt.block_on(core.sign_out_with(|_| Ok(()), |_| None)).unwrap().is_empty());
         assert!(!core.sign_out_pending() && !core.had_identity() && core.key_lost().is_none());
     }
 
     #[test]
     fn a_start_after_a_sign_out_that_stopped_partway_finishes_it_or_stays_stopped() {
         let (core, rt) = signed_in("restart");
-        let _ = rt.block_on(core.sign_out_with(|_| Err("the key store is locked".into())));
+        let _ = rt.block_on(core.sign_out_with(|_| Err("the key store is locked".into()), |_| None));
         assert!(core.sign_out_pending());
         // the next start (load_key's first step), with a key store that now answers
         core.finish_sign_out(|_| Ok(())).unwrap();
         assert!(!core.sign_out_pending() && !core.had_identity() && !core.has_identity() && core.key_lost().is_none());
         // and with one that still doesn't: stays stopped, and says so
         let (core, rt) = signed_in("restart-locked");
-        let _ = rt.block_on(core.sign_out_with(|_| Err("locked".into())));
+        let _ = rt.block_on(core.sign_out_with(|_| Err("locked".into()), |_| None));
         assert!(core.finish_sign_out(|_| Err("locked".into())).is_err());
         assert!(!core.has_identity() && core.sign_out_pending());
         assert_eq!(serde_json::to_value(core.key_lost().unwrap()).unwrap()["signing_out"], true);
+    }
+
+    /// A hub on loopback that notes each request (method, path kind), waits for a permit of `hold`, then
+    /// answers `code` (read when the request comes).
+    async fn held_hub(code: Arc<std::sync::atomic::AtomicU16>, hold: Arc<tokio::sync::Semaphore>, seen: Arc<Mutex<Vec<String>>>) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = HubAddress::parse(&format!("http://{}", l.local_addr().unwrap())).unwrap().to_string();
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = l.accept().await {
+                let (code, hold, seen) = (code.clone(), hold.clone(), seen.clone());
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let n = s.read(&mut buf).await.unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let mut words = head.split(' ');
+                    let method = words.next().unwrap_or("").to_string();
+                    let path = words.next().unwrap_or("").split('?').next().unwrap_or("").to_string();
+                    let kind = if path.starts_with("/api/devices/") { "device".to_string() } else { path };
+                    seen.lock().unwrap().push(format!("{method} {kind}"));
+                    drop(hold.acquire().await.unwrap());
+                    let code = code.load(std::sync::atomic::Ordering::SeqCst);
+                    let resp = format!("HTTP/1.1 {code} X\r\ncontent-type: application/json\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{{}}");
+                    let _ = s.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+        url
+    }
+
+    fn open_hub() -> Arc<tokio::sync::Semaphore> {
+        Arc::new(tokio::sync::Semaphore::new(1000))
+    }
+
+    fn me_of(core: &Core) -> Identity {
+        core.engine.lock().unwrap().as_ref().unwrap().me().clone()
+    }
+
+    #[test]
+    fn taking_an_identity_after_a_sign_out_that_stopped_partway_finishes_it_first() {
+        // nothing stopped: nothing to finish, nothing removed
+        let (core, _rt) = signed_in("settle-none");
+        *core.engine.lock().unwrap() = None;
+        core.settle_sign_out(|_| panic!("nothing to finish")).unwrap();
+        assert_eq!(core.store.draft("peer.111111").unwrap().as_deref(), Some("unsent draft"));
+        // stopped at the key store, then the same address is linked back: the sign-out is finished
+        // before its key is saved, so no mark is left for the next start to finish (it would remove
+        // the identity just taken)
+        let (core, rt) = signed_in("settle");
+        let _ = rt.block_on(core.sign_out_with(|_| Err("the key store is locked".into()), |_| None));
+        assert!(core.sign_out_pending());
+        // the key store still refuses: the identity isn't taken, and it stays stopped
+        assert_eq!(core.settle_sign_out(|_| Err("locked".into())).unwrap_err(), "Hubchat couldn't finish signing out: locked");
+        assert!(core.sign_out_pending());
+        assert_eq!(core.store.draft("peer.111111").unwrap().as_deref(), Some("unsent draft"));
+        core.settle_sign_out(|_| Ok(())).unwrap();
+        assert!(!core.sign_out_pending() && !core.had_identity() && core.key_lost().is_none());
+        assert_eq!(core.store.draft("peer.111111").unwrap(), None);
+    }
+
+    #[test]
+    fn nothing_takes_loads_or_starts_over_an_identity_while_the_hubs_are_being_told() {
+        let (core, rt) = signed_in("running");
+        let (code, hold, seen) = (Arc::new(std::sync::atomic::AtomicU16::new(200)), Arc::new(tokio::sync::Semaphore::new(0)), Arc::new(Mutex::new(Vec::new())));
+        let hub = rt.block_on(held_hub(code, hold.clone(), seen.clone()));
+        core.store.add_hub(&hub, "t").unwrap();
+        std::thread::scope(|scope| {
+            let signing = scope.spawn(|| rt.block_on(core.sign_out_with(|_| Ok(()), |_| None)));
+            let started = std::time::Instant::now();
+            while seen.lock().unwrap().is_empty() {
+                assert!(started.elapsed() < std::time::Duration::from_secs(10), "the hub was never asked");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            // the engine is taken, so this device has no identity now; still, nothing may take one,
+            assert!(!core.has_identity());
+            assert_eq!(core.settle_sign_out(|_| panic!("finished twice")).unwrap_err(), STILL_SIGNING_OUT);
+            // a cold attach or Try again doesn't finish it a second time,
+            assert_eq!(core.load_key_inner(), Ok(false));
+            assert!(core.sign_out_pending());
+            assert_eq!(core.store.draft("peer.111111").unwrap().as_deref(), Some("unsent draft"));
+            // Start over waits too, and so does a second sign-out
+            assert_eq!(core.start_over().unwrap_err(), STILL_SIGNING_OUT);
+            assert_eq!(rt.block_on(core.sign_out_with(|_| panic!("finished twice"), |_| None)).unwrap_err(), STILL_SIGNING_OUT);
+            hold.add_permits(1000);
+            assert!(signing.join().unwrap().unwrap().is_empty());
+        });
+        assert!(!core.sign_out_pending() && !core.had_identity() && core.key_lost().is_none());
+        assert_eq!(core.store.draft("peer.111111").unwrap(), None);
+        // it ended: taking an identity is allowed again
+        core.settle_sign_out(|_| panic!("nothing to finish")).unwrap();
+    }
+
+    #[test]
+    fn a_retry_asks_again_only_the_hubs_that_werent_told_while_the_key_is_here() {
+        for key_kept in [true, false] {
+            let (core, rt) = signed_in(if key_kept { "retry-key" } else { "retry-nokey" });
+            let me = me_of(&core);
+            let (home_seen, office_seen) = (Arc::new(Mutex::new(Vec::new())), Arc::new(Mutex::new(Vec::new())));
+            let office_code = Arc::new(std::sync::atomic::AtomicU16::new(500));
+            let home = rt.block_on(held_hub(Arc::new(200.into()), open_hub(), home_seen.clone()));
+            let office = rt.block_on(held_hub(office_code.clone(), open_hub(), office_seen.clone()));
+            for (url, name) in [(&home, "home"), (&office, "office")] {
+                core.store.add_hub(url, "t").unwrap();
+                core.store.hub_ok(url, name, None, "t").unwrap();
+            }
+            // office refuses, then the key store refuses: stopped, and office is kept as not told
+            let _ = rt.block_on(core.sign_out_with(|_| Err("the key store is locked".into()), |_| None)).unwrap_err();
+            assert_eq!((home_seen.lock().unwrap().len(), office_seen.lock().unwrap().len()), (2, 2));
+            let kept: Vec<Unreached> = serde_json::from_str(&core.store.meta(SIGNING_OUT).unwrap().unwrap()).unwrap();
+            assert_eq!(kept, vec![Unreached { url: office.clone(), name: "office".into() }]);
+            office_code.store(200, std::sync::atomic::Ordering::SeqCst);
+            let missed = rt.block_on(core.sign_out_with(|_| Ok(()), move |_| key_kept.then_some(me))).unwrap();
+            if key_kept {
+                // office is asked again and answers; home, already told, isn't asked again
+                assert!(missed.is_empty(), "{missed:?}");
+                assert_eq!((home_seen.lock().unwrap().len(), office_seen.lock().unwrap().len()), (2, 4));
+            } else {
+                // without the key nobody can be asked: office is named again
+                assert_eq!(missed, ["office"]);
+                assert_eq!((home_seen.lock().unwrap().len(), office_seen.lock().unwrap().len()), (2, 2));
+            }
+            assert!(!core.sign_out_pending() && !core.had_identity());
+        }
+    }
+
+    #[test]
+    fn when_nobody_knows_which_hubs_were_told_it_never_reads_as_all_told() {
+        // the saved hubs couldn't be read, or the hub task failed: the answer is an unnamed hub
+        // (signOut.ts unreachedText), and the mark asks every hub again at a retry
+        assert_eq!(super::mark_of(&super::unknown_hubs()), "yes");
+        let (core, rt) = signed_in("unknown");
+        let _ = rt.block_on(core.sign_out_with(|_| Err("locked".into()), |_| None));
+        core.store.set_meta(SIGNING_OUT, "yes").unwrap();
+        assert_eq!(rt.block_on(core.sign_out_with(|_| Ok(()), |_| None)).unwrap(), [""]);
     }
 }

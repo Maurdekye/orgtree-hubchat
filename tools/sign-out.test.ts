@@ -4,7 +4,7 @@
 // can still ask; a hub that can't be told never stops the sign-out.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { afterForgettingPush, signOutText, stoppedText, unreachedText } from "../src/lib/signOut.ts";
+import { afterForgettingPush, pushOffTellsHubs, signOutText, stoppedText, unreachedText } from "../src/lib/signOut.ts";
 
 test("the confirmation names what goes, what stays, and the way back", () => {
   const t = signOutText("PC");
@@ -47,4 +47,13 @@ test("a sign-out that stopped partway offers to finish it", () => {
   assert.equal(t.title, "Hubchat couldn't finish signing out");
   assert.equal(t.body, "Signing out of this browser stopped partway: some of its key, chats or settings are still here. Try again to remove them.");
   assert.equal(t.retry, "Try again");
+});
+
+test("when nobody knows which hubs heard, it never reads as all told", () => {
+  assert.equal(unreachedText([""], "PC"), "Signed out. Hubchat couldn't tell whether its hubs heard, so they may still list this PC.");
+});
+
+test("Sign out leaves telling the hubs about push to its budgeted hub step; Start over tells them first", () => {
+  assert.equal(pushOffTellsHubs("hc_sign_out"), false);
+  assert.equal(pushOffTellsHubs("hc_start_over"), true);
 });

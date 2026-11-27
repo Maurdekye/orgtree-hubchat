@@ -83,7 +83,7 @@ async fn every_hub_forgets_this_devices_push_and_the_device_and_the_unreached_ar
     let gone = closed_port().await;
     let e = engine_with(&[(&hub.url, "home"), (&old.url, "old hub"), (&refusing.url, "flaky"), (&gone, "")]);
     let device = e.device().0;
-    let missed = e.leave_hubs(Duration::from_secs(20)).await;
+    let missed: Vec<String> = e.leave_hubs(None, Duration::from_secs(20)).await.unwrap().into_iter().map(|u| u.name).collect();
     // a hub that answers is asked both, signed; push first, then the device
     let asked = hub.seen.lock().unwrap().clone();
     assert_eq!(
@@ -107,9 +107,9 @@ async fn a_hub_that_never_answers_is_given_up_on_at_the_budget() {
     let (hub, silent) = (fake_hub(Some(200)).await, fake_hub(None).await);
     let e = engine_with(&[(&hub.url, "home"), (&silent.url, "silent")]);
     let started = std::time::Instant::now();
-    let missed = e.leave_hubs(Duration::from_millis(500)).await;
+    let missed = e.leave_hubs(None, Duration::from_millis(500)).await.unwrap();
     assert!(started.elapsed() < Duration::from_secs(5), "took {:?}", started.elapsed());
-    assert_eq!(missed, vec!["silent".to_string()]);
+    assert_eq!(missed, vec![Unreached { url: HubAddress::parse(&silent.url).unwrap().to_string(), name: "silent".into() }]);
     assert_eq!(hub.seen.lock().unwrap().len(), 2, "the answering hub was told in the meantime");
     e.shutdown();
 }
@@ -117,6 +117,20 @@ async fn a_hub_that_never_answers_is_given_up_on_at_the_budget() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn with_no_hubs_there_is_nobody_to_tell() {
     let e = engine_with(&[]);
-    assert!(e.leave_hubs(Duration::from_secs(1)).await.is_empty());
+    assert!(e.leave_hubs(None, Duration::from_secs(1)).await.unwrap().is_empty());
+    e.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_retry_asks_only_the_hubs_it_names() {
+    let (told, missed) = (fake_hub(Some(200)).await, fake_hub(Some(200)).await);
+    let e = engine_with(&[(&told.url, "home"), (&missed.url, "office")]);
+    let only = [HubAddress::parse(&missed.url).unwrap().to_string()];
+    assert!(e.leave_hubs(Some(&only), Duration::from_secs(20)).await.unwrap().is_empty());
+    assert!(told.seen.lock().unwrap().is_empty(), "a hub already told isn't asked again");
+    assert_eq!(missed.seen.lock().unwrap().len(), 2);
+    // nothing left to retry: nobody is asked
+    assert!(e.leave_hubs(Some(&[]), Duration::from_secs(1)).await.unwrap().is_empty());
+    assert_eq!(missed.seen.lock().unwrap().len(), 2);
     e.shutdown();
 }

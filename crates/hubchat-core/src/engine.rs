@@ -720,14 +720,17 @@ impl Engine {
     }
 
     /// Leaving this device (Sign out of this device, or switching to another
-    /// identity): every saved hub, connected or not, is asked to forget this
-    /// device's push registration and to take it off the address's device
-    /// list, signed with the key while it is still here. Older hubs answer
-    /// 404: nothing to do. All hubs at once, at most `budget` in all. Never
-    /// unregisters the address: the other devices still use it. The answer:
-    /// the hubs that weren't told (unreachable, refused, out of time), by name.
-    pub async fn leave_hubs(&self, budget: Duration) -> Vec<String> {
-        let hubs = self.store.hubs().unwrap_or_default();
+    /// identity): every saved hub (`only`: just those addresses, the ones a
+    /// sign-out that stopped partway couldn't tell), connected or not, is
+    /// asked to forget this device's push registration and to take it off
+    /// the address's device list, signed with the key while it is still
+    /// here. Older hubs answer 404: nothing to do. All hubs at once, at most
+    /// `budget` in all. Never unregisters the address: the other devices
+    /// still use it. The answer: the hubs that weren't told (unreachable,
+    /// refused, out of time); an error when the saved hubs can't be read
+    /// (then nobody knows which were told).
+    pub async fn leave_hubs(&self, only: Option<&[String]>, budget: Duration) -> Result<Vec<Unreached>> {
+        let hubs: Vec<_> = self.store.hubs()?.into_iter().filter(|h| only.is_none_or(|o| o.contains(&h.url))).collect();
         let (device_id, _) = self.device();
         let told: Mutex<Vec<String>> = Mutex::new(Vec::new());
         // clients of their own: the running sessions' are stopped with the engine
@@ -746,7 +749,11 @@ impl Engine {
             _ = crate::rt::time::sleep(budget) => {}
         }
         let told = told.into_inner().unwrap_or_default();
-        hubs.into_iter().filter(|h| !told.contains(&h.url)).map(|h| if h.name.trim().is_empty() { h.url } else { h.name }).collect()
+        Ok(hubs
+            .into_iter()
+            .filter(|h| !told.contains(&h.url))
+            .map(|h| Unreached { name: if h.name.trim().is_empty() { h.url.clone() } else { h.name }, url: h.url })
+            .collect())
     }
 
     pub fn hub_statuses(&self) -> Vec<HubStatus> {
@@ -2663,6 +2670,14 @@ mod engine_blocks;
 
 #[path = "engine_status.rs"]
 mod engine_status;
+/// A hub `leave_hubs` couldn't tell: its address, and the name to show for it (its address when it
+/// has none).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
+pub struct Unreached {
+    pub url: String,
+    pub name: String,
+}
+
 pub use engine_status::{chosen_status, STATUSES};
 
 #[path = "engine_translation.rs"]

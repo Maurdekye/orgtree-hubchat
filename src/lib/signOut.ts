@@ -22,6 +22,8 @@ export function signOutText(device: string): SignOutText {
  *  null when every hub was told. */
 export function unreachedText(hubs: string[], device: string): string | null {
   if (!hubs.length) return null;
+  // an unnamed hub: Hubchat couldn't read its hubs or tell which were told (core.rs unknown_hubs)
+  if (hubs.some((h) => !h)) return `Signed out. Hubchat couldn't tell whether its hubs heard, so they may still list this ${device}.`;
   const names = hubs.length === 1 ? hubs[0] : hubs.slice(0, -1).join(", ") + " and " + hubs[hubs.length - 1];
   return `Signed out. Hubchat couldn't reach ${names}, so ${hubs.length === 1 ? "it" : "they"} may still list this ${device}.`;
 }
@@ -34,6 +36,14 @@ export function stoppedText(device: string): { title: string; body: string; retr
     retry: "Try again",
     busy: "Signing out…",
   };
+}
+
+/** Whether turning this browser's notifications off before `cmd` tells the hubs there and then. Start
+ *  over does (it has no key afterwards to tell them with, and no other step that does). Sign out
+ *  doesn't: its own hub step asks every hub to forget the push and the device at once, all within one
+ *  20-second budget (engine leave_hubs), so the page only ends the subscription and forgets it. */
+export function pushOffTellsHubs(cmd: string): boolean {
+  return cmd === "hc_start_over";
 }
 
 /** Tell the hubs to forget this browser's push subscription while the key can still ask, then `then`.

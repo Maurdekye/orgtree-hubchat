@@ -15,7 +15,7 @@ import { saveFile, saveText } from "./save";
 import { scanQr } from "./scan";
 import { serverName, suggestedHubs } from "./suggest";
 import { disablePush, enablePush, pendingChat, showUnread, syncPush, takePendingChat, watchPush } from "./push";
-import { afterForgettingPush } from "../lib/signOut";
+import { afterForgettingPush, pushOffTellsHubs } from "../lib/signOut";
 import { newerBuild } from "./update";
 import { sentence, type FromCore, type ToCore } from "./wire";
 
@@ -217,8 +217,9 @@ export async function openCore(takeOver = false): Promise<Core | null> {
     if (cmd === "hc_take_pending_chat") return Promise.resolve(takePendingChat()) as Promise<T>;
     if (cmd === "hc_set_notifications") return setNotifications((args ?? {}) as { enabled: boolean; preview: boolean; sound: boolean }) as Promise<T>;
     if (cmd === "hc_start_over" || cmd === "hc_sign_out") {
-      // the hubs forget where this browser's notifications went, while there is still a key to ask with
-      return afterForgettingPush(() => disablePush(call, true), () => call<T>(cmd, args));
+      // the subscription ends first; the hubs forget it while there is still a key to ask with (Sign
+      // out: in its own budgeted hub step, signOut.ts pushOffTellsHubs)
+      return afterForgettingPush(() => disablePush(call, pushOffTellsHubs(cmd)), () => call<T>(cmd, args));
     }
     if (cmd === "hc_file_preview" || cmd === "hc_attachment_preview") return picture(cmd, (args ?? {}) as Record<string, unknown>) as Promise<T>;
     if (cmd === "hc_open_attachment") return openAttachment((args ?? {}) as Record<string, unknown>) as Promise<T>;
