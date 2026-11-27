@@ -127,6 +127,8 @@ Each person has one identity: your address, made from your key. To use it on ano
 
 Don't scan Orgtree's setup code with a second phone: it would make a second identity, and your organization would know only one of them.
 
+**Signing out of a device.** To take your identity off one device, open **Settings › Devices › Sign out of this device** and confirm with **Sign out**. Hubchat first asks your hubs to forget the device, including where its notifications went. Then it removes the device's key, chats, hubs and settings and shows the welcome screen. Your address keeps working on your other devices, and you can bring it back to this one later by linking it (above) or with your recovery words. Save your recovery words first if this is your only device.
+
 ## 7. When it stops working
 
 - **You lost the key or are recovering an identity.** Choose **I already use Hubchat > Recovery words** (or **Recovery words** on the lost-key screen), then **Choose recovery words file** to open the text file Hubchat saved. Desktop and Android read it locally; Android uses its system file picker. The 24 words fill the input for you to check before **Continue**. You can still type or paste them. The file can also contain just the 24 words in order, separated by spaces or newlines (up to 64 KiB). A wrong file shows an error; Continue uses the same validation as typed words. Keep the original backup private. See [recovery-file help](https://github.com/Maurdekye/orgtree-hubchat/blob/main/docs/recovery-file.md).

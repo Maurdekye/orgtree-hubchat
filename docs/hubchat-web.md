@@ -320,8 +320,8 @@ there only through the browser's own push. A hub with Web Push (Mail hub
   the device in use (as the apps do), and a hub holds a browser's push
   while any device of the person is in use. The unread count shows on the
   app's icon and in the tab's title, `(3) Hubchat`.
-- **Start over** tells every hub to forget the subscription first, while
-  there is still a key to ask with.
+- **Start over** and **Sign out of this device** tell every hub to forget
+  the subscription first, while there is still a key to ask with.
 
 Without notifications (not turned on, refused, or a hub without Web Push)
 messages arrive while the app is open.
