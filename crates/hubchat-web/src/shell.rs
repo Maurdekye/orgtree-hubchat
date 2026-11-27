@@ -1158,7 +1158,7 @@ pub(crate) mod tests {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
             // the engine is taken, so this page has no identity now; still, nothing may take one
-            assert_eq!(sh.plan_identity("hc_create_identity", &json!({ "id": "kim", "name": "Kim" })).unwrap_err(), STILL_SIGNING_OUT);
+            assert_eq!(sh.plan_identity("hc_create_identity", &json!({ "id": "kim", "name": "Kim" })).err().unwrap(), STILL_SIGNING_OUT);
             let plan = Adoption { me: Identity::generate("kim").unwrap(), brand_new: true, meta: Vec::new(), hubs: Vec::new() };
             assert_eq!(sh.adopt(plan).unwrap_err(), STILL_SIGNING_OUT);
             assert_eq!(sh.start_over().unwrap_err(), STILL_SIGNING_OUT);
