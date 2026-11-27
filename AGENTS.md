@@ -817,3 +817,5 @@
   window-watch phrases/seconds (hubchat.update/window). Web and Android are
   excluded; Android still has no file log. [decided: coordinator mc2088b1e930f;
   verified: window_watch.rs, tools/desktop-diagnostics.test.mjs; docs/logging.md]
+
+- 2026-11-27: LaTeX math in messages: Orgtree's delimiter rules (src/lib/math.ts) + KaTeX 0.16.47, attributes only under .katex, fonts never data: URLs. docs/math.md
