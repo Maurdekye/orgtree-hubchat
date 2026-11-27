@@ -1,9 +1,11 @@
 # Releasing Hubchat with GitHub Actions
 
 Hubchat's published builds come from GitHub Actions, not from anyone's PC. Pushing a
-version tag builds every platform on GitHub's free runners and leaves a **draft**
-release. A person checks the draft and publishes it. Nothing is ever published
-automatically.
+version tag builds every platform on GitHub's free runners and leaves a complete,
+checked **draft** release ("draft ready"). Nothing is public until one manual command
+publishes every app's ready draft together: [Publishing](#publishing). Each app's tag
+runs once, on its own and in parallel with Orgtree's and the mail hub's (USER 2026-11-27
+m83564ad801f0, mabde2ca29ca3); there is no rehearsal run first.
 
 | Platform | Workflow | Runner | Release assets |
 |---|---|---|---|
@@ -30,7 +32,13 @@ automatically.
    - The builds themselves only ever hold throwaway keys.
 2. **stage**: writes `latest.json` from the platforms' updater entries, and
    `SHA256SUMS.txt`. It refuses a release without its three Hubchat Web files.
-3. **draft**: `gh release create --draft` with every asset.
+3. **draft**: `gh release create --draft` with every asset, then the draft itself is
+   checked as installed apps will check the release (`.github/ci/release/verify-published.mjs`
+   in DRAFT mode: every asset re-read from GitHub against `SHA256SUMS.txt`, every
+   `latest.json` entry pointing at an asset of the release with its `.sig` binding the
+   version, the APK copy, the Hubchat Web files against `build-info-web.json`). Green
+   means **draft ready**; if any step fails, the summary says **NOT published, draft
+   left**, and the draft stays visible only to the repository's members.
 
 ## Cutting a release
 
@@ -62,42 +70,44 @@ automatically.
 5. When the four builds finish, the `sign` job signs everything with the real keys
    from the `release` environment (see [Secrets](#secrets-and-the-release-environment)).
    It doesn't wait for an approval: pushing the tag is the decision to release.
-6. A draft release `v<v>` appears with every asset. The run's summary lists each
-   file's size and SHA-256.
+6. A draft release `v<v>` appears with every asset, and the run's summary says **draft
+   ready** (or **NOT published, draft left**). It lists each file's size and SHA-256.
+
+The user's go to publish comes before the tag is pushed. Orgtree's and the mail hub's
+tags can be pushed at the same time: no app waits for another's CI. If the draft job
+failed after creating the draft, delete the draft first (`gh release delete v<v> -R
+Maurdekye/orgtree-hubchat --yes` keeps the tag), then re-run the failed jobs: the job
+refuses to make a second draft.
 
 The pipeline is the only way a release is made. Don't also run the old local publish
 script for the tag: the workflow would then fail at the draft step, because the
 release already exists.
 
-## Checking and publishing the draft
+## Publishing
+
+Optional before publishing: install the Windows setup or the APK from the draft
+(`gh release download v<v> -R Maurdekye/orgtree-hubchat -p '*.apk'`) if the release
+changes anything risky.
+
+Publishing is one command in the Orgtree repository, for every app's ready draft
+together (Orgtree's docs/ci-release.md, "Publishing", describes it in full):
 
 ```
-gh release view v<v> -R Maurdekye/orgtree-hubchat
-gh release download v<v> -R Maurdekye/orgtree-hubchat -D check-v<v>
-cd check-v<v> && sha256sum -c SHA256SUMS.txt
+node tools/publish-release.mjs hubchat=<v> orgtree=<x> mailhub=<y>     # any of the three
 ```
 
-- `latest.json` has one entry per platform: `windows-x86_64`, `darwin-aarch64`,
-  `darwin-x86_64`, `linux-x86_64`, `linux-x86_64-deb`, `linux-aarch64`,
-  `linux-aarch64-deb` and `android-aarch64` (the versioned APK; desktop updaters ignore it). Each URL points at this release, and
-  each signature equals the matching `.sig` file.
-- Install the Windows setup and the APK on a test machine or phone if the release
-  changes anything risky.
-
-Publish it, which makes it the release every installed Hubchat updates from:
-
-```
-gh release edit v<v> -R Maurdekye/orgtree-hubchat --draft=false --latest
-```
-
-Publishing also starts **publish-web-image**, which pushes the release's
-Hubchat Web image to the registry ([below](#hubchat-web)).
+It checks every named draft first and publishes nothing unless all are ready, then
+publishes Hubchat as "latest" (the release every installed Hubchat updates from). It
+makes sure **verify-release** and **publish-web-image** (which pushes the release's
+Hubchat Web image to the registry, [below](#hubchat-web)) start for the tag, dispatching
+any that didn't, and prints their results.
 
 Publishing starts the **verify-release** workflow. It downloads every public asset as an installed app would and checks it against `SHA256SUMS.txt`, the updater feed and the tag, and it checks that GitHub's "latest" release is the right one. A red run means: roll back (below). To check a release again: `gh workflow run verify-release.yml -f tag=<tag>`.
 
 ## Rolling back
 
-- **Before publishing**: delete the draft and the tag, fix, and tag again.
+- **Before publishing** (a red draft, or a problem found in it): delete the draft and
+  the tag, fix, and tag again. No update feed has seen it.
   ```
   gh release delete v<v> -R Maurdekye/orgtree-hubchat --yes
   git push origin :refs/tags/v<v>
@@ -120,6 +130,7 @@ Publishing starts the **verify-release** workflow. It downloads every public ass
 
 ## Test runs
 
+Optional: the tag run needs no rehearsal, since it stops at a draft nobody else sees.
 A push to the branch `ci-test/hubchat-release` runs the whole pipeline as a test.
 Throwaway keys stand in for the real ones, and no release is created; the staged
 assets are the run's artifact. Each `build-<platform>.yml` also runs on its own
@@ -129,10 +140,12 @@ manual run can test any tag or commit:
 
 ```
 gh workflow run release.yml -R Maurdekye/orgtree-hubchat -f ref=v<v>
+gh workflow run release.yml -R Maurdekye/orgtree-hubchat -f ref=<commit> -f draft=true   # + a hidden, tagless draft, checked, then deleted
 ```
 
 A manual run is always a test, even one started from a tag: only a pushed tag
-makes a release.
+makes a release. A rehearsal draft is named `ci-test-draft-<run id>`, creates no tag,
+holds throwaway-signed files and is deleted at the end (`-f keep_draft=true` leaves it).
 
 Throwaway-signed files can't update or install over a real Hubchat. Never publish
 them.

@@ -337,8 +337,10 @@ procedure, including checking a draft and rolling a release back. In short:
    (the release's text) and `docs/update-notes-<version>.txt` (one or two
    sentences the apps show when they offer the update).
 3. **Tag that commit** `v<version>` and push the tag. The `release` workflow
-   builds every platform, signs everything and leaves a draft release.
-4. **Check the draft, then publish it.**
+   builds every platform, signs everything and leaves a checked draft release
+   ("draft ready" in the run's summary).
+4. **Publish it** with the other apps' ready drafts, in one command from the
+   Orgtree repository: `node tools/publish-release.mjs hubchat=<version> ...`.
 
 Each published release is also the update feed for the apps. Its
 `latest.json` has one entry per platform, `android-aarch64` (the APK) among
