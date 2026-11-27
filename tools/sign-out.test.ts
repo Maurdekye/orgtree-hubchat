@@ -4,7 +4,7 @@
 // can still ask; a hub that can't be told never stops the sign-out.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { afterForgettingPush, signOutText } from "../src/lib/signOut.ts";
+import { afterForgettingPush, signOutText, stoppedText, unreachedText } from "../src/lib/signOut.ts";
 
 test("the confirmation names what goes, what stays, and the way back", () => {
   const t = signOutText("PC");
@@ -33,4 +33,18 @@ test("a hub that can't be told doesn't stop the sign-out", async () => {
 
 test("a sign-out that fails says so", async () => {
   await assert.rejects(afterForgettingPush(async () => {}, async () => { throw new Error("the key store refused"); }), /the key store refused/);
+});
+
+test("hubs that couldn't be told are named after signing out; none, nothing is said", () => {
+  assert.equal(unreachedText([], "PC"), null);
+  assert.equal(unreachedText(["home"], "PC"), "Signed out. Hubchat couldn't reach home, so it may still list this PC.");
+  assert.equal(unreachedText(["home", "office", "https://hub.example"], "phone"),
+    "Signed out. Hubchat couldn't reach home, office and https://hub.example, so they may still list this phone.");
+});
+
+test("a sign-out that stopped partway offers to finish it", () => {
+  const t = stoppedText("browser");
+  assert.equal(t.title, "Hubchat couldn't finish signing out");
+  assert.equal(t.body, "Signing out of this browser stopped partway: some of its key, chats or settings are still here. Try again to remove them.");
+  assert.equal(t.retry, "Try again");
 });

@@ -2672,3 +2672,7 @@ mod status_tests;
 #[cfg(test)]
 #[path = "engine_webpush_tests.rs"]
 mod webpush_tests;
+
+#[cfg(test)]
+#[path = "engine_leave_tests.rs"]
+mod leave_tests;
