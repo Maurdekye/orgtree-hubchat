@@ -1,0 +1,3 @@
+- **Sign out of this device.** In Settings, signing out removes this device's key, chats, hubs and settings. Your address keeps working on your other devices.
+- **LaTeX in messages.** Use `$...$` or `\(...\)` for inline math and `$$...$$` or `\[...\]` for display math, as in Orgtree.
+- **Chats open at the bottom.** Hubchat starts at the latest message even when a picture near the end loads late.

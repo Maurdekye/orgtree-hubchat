@@ -1,0 +1,1 @@
+Sign out of this device from Settings and read typeset LaTeX in messages. Chats now open at the bottom even when an image near the end loads late.
