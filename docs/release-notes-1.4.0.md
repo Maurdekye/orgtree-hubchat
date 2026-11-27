@@ -44,5 +44,5 @@ Hubchat 1.4.0 shows when your contacts were last around, lets you block contacts
 
 ## Fixes
 
-- PLACEHOLDER (tray-freeze fix, @ticket:orgtree/hubchat-freezes-about-half-the-time-when-a-conta): Windows: choosing a contact from the tray icon's recent-chats list no longer freezes Hubchat. (The freeze dates back to 1.2.3, so 1.3.x had it too.)
+- Windows: choosing a contact from the tray icon's recent-chats list no longer freezes Hubchat. The freeze had been there since 1.2.3, so 1.3.x had it too.
 - **Dropping files on a chat works on Linux and macOS at any display scale**, including when Linux reports a fractional scale as 2: files land where the pointer is.
