@@ -12,6 +12,11 @@
 // only, and the WebView itself never navigates.
 import { Marked, type MarkedToken, type Token, type Tokens } from "marked";
 import DOMPurify from "dompurify";
+import katex from "katex";
+import "katex/dist/katex.min.css";
+// a selection copied across a formula carries its TeX source, not KaTeX's glyphs
+import "katex/contrib/copy-tex";
+import { mathBlockStart, mathInlineStart, mathToken, type MathToken } from "./math";
 import { resolveMentionTarget } from "./mentions";
 import { chipHtml, nextOref, nodeChip, nodeNameAtStart, NO_OREF_CONTEXT, orefAtStart, parseOref, tokenChip, type OrefContext } from "./orgtreeRefs";
 
@@ -65,6 +70,18 @@ const link = (href: string, inner: string) => {
   return u ? '<a class="md-a" data-href="' + esc(u) + '" title="' + esc(u) + '" tabindex="0" role="link">' + inner + "</a>" : inner;
 };
 
+// LaTeX math (lib/math.ts has the delimiter rules, which are Orgtree's). KaTeX runs with Orgtree's options:
+// no \href or \includegraphics (trust off), strict, bounded macro expansion and sizes, and no macros kept from one
+// formula to the next. LaTeX it can't read stays the text as typed, never an error box.
+function renderMath(t: MathToken): string {
+  try {
+    return katex.renderToString(t.text, { displayMode: t.display, output: "htmlAndMathml",
+      throwOnError: true, trust: false, strict: "error", maxExpand: 1000, maxSize: 20, macros: {} });
+  } catch {
+    return esc(t.raw);
+  }
+}
+
 const MENTION_SCAN_RE = /(?:^|[^0-9A-Za-z._%+-])(@(?:(?:net|org):)?[A-Za-z0-9](?:(?:\.|[_-]+)?[A-Za-z0-9])*)/gi;
 const MENTION_HEAD_RE = /^@(?:(?:net|org):)?[A-Za-z0-9](?:(?:\.|[_-]+)?[A-Za-z0-9])*/i;
 
@@ -83,6 +100,19 @@ const marked = new Marked({
     html: () => undefined,
   },
   extensions: [{
+    // display math alone on its lines, then inline math: before the mentions, so an @ in a formula stays in it
+    name: "mathBlock",
+    level: "block",
+    start: (s: string) => mathBlockStart(s),
+    tokenizer: (src: string) => mathToken(src, true),
+    renderer: (t: Tokens.Generic) => renderMath(t as MathToken),
+  }, {
+    name: "mathInline",
+    level: "inline",
+    start: (s: string) => mathInlineStart(s),
+    tokenizer: (src: string) => mathToken(src, false),
+    renderer: (t: Tokens.Generic) => renderMath(t as MathToken),
+  }, {
     // An Orgtree mention token (`@item:org/slug` and its kin): a chip, before the
     // contact mentions so `@app:…` never reads as a contact named "app".
     name: "oref",
@@ -158,19 +188,36 @@ const marked = new Marked({
   },
 });
 
+// What KaTeX writes (htmlAndMathml): MathML for screen readers and copying, and spans with inline sizes,
+// plus SVG for stretchy symbols. A message's own markup can't make any of it: raw HTML is text here.
+const MATH_TAGS = ["math", "semantics", "annotation", "mrow", "mi", "mn", "mo", "ms", "mtext", "mspace", "mfrac", "msqrt", "mroot",
+  "msub", "msup", "msubsup", "mover", "munder", "munderover", "mtable", "mtr", "mtd", "mstyle", "mpadded", "mphantom", "menclose", "line"];
+const MATH_ATTRS = ["style", "xmlns", "encoding", "display", "mathvariant", "mathcolor", "mathbackground", "mathsize", "stretchy", "fence",
+  "separator", "lspace", "rspace", "accent", "accentunder", "columnalign", "columnlines", "columnspacing", "rowlines", "rowspacing",
+  "displaystyle", "scriptlevel", "width", "height", "depth", "voffset", "minsize", "maxsize", "largeop", "linethickness", "notation",
+  "preserveAspectRatio", "x1", "y1", "x2", "y2", "stroke-width"];
+const MATH_ATTR_SET = new Set(MATH_ATTRS.map((a) => a.toLowerCase()));
+const inMath = (n: Element) => !!n.closest?.(".katex");
+
 const PURIFY = {
   ALLOWED_TAGS: [
     "p", "br", "hr", "strong", "em", "del", "code", "pre", "a", "span", "div", "button",
     "ul", "ol", "li", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6",
     "table", "thead", "tbody", "tr", "th", "td", "svg", "path",
+    // KaTeX's output, kept only inside its .katex root (the hook below)
+    ...MATH_TAGS,
   ],
-  ALLOWED_ATTR: ["class", "title", "data-href", "data-slug", "data-oref", "data-act", "start", "viewBox", "d", "aria-hidden", "tabindex", "role", "dir"],
+  ALLOWED_ATTR: ["class", "title", "data-href", "data-slug", "data-oref", "data-act", "start", "viewBox", "d", "aria-hidden", "tabindex", "role", "dir", ...MATH_ATTRS],
   ALLOW_DATA_ATTR: false,
   ALLOW_ARIA_ATTR: false,
   ALLOW_UNKNOWN_PROTOCOLS: false,
 };
 // the only attributes that can lead anywhere: data-href must be http(s)
 DOMPurify.addHook("afterSanitizeAttributes", (n) => {
+  // KaTeX's attributes live only under its own root; its inline styles are sizes and \color, never a url
+  if (!inMath(n)) {
+    for (const a of [...n.attributes]) if (MATH_ATTR_SET.has(a.name.toLowerCase())) n.removeAttribute(a.name);
+  } else if (/url\s*\(|expression\s*\(|@import|\\/i.test(n.getAttribute("style") || "")) n.removeAttribute("style");
   if (n.hasAttribute("data-href") && !safeUrl(n.getAttribute("data-href"))) n.removeAttribute("data-href");
   if (n.nodeName === "A" && n.classList.contains("md-a") && !n.hasAttribute("data-href")) n.removeAttribute("class");
   if (n.hasAttribute("data-act") && n.getAttribute("data-act") !== "copy-code") n.removeAttribute("data-act");
@@ -218,6 +265,9 @@ export function guideMd(src: string): string {
 function flat(ts: Token[] | undefined): string {
   let out = "";
   for (const tok of ts || []) {
+    // a formula reads as its source, delimiters and all
+    if (tok.type === "mathInline") { out += tok.raw; continue; }
+    if (tok.type === "mathBlock") { out += " " + tok.raw + " "; continue; }
     const t = tok as MarkedToken;
     switch (t.type) {
       case "code": out += " [code] "; break;

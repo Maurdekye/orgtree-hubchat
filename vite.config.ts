@@ -7,7 +7,8 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(() => ({
   plugins: [react()],
-  build: { rollupOptions: { input: { main: "index.html", tray: "tray-menu.html" } } },
+  // KaTeX's fonts stay files: never inlined as data: URLs (Hubchat Web's CSP has no data: fonts; same for the apps)
+  build: { rollupOptions: { input: { main: "index.html", tray: "tray-menu.html" } }, assetsInlineLimit: (file: string) => (/\.(woff2?|ttf)$/.test(file) ? false : undefined) },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

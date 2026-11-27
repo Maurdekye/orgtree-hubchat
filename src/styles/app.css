@@ -21,6 +21,9 @@
 
 /* the message text block keeps the bubble's paragraph rules */
 .mtext > p:last-child { margin-bottom: 0; }
+/* LaTeX math (lib/md.ts): a wide display formula scrolls inside its bubble, as in Orgtree */
+.bubble .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: 3px 0; margin: 6px 0; }
+.bubble .katex { color: inherit; }
 .att-file .link { font-weight: 600; }
 .keyacts .saved { white-space: nowrap; }
 .set-row .help { flex: 1; }

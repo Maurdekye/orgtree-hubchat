@@ -27,7 +27,8 @@ export default defineConfig(() => ({
   },
   // the core's worker is a module: it imports the bindings and the wasm file
   worker: { format: "es" as const },
-  build: { outDir: out, emptyOutDir: true, target: "es2022" },
+  // KaTeX's fonts stay files: the CSP allows fonts from 'self' only, never data: URLs
+  build: { outDir: out, emptyOutDir: true, target: "es2022", assetsInlineLimit: (file: string) => (/\.(woff2?|ttf)$/.test(file) ? false : undefined) },
   clearScreen: false,
   server: { port: 1430, strictPort: true, fs: { allow: [here(".")] } },
 }));
