@@ -252,7 +252,7 @@ pub(crate) const SIGNING_OUT: &str = "signout.pending";
 pub(crate) const STILL_SIGNING_OUT: &str = "Hubchat is still signing out of this device. Try again in a moment.";
 
 /// Clears `Core::signing_out_now` when the sign-out that set it ends, however it ends.
-struct SigningOut<'a>(&'a std::sync::atomic::AtomicBool);
+pub(crate) struct SigningOut<'a>(&'a std::sync::atomic::AtomicBool);
 impl Drop for SigningOut<'_> {
     fn drop(&mut self) {
         self.0.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -965,15 +965,21 @@ impl Core {
 
     /// Before an identity is taken on this device: never while a sign-out runs, and a sign-out that
     /// stopped partway is finished first (its key and local data go). Otherwise its mark would stay,
-    /// and the next start would finish it, removing the identity just taken.
-    pub(crate) fn settle_sign_out(&self, forget: impl FnOnce(&std::path::Path) -> Result<(), String>) -> Result<(), String> {
-        if self.signing_out_now.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(STILL_SIGNING_OUT.into());
-        }
+    /// and the next start would finish it, removing the identity just taken. The answer is a claim on
+    /// the same flag a sign-out holds, taken under the gate: the adopt keeps it for its whole save and
+    /// start, so a Try again (or a second adopt) refuses until it ends, and the other way round.
+    pub(crate) fn settle_sign_out(&self, forget: impl FnOnce(&std::path::Path) -> Result<(), String>) -> Result<SigningOut<'_>, String> {
+        let claim = {
+            let _pass = self.identity_gate.enter();
+            if self.signing_out_now.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                return Err(STILL_SIGNING_OUT.into());
+            }
+            SigningOut(&self.signing_out_now)
+        };
         if self.sign_out_pending() {
             self.finish_sign_out(forget)?;
         }
-        Ok(())
+        Ok(claim)
     }
 
     pub(crate) fn sign_out_pending(&self) -> bool {
@@ -1062,8 +1068,9 @@ impl Core {
         if let Some(err) = self.mismatch_guard_error(&me, brand_new) {
             return Err(err);
         }
-        // a running sign-out refuses; one that stopped partway is finished before this key is saved
-        self.settle_sign_out(crate::secrets::forget_identity)?;
+        // a running sign-out refuses; one that stopped partway is finished before this key is saved;
+        // the claim lasts until this adopt has saved and started (or failed)
+        let _claim = self.settle_sign_out(crate::secrets::forget_identity)?;
         let owner = self.store.meta("identity.address").ok().flatten();
         if must_wipe(owner.as_deref(), self.had_identity(), &me.address(), brand_new) {
             self.forget_push();
@@ -1888,7 +1895,7 @@ mod sign_out_tests {
         let _ = rt.block_on(core.sign_out_with(|_| Err("the key store is locked".into()), |_| None));
         assert!(core.sign_out_pending());
         // the key store still refuses: the identity isn't taken, and it stays stopped
-        assert_eq!(core.settle_sign_out(|_| Err("locked".into())).unwrap_err(), "Hubchat couldn't finish signing out: locked");
+        assert_eq!(core.settle_sign_out(|_| Err("locked".into())).err().unwrap(), "Hubchat couldn't finish signing out: locked");
         assert!(core.sign_out_pending());
         assert_eq!(core.store.draft("peer.111111").unwrap().as_deref(), Some("unsent draft"));
         core.settle_sign_out(|_| Ok(())).unwrap();
@@ -1911,7 +1918,7 @@ mod sign_out_tests {
             }
             // the engine is taken, so this device has no identity now; still, nothing may take one,
             assert!(!core.has_identity());
-            assert_eq!(core.settle_sign_out(|_| panic!("finished twice")).unwrap_err(), STILL_SIGNING_OUT);
+            assert_eq!(core.settle_sign_out(|_| panic!("finished twice")).err().unwrap(), STILL_SIGNING_OUT);
             // a cold attach or Try again doesn't finish it a second time,
             assert_eq!(core.load_key_inner(), Ok(false));
             assert!(core.sign_out_pending());
@@ -1970,5 +1977,24 @@ mod sign_out_tests {
         let _ = rt.block_on(core.sign_out_with(|_| Err("locked".into()), |_| None));
         core.store.set_meta(SIGNING_OUT, "yes").unwrap();
         assert_eq!(rt.block_on(core.sign_out_with(|_| Ok(()), |_| None)).unwrap(), [""]);
+    }
+
+    #[test]
+    fn an_adopt_and_a_try_again_never_interleave() {
+        // after a partway stop, an adopt (a background link completing, say) holds its claim from the
+        // settle through saving and starting; a Try again meanwhile refuses and changes nothing
+        let (core, rt) = signed_in("adopt-vs-retry");
+        *core.engine.lock().unwrap() = None;
+        let claim = core.settle_sign_out(|_| panic!("nothing to finish")).unwrap();
+        // the stopped sign-out's mark, as a Try again would find it while the adopt runs
+        core.store.set_meta(SIGNING_OUT, "yes").unwrap();
+        assert_eq!(rt.block_on(core.sign_out_with(|_| panic!("deleted the new key"), |_| None)).unwrap_err(), STILL_SIGNING_OUT);
+        assert_eq!(core.settle_sign_out(|_| panic!("second adopt")).err().unwrap(), STILL_SIGNING_OUT);
+        assert_eq!(core.store.meta(SIGNING_OUT).unwrap().as_deref(), Some("yes"));
+        assert_eq!(core.store.draft("peer.111111").unwrap().as_deref(), Some("unsent draft"));
+        drop(claim);
+        // the adopt ended: a Try again runs again
+        assert!(rt.block_on(core.sign_out_with(|_| Ok(()), |_| None)).is_ok());
+        assert!(!core.sign_out_pending());
     }
 }
