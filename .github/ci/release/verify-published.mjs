@@ -6,9 +6,14 @@
 // - the Hubchat Web files are there and are the ones build-info-web.json records;
 // - GitHub's "latest" release is this one (installed apps read latest/download/latest.json).
 //   TAG=v<x.y.z> GITHUB_REPOSITORY=owner/repo GH_TOKEN=... node verify-published.mjs
+//
+// DRAFT mode (release.yml's draft job): DRAFT_ID=<release id> checks that draft instead, with
+// the same file, hash, signature and latest.json checks. A draft has no public URLs, so its
+// assets are read through the API with the token; GitHub's "latest" is checked after publishing.
 import crypto from 'node:crypto'
 
-const { TAG: tag, GITHUB_REPOSITORY: repo, GH_TOKEN: token } = process.env
+const { TAG: tag, GITHUB_REPOSITORY: repo, GH_TOKEN: token, DRAFT_ID: draftId } = process.env
+const draft = !!draftId
 const version = /^v(\d+\.\d+\.\d+)$/.exec(tag ?? '')?.[1] ?? fail(`not a version tag: ${tag}`)
 const api = async path => {
   const response = await fetch(`https://api.github.com/repos/${repo}/${path}`, {
@@ -19,12 +24,16 @@ const api = async path => {
 const problems = []
 const check = (ok, message) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${message}`); if (!ok) problems.push(message) }
 
-const release = await api(`releases/tags/${encodeURIComponent(tag)}`)
-check(!release.draft && !release.prerelease, `release ${tag} is public and not a prerelease`)
+const release = await api(draft ? `releases/${draftId}` : `releases/tags/${encodeURIComponent(tag)}`)
+if (draft) check(release.draft && !release.prerelease, `release ${release.tag_name} (${draftId}) is still a draft, not a prerelease`)
+else check(!release.draft && !release.prerelease, `release ${tag} is public and not a prerelease`)
 
 const bytes = {}
 for (const asset of release.assets) {
-  const response = await fetch(asset.browser_download_url)
+  // a draft's assets through the API with the token (fetch drops it on the redirect)
+  const response = draft
+    ? await fetch(asset.url, { headers: { Accept: 'application/octet-stream', Authorization: `Bearer ${token}`, 'User-Agent': 'hubchat-verify' } })
+    : await fetch(asset.browser_download_url)
   if (!response.ok) { check(false, `${asset.name} downloads (HTTP ${response.status})`); continue }
   bytes[asset.name] = Buffer.from(await response.arrayBuffer())
   check(bytes[asset.name].length === asset.size, `${asset.name}: ${asset.size} bytes`)
@@ -64,11 +73,15 @@ if ('latest.json' in bytes) {
   }
   check('windows-x86_64' in (latest.platforms ?? {}), 'latest.json has windows-x86_64')
 }
-const latestRelease = await api('releases/latest')
-check(latestRelease.tag_name === tag, `"latest" is ${tag} (it is ${latestRelease.tag_name})`)
+if (draft) console.log('note "latest" is checked after publishing')
+else {
+  const latestRelease = await api('releases/latest')
+  check(latestRelease.tag_name === tag, `"latest" is ${tag} (it is ${latestRelease.tag_name})`)
+}
 
+if (draft && problems.length) fail(`${problems.length} problem(s) with the draft of ${tag}: NOT published, draft left`)
 if (problems.length) fail(`${problems.length} problem(s) with the published ${tag}; see docs/ci-release.md, "Rolling back"`)
-console.log(`${tag} is published correctly`)
+console.log(draft ? `the draft of ${tag} is complete and correct` : `${tag} is published correctly`)
 
 function fail(message) {
   console.log(`::error::${message}`)
