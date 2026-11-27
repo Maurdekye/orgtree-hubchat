@@ -1,0 +1,28 @@
+// Mounted desktop/Android check of LaTeX math in message bubbles, dark and light (tools/math-entry.tsx, driven by
+// tools/math-electron.cjs): the real App on synthetic state; no hub, real data, media or network.
+// Run inside a kernel Job with HUBCHAT_JOB_CONTAINED=1 and a new output folder under C:/orgtree-build
+// (HUBCHAT_RENDERER_OUT). HUBCHAT_PROOF_PHASE=red expects exactly the failures of the source before math, and
+// captures the same views (before-*.png); green captures after-*.png. The real clipboard is never read or written.
+// A package missing from HUBCHAT_DEPENDENCY_ROOT (katex, before an npm ci of this tip) resolves from
+// HUBCHAT_DOM_DEPENDENCY_ROOT; KaTeX's fonts are emitted as files next to entry.css, as Vite emits them.
+//   node tools/proof-math.mjs [repo]   (default: the current folder)
+import fs from 'node:fs';import path from 'node:path';import{createRequire}from'node:module';import{spawnSync}from'node:child_process';
+const repo=path.resolve(process.argv[2]||process.cwd()),out=path.resolve(process.env.HUBCHAT_RENDERER_OUT||'');
+if(process.env.HUBCHAT_JOB_CONTAINED!=='1'||!/^C:[\\/]orgtree-build[\\/]/i.test(out))throw Error('Assigned C output and kernel Job required');
+if(fs.existsSync(out))throw Error('The output folder must be new: '+out);
+const deps=createRequire(path.join(process.env.HUBCHAT_DEPENDENCY_ROOT,'package.json')),dom=createRequire(path.join(process.env.HUBCHAT_DOM_DEPENDENCY_ROOT,'package.json'));
+fs.mkdirSync(out,{recursive:true});
+fs.writeFileSync(out+'/result.json',JSON.stringify({passed:false,status:'not executed'}));
+try{await dom('esbuild').build({entryPoints:[repo+'/tools/math-entry.tsx'],outfile:out+'/entry.js',bundle:true,platform:'browser',format:'iife',jsx:'automatic',loader:{'.md':'text','.svg':'text','.png':'dataurl','.woff2':'file','.woff':'file','.ttf':'file'},plugins:[{name:'existing-dependencies',setup(b){b.onResolve({filter:/^[^./][^:]*/},a=>{if(a.kind==='url-token')return undefined;const n=a.path==='qrcode'?'qrcode/lib/browser.js':a.path;try{return{path:deps.resolve(n)};}catch{return{path:dom.resolve(n)};}});}}]});}finally{dom('esbuild').stop();}
+for(const platform of ['desktop','android']){
+ const names=['tokens.css','base.css','app.css',...(platform==='desktop'?['desktop.css','app-desktop.css']:['mobile.css','app-mobile.css'])];
+ fs.writeFileSync(out+'/'+platform+'.css',names.map(n=>fs.readFileSync(repo+'/src/styles/'+n,'utf8')).join('\n'));
+ const own=fs.existsSync(out+'/entry.css')?'<link rel="stylesheet" href="entry.css">':'';
+ fs.writeFileSync(out+'/'+platform+'.html',`<!doctype html><html class="theme-dark" data-platform="${platform}"><head><link rel="stylesheet" href="${platform}.css">${own}</head><body><div id="root" style="height:100vh"></div><script>window.addEventListener('error',e=>window.mathFixtureError=e.message);</script><script src="entry.js"></script></body></html>`);
+}
+const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;delete env.NODE_OPTIONS;
+const p=spawnSync(dom('electron'),[repo+'/tools/math-electron.cjs'],{env,encoding:'utf8',windowsHide:true,timeout:180000,maxBuffer:4e6});
+fs.writeFileSync(out+'/electron.log',(p.stdout||'')+(p.stderr||'')+(p.error?String(p.error):''));
+fs.rmSync(path.join(out,'user-data'),{recursive:true,force:true});
+console.log(JSON.stringify({status:p.status,signal:p.signal,error:p.error?.message||null}));console.log((p.stdout+p.stderr).slice(-6000));
+const verdict=JSON.parse(fs.readFileSync(out+'/result.json','utf8'));process.exitCode=p.status===0&&verdict.passed?0:p.status||2;
