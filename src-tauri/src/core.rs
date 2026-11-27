@@ -846,6 +846,20 @@ impl Core {
     /// data forgotten. The address itself stays registered for its other
     /// devices.
     pub async fn leave_identity(&self) -> Result<(), String> {
+        self.leave(false).await
+    }
+
+    /// Settings › Devices › Sign out of this device: as leaving for another
+    /// identity (the hubs forget this device and its push first, while the
+    /// key can still ask), then the welcome screen.
+    pub async fn sign_out(&self) -> Result<(), String> {
+        if !self.has_identity() {
+            return Err("no identity yet".into());
+        }
+        self.leave(true).await
+    }
+
+    async fn leave(&self, signing_out: bool) -> Result<(), String> {
         self.forget_push();
         let taken = { let _pass = self.identity_gate.enter(); self.engine.lock().unwrap().take() };
         let Some(e) = taken else {
@@ -862,8 +876,14 @@ impl Core {
         e.shutdown();
         crate::secrets::forget_identity(&self.dir)?;
         self.store.wipe().map_err(|e| e.to_string())?;
-        keylog::note(&self.dir, "left this identity: key and local data forgotten", &[Fact::LeftIdentity]);
-        self.host.platform.status("Switching identity");
+        *self.key_lost.lock().unwrap() = None;
+        if signing_out {
+            keylog::note(&self.dir, "signed out of this device: key and local data forgotten", &[Fact::LeftIdentity]);
+            self.host.platform.status("Signed out");
+        } else {
+            keylog::note(&self.dir, "left this identity: key and local data forgotten", &[Fact::LeftIdentity]);
+            self.host.platform.status("Switching identity");
+        }
         Ok(())
     }
 

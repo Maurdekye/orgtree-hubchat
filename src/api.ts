@@ -501,6 +501,8 @@ export const makeApi = ({ invoke, listen, mediaUrl }: Transport) => ({
   retryKey: () => invoke<void>("hc_retry_key"),
   /** The lost-key screen: remove this device's local data and start afresh. */
   startOver: () => invoke<void>("hc_start_over"),
+  /** Settings › Devices › Sign out of this device: off the hubs' device lists (push included), key and local data forgotten. */
+  signOut: () => invoke<void>("hc_sign_out"),
   /** The lost-key screen (Linux): adopt the identity currently in this session's key store. */
   useFoundIdentity: (expected: string) => invoke<void>("hc_use_found_identity", { expected }),
   /** The "restored from Hubchat's backup" notice was seen. */

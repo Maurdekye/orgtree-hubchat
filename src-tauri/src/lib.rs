@@ -474,6 +474,7 @@ pub fn run() {
             commands::hc_restore_words,
             commands::hc_retry_key,
             commands::hc_start_over,
+            commands::hc_sign_out,
             commands::hc_use_found_identity,
             commands::hc_key_restored_seen,
             commands::hc_recovery_words,

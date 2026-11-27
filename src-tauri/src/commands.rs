@@ -194,6 +194,13 @@ pub fn hc_start_over() -> R<()> {
     core::get()?.start_over()
 }
 
+/// Settings › Devices › Sign out of this device: off the hubs' device lists
+/// (push included), then key and local data forgotten; the welcome screen.
+#[tauri::command]
+pub async fn hc_sign_out() -> R<()> {
+    core::get()?.sign_out().await
+}
+
 /// The lost-key screen (Linux): adopt the identity currently in this session's
 /// key store after confirming the store still holds `expected`.
 #[tauri::command]

@@ -303,6 +303,21 @@ impl Shell {
         Ok(())
     }
 
+    /// Settings › Devices › Sign out of this device: off the device lists of
+    /// v2 hubs, the engine stopped, local data forgotten (the caller also
+    /// clears the browser's key store, first). The welcome screen follows.
+    pub async fn sign_out(&self) -> R<()> {
+        let e = self.engine.lock().unwrap().take().ok_or_else(|| "no identity yet".to_string())?;
+        if let Some(link) = self.link_stop.lock().unwrap().take() {
+            link.cancel();
+        }
+        e.sign_out_this_device().await;
+        e.shutdown();
+        self.store.wipe().map_err(s)?;
+        *self.key_lost.lock().unwrap() = None;
+        Ok(())
+    }
+
     fn state(&self) -> Value {
         let engine = self.engine().ok();
         let on = |k: &str| self.meta(k) != "off";
@@ -431,6 +446,8 @@ impl Shell {
                 None => Err(NOT_YET.into()),
             },
             "hc_start_over" => self.start_over().map(|_| Value::Null),
+            // a caller without a key store of its own (tests); the page's goes first (wasm.rs)
+            "hc_sign_out" => self.sign_out().await.map(|_| Value::Null),
             "hc_retry_key" | "hc_key_restored_seen" => Ok(Value::Null),
             "hc_recovery_words" => out(recovery::to_words(self.engine()?.me()).map_err(s)?),
             // The apps write the recovery file themselves (`hc_save_recovery`); a

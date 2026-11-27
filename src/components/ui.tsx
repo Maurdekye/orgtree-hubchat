@@ -189,7 +189,7 @@ export function ModalHead({ title, onClose, children }: { title: ReactNode; onCl
 }
 
 /** A confirm dialog: a centred modal on desktop, a Material dialog on Android. */
-export function Confirm({ title, children, okLabel, danger, onOk, onCancel, busy }: { title: string; children: ReactNode; okLabel: string; danger?: boolean; onOk: () => void; onCancel: () => void; busy?: boolean }) {
+export function Confirm({ title, children, okLabel, cancelLabel = "Cancel", danger, onOk, onCancel, busy }: { title: string; children: ReactNode; okLabel: string; cancelLabel?: string; danger?: boolean; onOk: () => void; onCancel: () => void; busy?: boolean }) {
   const platform = usePlatform();
   useEffect(() => {
     const k = (e: KeyboardEvent) => { if (e.key === "Escape") { e.preventDefault(); onCancel(); } };
@@ -204,7 +204,7 @@ export function Confirm({ title, children, okLabel, danger, onOk, onCancel, busy
           <h4 id="confirm-title">{title}</h4>
           {children}
           <div className="acts">
-            <button className="btn ghost" onClick={onCancel}>Cancel</button>
+            <button className="btn ghost" onClick={onCancel}>{cancelLabel}</button>
             <button className={"btn ghost" + (danger ? " danger" : "")} onClick={onOk} disabled={busy}>{okLabel}</button>
           </div>
         </div>
@@ -216,7 +216,7 @@ export function Confirm({ title, children, okLabel, danger, onOk, onCancel, busy
       <ModalHead title={title} />
       <div className="modal-b">{children}</div>
       <div className="modal-f">
-        <button className="btn ghost" onClick={onCancel}>Cancel</button>
+        <button className="btn ghost" onClick={onCancel}>{cancelLabel}</button>
         <button className={"btn " + (danger ? "danger solid" : "primary")} onClick={onOk} disabled={busy}>{okLabel}</button>
       </div>
     </Modal>

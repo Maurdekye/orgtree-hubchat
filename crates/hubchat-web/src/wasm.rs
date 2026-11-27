@@ -196,6 +196,13 @@ pub async fn call(cmd: String, args: String) -> Result<String, JsValue> {
             shell.start_over().map_err(err)?;
             Value::Null
         }
+        None if cmd == "hc_sign_out" => {
+            // the key first, as for Start over; the engine still holds it to tell the hubs
+            shell.engine().map_err(err)?;
+            host_call("clearIdentity", &[]).await.map_err(|e| err(thrown(&e)))?;
+            shell.sign_out().await.map_err(err)?;
+            Value::Null
+        }
         None => shell.call(&cmd, &args).await.map_err(err)?,
     };
     serde_json::to_string(&out).map_err(err)

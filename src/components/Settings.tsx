@@ -11,7 +11,8 @@ import { appVersion, autostart, copyText, errText, exitOnClose, openLink, scanQr
 import { routeLink, startJoin } from "../lib/join";
 import { displayName, hubCls, hubStatusText, hubSummary, hubVersion } from "../lib/peers";
 import { blockNeedsUpdate, canBlock, unblock } from "./Block";
-import { refreshDirectory, refreshState, useSnap } from "../lib/store";
+import { refreshAll, refreshDirectory, refreshState, useSnap } from "../lib/store";
+import { signOutText } from "../lib/signOut";
 import { setThemePref, useThemePref, type ThemePref } from "../lib/theme";
 import { setEnterKey, useEnterKey } from "../lib/enterKey";
 import { toast } from "../lib/toast";
@@ -266,6 +267,38 @@ function Recovery() {
   );
 }
 
+/** Sign out of this device: the hubs forget this device (and its push), then its key and local data go
+ *  and Hubchat shows the welcome screen. The address keeps working on the other devices. */
+function SignOut() {
+  const platform = usePlatform();
+  const word = useDeviceWord();
+  const snap = useSnap();
+  const [ask, setAsk] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const t = signOutText(word);
+  const go = async () => {
+    setBusy(true);
+    try { await api.signOut(); await refreshAll(); }
+    catch (e) { toast(errText(e)); setBusy(false); }
+  };
+  const label = <><Icon name="logout" />{t.action}</>;
+  const help = "Removes this " + word + "'s chats, hubs and settings. Your address keeps working on your other devices.";
+  return (
+    <>
+      {platform === "android"
+        ? <><div className="pad" style={{ marginTop: 2 }}><button className="btn ghost block" onClick={() => setAsk(true)}>{label}</button></div>
+            <div className="help pad" style={{ paddingTop: 0 }}>{help}</div></>
+        : <div className="set-row sign-out"><button className="btn ghost" onClick={() => setAsk(true)}>{label}</button><span className="help">{help}</span></div>}
+      {ask ? (
+        <Confirm title={t.title} okLabel={busy ? t.busy : t.ok} cancelLabel={t.cancel} danger busy={busy} onOk={() => void go()} onCancel={() => { if (!busy) setAsk(false); }}>
+          <p>{t.body}</p>
+          {snap.state?.recovery_saved ? null : <NoteCard icon="warning" warn>{t.unsaved}</NoteCard>}
+        </Confirm>
+      ) : null}
+    </>
+  );
+}
+
 /** What the browser mock's camera reads for "Use another identity": a signed-in device's link QR. */
 const MOCK_GIVE_QR = "hubchat://link?code=W2NV-8KQP-4RTX-6MJD&hub=" + encodeURIComponent("http://hub.office.lan:7370") + "&role=give";
 
@@ -373,6 +406,7 @@ function Devices({ onLink, goTab }: { onLink?: (tab?: LinkTab, input?: string) =
             ? <div className="pad" style={{ marginTop: 6 }}><button className="btn block" onClick={() => link()}><Icon name="link" />Link a device</button></div>
             : <div className="set-row"><button className="btn" onClick={() => link()}><Icon name="link" />Link a device</button><span className="help">Bring your identity to a new phone or {isWin ? "PC" : "device"}: show a QR code for it to scan, approve its code, show your key as a QR code, or save a key file.</span></div>}
           <UseAnother onApprove={(input) => link("approve", input)} />
+          <SignOut />
         </Card>
         {others.length ? (
           <Card>
