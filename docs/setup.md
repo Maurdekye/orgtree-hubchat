@@ -127,7 +127,7 @@ Each person has one identity: your address, made from your key. To use it on ano
 
 Don't scan Orgtree's setup code with a second phone: it would make a second identity, and your organization would know only one of them.
 
-**Signing out of a device.** To take your identity off one device, open **Settings › Devices › Sign out of this device** and confirm with **Sign out**. Hubchat first asks your hubs to forget the device, including where its notifications went. Then it removes the device's key, chats, hubs and settings and shows the welcome screen. Your address keeps working on your other devices, and you can bring it back to this one later by linking it (above) or with your recovery words. Save your recovery words first if this is your only device.
+**Signing out of a device.** To take your identity off one device, open **Settings › Devices › Sign out of this device** and confirm with **Sign out**. Hubchat first asks your hubs to forget the device, including where its notifications went. Then it removes the device's key, chats, hubs and settings and shows the welcome screen. A hub it can't reach within 20 seconds is named afterwards: it may still list the device. If signing out stops partway (for example, a locked key store), Hubchat shows **Hubchat couldn't finish signing out** with **Try again**, and it finishes the sign-out at its next start rather than signing back in. Your address keeps working on your other devices, and you can bring it back to this one later by linking it (above) or with your recovery words. Save your recovery words first if this is your only device.
 
 ## 7. When it stops working
 
