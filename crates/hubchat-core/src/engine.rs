@@ -719,22 +719,34 @@ impl Engine {
         self.body_changed.notify_one();
     }
 
-    /// Take this device off our device list on every v2 hub (switching to
-    /// another identity). Older hubs have no device list: nothing to do.
-    /// Never unregisters the address: our other devices still use it.
-    pub async fn sign_out_this_device(&self) {
+    /// Leaving this device (Sign out of this device, or switching to another
+    /// identity): every saved hub, connected or not, is asked to forget this
+    /// device's push registration and to take it off the address's device
+    /// list, signed with the key while it is still here. Older hubs answer
+    /// 404: nothing to do. All hubs at once, at most `budget` in all. Never
+    /// unregisters the address: the other devices still use it. The answer:
+    /// the hubs that weren't told (unreachable, refused, out of time), by name.
+    pub async fn leave_hubs(&self, budget: Duration) -> Vec<String> {
+        let hubs = self.store.hubs().unwrap_or_default();
         let (device_id, _) = self.device();
-        let clients: Vec<HubClient> = self
-            .hubs
-            .lock()
-            .unwrap()
-            .values()
-            .filter(|h| h.status.features.iter().any(|f| f == "devices"))
-            .map(|h| h.client.clone())
-            .collect();
-        for c in clients {
-            let _ = c.sign_out_device(&self.me, &device_id).await;
+        let told: Mutex<Vec<String>> = Mutex::new(Vec::new());
+        // clients of their own: the running sessions' are stopped with the engine
+        let each = hubs.iter().filter_map(|h| HubAddress::parse(&h.url).ok().map(|a| (h.url.clone(), HubClient::new(a)))).map(|(url, client)| {
+            let (told, me, device_id) = (&told, &self.me, &device_id);
+            async move {
+                let push = client.unregister_push(me, device_id).await;
+                let device = client.sign_out_device(me, device_id).await;
+                if push.is_ok() && device.is_ok() {
+                    told.lock().unwrap().push(url);
+                }
+            }
+        });
+        tokio::select! {
+            _ = futures_util::future::join_all(each) => {}
+            _ = crate::rt::time::sleep(budget) => {}
         }
+        let told = told.into_inner().unwrap_or_default();
+        hubs.into_iter().filter(|h| !told.contains(&h.url)).map(|h| if h.name.trim().is_empty() { h.url } else { h.name }).collect()
     }
 
     pub fn hub_statuses(&self) -> Vec<HubStatus> {

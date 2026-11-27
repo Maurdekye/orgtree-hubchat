@@ -18,6 +18,24 @@ export function signOutText(device: string): SignOutText {
   };
 }
 
+/** After signing out: the hubs that couldn't be told (unreachable, refused, or out of time), by name.
+ *  null when every hub was told. */
+export function unreachedText(hubs: string[], device: string): string | null {
+  if (!hubs.length) return null;
+  const names = hubs.length === 1 ? hubs[0] : hubs.slice(0, -1).join(", ") + " and " + hubs[hubs.length - 1];
+  return `Signed out. Hubchat couldn't reach ${names}, so ${hubs.length === 1 ? "it" : "they"} may still list this ${device}.`;
+}
+
+/** The screen after a sign-out that stopped partway (the key or the chats are still here). */
+export function stoppedText(device: string): { title: string; body: string; retry: string; busy: string } {
+  return {
+    title: "Hubchat couldn't finish signing out",
+    body: `Signing out of this ${device} stopped partway: some of its key, chats or settings are still here. Try again to remove them.`,
+    retry: "Try again",
+    busy: "Signing out…",
+  };
+}
+
 /** Tell the hubs to forget this browser's push subscription while the key can still ask, then `then`.
  *  A hub that can't be told forgets nothing, but the subscription itself is gone, so it never stops
  *  the sign-out (or Start over). */

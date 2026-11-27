@@ -196,8 +196,10 @@ pub fn hc_start_over() -> R<()> {
 
 /// Settings › Devices › Sign out of this device: off the hubs' device lists
 /// (push included), then key and local data forgotten; the welcome screen.
+/// The answer: the hubs that couldn't be told, by name. Again after a
+/// sign-out that stopped partway: it finishes.
 #[tauri::command]
-pub async fn hc_sign_out() -> R<()> {
+pub async fn hc_sign_out() -> R<Vec<String>> {
     core::get()?.sign_out().await
 }
 

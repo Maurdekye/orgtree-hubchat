@@ -12,7 +12,7 @@ import { routeLink, startJoin } from "../lib/join";
 import { displayName, hubCls, hubStatusText, hubSummary, hubVersion } from "../lib/peers";
 import { blockNeedsUpdate, canBlock, unblock } from "./Block";
 import { refreshAll, refreshDirectory, refreshState, useSnap } from "../lib/store";
-import { signOutText } from "../lib/signOut";
+import { signOutText, unreachedText } from "../lib/signOut";
 import { setThemePref, useThemePref, type ThemePref } from "../lib/theme";
 import { setEnterKey, useEnterKey } from "../lib/enterKey";
 import { toast } from "../lib/toast";
@@ -278,8 +278,17 @@ function SignOut() {
   const t = signOutText(word);
   const go = async () => {
     setBusy(true);
-    try { await api.signOut(); await refreshAll(); }
-    catch (e) { toast(errText(e)); setBusy(false); }
+    try {
+      const missed = await api.signOut();
+      await refreshAll();
+      const note = unreachedText(missed, word);
+      if (note) toast(note);
+    } catch (e) {
+      // a sign-out that stopped partway: the screen that offers to finish it comes with the refresh
+      toast(errText(e));
+      setBusy(false);
+      await refreshAll();
+    }
   };
   const label = <><Icon name="logout" />{t.action}</>;
   const help = "Removes this " + word + "'s chats, hubs and settings. Your address keeps working on your other devices.";

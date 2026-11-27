@@ -22,6 +22,7 @@ import { chatLinkTarget } from "../lib/chatlink";
 import { usePendingLink } from "../lib/visibility";
 import { isSetupLink, scanSetup, startSetup, useLinkInstead } from "../lib/setup";
 import { FINISH_IDENTITY_NOTICE, isMismatchRefusal } from "../lib/mismatchFlow";
+import { stoppedText, unreachedText } from "../lib/signOut";
 import { formatCode } from "./LinkDevice";
 import { openGuide } from "./Guide";
 import { Confirm, NoteCard, QR, defaultDeviceName, useDeviceWord, useIsWindowsDesktop, useNow, useOs, usePlatform, useWeb } from "./ui";
@@ -108,6 +109,16 @@ export function LostKey({ lost, err, onPick }: { lost: KeyLost; err?: string | n
   const [busy, setBusy] = useState(false);
   const [tries, setTries] = useState(0);
   const found = lost.found ?? null;
+  const stopped = stoppedText(device);
+  const finishSignOut = async () => {
+    setBusy(true);
+    try {
+      const missed = await api.signOut();
+      await refreshAll();
+      const note = unreachedText(missed, device);
+      if (note) toast(note);
+    } catch (e) { toast(errText(e)); setBusy(false); await refreshAll(); }
+  };
   const who = lost.address ? <b className="mono inl">{lost.address}</b> : "your identity";
   const foundWho = found ? <b className="mono inl">{found}</b> : null;
   // a key store that doesn't answer may only be slow (just after signing
@@ -140,6 +151,20 @@ export function LostKey({ lost, err, onPick }: { lost: KeyLost; err?: string | n
       await refreshAll();
     }
   };
+  if (lost.signing_out) {
+    return (
+      <Frame step="welcome" flow="new" actions={[]}>
+        <div className="lk">
+          <Icon name="logout" />
+          <h2>{stopped.title}</h2>
+          <p className="lead">{stopped.body}</p>
+          <div className="lk-acts">
+            <button className="btn primary" onClick={() => void finishSignOut()} disabled={busy}>{busy ? stopped.busy : stopped.retry}</button>
+          </div>
+        </div>
+      </Frame>
+    );
+  }
   if (confirm) {
     return (
       <Frame step="welcome" flow="new" actions={[]}>

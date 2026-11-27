@@ -678,7 +678,7 @@ export const mockApi: Api = {
     if (st.key_lost?.unreadable && now() >= keyBackAt) { st.me = { ...ALEX }; st.key_lost = null; st.hubs = seedHubs(); }
   },
   startOver: async () => { await sleep(300); st.key_lost = null; st.me = null; st.hubs = []; },
-  signOut: async () => { await sleep(300); st.key_lost = null; st.me = null; st.hubs = []; },
+  signOut: async () => { await sleep(300); st.key_lost = null; st.me = null; st.hubs = []; return [] as string[]; },
   useFoundIdentity: async (expected: string) => {
     await sleep(300);
     if (st.key_lost?.found !== expected) throw new Error("The key store changed. Try again.");

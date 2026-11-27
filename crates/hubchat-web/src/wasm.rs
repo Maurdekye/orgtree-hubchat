@@ -197,11 +197,9 @@ pub async fn call(cmd: String, args: String) -> Result<String, JsValue> {
             Value::Null
         }
         None if cmd == "hc_sign_out" => {
-            // the key first, as for Start over; the engine still holds it to tell the hubs
-            shell.engine().map_err(err)?;
-            host_call("clearIdentity", &[]).await.map_err(|e| err(thrown(&e)))?;
-            shell.sign_out().await.map_err(err)?;
-            Value::Null
+            // the hubs first, while the key can sign; then the browser's key store; then the data
+            let clear = || async { host_call("clearIdentity", &[]).await.map(|_| ()).map_err(|e| thrown(&e)) };
+            serde_json::to_value(shell.sign_out_with(clear).await.map_err(err)?).map_err(err)?
         }
         None => shell.call(&cmd, &args).await.map_err(err)?,
     };

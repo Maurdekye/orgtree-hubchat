@@ -45,7 +45,19 @@ pub(crate) fn s<E: std::fmt::Display>(e: E) -> String {
 pub struct KeyLost {
     address: Option<String>,
     unreadable: bool,
+    /// Sign out of this device stopped partway (the key or the chats are
+    /// still here): the screen offers to finish it.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    signing_out: bool,
 }
+
+/// Sign out of this device has begun: set before the hubs are told and gone
+/// with the wipe (as the apps' core.rs). A page opened while it is set never
+/// starts the identity again (the hubs may already have dropped its device).
+const SIGNING_OUT: &str = "signout.pending";
+
+/// How long Sign out of this device waits for the hubs, all together.
+const LEAVE_BUDGET: Duration = Duration::from_secs(20);
 
 struct ShellHost {
     sink: Sink,
@@ -175,10 +187,15 @@ impl Shell {
             suggested: Mutex::new(Vec::new()),
         });
         match identity {
+            // a sign-out that stopped partway: finish it (the page's key store first, wasm.rs), never resume
+            Some(_) if shell.sign_out_pending() => shell.stopped_signing_out(),
             Some(me) => shell.start_with(me)?,
             None => {
-                *shell.key_lost.lock().unwrap() =
-                    shell.had_identity().then(|| KeyLost { address: shell.store.meta("identity.address").ok().flatten(), unreadable: false });
+                *shell.key_lost.lock().unwrap() = shell.had_identity().then(|| KeyLost {
+                    address: shell.store.meta("identity.address").ok().flatten(),
+                    unreadable: false,
+                    signing_out: shell.sign_out_pending(),
+                });
             }
         }
         Ok(shell)
@@ -303,19 +320,56 @@ impl Shell {
         Ok(())
     }
 
-    /// Settings › Devices › Sign out of this device: off the device lists of
-    /// v2 hubs, the engine stopped, local data forgotten (the caller also
-    /// clears the browser's key store, first). The welcome screen follows.
-    pub async fn sign_out(&self) -> R<()> {
-        let e = self.engine.lock().unwrap().take().ok_or_else(|| "no identity yet".to_string())?;
-        if let Some(link) = self.link_stop.lock().unwrap().take() {
-            link.cancel();
+    /// Settings › Devices › Sign out of this device, in the apps' order: marked;
+    /// every hub asked to forget this device and its push while the key can
+    /// still sign; the engine stopped; then `clear_key` (the browser's key
+    /// store, wasm.rs) and the local data. A step that fails leaves it
+    /// stopped and marked: calling this again finishes it, and so does a page
+    /// opened later. The answer: the hubs that weren't told.
+    pub async fn sign_out_with<F, Fut>(&self, clear_key: F) -> R<Vec<String>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = R<()>>,
+    {
+        let taken = {
+            let mut slot = self.engine.lock().unwrap();
+            if slot.is_some() {
+                self.store.set_meta(SIGNING_OUT, "yes").map_err(s)?;
+            }
+            slot.take()
+        };
+        let missed = match taken {
+            Some(e) => {
+                if let Some(link) = self.link_stop.lock().unwrap().take() {
+                    link.cancel();
+                }
+                let missed = e.leave_hubs(LEAVE_BUDGET).await;
+                e.shutdown();
+                missed
+            }
+            None if self.sign_out_pending() => Vec::new(),
+            None => return Err("no identity yet".into()),
+        };
+        match clear_key().await.and_then(|_| self.store.wipe().map_err(s)) {
+            Ok(()) => {
+                *self.key_lost.lock().unwrap() = None;
+                Ok(missed)
+            }
+            Err(e) => {
+                self.stopped_signing_out();
+                Err(format!("Hubchat couldn't finish signing out: {e}"))
+            }
         }
-        e.sign_out_this_device().await;
-        e.shutdown();
-        self.store.wipe().map_err(s)?;
-        *self.key_lost.lock().unwrap() = None;
-        Ok(())
+    }
+
+    fn sign_out_pending(&self) -> bool {
+        self.store.meta(SIGNING_OUT).ok().flatten().is_some()
+    }
+
+    /// The screen that offers to finish a sign-out that stopped partway.
+    fn stopped_signing_out(&self) {
+        *self.key_lost.lock().unwrap() =
+            Some(KeyLost { address: self.store.meta("identity.address").ok().flatten(), unreadable: false, signing_out: true });
     }
 
     fn state(&self) -> Value {
@@ -447,7 +501,7 @@ impl Shell {
             },
             "hc_start_over" => self.start_over().map(|_| Value::Null),
             // a caller without a key store of its own (tests); the page's goes first (wasm.rs)
-            "hc_sign_out" => self.sign_out().await.map(|_| Value::Null),
+            "hc_sign_out" => out(self.sign_out_with(|| async { Ok(()) }).await?),
             "hc_retry_key" | "hc_key_restored_seen" => Ok(Value::Null),
             "hc_recovery_words" => out(recovery::to_words(self.engine()?.me()).map_err(s)?),
             // The apps write the recovery file themselves (`hc_save_recovery`); a
@@ -794,6 +848,77 @@ pub(crate) mod tests {
         assert_eq!(again.call("hc_state", &json!({})).await.unwrap()["key_lost"], Value::Null);
         // signing out twice has nothing to sign out of
         assert_eq!(sh.call("hc_sign_out", &json!({})).await.unwrap_err(), "no identity yet");
+    }
+
+    /// A hub on loopback that answers 200 to everything and notes each request (method, path kind) and
+    /// whether the store was already marked as signing out.
+    async fn noting_hub(store: Arc<Store>, order: Arc<Mutex<Vec<String>>>) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = HubAddress::parse(&format!("http://{}", l.local_addr().unwrap())).unwrap().to_string();
+        tokio::spawn(async move {
+            while let Ok((mut c, _)) = l.accept().await {
+                let (store, order) = (store.clone(), order.clone());
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let n = c.read(&mut buf).await.unwrap_or(0);
+                    let head = String::from_utf8_lossy(&buf[..n]).to_string();
+                    let mut words = head.split(' ');
+                    let method = words.next().unwrap_or("").to_string();
+                    let path = words.next().unwrap_or("").split('?').next().unwrap_or("").to_string();
+                    let kind = if path.starts_with("/api/devices/") { "device".to_string() } else { path };
+                    let marked = store.meta("signout.pending").ok().flatten().is_some();
+                    order.lock().unwrap().push(format!("{method} {kind} marked={marked}"));
+                    let _ = c.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}").await;
+                });
+            }
+        });
+        url
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_browser_signs_out_in_the_apps_order_hubs_then_key_then_data() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let (sh, _) = shell(store.clone(), None);
+        take(&sh, "hc_create_identity", json!({ "id": "pat", "name": "Pat" })).await;
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let hub = noting_hub(store.clone(), order.clone()).await;
+        store.add_hub(&hub, "t").unwrap();
+        let log = order.clone();
+        let missed = sh.sign_out_with(|| async move { log.lock().unwrap().push("clear key".to_string()); Ok(()) }).await.unwrap();
+        assert!(missed.is_empty(), "{missed:?}");
+        assert_eq!(*order.lock().unwrap(), ["DELETE /api/push marked=true", "DELETE device marked=true", "clear key"]);
+        let st = sh.call("hc_state", &json!({})).await.unwrap();
+        assert_eq!((st["me"].clone(), st["key_lost"].clone()), (Value::Null, Value::Null), "{st}");
+        assert!(store.hubs().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_browser_sign_out_that_stops_partway_is_finished_not_resumed() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let (sh, _) = shell(store.clone(), None);
+        let address = take(&sh, "hc_create_identity", json!({ "id": "pat", "name": "Pat" })).await;
+        let me = sh.engine().unwrap().me().clone();
+        sh.call("hc_set_draft", &json!({ "peer": "ann.111111", "body": "half a thought" })).await.unwrap();
+        // the browser's key store refuses: stopped, marked, and the screen offers to finish
+        let err = sh.sign_out_with(|| async { Err("the key store refused".to_string()) }).await.unwrap_err();
+        assert_eq!(err, "Hubchat couldn't finish signing out: the key store refused");
+        let st = sh.call("hc_state", &json!({})).await.unwrap();
+        assert_eq!(st["me"], Value::Null);
+        assert_eq!(st["key_lost"], json!({ "address": address, "unreadable": false, "signing_out": true }));
+        // the tab closed there: a page opened with the key still kept never starts the identity again
+        let (again, _) = shell(store.clone(), Some(me));
+        let st = again.call("hc_state", &json!({})).await.unwrap();
+        assert_eq!(st["me"], Value::Null, "{st}");
+        assert_eq!(st["key_lost"]["signing_out"], true, "{st}");
+        // Try again finishes it: the key store, then the data
+        assert_eq!(again.call("hc_sign_out", &json!({})).await.unwrap(), json!([]));
+        let st = again.call("hc_state", &json!({})).await.unwrap();
+        assert_eq!((st["me"].clone(), st["key_lost"].clone()), (Value::Null, Value::Null), "{st}");
+        assert_eq!(store.draft("ann.111111").unwrap(), None);
+        // a page opened after that is the welcome screen
+        let (fresh, _) = shell(store, None);
+        assert_eq!(fresh.call("hc_state", &json!({})).await.unwrap()["key_lost"], Value::Null);
     }
 
     #[tokio::test]
