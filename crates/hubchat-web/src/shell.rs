@@ -758,6 +758,28 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn signing_out_leaves_this_device_empty_and_on_the_welcome_screen() {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        let (sh, _) = shell(store.clone(), None);
+        take(&sh, "hc_create_identity", json!({ "id": "pat", "name": "Pat" })).await;
+        sh.call("hc_set_draft", &json!({ "peer": "ann.111111", "body": "half a thought" })).await.unwrap();
+        sh.call("hc_set_notifications", &json!({ "enabled": true, "preview": false, "sound": false })).await.unwrap();
+        sh.call("hc_sign_out", &json!({})).await.unwrap();
+        // the welcome screen, not the lost-key screen: nothing of the identity is left to find
+        let st = sh.call("hc_state", &json!({})).await.unwrap();
+        assert_eq!((st["me"].clone(), st["key_lost"].clone()), (Value::Null, Value::Null), "{st}");
+        assert_eq!(sh.call("hc_recovery_words", &json!({})).await.unwrap_err(), "no identity yet");
+        assert_eq!(store.meta("identity.address").unwrap(), None);
+        assert_eq!(store.meta("device.id").unwrap(), None);
+        assert_eq!(store.draft("ann.111111").unwrap(), None);
+        // a page opened on this store later starts at the welcome screen too
+        let (again, _) = shell(store, None);
+        assert_eq!(again.call("hc_state", &json!({})).await.unwrap()["key_lost"], Value::Null);
+        // signing out twice has nothing to sign out of
+        assert_eq!(sh.call("hc_sign_out", &json!({})).await.unwrap_err(), "no identity yet");
+    }
+
+    #[tokio::test]
     async fn commands_take_the_apps_names_and_arguments() {
         let (sh, _) = fresh();
         take(&sh, "hc_create_identity", json!({ "id": "maya", "name": "Maya" })).await;
