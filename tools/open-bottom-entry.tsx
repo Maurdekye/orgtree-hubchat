@@ -159,6 +159,23 @@ async function run() {
       check("after a short scroll up (30 px), content growing below doesn't pull the chat back down", Math.abs(after - before) <= 1, { before, after });
       return { before, after };
     },
+    // @build-sol's bounce of 3c31673: a touch moving up 3 px, then 96 px of growth below, was pulled back to 0.
+    "tiny-up-then-growth": async () => {
+      const out: Record<string, { before: number; after: number }> = {};
+      for (const px of [3, 1]) {
+        const el = await bottom();
+        await gesture(el, async () => { el.scrollTop -= px; el.dispatchEvent(new Event("scroll")); await frame(); });
+        const before = gap();
+        const last = document.querySelector<HTMLElement>('.msg[data-id="k-last"] .bubble')!;
+        const pad = document.createElement("div"); pad.style.height = "96px"; last.appendChild(pad);
+        for (let i = 0; i < 6; i++) await frame();
+        const after = gap(); pad.remove(); for (let i = 0; i < 3; i++) await frame();
+        out[px + "px"] = { before, after };
+      }
+      const ok = Object.values(out).every(o => o.before >= 0.5 && o.after >= o.before + 90);
+      check("after a touch moving up only 3 px or 1 px, content growing below doesn't pull the chat back down", ok, out);
+      return out;
+    },
     "short-up-then-keyboard": async () => {
       const el = await bottom();
       await gesture(el, async () => { for (let i = 0; i < 3; i++) { el.scrollTop -= 10; el.dispatchEvent(new Event("scroll")); await frame(); } });

@@ -9,8 +9,9 @@ app.on('window-all-closed',()=>{});
 const sessionOf=pid=>{try{return Number(execFileSync('powershell',['-NoProfile','-NonInteractive','-Command',`(Get-Process -Id ${pid}).SessionId`],{encoding:'utf8',windowsHide:true}).trim());}catch{return null;}};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 // Red: the source before the user-gesture fix (v1.4.3), where the open/growth checks already pass.
-const expectedRed=JSON.parse(process.env.HUBCHAT_OPEN_RED||'null')||["a slow drag up from the bottom, 1 px per event, moves the chat up","after a short scroll up (30 px), content growing below doesn't pull the chat back down","after a short scroll up (30 px), the timeline getting shorter doesn't pull the chat back down"];
-const COUNT=7;
+// Red at v1.4.3 (b77ef4a) fails the first, second and fourth; the tiny-move step also fails at 3c31673 (bounce mb3e04d84058a).
+const expectedRed=JSON.parse(process.env.HUBCHAT_OPEN_RED||'null')||["a slow drag up from the bottom, 1 px per event, moves the chat up","after a short scroll up (30 px), content growing below doesn't pull the chat back down","after a touch moving up only 3 px or 1 px, content growing below doesn't pull the chat back down","after a short scroll up (30 px), the timeline getting shorter doesn't pull the chat back down"];
+const COUNT=8;
 // The natural opens depend on when each picture decodes: the source before the fix lands above the bottom on SOME
 // opens only (measured: 319 px on the first desktop open in one run, 0 in another), so red may or may not fail it.
 const NATURAL='every open of a chat that ends in pictures lands at its bottom';
@@ -32,7 +33,7 @@ app.whenReady().then(async()=>{
    fs.writeFileSync(path.join(out,`${red?'before':'after'}-${platform}-opened.png`),(await win.webContents.capturePage()).toPNG());
    r.actions.push({step:'late-growth',state:await js(`window.openFixture.step("late-growth")`)});
    r.actions.push({step:'user-up',state:await js(`window.openFixture.step("user-up")`)});
-   for(const step of ['slow-drag','short-up-then-growth','short-up-then-keyboard','back-to-bottom'])r.actions.push({step,state:await js(`window.openFixture.step(${JSON.stringify(step)})`)});
+   for(const step of ['slow-drag','short-up-then-growth','tiny-up-then-growth','short-up-then-keyboard','back-to-bottom'])r.actions.push({step,state:await js(`window.openFixture.step(${JSON.stringify(step)})`)});
    r.checks=await js('window.openFixture.checks');
    r.session={main:sessionOf(process.pid),renderer:sessionOf(win.webContents.getOSProcessId())};
    r.failed=r.checks.filter(c=>!c.ok).map(c=>c.name).sort();
