@@ -36,7 +36,8 @@ try {
       b.onResolve({ filter: /\.css\?inline$/ }, () => ({ path: 'empty', namespace: 'empty' }));
       b.onLoad({ filter: /.*/, namespace: 'empty' }, () => ({ contents: 'export default ""', loader: 'js' }));
       // the profiling build: production speed, and Profiler still reports render cost
-      b.onResolve({ filter: /^[^./][^:]*/ }, a => ({ path: deps.resolve(a.path === 'qrcode' ? 'qrcode/lib/browser.js' : a.path === 'react-dom/client' ? 'react-dom/profiling' : a.path) }));
+      // a stylesheet's url(...) (KaTeX's fonts) is relative to it: esbuild resolves those itself
+      b.onResolve({ filter: /^[^./][^:]*/ }, a => a.kind === 'url-token' ? undefined : ({ path: deps.resolve(a.path === 'qrcode' ? 'qrcode/lib/browser.js' : a.path === 'react-dom/client' ? 'react-dom/profiling' : a.path) }));
     } }],
   });
 } finally { esbuild.stop(); }
