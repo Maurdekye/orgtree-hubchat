@@ -82,6 +82,10 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
   const pinned = useRef(true);
   const lastTop = useRef(0); // the timeline's scrollTop at its last scroll event
   const jumpHold = useRef(false);
+  // the user's own scrolling gesture (touch, wheel, keys, the scrollbar) and its momentum: while it lasts, a scroll
+  // event is the user's, however small (docket hubchat-mobile-chat-sticks-to-the-bottom-too-har)
+  const touching = useRef(false);
+  const gestureUntil = useRef(0);
   useRefreshState(refreshId, () => ({count:msgs.length,top:tl.current?.scrollTop ?? 0,pinned:pinned.current}));
   const [far, setFar] = useState(false);
   const newMark = useRef<{ peer: string; id: string | null } | null>(null);
@@ -258,8 +262,17 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
     // bottom"): a scroll event that didn't move up is the pin's own, arriving after content below grew in the
     // meantime (pictures, mention marks, a narrower window), so it follows the new bottom instead.
     const movedUp = el.scrollTop < lastTop.current - 1;
+    const wentUp = el.scrollTop < lastTop.current;
     lastTop.current = el.scrollTop;
-    if (pinned.current && !movedUp && !jumpHold.current) {
+    if (touching.current || performance.now() < gestureUntil.current) {
+      // The user's gesture (user 2026-11-28 "too sticky to the bottom now"): any step up off the bottom unpins at
+      // once, however small (a slow touch drag moves well under a pixel per event), and nothing pulls the view back
+      // until the user reaches the bottom again. Momentum keeps the gesture going.
+      gestureUntil.current = Math.max(gestureUntil.current, performance.now() + 300);
+      if (wentUp && gap > 4) pinned.current = false;
+      else if (!wentUp && gap <= 4) pinned.current = true;
+      setFar(gap > 300);
+    } else if (pinned.current && !movedUp && !jumpHold.current) {
       if (gap > 1) { el.scrollTop = el.scrollHeight; lastTop.current = el.scrollTop; }
       setFar(false);
     } else { pinned.current = gap < 80 && !jumpHold.current; setFar(gap > 300); }
@@ -267,7 +280,13 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
     trimNow();
   };
   const toBottom = () => { const el = tl.current; if (el) { jumpHold.current = false; el.scrollTop = el.scrollHeight; pinned.current = true; setFar(false); } };
-  const userMoves = () => { jumpHold.current = false; };
+  const userMoves = () => { jumpHold.current = false; gestureUntil.current = performance.now() + 1000; };
+  const gestureHandlers = {
+    onTouchStart: () => { touching.current = true; userMoves(); },
+    onTouchEnd: () => { touching.current = false; userMoves(); },
+    onTouchCancel: () => { touching.current = false; userMoves(); },
+    onWheel: (e: React.WheelEvent) => { userMoves(); if (e.deltaY < 0 && (tl.current?.scrollTop ?? 0) > 0) pinned.current = false; },
+  };
 
   const flash = (el: HTMLElement, smooth = true) => {
     jumpHold.current = true;
@@ -597,7 +616,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
         ) : null}
         <FileBackgroundBanner />
         <div className="tl-wrap">
-          <div className="timeline" ref={tl} onScroll={onScroll} {...touch}><div>{rows}{typingNow ? <TypingRow name={name} /> : null}</div></div>
+          <div className="timeline" ref={tl} onScroll={onScroll} {...touch} {...gestureHandlers}><div>{rows}{typingNow ? <TypingRow name={name} /> : null}</div></div>
           {jumpBtn}
         </div>
         {blockBar ?? composer}
@@ -626,7 +645,7 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
       <div className="tl-wrap">
         <div className="timeline scroll" ref={tl} onScroll={onScroll} tabIndex={platform === "desktop" ? -1 : undefined} role="region" aria-label={"Messages with " + name}
           onContextMenu={(e) => { if (hlRef.current && e.target === e.currentTarget) { e.preventDefault(); menuOnHl(); } }}
-          onMouseDown={() => { userMoves(); if (hlRef.current) leaveHl(); }} onWheel={userMoves} onTouchStart={userMoves} onKeyDown={userMoves}
+          onMouseDown={() => { userMoves(); if (hlRef.current) leaveHl(); }} {...gestureHandlers} onKeyDown={userMoves}
           onBlur={(e) => { if (hlRef.current && document.hasFocus() && !e.currentTarget.contains(e.relatedTarget as Node | null)) leaveHl(); }}><div className="tl-inner">{rows}{typingNow ? <TypingRow name={name} /> : null}</div></div>
         {jumpBtn}
         {dragging ? <DropZone lim={limitFor(c, hubs)} /> : null}
