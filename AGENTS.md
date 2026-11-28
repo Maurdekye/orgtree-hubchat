@@ -819,3 +819,5 @@
   verified: window_watch.rs, tools/desktop-diagnostics.test.mjs; docs/logging.md]
 
 - 2026-11-27: LaTeX math in messages: Orgtree's delimiter rules (src/lib/math.ts) + KaTeX 0.16.47, attributes only under .katex, fonts never data: URLs. docs/math.md
+
+- 2026-11-28: A hub connected later fills in each chat the device already has back to what it shows (take_chat_list -> fill_in, at most 10 pages of 200), then `chat_filled` makes the open chat re-read in full. docs/hub-added-later.md
