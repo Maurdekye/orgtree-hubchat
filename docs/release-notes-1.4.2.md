@@ -1,0 +1,1 @@
+- **Earlier messages from a newly added hub.** When you add a hub on a device that already has chats, each chat you've opened fills in that hub's earlier messages right away, without scrolling back.
