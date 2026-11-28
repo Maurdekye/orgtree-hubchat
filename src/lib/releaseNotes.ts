@@ -35,6 +35,7 @@ import v1_3_13 from "../../docs/release-notes-1.3.13.md?raw";
 import v1_4_0 from "../../docs/release-notes-1.4.0.md?raw";
 import v1_4_1 from "../../docs/release-notes-1.4.1.md?raw";
 import v1_4_2 from "../../docs/release-notes-1.4.2.md?raw";
+import v1_4_3 from "../../docs/release-notes-1.4.3.md?raw";
 
 export const RELEASE_NOTES: { file: string; text: string }[] = [
   { file: "release-notes-0.1.3.md", text: v0_1_3 },
@@ -70,4 +71,5 @@ export const RELEASE_NOTES: { file: string; text: string }[] = [
   { file: "release-notes-1.4.0.md", text: v1_4_0 },
   { file: "release-notes-1.4.1.md", text: v1_4_1 },
   { file: "release-notes-1.4.2.md", text: v1_4_2 },
+  { file: "release-notes-1.4.3.md", text: v1_4_3 },
 ];

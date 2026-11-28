@@ -1,0 +1,1 @@
+Linux: Ctrl+V now pastes images into a message, like right-click Paste.
