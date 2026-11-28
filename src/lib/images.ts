@@ -134,6 +134,16 @@ export const isPastedImage = (f: File) => f.type in { "image/png": 1, "image/jpe
  *  picker or dropped on the chat, which hand over a path instead. */
 export const MAX_PASTED_BYTES = 64 * 1024 * 1024;
 
+/** Whether a paste event must be completed from the native clipboard: Hubchat on a Linux desktop (WebKitGTK puts no
+ *  picture in the paste event, so Ctrl+V of a screenshot brought nothing while right-click Paste, which reads the
+ *  clipboard natively, attached it) when the event carries neither text nor files. Windows, macOS, Android and
+ *  Hubchat Web keep their webview's own paste. */
+export function needsNativePaste(dt: DataTransfer | null, os: string, desktop: boolean, web: boolean): boolean {
+  if (os !== "linux" || !desktop || web) return false;
+  if (!dt) return true;
+  return dt.files.length === 0 && !dt.getData("text/plain");
+}
+
 /** Files on the clipboard (an image, or files copied in a file manager), unless it also holds text, which wins as it
  *  does for images. Pictures only used to qualify (symmetry audit ux10 S4). */
 export function pastedFiles(dt: DataTransfer | null): File[] {

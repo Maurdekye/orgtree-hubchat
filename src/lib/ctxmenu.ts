@@ -65,14 +65,16 @@ const isField = (el: Element | null): el is Field =>
 
 /** Paste where the caret was: text if the clipboard has any (as Ctrl+V
  *  does); otherwise a picture goes where Ctrl+V would put it (the composer
- *  attaches it). Read natively: the WebView would ask the user first. */
-async function pasteInto(f: Field, start: number, end: number): Promise<void> {
+ *  attaches it). Read natively: the WebView would ask the user first. Also
+ *  the composer's Ctrl+V on Linux, whose WebKitGTK paste event carries no
+ *  picture (`quiet`: an empty clipboard says nothing there). */
+export async function pasteInto(f: Field, start: number, end: number, quiet = false): Promise<void> {
   const text = await api.clipboardText().catch(() => null);
   f.focus();
   try { f.setSelectionRange(start, end); } catch { /* number fields have no selection */ }
   if (text) { document.execCommand("insertText", false, text); return; }
   const png = await api.clipboardImage().catch(() => null);
-  if (!png) { toast("Nothing to paste"); return; }
+  if (!png) { if (!quiet) toast("Nothing to paste"); return; }
   const dt = new DataTransfer();
   dt.items.add(new File([png], "image.png", { type: "image/png" }));
   f.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));

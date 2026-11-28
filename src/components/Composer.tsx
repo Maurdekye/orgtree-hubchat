@@ -3,10 +3,11 @@
 // on the chat) and a size check against the hub's limit before anything is
 // sent.
 import { useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, type Ref } from "react";
-import { api, newId, type Contact, type HubStatus, type Message, type NewAttachment, type NewOutgoing } from "../api";
+import { api, isWeb, newId, type Contact, type HubStatus, type Message, type NewAttachment, type NewOutgoing } from "../api";
 import { Icon } from "../lib/icons";
 import { bytes, fileTitle, isLong, MAX_FILES, num, utf8Len } from "../lib/format";
-import { isImage, isPastedImage, MAX_PASTED_BYTES, pastedFiles, pastedName, thumbable, useFilePreview } from "../lib/images";
+import { isImage, isPastedImage, MAX_PASTED_BYTES, needsNativePaste, pastedFiles, pastedName, thumbable, useFilePreview } from "../lib/images";
+import { pasteInto } from "../lib/ctxmenu";
 import { errText, pickFiles } from "../lib/native";
 import { displayName, kindOf, limitFor, msgTime, preview } from "../lib/peers";
 import {
@@ -22,7 +23,7 @@ import { foldAt } from "../lib/replies";
 import { cardOf, type CardKnown } from "../lib/questions";
 import { noteDraft, usePreparation, getPreparation, submitOutgoing, clearPreparation, getSnap, useSnap, usePendingRestore, takeRestore, holdsDraft } from "../lib/store";
 import { setReplies } from "../lib/answers";
-import { KindGlyph, PeerAvatar, usePlatform } from "./ui";
+import { KindGlyph, PeerAvatar, useOs, usePlatform, useWeb } from "./ui";
 import { refreshKey, useRestoredRefreshState, useRefreshState } from "../lib/refresh";
 import { sendsOnEnter, useEnterKey } from "../lib/enterKey";
 
@@ -102,6 +103,8 @@ function keepMentionItemInView(listEl: HTMLElement, activeEl: HTMLElement | null
 
 export function Composer({ peer, c, hubs, msgs, replies, picked, cardState, pos, onRemoveReply, onUnpick, onCancelReply, onSent, ref, off }: Props) {
   const platform = usePlatform();
+  const os = useOs();
+  const web = useWeb() || isWeb;
   const enter = useEnterKey();
   const snap = useSnap();
   const [text, setText] = useState("");
@@ -607,7 +610,16 @@ export function Composer({ peer, c, hubs, msgs, replies, picked, cardState, pos,
           onSelect={syncCaret}
           onClick={syncCaret}
           onKeyUp={syncCaret}
-          onPaste={(e) => { const pasted = pastedFiles(e.clipboardData); if (pasted.length) { e.preventDefault(); void paste(pasted); } }}
+          onPaste={(e) => {
+            const pasted = pastedFiles(e.clipboardData);
+            if (pasted.length) { e.preventDefault(); void paste(pasted); return; }
+            // Linux: WebKitGTK's paste event holds no picture; read the clipboard natively, as right-click Paste does
+            if (needsNativePaste(e.clipboardData, os, platform === "desktop", web)) {
+              e.preventDefault();
+              const f = e.currentTarget;
+              void pasteInto(f, f.selectionStart ?? f.value.length, f.selectionEnd ?? f.value.length, true);
+            }
+          }}
           onKeyDown={(e) => {
             if (mentionOpen && !e.nativeEvent.isComposing) {
               if (e.key === "ArrowDown" || e.key === "ArrowUp") {
