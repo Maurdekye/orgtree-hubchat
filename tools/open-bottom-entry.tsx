@@ -1,7 +1,8 @@
 // Mounted App, synthetic API only: opening a chat lands at its bottom and stays there while late content (pictures)
 // settles (docket hubchat-some-chats-open-scrolled-a-little-above-t, user 2026-11-27 m50385a018301 "when i click onto
 // certain chats it always starts scrolled a little bit up from the bottom"). No hub, network or real clipboard.
-// ?platform=desktop|android
+// ?platform=desktop|android. Also: a user's scroll up from the bottom is never pulled back (docket
+// hubchat-mobile-chat-sticks-to-the-bottom-too-har).
 import { createRoot } from "react-dom/client";
 import App from "../src/App";
 import { api, type Contact, type Message } from "../src/api";
@@ -79,6 +80,20 @@ async function run() {
     await sleep(150);
   };
   await until(() => !!row("Kim"), 3000);
+  // at the bottom, pinned (the jump button's path is not used: a fresh open of the chat)
+  const bottom = async () => {
+    await sleep(1600); // any earlier gesture is over
+    await open("Lee", "l1"); await sleep(120); delay = 0; await open("Kim", "k-last"); await settled();
+    const el = tl()!; el.scrollTop = el.scrollHeight; for (let i = 0; i < 3; i++) await frame();
+    return el;
+  };
+  // the user's own gesture: touch on Android, the wheel on desktop (synthetic events, no OS input)
+  const gesture = async (el: HTMLElement, moves: () => Promise<void>) => {
+    if (platform === "android") el.dispatchEvent(new Event("touchstart", { bubbles: true }));
+    else el.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: 0 }));
+    await moves();
+    if (platform === "android") el.dispatchEvent(new Event("touchend", { bubbles: true }));
+  };
 
   const steps: Record<string, () => Promise<unknown>> = {
     // the user's case: open the chat again and again; it lands at the bottom every time
@@ -121,6 +136,50 @@ async function run() {
       pad.remove();
       check("a user who scrolled up stays where they are while content grows below", Math.abs(after - before) <= 1 && g >= 500, { before, after, gap: g });
       return { before, after };
+    },
+    // Hubchat 1.4.3 on a phone (docket hubchat-mobile-chat-sticks-to-the-bottom-too-har, user 2026-11-28 "too sticky
+    // to the bottom now, its annoying to try and scroll up from it"): a user's gesture (touch on Android, the wheel on
+    // desktop) moving up from the bottom is the user's, however small each step is.
+    "slow-drag": async () => {
+      const el = await bottom();
+      await gesture(el, async () => { for (let i = 0; i < 40; i++) { el.scrollTop -= 1; el.dispatchEvent(new Event("scroll")); await frame(); } });
+      for (let i = 0; i < 4; i++) await frame();
+      const g = gap();
+      check("a slow drag up from the bottom, 1 px per event, moves the chat up", g >= 30, g);
+      return g;
+    },
+    "short-up-then-growth": async () => {
+      const el = await bottom();
+      await gesture(el, async () => { for (let i = 0; i < 3; i++) { el.scrollTop -= 10; el.dispatchEvent(new Event("scroll")); await frame(); } });
+      const before = el.scrollTop;
+      const last = document.querySelector<HTMLElement>('.msg[data-id="k-last"] .bubble')!;
+      const pad = document.createElement("div"); pad.style.height = "240px"; last.appendChild(pad);
+      for (let i = 0; i < 6; i++) await frame();
+      const after = el.scrollTop; pad.remove(); for (let i = 0; i < 3; i++) await frame();
+      check("after a short scroll up (30 px), content growing below doesn't pull the chat back down", Math.abs(after - before) <= 1, { before, after });
+      return { before, after };
+    },
+    "short-up-then-keyboard": async () => {
+      const el = await bottom();
+      await gesture(el, async () => { for (let i = 0; i < 3; i++) { el.scrollTop -= 10; el.dispatchEvent(new Event("scroll")); await frame(); } });
+      const before = el.scrollTop;
+      // the soft keyboard (or a narrower window) makes the timeline shorter
+      const h = el.clientHeight; el.style.height = (h - 250) + "px"; el.style.flex = "none";
+      for (let i = 0; i < 6; i++) await frame();
+      const after = el.scrollTop; el.style.height = ""; el.style.flex = ""; for (let i = 0; i < 3; i++) await frame();
+      check("after a short scroll up (30 px), the timeline getting shorter doesn't pull the chat back down", Math.abs(after - before) <= 1, { before, after });
+      return { before, after };
+    },
+    "back-to-bottom": async () => {
+      const el = await bottom();
+      await gesture(el, async () => { for (let i = 0; i < 3; i++) { el.scrollTop -= 100; el.dispatchEvent(new Event("scroll")); await frame(); } });
+      await gesture(el, async () => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event("scroll")); await frame(); });
+      const last = document.querySelector<HTMLElement>('.msg[data-id="k-last"] .bubble')!;
+      const pad = document.createElement("div"); pad.style.height = "240px"; last.appendChild(pad);
+      for (let i = 0; i < 6; i++) await frame();
+      const g = gap(); pad.remove(); for (let i = 0; i < 3; i++) await frame();
+      check("control: a user who scrolls back to the bottom is pinned again and follows growth below", g <= 1, g);
+      return g;
     },
   };
   window.openFixture = { checks, platform, step: async (name) => { const f = steps[name]; if (!f) throw Error("no step " + name); return f(); } };
