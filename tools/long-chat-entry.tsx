@@ -72,7 +72,7 @@ function install(n: number) {
   const fallback = async () => null;
   for (const k of Object.keys(api) as (keyof typeof api)[]) (api as Record<string, unknown>)[k] = fallback;
   Object.assign(api, {
-    state: async () => ({ me: { address: ME, username: "me" }, hubs: [{ url: "http://hub.invalid", name: "Bench hub", state: "connected", enabled: true }], platform: "desktop" }),
+    state: async () => ({ me: { address: ME, username: "me" }, hubs: [{ url: "http://hub.invalid", name: "Bench hub", state: "connected", enabled: true, features: [] }], platform: "desktop" }),
     uiState: async () => ({}),
     chats: async () => [{ peer: PEER, last: all[all.length - 1], unread: 0 }],
     directory: async () => [{ address: PEER, kind: "org", org_name: "Bench Org", username: "", blurb: "", online: true, last_seen: null, hubs: ["http://hub.invalid"] }],

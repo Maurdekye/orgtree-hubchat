@@ -23,7 +23,7 @@ try {
   await esbuild.build({
     entryPoints: [path.join(repo, 'tools/long-chat-entry.tsx')], outfile: path.join(out, 'long-chat.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic',
     define: { 'process.env.NODE_ENV': '"production"' }, minify: false,
-    loader: { '.md': 'text', '.svg': 'text', '.png': 'dataurl' },
+    loader: { '.md': 'text', '.svg': 'text', '.png': 'dataurl', '.woff2': 'file', '.woff': 'file', '.ttf': 'file' },
     plugins: [{ name: 'existing-dependencies', setup(b) {
       // count the rows whose memo misses, by the prop that changed (window.__memoMiss)
       b.onLoad({ filter: /MessageView\.tsx$/ }, a => {
