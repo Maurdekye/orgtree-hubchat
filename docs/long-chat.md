@@ -57,10 +57,12 @@ theres no lag."
   or less for the pin's own and snapped back to the bottom; a slow touch drag moves less than that per event. And
   a short scroll up (under 80 px) stayed pinned, so growth below or a shorter timeline (the soft keyboard) pulled it
   back down. Now touch, wheel, keys and mouse on the timeline start a gesture that lasts through its momentum (1 s
-  after the last touch or wheel, 300 ms after each scroll event): within it any step up more than 4 px from the
-  bottom unpins and only reaching the bottom (4 px) re-pins, with no forced scroll; scroll events outside a
+  after the last touch or wheel, 300 ms after each scroll event): within it any step up off the bottom unpins
+  (even 1 px) and only a move down that reaches the bottom (gap under 1 px) re-pins, with no forced scroll; an
+  event that didn't move changes nothing; scroll events outside a
   gesture keep 1.4.1's rule. Proof: the four user-gesture steps of `tools/proof-open-bottom.mjs` (red at 1.4.3:
-  slow drag gap 0, growth +240 px, shorter timeline +250 px; green: all 7 checks on desktop and Android). Synthetic
+  slow drag gap 0, growth +240 px, shorter timeline +250 px; green: all 8 checks on desktop and Android; the 3 px / 1 px step came from
+  @build-sol's bounce of the first hand-in). Synthetic
   events in Electron; a real phone's touch scroll is not measured.
 
 ## The benchmark

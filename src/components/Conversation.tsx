@@ -263,14 +263,17 @@ export function Conversation({ peer, onBack, onInfo, onOpenAddr, onContactInfo, 
     // meantime (pictures, mention marks, a narrower window), so it follows the new bottom instead.
     const movedUp = el.scrollTop < lastTop.current - 1;
     const wentUp = el.scrollTop < lastTop.current;
+    const wentDown = el.scrollTop > lastTop.current;
     lastTop.current = el.scrollTop;
     if (touching.current || performance.now() < gestureUntil.current) {
       // The user's gesture (user 2026-11-28 "too sticky to the bottom now"): any step up off the bottom unpins at
-      // once, however small (a slow touch drag moves well under a pixel per event), and nothing pulls the view back
-      // until the user reaches the bottom again. Momentum keeps the gesture going.
+      // once, however small (a slow touch drag moves well under a pixel per event; a 3 px move must not be pulled
+      // back either), and nothing pulls the view back until the user moves down to the bottom again (under 1 px:
+      // a fractional zoom can leave a sub-pixel gap at the true bottom). An event that didn't move changes nothing.
+      // Momentum keeps the gesture going.
       gestureUntil.current = Math.max(gestureUntil.current, performance.now() + 300);
-      if (wentUp && gap > 4) pinned.current = false;
-      else if (!wentUp && gap <= 4) pinned.current = true;
+      if (wentUp && gap > 0) pinned.current = false;
+      else if (wentDown && gap < 1) pinned.current = true;
       setFar(gap > 300);
     } else if (pinned.current && !movedUp && !jumpHold.current) {
       if (gap > 1) { el.scrollTop = el.scrollHeight; lastTop.current = el.scrollTop; }
