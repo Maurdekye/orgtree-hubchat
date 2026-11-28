@@ -980,6 +980,12 @@ impl Store {
         )
     }
 
+    /// When the oldest message this device holds of the chat with `peer`
+    /// was made (our clock, the store's time form); None: none yet.
+    pub fn oldest_at(&self, peer: &str) -> Result<Option<String>> {
+        self.with(|c| c.query_row("SELECT MIN(created_at) FROM messages WHERE peer=?", [peer], |r| r.get(0)))
+    }
+
     pub fn message(&self, id: &str) -> Result<Option<Message>> {
         Ok(self
             .messages_where("m.id=?", params![id])?

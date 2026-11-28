@@ -291,7 +291,7 @@ export async function openCore(takeOver = false): Promise<Core | null> {
   void listen<{ type?: string }>("hc", (e) => {
     const type = e.payload?.type;
     if (type === "hub") void syncPush(call, true).catch(() => { /* next start */ });
-    else if (type === "chat" || type === "incoming") countUnread();
+    else if (type === "chat" || type === "chat_filled" || type === "incoming") countUnread();
   });
   countUnread();
   if (pendingChat()) window.dispatchEvent(new Event("hc-pending"));

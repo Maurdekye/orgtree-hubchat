@@ -48,6 +48,11 @@ const CONNECTING_GRACE: Duration = Duration::from_secs(4);
 
 /// Messages per history page when scrolling back.
 const HISTORY_PAGE: u32 = 50;
+/// A hub connected later fills in each chat this device already has back to
+/// what the chat shows, at most FILL_PAGES pages of FILL_PAGE per chat; the
+/// rest pages in as the user scrolls back.
+const FILL_PAGES: usize = 10;
+const FILL_PAGE: u32 = 200;
 
 /// What one `load_older` call did.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -59,6 +64,16 @@ pub struct OlderPage {
     /// Hubs this device started from now on that couldn't be asked
     /// (offline): their older messages are not loaded yet.
     pub unreachable: Vec<String>,
+}
+
+/// One older page from one hub (`Engine::history_page`).
+struct PageStep {
+    /// Messages new to this device.
+    added: usize,
+    /// The chat's start on that hub is reached.
+    done: bool,
+    /// Hub clock, unix ms: the oldest message loaded through that hub.
+    oldest_ms: Option<i64>,
 }
 
 /// A hub timestamp (RFC 3339, `Z`) in unix ms.
@@ -79,6 +94,10 @@ pub fn now() -> String {
 pub enum Event {
     /// A chat's messages or unread count changed.
     Chat { peer: String },
+    /// A hub this device just connected filled in older messages of a chat
+    /// it already had, possibly between rows on screen: the shell re-reads
+    /// the chat's whole loaded range, not only its newest rows.
+    ChatFilled { peer: String },
     /// A new incoming message (the shell decides whether to notify).
     Incoming {
         /// Immutable identity of the engine that received this message.
@@ -1305,6 +1324,14 @@ impl Engine {
         let list = client.conversations(&self.me).await?;
         let me = self.me.address();
         let offset = self.offset(url);
+        // how far back each chat this device already has shows, before this
+        // hub's newest message joins it (fill_in)
+        let mut fill: Vec<(String, i64)> = Vec::new();
+        for c in &list {
+            if let Some(t) = self.fill_target(&c.with)? {
+                fill.push((c.with.clone(), t));
+            }
+        }
         for c in &list {
             let mut listed = None;
             if let Some(m) = &c.last {
@@ -1327,7 +1354,57 @@ impl Engine {
             )?;
             self.host.event(Event::Chat { peer: c.with.clone() });
         }
-        self.store.delete_meta(&chats_key(url))
+        self.store.delete_meta(&chats_key(url))?;
+        for (peer, target) in fill {
+            // the chat pages in on scrolling back as before if this fails
+            if let Err(e) = self.fill_in(client, url, &peer, target).await {
+                crate::diag::failure(&format!("filling in a chat from {}", crate::diag::tag("hub", url)), &e);
+            }
+        }
+        Ok(())
+    }
+
+    /// Where a chat this device has already shown starts on screen (our
+    /// clock, unix ms): its history floor, or its oldest stored message when
+    /// it shows everything. None: never shown here (a new device's chats,
+    /// or one only on the chat list), so it keeps paging in lazily.
+    fn fill_target(&self, peer: &str) -> Result<Option<i64>> {
+        match self.store.meta(&format!("history.floor.{peer}"))?.as_deref() {
+            None => Ok(None),
+            Some("all") => Ok(self.store.oldest_at(peer)?.as_deref().and_then(hub_ms)),
+            Some(f) => Ok(f.parse::<i64>().ok()),
+        }
+    }
+
+    /// A hub this device connected after it already had the chat with
+    /// `peer` (docket hubchat-after-connecting-a-second-hub-a-contact-s,
+    /// 2026-11-28): its older messages back to `target` (our clock), the
+    /// range the chat already covers, page in now, not only once the user
+    /// scrolls past everything this device holds. A hub that stops
+    /// answering leaves the rest to scrolling back.
+    async fn fill_in(&self, client: &HubClient, url: &str, peer: &str, target: i64) -> Result<()> {
+        let Some(start) = self.store.meta(&start_key(url))?.and_then(|v| v.parse::<i64>().ok()) else {
+            return Ok(());
+        };
+        let mut added = 0;
+        for _ in 0..FILL_PAGES {
+            let mark = self.store.history_mark(url, peer)?.unwrap_or_default();
+            if mark.done {
+                break;
+            }
+            let Some(step) = self.history_page(url, client, peer, start, &mark, FILL_PAGE).await? else {
+                break;
+            };
+            added += step.added;
+            let reached = step.oldest_ms.is_some_and(|t| t - self.offset(url) <= target);
+            if step.done || reached {
+                break;
+            }
+        }
+        if added > 0 {
+            self.host.event(Event::ChatFilled { peer: peer.into() });
+        }
+        Ok(())
     }
 
     /// The hub's clock minus ours (0 when unknown).
@@ -1448,7 +1525,6 @@ impl Engine {
             .iter()
             .map(|(u, h)| (u.clone(), h.client.clone()))
             .collect();
-        let me = self.me.address();
         let mut out = OlderPage::default();
         for (url, client) in hubs {
             let Some(start) = self
@@ -1466,56 +1542,13 @@ impl Engine {
                 out.unreachable.push(url);
                 continue;
             }
-            let before = match &mark.before {
-                Some(c) => crate::hub_v2::Before::Cursor(c.clone()),
-                // the start's own millisecond too: sync may not bring it
-                None => crate::hub_v2::Before::Time(start + 1),
-            };
-            let page = match client.history(&self.me, peer, &before, HISTORY_PAGE).await {
-                Ok(p) => p,
-                Err(e) if e.status().is_some() => return Err(e),
+            let Some(step) = self.history_page(&url, &client, peer, start, &mark, HISTORY_PAGE).await? else {
                 // the connection failed: as good as offline
-                Err(_) => {
-                    out.unreachable.push(url);
-                    continue;
-                }
+                out.unreachable.push(url);
+                continue;
             };
-            let mut oldest = mark.oldest_ms;
-            let mut old_unread = mark.old_unread;
-            let offset = self.offset(&url);
-            for m in &page.messages {
-                if let Some(t) = hub_ms(&m.env.received_at) {
-                    oldest = Some(oldest.map_or(t, |o| o.min(t)));
-                }
-                if m.env.body.starts_with(crate::link::LINK_MESSAGE_PREFIX) {
-                    continue;
-                }
-                if self.store.message(&m.env.id)?.is_none() {
-                    out.added += 1;
-                }
-                self.store.upsert_synced_at(&url, &me, m, offset)?;
-                self.body_changed.notify_one();
-                // an unread one this hub's chat list counted is now here
-                if m.env.from != me
-                    && m.read_at.is_none()
-                    && mark.listed_id.as_deref() != Some(m.env.id.as_str())
-                {
-                    old_unread -= 1;
-                }
-            }
-            let done = page.before.is_none();
-            self.store.set_history_mark(
-                &url,
-                peer,
-                &crate::store::HistoryMark {
-                    before: page.before,
-                    oldest_ms: oldest,
-                    done,
-                    old_unread: old_unread.max(0),
-                    listed_id: mark.listed_id.clone(),
-                },
-            )?;
-            if !done {
+            out.added += step.added;
+            if !step.done {
                 out.more.push(url);
             }
         }
@@ -1523,6 +1556,60 @@ impl Engine {
             self.host.event(Event::Chat { peer: peer.into() });
         }
         Ok(out)
+    }
+
+    /// The next older page of the chat with `peer` from hub `url`, after
+    /// `mark` (this device's copy of that hub begins at `start`, hub clock):
+    /// stored by id, the mark moved on. None: the connection failed.
+    async fn history_page(&self, url: &str, client: &HubClient, peer: &str, start: i64, mark: &crate::store::HistoryMark, limit: u32) -> Result<Option<PageStep>> {
+        let me = self.me.address();
+        let before = match &mark.before {
+            Some(c) => crate::hub_v2::Before::Cursor(c.clone()),
+            // the start's own millisecond too: sync may not bring it
+            None => crate::hub_v2::Before::Time(start + 1),
+        };
+        let page = match client.history(&self.me, peer, &before, limit).await {
+            Ok(p) => p,
+            Err(e) if e.status().is_some() => return Err(e),
+            Err(_) => return Ok(None),
+        };
+        let mut added = 0;
+        let mut oldest = mark.oldest_ms;
+        let mut old_unread = mark.old_unread;
+        let offset = self.offset(url);
+        for m in &page.messages {
+            if let Some(t) = hub_ms(&m.env.received_at) {
+                oldest = Some(oldest.map_or(t, |o| o.min(t)));
+            }
+            if m.env.body.starts_with(crate::link::LINK_MESSAGE_PREFIX) {
+                continue;
+            }
+            if self.store.message(&m.env.id)?.is_none() {
+                added += 1;
+            }
+            self.store.upsert_synced_at(url, &me, m, offset)?;
+            self.body_changed.notify_one();
+            // an unread one this hub's chat list counted is now here
+            if m.env.from != me
+                && m.read_at.is_none()
+                && mark.listed_id.as_deref() != Some(m.env.id.as_str())
+            {
+                old_unread -= 1;
+            }
+        }
+        let done = page.before.is_none();
+        self.store.set_history_mark(
+            url,
+            peer,
+            &crate::store::HistoryMark {
+                before: page.before,
+                oldest_ms: oldest,
+                done,
+                old_unread: old_unread.max(0),
+                listed_id: mark.listed_id.clone(),
+            },
+        )?;
+        Ok(Some(PageStep { added, done, oldest_ms: oldest }))
     }
 
     /// The hub is connected, or becomes so within a few seconds (right

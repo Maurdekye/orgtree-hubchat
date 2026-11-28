@@ -380,6 +380,9 @@ export interface Devices {
 export type HcEvent =
   | { type: "file_lifecycle" }
   | { type: "chat"; peer: string }
+  /** A hub connected later filled in older messages of a chat this device
+   *  already had, possibly between rows on screen: re-read it in full. */
+  | { type: "chat_filled"; peer: string }
   | { type: "incoming"; peer: string; id: string; preview: string }
   | { type: "hub"; url: string }
   | { type: "directory" }

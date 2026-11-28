@@ -73,13 +73,15 @@ function schedule(k: keyof typeof pending) {
 }
 
 // ------------------------------------------------------- per-chat changes
-const chatSubs = new Map<string, Set<() => void>>();
-export function onChatChange(peer: string, f: () => void): () => void {
+const chatSubs = new Map<string, Set<(full: boolean) => void>>();
+/** `f(full)`: `full` when rows may have joined anywhere in the chat, not only
+ *  among its newest (a hub connected later filled it in). */
+export function onChatChange(peer: string, f: (full: boolean) => void): () => void {
   let s = chatSubs.get(peer); if (!s) chatSubs.set(peer, (s = new Set()));
   s.add(f);
   return () => { s!.delete(f); };
 }
-function chatChanged(peer: string) { chatSubs.get(peer)?.forEach((f) => f()); }
+function chatChanged(peer: string, full = false) { chatSubs.get(peer)?.forEach((f) => f(full)); }
 
 /** Where a chat's messages go (the hub picker), re-read when the chat, the
  *  hubs or the directory change. */
@@ -150,7 +152,7 @@ export function useMessages(peer: string | null, page = PAGE) {
     });
     return () => { live = false; };
   }, [peer, tick, page]);
-  useEffect(() => (peer ? onChatChange(peer, () => { windowed.current = true; setTick((t) => t + 1); }) : undefined), [peer]);
+  useEffect(() => (peer ? onChatChange(peer, (full) => { if (full) forceFull.current = true; else windowed.current = true; setTick((t) => t + 1); }) : undefined), [peer]);
   // Gaining focus (window or app) re-reads the open chat in full, once per gain.
   useEffect(() => {
     if (!peer) return;
@@ -467,6 +469,7 @@ function onEvent(e: HcEvent) {
       break;
     }
     case "chat": schedule("chats"); chatChanged(e.peer); schedule("transfers"); break;
+    case "chat_filled": schedule("chats"); chatChanged(e.peer, true); break;
     case "incoming": typingEnded(e.peer); schedule("chats"); chatChanged(e.peer); break;
     case "file_lifecycle": schedule("state"); schedule("transfers"); break;
     case "hub": schedule("state"); schedule("transfers"); break;
