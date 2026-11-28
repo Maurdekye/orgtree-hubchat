@@ -392,6 +392,92 @@ impl Drop for Forwarder {
     }
 }
 
+/// The phone of the user's report (docket hubchat-after-connecting-a-second-
+/// hub-a-contact-s, 2026-11-28): a device on hub A only has a chat with
+/// `pat`; `pat` also wrote through hub B, before and after this device
+/// started. The device then connects hub B. Returns the device, the ids
+/// only hub B holds, and the one live message from hub A.
+async fn phone_adds_second_hub(hub_a: &str, hub_b: &str, alex: &Identity, pat: &Identity, dir: &std::path::Path) -> (Arc<Engine>, BTreeSet<String>, String) {
+    let ca = on_hub(hub_a, alex, pat).await;
+    let cb = on_hub(hub_b, alex, pat).await;
+    let mut only_b: BTreeSet<String> = BTreeSet::new();
+    // through A before the phone: what an older device of alex's saw
+    send_many(&ca, pat, alex, &uid("a-old-"), 3).await;
+    only_b.extend(send_many(&cb, pat, alex, &uid("b-early-"), 5).await);
+    only_b.extend(send_many(&cb, alex, pat, &uid("b-mine-"), 2).await);
+    let d = new_device(alex, &[hub_a], dir).await;
+    let mut live = Outgoing::new(&alex.address(), "through A, live");
+    live.id = uid("a-live-");
+    ca.send(pat, &live).await.unwrap();
+    until("the live message through A", 30, || d.store().message(&live.id).unwrap().is_some()).await;
+    // the user has the chat open: it shows what came live
+    assert_eq!(shown(&d, &pat.address()), vec![live.id.clone()]);
+    // pat goes on writing through B, which this device doesn't use yet
+    only_b.extend(send_many(&cb, pat, alex, &uid("b-late-"), 5).await);
+    // now it connects B
+    d.add_hub(hub_b).unwrap();
+    until("hub B's first sync", 120, || {
+        let s = d.hub_statuses();
+        s.len() == 2 && s.iter().all(|s| s.answered_ms.is_some())
+    })
+    .await;
+    (d, only_b, live.id)
+}
+
+/// The user's workaround: scrolling the chat back to its start. Every
+/// message hub B holds must then show, each once, beside A's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_hub_connected_later_shows_its_messages_once_paged_to_the_start() {
+    let Some((hub_a, hub_b)) = lazy_hubs() else {
+        eprintln!("SKIPPED: set HUBCHAT_LAZY_HUB and HUBCHAT_LAZY_HUB2 to two scratch mail hubs");
+        return;
+    };
+    assert_ne!(url(&hub_a), url(&hub_b), "needs two hubs with separate databases");
+    let dir = tempfile::tempdir().unwrap();
+    let alex = Identity::generate("alex").unwrap();
+    let pat = Identity::generate("pat").unwrap();
+    let (d, only_b, live) = phone_adds_second_hub(&hub_a, &hub_b, &alex, &pat, dir.path()).await;
+    let peer = pat.address();
+    page_to_start(&d, &peer).await;
+    let on_screen = shown(&d, &peer);
+    let distinct: BTreeSet<_> = on_screen.iter().cloned().collect();
+    assert_eq!(on_screen.len(), distinct.len(), "duplicates");
+    let missing: Vec<_> = only_b.difference(&distinct).collect();
+    assert!(missing.is_empty(), "hub B's messages missing after paging to the start: {missing:?}; shown {on_screen:?}");
+    assert!(distinct.contains(&live), "A's live message went missing");
+    d.shutdown();
+}
+
+/// Connecting a hub fills in the chats this device already has, without
+/// scrolling: hub B's messages from the range the chat covers show at once,
+/// in time order with A's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_hub_connected_later_fills_in_a_chat_the_device_already_has() {
+    let Some((hub_a, hub_b)) = lazy_hubs() else {
+        eprintln!("SKIPPED: set HUBCHAT_LAZY_HUB and HUBCHAT_LAZY_HUB2 to two scratch mail hubs");
+        return;
+    };
+    assert_ne!(url(&hub_a), url(&hub_b), "needs two hubs with separate databases");
+    let dir = tempfile::tempdir().unwrap();
+    let alex = Identity::generate("alex").unwrap();
+    let pat = Identity::generate("pat").unwrap();
+    let (d, only_b, live) = phone_adds_second_hub(&hub_a, &hub_b, &alex, &pat, dir.path()).await;
+    let peer = pat.address();
+    // the chat already covers A's live message onward: B's messages from
+    // that range fill in
+    let late: BTreeSet<_> = only_b.iter().filter(|id| id.starts_with("b-late-")).cloned().collect();
+    until("hub B's messages in the range the chat covers", 30, || {
+        let s: BTreeSet<_> = shown(&d, &peer).into_iter().collect();
+        late.is_subset(&s) && s.contains(&live)
+    })
+    .await;
+    // and in time order: A's live message before B's late ones
+    let on_screen = shown(&d, &peer);
+    let at = |id: &str| on_screen.iter().position(|x| x == id).unwrap();
+    assert!(late.iter().all(|id| at(id) > at(&live)), "out of order: {on_screen:?}");
+    d.shutdown();
+}
+
 /// A hub that is down: scrolling back names it and doesn't wait for it
 /// (the other hub's messages all show); once it is back its messages fill
 /// in, and none of those already on screen go away.
