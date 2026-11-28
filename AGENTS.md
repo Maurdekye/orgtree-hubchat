@@ -245,6 +245,9 @@
   `hc_save_pasted` keeps a safe own name. [decided: user 2026-10-29 via the
   coordinator; verified: tools/proof-symmetry-s4-*.mjs, cargo test -p hubchat
   --lib media; docs/symmetry-s4.md]
+  Linux desktop: WebKitGTK's paste event holds no picture, so a Ctrl+V event
+  with neither text nor files is read natively like right-click Paste
+  (`needsNativePaste`; tools/proof-linux-keypaste.mjs; 2026-11-28).
 
 - 2026-10-25: Desktop/Android/lost-key recovery share Onboarding's local file
   input. Parse at most 64 KiB of the saved numbered export or plain 24 words;

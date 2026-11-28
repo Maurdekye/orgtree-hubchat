@@ -41,6 +41,7 @@ Mounted real components in jsdom with a synthetic API (no hub, native file or cl
 | `tools/proof-symmetry-s4-mention.mjs` | #10 |
 | `tools/proof-symmetry-s4-settings.mjs` | #31 #32 #46 |
 | `tools/proof-symmetry-s4-composer.mjs` | #38 #39 |
+| `tools/proof-linux-keypaste.mjs` | #39 on Linux: Ctrl+V of a picture WebKitGTK's paste event leaves out is read from the native clipboard (stubbed) like right-click Paste; other platforms unchanged |
 | `cargo test -p hubchat --lib media` | `pasted_file_name` |
 | `tools/proof-symmetry-s4-capture.mjs` | offscreen Electron pictures of every state, desktop and Android mock, silent, Session 0 |
 
