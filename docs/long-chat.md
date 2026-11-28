@@ -52,6 +52,16 @@ theres no lag."
   leaves a 240 px gap; green: 0). Natural opens of a chat ending in four pictures depend on timing: before the
   fix one desktop run's first open stopped 319 px up (about one picture), another run's 16 opens all reached the
   bottom; after it, every open did. Which content triggers it in the user's own chats is not measured.
+- During the user's own gesture, any step up unpins (Hubchat 1.4.4; user 2026-11-28 on Android "too sticky to the
+  bottom now, its annoying to try and scroll up from it"). 1.4.1's rule took a scroll event that moved up by 1 px
+  or less for the pin's own and snapped back to the bottom; a slow touch drag moves less than that per event. And
+  a short scroll up (under 80 px) stayed pinned, so growth below or a shorter timeline (the soft keyboard) pulled it
+  back down. Now touch, wheel, keys and mouse on the timeline start a gesture that lasts through its momentum (1 s
+  after the last touch or wheel, 300 ms after each scroll event): within it any step up more than 4 px from the
+  bottom unpins and only reaching the bottom (4 px) re-pins, with no forced scroll; scroll events outside a
+  gesture keep 1.4.1's rule. Proof: the four user-gesture steps of `tools/proof-open-bottom.mjs` (red at 1.4.3:
+  slow drag gap 0, growth +240 px, shorter timeline +250 px; green: all 7 checks on desktop and Android). Synthetic
+  events in Electron; a real phone's touch scroll is not measured.
 
 ## The benchmark
 
