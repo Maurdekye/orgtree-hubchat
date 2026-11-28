@@ -1,0 +1,1 @@
+- Chats: scrolling up from the bottom no longer snaps back, even with a slow swipe or while new content loads.
